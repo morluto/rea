@@ -9,6 +9,8 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { createDirectAnalysis } from "../../../../src/composition/directAnalysis.js";
 import {
   ArtifactPathRegistry,
+  destinationCaseCollisionMessage,
+  ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
   normalizeArtifactPath,
 } from "../../../../src/artifacts/ArtifactPaths.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
@@ -95,17 +97,8 @@ describe("artifact archive safety", () => {
     });
     const registry = new ArtifactPathRegistry();
     registry.add("A.js", "file");
-    let collisionError: unknown;
-    try {
-      registry.add("a.js", "file");
-    } catch (error: unknown) {
-      collisionError = error;
-    }
-    expect(collisionError).toBeInstanceOf(ArtifactReaderFailure);
-    expect(collisionError).toMatchObject({
-      reason: "path",
-      message: "Artifact path collision: a.js differs only in case from A.js",
-    });
+    expect(() => registry.add("a.js", "file")).not.toThrow();
+    expect(() => registry.add("A.js", "file")).toThrow(ArtifactReaderFailure);
 
     for (const [filePath, childPath] of [
       ["Foo", "foo/bar"],
@@ -113,10 +106,14 @@ describe("artifact archive safety", () => {
     ] as const) {
       const casePrefixRegistry = new ArtifactPathRegistry();
       casePrefixRegistry.add(filePath, "file");
-      expect(() => casePrefixRegistry.add(childPath, "file")).toThrow(
-        ArtifactReaderFailure,
-      );
+      expect(() => casePrefixRegistry.add(childPath, "file")).not.toThrow();
     }
+
+    const exactPrefixRegistry = new ArtifactPathRegistry();
+    exactPrefixRegistry.add("Foo", "file");
+    expect(() => exactPrefixRegistry.add("Foo/bar", "file")).toThrow(
+      ArtifactReaderFailure,
+    );
 
     const sameDirectoryRegistry = new ArtifactPathRegistry();
     sameDirectoryRegistry.add("Foo/one.js", "file");
@@ -126,7 +123,50 @@ describe("artifact archive safety", () => {
     caseVariantDirectoryRegistry.add("Foo/one.js", "file");
     expect(() =>
       caseVariantDirectoryRegistry.add("foo/two.js", "file"),
-    ).toThrow(ArtifactReaderFailure);
+    ).not.toThrow();
+  });
+
+  it("names a destination case collision from the directory listing", () => {
+    expect(
+      destinationCaseCollisionMessage("res/2f.xml", ["2F.xml", "other.xml"]),
+    ).toBe(
+      "Destination filesystem cannot store both res/2f.xml and res/2F.xml; inventory retains both logical names.",
+    );
+    expect(
+      destinationCaseCollisionMessage("res/2f.xml", ["2f.xml", "2F.xml"]),
+    ).toBeUndefined();
+  });
+
+  it("extracts logical names that differ only in case", async () => {
+    const root = await createTestTempDirectory("rea-case-distinct-zip-");
+    const path = join(root, "fixture.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("Main.js", new TextReader("upper"));
+    await writer.add("main.js", new TextReader("lower"));
+    await writeFile(path, await writer.close());
+    const parsed = await parseBinaryTarget(path);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const result = await inventory(parsed.value);
+    expect(result.limitations).toContain(
+      ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+    );
+    expect(
+      result.occurrences
+        .filter(({ logical_path }) => logical_path !== ".")
+        .map(({ logical_path }) => logical_path)
+        .sort(),
+    ).toEqual(["Main.js", "main.js"]);
+    const output = join(root, "output");
+    const extracted = await new ArtifactProvider(process.env)
+      .createClient(parsed.value)
+      .execute(
+        "extract_artifact",
+        artifactExtractionExecutionSchema.parse({ output_root: output }),
+      );
+    expect(extracted.ok).toBe(true);
+    expect(await readFile(join(output, "Main.js"), "utf8")).toBe("upper");
+    expect(await readFile(join(output, "main.js"), "utf8")).toBe("lower");
   });
 });
 const inventory = async (targetValue: BinaryTarget) => {
