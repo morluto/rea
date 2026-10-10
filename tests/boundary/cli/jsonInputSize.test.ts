@@ -8,14 +8,14 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "rejects malformed oversized JSON through both CLI and Evidence readers",
+  "rejects malformed oversized input through CLI and Evidence readers",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-limit-");
     const input = join(root, "oversized.json");
     const file = await open(input, "wx");
     try {
-      // Sparse zero bytes are valid UTF-8 but invalid JSON. Both readers
-      // stream the input and reject the syntax before assembling a value.
+      // Sparse zero bytes are valid UTF-8. Both streaming readers reject
+      // their invalid JSON syntax without assembling a whole-document string.
       await file.truncate(constants.MAX_STRING_LENGTH + 1);
     } finally {
       await file.close();
@@ -118,7 +118,7 @@ cliTest(
 
 cliTest(
   "returns a typed string assembly constraint under a bounded heap",
-  async ({ cli }) => {
+  async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-headroom-");
     const input = join(root, "long-string.json");
     const file = await open(input, "wx");
@@ -150,5 +150,21 @@ cliTest(
         action: expect.stringContaining("re-analyze a smaller selection"),
       },
     });
+    const evidence = await processes.run(process.execPath, [
+      "--max-old-space-size=768",
+      "--input-type=module",
+      "-e",
+      `import { readJsonFile } from "./dist/application/JsonFiles.js";
+       import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
+       const result = await readJsonFile(process.argv[1]);
+       console.log(JSON.stringify(result.ok ? result : projectAnalysisError(result.error)));`,
+      input,
+    ]);
+    expect(JSON.parse(evidence.stdout)).toMatchObject({
+      code: "resource_constraint",
+      details: { operation: "read_evidence_file", resource: "memory" },
+    });
+    expect(evidence.stderr).toBe("");
+    expect(evidence.exitCode).toBe(0);
   },
 );

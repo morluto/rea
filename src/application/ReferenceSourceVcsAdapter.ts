@@ -53,24 +53,25 @@ const resolveSourceHead = async (
       ...fs.promises,
       // isomorphic-git treats every read failure as absence. Preserve real
       // failures so a readable packed ref cannot hide an unreadable loose ref.
-      readFile: async (
-        path: string | undefined,
-        options:
-          | BufferEncoding
-          | { readonly encoding?: BufferEncoding | null }
-          | null = null,
-      ) => {
-        // The library probes readFile() without a path to detect promise APIs.
-        // Reject that invocation without attributing it to a source read.
+      readFile: async (path?: string, options?: unknown) => {
+        // isomorphic-git probes promise support with readFile() before reading
+        // metadata. Its rejected probe must not count as a failed file read.
         if (path === undefined)
-          throw new TypeError("Git filesystem read requires a path");
+          throw new TypeError("Git metadata path is required");
         try {
           const bytes = await readRegularFile(path, { signal });
           const encoding =
-            typeof options === "string" ? options : options?.encoding;
-          return encoding === undefined || encoding === null
-            ? bytes
-            : bytes.toString(encoding);
+            typeof options === "string"
+              ? options
+              : typeof options === "object" &&
+                  options !== null &&
+                  "encoding" in options
+                ? options.encoding
+                : undefined;
+          if (encoding === undefined || encoding === null) return bytes;
+          if (typeof encoding !== "string" || !Buffer.isEncoding(encoding))
+            throw new TypeError("Unsupported Git metadata text encoding");
+          return bytes.toString(encoding);
         } catch (cause: unknown) {
           if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
           throw cause;

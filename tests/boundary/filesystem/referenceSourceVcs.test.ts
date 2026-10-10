@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -84,14 +84,6 @@ it("reads a linked worktree's own branch and detached HEAD through shared Git re
     head: mainHead,
     dirty: null,
   });
-  // A non-regular loose ref must remain unknown even when packed-refs has
-  // a readable value. The library's promise-API probe is not a source failure.
-  await mkdir(join(repository, ".git", "refs", "heads", "main"));
-  expect(await readReferenceSourceVcs(repository)).toEqual({
-    kind: "unknown",
-    head: null,
-    dirty: null,
-  });
   const controller = new AbortController();
   controller.abort();
   expect(await readReferenceSourceVcs(linked, controller.signal)).toEqual({
@@ -100,3 +92,41 @@ it("reads a linked worktree's own branch and detached HEAD through shared Git re
     dirty: null,
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps unreadable loose refs unknown instead of falling back to packed refs",
+  async () => {
+    const root = await createTestTempDirectory("rea-reference-loose-ref-");
+    const gitdir = join(root, ".git");
+    const looseRef = join(gitdir, "refs", "heads", "main");
+    await mkdir(join(gitdir, "refs", "heads"), { recursive: true });
+    const head = "1234567890abcdef1234567890abcdef12345678";
+    await writeFile(join(gitdir, "HEAD"), "ref: refs/heads/main\n");
+    await writeFile(join(gitdir, "packed-refs"), `${head} refs/heads/main\n`);
+    expect(await readReferenceSourceVcs(root)).toEqual({
+      kind: "git",
+      head,
+      dirty: null,
+    });
+    // A non-file loose ref is an actual read failure, not an absent ref.
+    await mkdir(looseRef);
+    expect(await readReferenceSourceVcs(root)).toEqual({
+      kind: "unknown",
+      head: null,
+      dirty: null,
+    });
+    await rm(looseRef, { recursive: true });
+    if (process.getuid?.() === 0) return;
+    await writeFile(looseRef, `${head}\n`);
+    await chmod(looseRef, 0);
+    try {
+      expect(await readReferenceSourceVcs(root)).toEqual({
+        kind: "unknown",
+        head: null,
+        dirty: null,
+      });
+    } finally {
+      await chmod(looseRef, 0o600);
+    }
+  },
+);
