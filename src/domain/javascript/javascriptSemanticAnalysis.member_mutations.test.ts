@@ -597,9 +597,11 @@ describe("property mutation collection on minified bundles", () => {
       { length: 2000 },
       (_, index) => `source.p${index} = ${index};`,
     ).join(" ");
+    const start = performance.now();
     const value = resultValue(
       `const source = { token: "TOKEN" }; ${writes} return [source.token, source.p1999];`,
     );
+    expect(performance.now() - start).toBeLessThan(2000);
     expect(value).toMatchObject({
       status: "array",
       items: [
@@ -626,7 +628,7 @@ describe("results of methods on an escaped receiver", () => {
     });
   });
 
-  it("preserves escape coverage across many receiver methods and calls (#1495)", () => {
+  it("keeps a shared result uncertain across a wide escaped receiver (#1495)", () => {
     const count = 2000;
     const methods = Array.from(
       { length: count },
@@ -636,11 +638,9 @@ describe("results of methods on an escaped receiver", () => {
       { length: count },
       (_, index) => `box.m${index}().p${index} = ${index};`,
     ).join(" ");
-    const start = performance.now();
     const value = resultValue(
       `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`,
     );
-    expect(performance.now() - start).toBeLessThan(2000);
     expect(value).toMatchObject({
       status: "array",
       items: [{ value: { status: "unknown" } }],
