@@ -8,52 +8,46 @@
       name="description"
       content="N0zoM1z0 reflects on manual reverse engineering, Touhou reconstruction with AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04."
     />
-    <link
-      rel="canonical"
-      href="https://rea.tools/blog/touhou-reconstruction/"
-    />
+    <!-- website:sharing:start -->
+    <!-- prettier-ignore -->
+    <link rel="canonical" href="https://rea.tools/blog/touhou-reconstruction/" />
+    <!-- prettier-ignore -->
     <meta property="og:type" content="website" />
+    <!-- prettier-ignore -->
     <meta property="og:site_name" content="REA" />
-    <meta
-      property="og:title"
-      content="Reverse Engineering’s Industrial Revolution — REA"
-    />
-    <meta
-      property="og:description"
-      content="N0zoM1z0 reflects on manual reverse engineering, Touhou reconstruction with AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04."
-    />
-    <meta
-      property="og:url"
-      content="https://rea.tools/blog/touhou-reconstruction/"
-    />
-    <meta
-      property="og:image"
-      content="https://rea.tools/assets/social-card.png"
-    />
+    <!-- prettier-ignore -->
+    <meta property="og:title" content="Reverse Engineering’s Industrial Revolution — REA" />
+    <!-- prettier-ignore -->
+    <meta property="og:description" content="N0zoM1z0 reflects on manual reverse engineering, Touhou reconstruction with AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04." />
+    <!-- prettier-ignore -->
+    <meta property="og:url" content="https://rea.tools/blog/touhou-reconstruction/" />
+    <!-- prettier-ignore -->
+    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
     <meta property="og:image:type" content="image/png" />
+    <!-- prettier-ignore -->
     <meta property="og:image:width" content="1200" />
+    <!-- prettier-ignore -->
     <meta property="og:image:height" content="630" />
+    <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
       content="REA — Find out how software works. Reverse engineering with your coding agent."
     />
+    <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta
-      name="twitter:title"
-      content="Reverse Engineering’s Industrial Revolution — REA"
-    />
-    <meta
-      name="twitter:description"
-      content="N0zoM1z0 reflects on manual reverse engineering, Touhou reconstruction with AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04."
-    />
-    <meta
-      name="twitter:image"
-      content="https://rea.tools/assets/social-card.png"
-    />
+    <!-- prettier-ignore -->
+    <meta name="twitter:title" content="Reverse Engineering’s Industrial Revolution — REA" />
+    <!-- prettier-ignore -->
+    <meta name="twitter:description" content="N0zoM1z0 reflects on manual reverse engineering, Touhou reconstruction with AI agents, and how knowledge compounds across TH08, TH095 and PC-98 TH04." />
+    <!-- prettier-ignore -->
+    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
       content="REA — Find out how software works. Reverse engineering with your coding agent."
     />
+    <!-- website:sharing:end -->
     <meta name="theme-color" content="#ffffff" />
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../assets/styles.css" />
@@ -61,6 +55,8 @@
   </head>
   <body id="top" class="blog-article">
     <a class="skip-link" href="#main">Skip to content</a>
+    <!-- website:header:start -->
+    <!-- prettier-ignore -->
     <header class="site-header">
       <div class="container header-inner">
         <a class="brand" href="../../" aria-label="REA home"
@@ -69,8 +65,8 @@
         >
         <nav class="navigation" aria-label="Main navigation">
           <a href="../../showcase/">Showcases</a>
-          <a href="../" aria-current="true">Blog</a>
-          <a class="nav-start" href="../../get-started/">Get started</a>
+          <a href="../../blog/" aria-current="page">Blog</a>
+          <a href="../../get-started/" class="nav-start">Get started</a>
           <a href="../../guides/">Guides</a>
           <a href="../../faq/">FAQ</a>
         </nav>
@@ -136,6 +132,7 @@
         </div>
       </div>
     </header>
+    <!-- website:header:end -->
     <main id="main" class="container">
       <div class="page-heading">
         <p class="breadcrumb">
@@ -147,21 +144,166 @@
         <p class="page-meta">By N0zoM1z0 · 10 October 2026</p>
         <div class="blog-takeaway">
           <p class="eyebrow">Takeaway</p>
-          <p>
-            <strong
-              >Agent-driven reverse engineering changes how the work can
-              accumulate.</strong
-            >
-            An investigation can become a checked result, a failed experiment
-            can become a reusable test, and one project's experience can become
-            the next project's starting point.
-          </p>
-          <p>
-            Reconstructing TH08, TH095 and TH04 convinced me that RE is entering
-            its industrial age.
-          </p>
+          <ul>
+            <li>
+              <strong>Give agents autonomy over the investigation.</strong> Set
+              a clear goal and acceptance criteria, then let the agent decide
+              what to try next.
+            </li>
+            <li>
+              <strong>Use the repository and Git as working memory.</strong>
+              Keep the reasoning with the code. Git checkpoints let the next
+              session continue after the conversation ends.
+            </li>
+            <li>
+              <strong>Let evidence decide what you claim.</strong> A confident
+              explanation still needs testing. “Unknown” is a valid answer when
+              the evidence is incomplete.
+            </li>
+            <li>
+              <strong>Test the oracle too.</strong> Try cases it should reject.
+              If it misses a bug, revisit the earlier results that depended on
+              it.
+            </li>
+            <li>
+              <strong
+                >We are in the early days of RE's industrial revolution.</strong
+              >
+              The methods are still taking shape. There is plenty left to
+              explore.
+            </li>
+          </ul>
         </div>
       </div>
+      <figure class="reconstruction-flywheel" aria-labelledby="flywheel-title">
+        <div class="flywheel-heading">
+          <p class="eyebrow" id="flywheel-title">How experience compounds</p>
+          <p><strong>Human direction</strong> · Goal and acceptance criteria</p>
+        </div>
+        <div class="flywheel-diagram">
+          <svg
+            class="flywheel-arrows"
+            viewBox="0 0 720 470"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <defs>
+              <marker
+                id="flywheel-forward"
+                markerWidth="10"
+                markerHeight="10"
+                refX="7"
+                refY="4"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+              >
+                <path
+                  d="M 0 0 L 8 4 L 0 8"
+                  fill="none"
+                  stroke="#294f82"
+                  stroke-width="2"
+                />
+              </marker>
+              <marker
+                id="flywheel-revise"
+                markerWidth="10"
+                markerHeight="10"
+                refX="7"
+                refY="4"
+                orient="auto"
+                markerUnits="userSpaceOnUse"
+              >
+                <path
+                  d="M 0 0 L 8 4 L 0 8"
+                  fill="none"
+                  stroke="#5b6570"
+                  stroke-width="1.5"
+                />
+              </marker>
+            </defs>
+            <g
+              fill="none"
+              stroke="#294f82"
+              stroke-width="2.5"
+              marker-end="url(#flywheel-forward)"
+            >
+              <path
+                class="flywheel-path-desktop"
+                d="M 444 115 C 537 111 624 157 627 208"
+              />
+              <path d="M 528 365 C 456 437 263 437 191 365" />
+              <path
+                class="flywheel-path-desktop"
+                d="M 99 209 C 94 145 170 97 271 104"
+              />
+              <path
+                class="flywheel-path-mobile"
+                d="M 530 115 C 614 108 681 164 674 215"
+              />
+              <path
+                class="flywheel-path-mobile"
+                d="M 87 198 C 74 143 135 119 190 120"
+              />
+            </g>
+            <path
+              class="flywheel-path-desktop"
+              d="M 515 215 C 500 165 450 166 430 127"
+              fill="none"
+              stroke="#5b6570"
+              stroke-width="1.5"
+              stroke-dasharray="5 5"
+              marker-end="url(#flywheel-revise)"
+            />
+            <path
+              class="flywheel-path-mobile"
+              d="M 510 204 C 404 204 391 187 412 136"
+              fill="none"
+              stroke="#5b6570"
+              stroke-width="1.5"
+              stroke-dasharray="5 5"
+              marker-end="url(#flywheel-revise)"
+            />
+          </svg>
+          <div class="flywheel-node flywheel-agent">
+            <p class="flywheel-kicker">Autonomy</p>
+            <h3>Agent</h3>
+            <p>Choose an experiment.<br />Propose a hypothesis.</p>
+          </div>
+          <div class="flywheel-node flywheel-oracle">
+            <p class="flywheel-kicker">Verification</p>
+            <h3>Oracle</h3>
+            <p>Test against a<br />concrete reference.</p>
+          </div>
+          <div class="flywheel-node flywheel-memory">
+            <p class="flywheel-kicker">Repository</p>
+            <h3>Working memory</h3>
+            <p>Code, evidence,<br />checks and lessons.</p>
+          </div>
+          <p class="flywheel-retry">
+            Mismatch<br /><strong>Revise the hypothesis</strong>
+          </p>
+          <p class="flywheel-center">
+            A better<br /><strong>starting point</strong>
+          </p>
+          <p class="flywheel-reuse">Reuse</p>
+          <p class="flywheel-pass">
+            <strong>Pass</strong> · Keep the result and its evidence
+          </p>
+        </div>
+        <div
+          class="flywheel-projects"
+          aria-label="Experience carried between projects"
+        >
+          <a href="#th08">TH08</a><span aria-hidden="true">→</span
+          ><a href="#th095">TH095</a><span aria-hidden="true">→</span
+          ><a href="#th04">TH04</a>
+        </div>
+        <figcaption>
+          Each project leaves the next with a better starting point. That
+          includes fixing the checks when we discover a gap.
+        </figcaption>
+      </figure>
       <div class="article-layout">
         <nav class="contents" aria-label="On this page">
           <p>In this article</p>
@@ -171,6 +313,9 @@
             <li><a href="#different-approaches">Two approaches</a></li>
             <li><a href="#th095">TH095: compounding</a></li>
             <li><a href="#th04">TH04: across architectures</a></li>
+            <li>
+              <a href="#semantic-reconstruction">From exact to readable</a>
+            </li>
             <li><a href="#industrial-shift">The industrial shift</a></li>
             <li><a href="#possibilities">What becomes possible</a></li>
           </ul>
@@ -179,82 +324,145 @@
           <section class="article-section" id="august">
             <h2>What changed in August 2026</h2>
             <p>
-              Before this reconstruction work, I had done a lot of manual
-              reverse engineering. The familiar loop was to inspect
-              instructions, follow references, form an explanation, test it, and
-              revise it. Progress depended on how much of that loop I could
-              carry out myself, and how well I could keep the growing picture in
-              my head.
+              Before this work, I had done a lot of manual reverse engineering.
+              I would inspect a function until I had an explanation, then test
+              that explanation against the program. Getting further meant
+              spending more of my own time on the next function. It also meant
+              keeping an increasingly large picture in my head.
             </p>
             <p>
-              In August 2026, I began exploring agent-driven RE seriously. I
-              wanted to see how far an agent could go when it had access to the
-              program, ordinary development tools, and feedback from real
-              checks. Touhou reconstruction became the place where I could
-              pursue that question through a substantial project.
+              Most of my RE work is on games. I reconstruct them so their
+              behavior can be understood and eventually carried into a port or a
+              mod. That is the experience behind this article. The method can be
+              useful elsewhere, but each field needs to establish what it can
+              check against a reliable reference.
             </p>
             <p>
-              The early progress was startling. Tasks that I would have budgeted
-              around my own time and attention could keep moving while the agent
-              investigated, tried source formulations, compiled them, and
-              examined the result. My work increasingly involved choosing the
-              direction, improving the tools and checks, and deciding what the
-              accumulated evidence meant.
+              In August 2026, I started exploring agent-driven RE seriously. I
+              wanted to see how far an agent could get with access to the
+              program and ordinary development tools. Touhou reconstruction gave
+              me a substantial project in which to find out.
             </p>
             <p>
-              That changed which projects seemed reasonable to attempt. A large
-              executable began to look like a collection of investigations we
-              could organize and keep advancing. Recovering source, making it
-              readable, and eventually using it for a port became parts of an
-              achievable project.
+              The early progress was startling. An investigation could keep
+              moving without me choosing every individual step. A failed
+              comparison might send the agent to another caller. It could write
+              a small diagnostic and use the result to decide what to try next.
+              Giving it that freedom made a difference: I could spend more
+              attention on the project's direction and on whether its checks
+              were trustworthy.
             </p>
             <p>
-              The numbers first got my attention. The more interesting question
-              was what made that progress possible—and whether the process could
-              improve as it worked.
+              The pace got my attention first. Then I began wondering what would
+              survive beyond the current project. Would the next game benefit
+              from everything we had just learned?
             </p>
           </section>
           <section class="article-section" id="th08">
             <h2>TH08: building on human work</h2>
             <p>
               <a href="https://github.com/N0zoM1z0/th08">TH08</a>, Imperishable
-              Night, began for me as a continuation of
+              Night, began as a continuation of
               <a href="https://github.com/GensokyoClub/th08"
                 >GensokyoClub's reconstruction</a
-              >. Their public work already contained source, names, build
-              knowledge and a contribution history. It gave the continuation a
-              foundation. That foundation matters when discussing everything
-              that followed.
+              >. Their public source gave me a substantial foundation. It came
+              with knowledge of the build and a history of contributions that I
+              preserved in the continuation.
             </p>
             <p>
-              I preserved the imported history through the public 10 August
-              checkpoint. The independent continuation began on 13 August. By 19
-              August, the project's ledger recorded source for all 1,107
-              identified game functions. A playable Linux reconstruction port
-              was committed on 24 August, roughly eleven days after the
-              continuation began. A Web edition followed, then a native Linux
-              64-bit release on 30 August.
+              The imported history ends at the public 10 August checkpoint. My
+              independent continuation began on 13 August. By 19 August, the
+              ledger recorded source for all 1,107 identified game functions.
             </p>
             <p>
-              Those dates made the change in pace tangible. What interested me
-              most was that the work extended beyond producing plausible C++. It
-              included comparisons, build repairs, recovery of meaningful names
-              and types, and the work needed to turn reconstructed pieces into a
-              program people could run.
+              A playable Linux reconstruction port was committed on 24 August,
+              roughly eleven days after the continuation began. A Web edition
+              followed. The native Linux 64-bit release arrived on 30 August.
             </p>
             <p>
-              This also exposed the importance of feedback. A function can look
-              correct and compile correctly while its place in the whole program
-              is wrong. Two functions can accidentally use separate copies of
-              state that should be shared. A port can hide a problem that
-              appears when the historical build runs. Each failure adds
-              something useful if we can reproduce it and keep the check.
+              What struck me was that the work had reached a program people
+              could run. Getting there required following problems beyond an
+              individual function. Even when two functions looked correct in
+              isolation, they could accidentally use separate copies of state
+              that should have been shared.
             </p>
             <p>
-              Over time, more of the project lived outside any one conversation:
-              source, evidence, comparison scripts, regression tests, and
-              focused notes about what to do next. A fresh agent could inspect
-              that state and continue.
+              This made reference checks central to the work. I call them
+              <strong>oracles</strong>. A code comparison can tell us whether a
+              reconstructed function reproduces the original instructions. A
+              runtime check can tell us whether an exercised route reaches the
+              expected state. The agent proposes an explanation and tests it; a
+              mismatch gives it something specific to investigate.
+            </p>
+            <h3>An exact match with the wrong constant</h3>
+            <p>
+              An oracle is software someone wrote. TH08 gave me a clear reminder
+              of how much can depend on that software.
+            </p>
+            <p>
+              In September, a bug reported by a downstream Switch port led back
+              to item auto-collection. The reconstructed source checked player
+              power against <code>0.0</code>. The original used
+              <code>128.0</code>, the maximum-power threshold.
+            </p>
+            <p>
+              Normal power is non-negative, so the reconstructed power check was
+              effectively always satisfied. Above the collection line, the game
+              could attract items without requiring maximum power. The other
+              exceptions in the condition were correct. This one constant
+              changed the behavior.
+            </p>
+            <p>
+              <strong
+                >Yet the function had already passed the exact
+                comparison.</strong
+              >
+            </p>
+            <p>
+              A rebuild can put a constant at a different address. The
+              comparison tool accounted for that by adjusting addresses in the
+              compiled instructions before comparing them with the original. But
+              it never checked the floating-point value stored at the referenced
+              address.
+            </p>
+            <p>
+              That left a hole in the check. It could point the reconstructed
+              instruction at the original's <code>128.0</code> while the source
+              still said <code>0.0</code>. The instruction bytes matched. The
+              source meant something different.
+            </p>
+            <p>
+              The
+              <a href="https://github.com/N0zoM1z0/th08/pull/11"
+                >2 September fix</a
+              >
+              corrected the source and made the comparison check the referenced
+              constant's actual bytes. A
+              <a href="https://github.com/N0zoM1z0/th08/pull/13">wider audit</a>
+              then examined 1,548 floating-literal references. It found another
+              twelve incorrect references across five accepted functions.
+            </p>
+            <p>
+              The comparison now checks every such floating literal. Its tests
+              include deliberately wrong values to make sure they are rejected.
+              We also had to revisit results that had passed the weaker check.
+            </p>
+            <p>
+              <strong>The oracle needed reconstructing too.</strong> Repairing
+              it was part of repairing the game.
+            </p>
+            <p>
+              That matters when the team is mostly one person working with
+              agents. I cannot personally inspect every line they produce, so
+              much of my confidence rests on their checks. A shared oracle's
+              blind spot can affect many investigations before I notice it. I
+              have to understand what the checker actually verifies and test it
+              against cases that ought to fail.
+            </p>
+            <p>
+              As the work continued, those checks became part of the repository.
+              So did the reasons for source changes and notes that let a later
+              session pick up where an earlier one stopped.
               <strong
                 >The repository was becoming the project's working
                 memory.</strong
@@ -270,10 +478,14 @@
           <section class="article-section" id="different-approaches">
             <h2>Two different ideas of reconstruction</h2>
             <p>
-              There is a real disagreement around this work, and GensokyoClub's
-              public README expresses it directly. Its notice announces that
-              further development will happen privately until completion. One
-              passage reads:
+              GensokyoClub's
+              <a
+                href="https://web.archive.org/web/20260909051514/https://github.com/GensokyoClub/th08#important-notice"
+                >public README</a
+              >
+              makes its disagreement with this kind of work explicit. The notice
+              announces that further development will happen privately until
+              completion. One passage reads:
             </p>
             <blockquote>
               <p>
@@ -285,56 +497,50 @@
             <p>
               The notice also describes the psychological toll on the
               maintainers. Their contribution policy excludes pull requests
-              produced primarily with AI. These are people putting their free
-              time into difficult work, and their published work helped make my
-              continuation possible. That effort deserves respect. The
-              disagreement I want to discuss concerns how reconstruction is done
-              and how contributions are evaluated.
+              produced primarily with AI. They have put their free time into
+              difficult work, and that work helped make my continuation
+              possible. I respect the effort behind it. The disagreement I want
+              to discuss is about how reconstruction should proceed and how a
+              contribution should be judged.
             </p>
             <p>
-              In the manual RE workflow I knew, expertise and execution were
-              closely connected. The person developing an understanding of a
-              function also carried out much of the investigation and
-              reconstruction. Personal knowledge, careful authorship and trust
-              in contributors were central to the project.
+              In the manual workflow I knew, developing an understanding of a
+              function and reconstructing it usually fell to the same person. A
+              project relied heavily on that person's expertise. Trust in the
+              contributor mattered because so much of the reasoning happened
+              while they worked.
             </p>
             <p>
-              Manual projects already preserve knowledge in code, build tools
-              and tests. What changed for me was having an agent use that
-              accumulated knowledge to investigate, implement and test the next
-              change.
+              Existing projects already preserve knowledge in their source and
+              build tools. What changed for me was that an agent could use that
+              knowledge to pursue the next investigation on its own.
             </p>
             <p>
-              My continuation takes an agent-led approach. Agents carry out the
-              new engineering; the human sets direction and release decisions.
-              Understanding has to be retained in source and evidence, while
-              comparisons, builds and runtime experiments test the results. A
-              contribution can be useful even when an agent performed most of
-              the work, provided its reasoning and result can be examined.
+              In my continuation, I decide the objective and the standard for
+              accepting a result. The agent has broad freedom to investigate.
+              Its proposed reconstruction then has to survive the relevant
+              checks. I want another person to be able to examine why we chose
+              an implementation, even if an agent did most of the work.
             </p>
             <p>
-              This creates a difficult transition for communities built around
-              the earlier model. Open source makes existing work available for
-              continuation, and agents can change the pace of that continuation
-              dramatically. Years of careful work may become the starting point
-              for something that moves much faster. Recognition, provenance and
-              the standards for accepting new work become more important in that
-              situation.
+              This can be a difficult transition. Years of careful work may
+              become the foundation for a continuation that moves much faster.
+              That raises real questions about credit. It also changes what
+              maintainers need to know before accepting a contribution.
             </p>
             <p>
-              The industrial analogy helps me make sense of the disagreement. A
-              craft contains skill, judgment and accumulated knowledge. When
-              machinery changes how execution happens, those skills find new
-              roles in designing the process, detecting defects and deciding
-              what should be produced. Different communities can reasonably
-              choose different ways to organize that work.
+              The industrial analogy helps me think about this. In a craft, much
+              of the process depends on the skill of the person carrying it out.
+              Machinery changes where that skill is needed. Someone still has to
+              design the process and recognize when its output is wrong.
+              Different communities can choose how much of that change they want
+              to take on.
             </p>
             <p>
-              My choice is to develop this continuation openly, preserve its
-              sources and history, and make the new work reviewable. The
-              technical question I want to pursue is how far agent-driven
-              reconstruction can go with strong evidence and a process that
-              keeps improving.
+              My choice is to continue openly, with the inherited work credited
+              and its history preserved. I want the new work to be reviewable.
+              That gives us a way to ask how far this approach can go and to
+              learn from what goes wrong along the way.
             </p>
             <p class="caption">
               Source: GensokyoClub's
@@ -357,103 +563,100 @@
             <h2>TH095: experience starts compounding</h2>
             <p>
               <a href="https://github.com/N0zoM1z0/th095">TH095</a>, Shoot the
-              Bullet, made the accumulated experience much easier to see. Its
-              new repository began on 29 August with zero confirmed game
-              functions in the reconstruction ledger. It already had a way to
-              work: identify the target, bring up analysis and comparison tools,
-              keep tasks manageable, preserve evidence, and leave checkpoints
-              another session could use.
+              Bullet, made the value of that experience much easier to see. Its
+              repository began on 29 August with zero confirmed game functions
+              in the ledger. We still had to learn the game. But we already knew
+              much more about how to begin a reconstruction and how to keep it
+              moving.
             </p>
             <p>
               By 7 September, all 697 identified game functions had source. By 8
-              September, 696 of them were accepted as exact comparisons. The
-              whole program linked on 9 September, and the Windows i386
-              reconstruction was marked playable on 10 September, about twelve
-              days after initialization.
+              September, 696 had been accepted as exact comparisons. The whole
+              program linked on 9 September. The Windows i386 reconstruction was
+              marked playable on 10 September, about twelve days after
+              initialization.
             </p>
             <p>
-              I found this more exciting than the first project's speed. TH095
-              began with the process and experience developed during TH08 and
-              the other reconstruction work. We could approach a new target with
-              better questions, better checks and fewer assumptions left
-              implicit.
+              I found this more exciting than the first project's speed. A fresh
+              target could benefit from work done on another game. The
+              experience was already present in the tools and in the way the
+              project was organized.
             </p>
             <p>
-              For example, matching individual functions had taught us to pay
-              attention to the assembled program early. Does the source build
-              together? Do different parts of the game use the same state? Does
-              the reconstructed executable survive the transitions we need to
-              exercise? Those questions became part of how the next project was
-              organized.
+              For example, TH08 had taught us to pay attention to the assembled
+              program early. If several recovered functions depend on the same
+              state, their isolated comparisons leave an important question
+              open. We need to see them working together. That lesson helped
+              shape how we approached TH095's whole-program build.
             </p>
             <p>
-              This is what I mean by knowledge compounding. A lesson that stays
-              in my head helps while I am present. A lesson retained as a test,
-              a script or a precise evidence note can help every later session.
-              A failure becomes valuable when the next agent can recognize it
-              without repeating the whole investigation.
+              A lesson that stays in my head is useful while I am there. Once it
+              becomes a check that another session can run, it can keep helping
+              after I have moved on. The next agent can use the result without
+              repeating the investigation that led to it.
+            </p>
+            <p>
+              The floating-literal bug belongs in that memory too. It explains
+              why checking a reference also requires checking the data behind
+              it. Keeping that correction with the code helps later projects
+              avoid inheriting the old check's blind spot.
             </p>
             <p>
               <strong
                 >The method becomes part of the starting material for the next
                 game.</strong
               >
-              As that material improves, we can spend more attention on what is
-              new about the target.
+              We can spend more of the next project's effort on what is actually
+              new about its target.
             </p>
             <p>
-              This compounds across people as well as projects. Someone joining
-              later can rerun a check, inspect the reason for a source choice,
-              or continue from a recorded unknown. The project can make use of
-              experience without requiring everyone to reconstruct its entire
-              history from scratch.
+              The same benefit is available to people joining later. They can
+              inspect a decision and rerun its check before continuing the work.
+              They do not have to reconstruct the entire project's history to
+              find out why the source looks the way it does.
             </p>
           </section>
           <section class="article-section" id="th04">
             <h2>TH04: the workflow survives a different architecture</h2>
             <p>
               <a href="https://github.com/N0zoM1z0/th04">TH04</a>, Lotus Land
-              Story, took the work into the PC-98 DOS era. We moved from 32-bit
-              Windows games to a 16-bit environment with four cooperating
-              programs and hardware behavior that had to be understood on its
-              own terms. Existing
-              <a href="https://github.com/nmlgc/ReC98">ReC98 work</a> provided
+              Story, took this work into the PC-98 DOS era. The target was now a
+              16-bit environment with four cooperating programs. Understanding
+              its hardware behavior required different evidence from the Windows
+              games. Existing
+              <a href="https://github.com/nmlgc/ReC98">ReC98 work</a> gave us
               valuable knowledge and source material here too.
             </p>
             <p>
-              The DOS reconstruction is now working, including complete Normal
-              routes, endings and saves from my manual testing. The current work
-              is a native 64-bit port. These are distinct phases: first
-              establish a working reconstruction on the original platform, then
-              carry its behavior into a new environment.
+              The DOS reconstruction is now working. In my manual testing, I
+              played complete Normal routes through their endings and checked
+              saves. The current work is a native 64-bit port. Establishing a
+              working DOS version first gives that port a reference.
             </p>
             <p>
-              TH04's architecture changed the evidence we needed and the tools
-              used to collect it. It did not require inventing a different way
-              to organize the work. We could still isolate a question, inspect
-              the original behavior, reconstruct it, compare the result and
-              retain the lesson.
+              The architecture changed what we needed to investigate. It also
+              changed the compiler and runtime against which we checked our
+              work. But the agent could still follow a question through to a
+              result and let that result guide the next experiment.
             </p>
             <p>
-              The difficult parts became concrete experiments. Which part of
-              startup establishes a piece of state? What happens when gameplay
-              hands control to an ending? Which hardware effect must the
-              reconstructed code preserve? With observations and a useful check,
-              an agent could work through these questions in the same iterative
-              way as it did on the Windows titles.
+              Consider the transition from gameplay to an ending. We need to
+              know what state carries across that boundary and which program is
+              responsible for it. That is something we can investigate against
+              the DOS product. Once the evidence and checks are available, an
+              agent can work through the question much as it did on a Windows
+              title.
             </p>
             <p>
-              That is why TH04 matters to the larger argument. The process
-              generalized across a substantial change in platform. Architecture
-              determined the subject of the investigation; it did not become a
-              fundamental barrier to the workflow.
+              This is why TH04 matters to the argument. A substantial platform
+              change did not force us to start over with a new way of working.
+              The architecture defined the problem; the workflow still gave us a
+              way to solve it.
             </p>
             <p>
-              The 64-bit port now gives that work another use. We can revisit
-              the recovered behavior, separate it from old platform services and
-              test new implementations against what we learned. The
-              reconstruction supplies both source and a growing body of
-              knowledge about how the game should behave.
+              For the 64-bit port, we can now examine the new implementation
+              against behavior already recovered on DOS. The knowledge from
+              reconstruction gives the port something to build on.
             </p>
             <p class="caption">
               Project state as of 10 October 2026:
@@ -467,39 +670,171 @@
               >. The port remains in development.
             </p>
           </section>
+          <section class="article-section" id="semantic-reconstruction">
+            <h2>From exact code to readable code</h2>
+            <p>
+              Once a reconstruction works, I want someone else to be able to
+              understand it.
+            </p>
+            <p>
+              To me, assembly and raw offsets can feel like old friends. I
+              realise this is a slightly unusual definition of “readable.” Most
+              people would prefer to follow the game's logic without keeping the
+              executable's memory layout in their head.
+            </p>
+            <p>
+              That is where <strong>semantic reconstruction</strong> comes in. A
+              recovered field may still be known mainly by its offset. We follow
+              how the game uses it until we can explain its role. Then we can
+              give it a meaningful name and a type that fits the evidence. We
+              keep the reasoning with the source so the next person can see
+              where that interpretation came from.
+            </p>
+            <p>
+              This becomes especially important for a port. An absolute address
+              tells me where something lived in the old executable. It gives a
+              64-bit implementation little help in deciding which object should
+              own that state. To move the behavior safely, we need to recover
+              the relationship behind the old memory access.
+            </p>
+            <p>The order I now use is:</p>
+            <ol>
+              <li>
+                <strong>Recover an exact baseline.</strong> Compile the
+                reconstructed pieces with the historical compiler. Compare the
+                relevant code and data with the original executable. Record
+                unresolved differences so the next phase has a clear starting
+                point.
+              </li>
+              <li>
+                <strong>Build and play it on the original platform.</strong>
+                Link those pieces into the real program using the original
+                architecture and compiler. Exercise important gameplay paths.
+                This is where we can find problems with shared state or
+                initialization that an isolated function comparison missed.
+              </li>
+              <li>
+                <strong
+                  >Reconstruct the semantics against both references.</strong
+                >
+                Take one coherent part of the game at a time and establish what
+                its recovered source means. Improve its representation while
+                preserving the exact comparisons and the playable historical
+                build.
+              </li>
+              <li>
+                <strong>Make the modern port.</strong> Move the established
+                behavior into the new environment, such as a native 64-bit
+                build. The reconstructed original-platform game remains a
+                reference for comparing how the port behaves.
+              </li>
+            </ol>
+            <p>
+              The playable build from the second stage becomes a
+              <strong>second oracle</strong> during the third. The first oracle
+              checks whether our changed source still reproduces the relevant
+              original code and data. The second checks that the reconstructed
+              program still builds and behaves correctly along the paths we
+              exercise.
+            </p>
+            <p>
+              They catch different mistakes. A type change can alter the
+              generated instructions. An ownership change can leave two parts of
+              the game using different copies of state. Keeping both checks
+              available gives the agent a concrete failure to investigate before
+              carrying a refactor further.
+            </p>
+            <p>
+              A name needs evidence of its own. An exact comparison cannot tell
+              us whether a field really means “invulnerability time.” We have to
+              establish that from how the game writes and uses it. If the
+              meaning remains uncertain, a neutral name is more helpful to the
+              next reader than a confident guess.
+            </p>
+            <p>
+              We learned this order through the projects. TH08 already had
+              playable ports before some of its later historical-platform
+              audits. That made certain defects harder to see. The
+              <a
+                href="https://github.com/N0zoM1z0/touhou-reconstruction-factory/blob/717e1b8560783ed17a39fdf159d30aa16bb307a7/docs/semantic-reconstruction.md"
+                >Factory's current workflow</a
+              >
+              puts the original-platform build first, so semantic work can use
+              it as a reference before porting begins.
+            </p>
+            <p>
+              <strong
+                >Exact reconstruction gives us a reference. Semantic
+                reconstruction makes the recovered knowledge usable.</strong
+              >
+              A port can then build on both.
+            </p>
+          </section>
           <section class="article-section" id="industrial-shift">
             <h2>What makes this an industrial shift</h2>
             <p>
-              These projects changed my view of the bottleneck. As more
-              investigation and implementation can be carried out by agents, the
-              working environment becomes increasingly important. The agent
-              needs access to the target, tools it can compose, feedback it can
-              act on, and memory that survives its current session.
+              These projects changed where I spent my attention. Once agents
+              could carry much of an investigation forward, improving their
+              working environment became one of the most useful things I could
+              do. A better tool could help with every later function that needed
+              it.
             </p>
             <p>
-              REA fits into that picture by making reverse-engineering tools
-              available through interfaces an agent can use. It can inspect
-              code, follow relationships and return evidence for the next
-              question. Reconstruction projects add their own compilers,
-              comparisons and runtime checks. Together, these give an agent a
-              way to move from an explanation to an experiment with an
-              observable result.
+              Autonomy matters here. The useful next step often becomes clear
+              only after a failed experiment. An agent needs enough freedom to
+              follow that result somewhere unexpected. If it has to wait for me
+              to prescribe each step, much of the work remains tied to my
+              attention.
             </p>
             <p>
-              Fast execution makes good feedback more valuable. A bad assumption
-              can produce a large amount of plausible source. A useful check can
-              reject that assumption early and point to the next investigation.
-              Improving a check improves many later decisions, which is why
-              tooling and verification deserve as much attention as the
-              recovered code.
+              I expect the agent to make wrong hypotheses. What matters is
+              whether we can test them and learn from the result. A failed check
+              should help it understand the mistake well enough to try again. I
+              still have to decide whether the accumulated evidence supports a
+              project milestone.
             </p>
             <p>
-              The work also needs continuity. A conversation can end while the
-              campaign continues. Its result should leave the repository in a
-              state another agent can understand: what changed, what was tested,
-              what remains uncertain, and where to continue. This lets a large
-              reconstruction proceed through many small experiments without
-              relying on one uninterrupted session.
+              REA gives the agent access to analysis tools. A question about a
+              function's caller can lead straight into inspecting that caller.
+              The reconstruction project supplies the compiler and its own
+              reference checks. The agent can use those to test the source it
+              proposes and see where its explanation holds up.
+            </p>
+            <p>
+              The TH08 bug shows why those checks deserve engineering attention
+              of their own. When the same comparison is used across hundreds of
+              functions, a gap in it can spread much further than a mistake in
+              one implementation. Testing the checker improves the feedback
+              available to all that later work.
+            </p>
+            <p>
+              The industrial analogy has a useful historical example here.
+              Boulton and Watt introduced a
+              <a
+                href="https://collection.sciencemuseumgroup.org.uk/objects/co51439/watts-steam-engine-indicator"
+                >steam-engine indicator in 1796</a
+              >
+              to help adjust engine valves. A recording version traced pressure
+              through the piston stroke. It made the engine's internal behavior
+              available for inspection. Our comparison tools serve a similar
+              purpose: they let us examine what the machinery is doing while we
+              improve it.
+            </p>
+            <p>
+              <strong
+                >We are in the early stages of this industrial shift.</strong
+              >
+              Much of the infrastructure is still immature. Agents can move
+              faster than our checks were designed to support, so the process
+              has to develop alongside them. When we find a defect in a shared
+              tool, we have to repair it and revisit the results it affected.
+              The next project can then inherit a stronger tool.
+            </p>
+            <p>
+              There is also a practical limit to any one conversation. It will
+              end before a large reconstruction is finished. The repository has
+              to make it possible for another session to continue without losing
+              the reason for the last decision.
             </p>
             <p>
               The
@@ -507,42 +842,31 @@
                 href="https://github.com/N0zoM1z0/touhou-reconstruction-factory"
                 >Touhou Reconstruction Factory</a
               >
-              grew out of these experiences. It gives the projects shared ways
-              to retain evidence, run checks and carry useful lessons between
-              games. The point is to make the next investigation easier to
-              execute, easier to judge and easier to resume.
+              grew out of that need. It gives projects a shared way to carry
+              their checks and lessons forward. Work on one game can improve the
+              starting conditions for another.
             </p>
             <p>
-              This is the industrial shift I see: expertise increasingly lives
-              in a working process that can be reused and improved. Human
-              judgment shapes the process. Agents supply much of the execution.
-              Verified results and accumulated lessons make the process more
-              capable over time.
+              That is what makes the industrial analogy meaningful to me.
+              Experience starts becoming part of tools that others can use.
+              Improving those tools changes how much the next person—or the next
+              agent—can get done.
             </p>
           </section>
           <section class="article-section" id="possibilities">
             <h2>The projects we can now consider</h2>
             <p>
-              The pace matters because it changes the cost of beginning. When I
-              imagined doing every investigation manually, I also imagined
-              committing my own attention to each one. A sufficiently large
-              project could be interesting and still remain something I would
-              never realistically attempt.
+              The pace matters because it changes the decision to begin. A game
+              could be fascinating to reverse engineer and still demand more of
+              my own attention than I could realistically give it. Many projects
+              would stay ideas.
             </p>
             <p>
-              An agent with access, feedback and project memory changes that
-              calculation. Recovering a game, making its source readable,
-              building a port, or exploring a mod can become a sustained
-              engineering effort with a practical way to keep going. The work
-              still involves difficult questions, but there is now a process for
-              giving those questions sustained attention.
-            </p>
-            <p>
-              TH08 showed me what an agent-led continuation could achieve on top
-              of human work. TH095 showed how the experience could carry
-              forward. TH04 showed that the method could cross into a very
-              different platform. Together, they made the industrial analogy
-              feel concrete.
+              Now I can see a way to keep such a project moving through repeated
+              investigations. Getting a working reconstruction makes a port more
+              practical. Recovering readable semantics makes it easier for
+              someone else to explore a mod. The effort put into understanding
+              the game can keep paying off after the first version runs.
             </p>
             <p>
               I now look at an unfamiliar program and ask:
@@ -552,10 +876,9 @@
               >
             </p>
             <p>
-              That question opens up projects I would previously have left
-              alone. Each one can add code, checks and experience that make the
-              next more approachable. That is the future of reverse engineering
-              I want to keep exploring.
+              That question makes me consider projects I would previously have
+              left alone. Each one can improve the way we approach the next. I
+              want to keep exploring how far that can take us.
             </p>
           </section>
           <section class="article-section" id="sources">
@@ -625,6 +948,41 @@
                   complete Normal-route testing and the current 64-bit phase.
                 </li>
                 <li>
+                  <strong>TH08 oracle correction:</strong>
+                  <a href="https://github.com/N0zoM1z0/th08/issues/10"
+                    >the reported auto-collection bug</a
+                  >,
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/commit/7148a76ba224742677895c7160807a68897957d5"
+                    >the source and comparison fix</a
+                  >, and
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/commit/a393f400786e4cc6cbb1000af0dad3276da12c78"
+                    >the full floating-literal audit</a
+                  >.
+                </li>
+                <li>
+                  <strong>Semantic reconstruction:</strong>
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/blob/d2a00f4acb4a13916e07a00bd13f714961714628/docs/SEMANTIC_PLAYBOOK.md"
+                    >TH08's readability playbook</a
+                  >
+                  and
+                  <a
+                    href="https://github.com/N0zoM1z0/touhou-reconstruction-factory/blob/717e1b8560783ed17a39fdf159d30aa16bb307a7/docs/semantic-reconstruction.md"
+                    >the Factory's phase order and two validation paths</a
+                  >.
+                </li>
+                <li>
+                  <strong>Industrial history:</strong>
+                  <a
+                    href="https://collection.sciencemuseumgroup.org.uk/objects/co51439/watts-steam-engine-indicator"
+                    >the Science Museum Group's steam-engine indicator record</a
+                  >
+                  describes the 1796 introduction and the pressure-recording
+                  mechanism.
+                </li>
+                <li>
                   <strong>Method:</strong> the Factory's
                   <a
                     href="https://github.com/N0zoM1z0/touhou-reconstruction-factory/blob/038b6bed51d273c8b3680553b6f43e1b97d19bd1/docs/agent-autonomy.md"
@@ -649,21 +1007,23 @@
         </article>
       </div>
     </main>
+    <!-- website:footer:start -->
+    <!-- prettier-ignore -->
     <footer class="site-footer">
       <div class="container footer-inner">
         <p>REA · Reverse Engineer Anything</p>
         <div class="footer-links">
           <a href="https://github.com/morluto/rea">Source</a
-          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
-            >MIT license</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
           ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
           ><a href="https://x.com/reatools">Follow us on X</a>
         </div>
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
-    <a class="back-to-top" href="#top" aria-label="Back to top"
-      ><span aria-hidden="true">↑</span> Top</a
-    >
+    <a class="back-to-top" href="#top" aria-label="Back to top">
+      <span aria-hidden="true">↑</span> Top
+    </a>
+    <!-- website:footer:end -->
   </body>
 </html>

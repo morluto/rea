@@ -1,6 +1,6 @@
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
   type JavaScriptSemanticGraph,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
@@ -130,6 +130,11 @@ export interface JavaScriptSemanticGraphProjection {
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
   ) => void;
+  /** Project one file in steps between its projection passes. */
+  readonly projectFileSteps: (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ) => Generator<void, void>;
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
@@ -146,10 +151,10 @@ export const createJavaScriptSemanticGraphProjection =
     const state = emptyState({ nodes: [] });
     const fingerprints: JavaScriptSemanticFingerprint[] = [];
     let truncatedFiles = 0;
-    const projectSource = (
+    const projectSourceSteps = function* (
       file: JavaScriptArtifactFile,
       ir: JavaScriptSemanticIr,
-    ): void => {
+    ): Generator<void, void> {
       if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
         truncatedFiles += 1;
         return;
@@ -161,7 +166,7 @@ export const createJavaScriptSemanticGraphProjection =
         remainingTreeBudget,
       );
       state.fileNodesDropped = false;
-      fingerprints.push(...projectFile(file, ir, state));
+      fingerprints.push(...(yield* projectFileSteps(file, ir, state)));
       // Nodes were dropped only if the budget actually blocked creation. A file
       // that exactly fills its share ends with a zero budget without dropping
       // anything, so the remaining budget alone cannot decide truncation.
@@ -198,7 +203,8 @@ export const createJavaScriptSemanticGraphProjection =
         evidence_contexts: state.evidenceContexts.contexts,
         nodes: [...state.nodes.values()],
         relations,
-        fingerprints,
+        // The input is transferred to the factory; `fingerprints` is cleared below.
+        fingerprints: [...fingerprints],
         unknowns,
         coverage: {
           status: truncatedFiles > 0 ? "partial" : "unknown",
@@ -246,7 +252,11 @@ export const createJavaScriptSemanticGraphProjection =
       return graph;
     };
     return {
-      projectFile: projectSource,
+      projectFile: (file, ir) => {
+        const steps = projectSourceSteps(file, ir);
+        while (steps.next().done !== true);
+      },
+      projectFileSteps: projectSourceSteps,
       finish: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createJavaScriptSemanticGraph,
@@ -255,18 +265,19 @@ export const createJavaScriptSemanticGraphProjection =
         ),
       finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
         finishWith(
-          createImmutableJavaScriptSemanticGraphSteps,
+          sealTransferredJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
         ),
     };
   };
 
-const projectFile = (
+function* projectFileSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
-): JavaScriptSemanticFingerprint[] => {
+): Generator<void, JavaScriptSemanticFingerprint[]> {
+  yield;
   const moduleNode = retainNode(state, file, {
     kind: "module",
     roleKey: "module",
@@ -276,38 +287,50 @@ const projectFile = (
   });
   if (moduleNode === null) return [];
   state.roots.add(moduleNode.node_id);
-  const callableNodes = new Map(
-    ir.callables.flatMap((callable) => {
-      const node = retainNode(state, file, {
-        kind: "function",
-        roleKey: `callable:${callable.callableId}`,
-        location: callable.location,
-        label: callable.name,
-        functionNodeId: null,
-        // The label is display text; keep the exact name, which may be "".
-        properties: { name: callable.name },
-      });
-      return node === null ? [] : [[callable.callableId, node] as const];
-    }),
-  );
+  // Node creation keeps source order, which the per-file node budget relies
+  // on; yields between nodes do not change it.
+  const callableNodes = new Map<string, JavaScriptSemanticGraphNode>();
+  for (const [index, callable] of ir.callables.entries()) {
+    if (index % 64 === 0) yield;
+    const node = retainNode(state, file, {
+      kind: "function",
+      roleKey: `callable:${callable.callableId}`,
+      location: callable.location,
+      label: callable.name,
+      functionNodeId: null,
+      // The label is display text; keep the exact name, which may be "".
+      properties: { name: callable.name },
+    });
+    if (node !== null) callableNodes.set(callable.callableId, node);
+  }
   const callableOwnerAt = createSemanticCallableOwnerLookup(ir, callableNodes);
-  const bindingNodes = new Map(
-    ir.bindings.flatMap((binding) => {
-      const location = binding.definitions[0]?.location ?? null;
-      const kind = binding.kind === "parameter" ? "parameter" : "binding";
-      const owner = callableOwnerAt(location);
-      const node = retainNode(state, file, {
-        kind,
-        roleKey: `binding:${binding.bindingId}`,
-        location,
-        label: binding.name,
-        functionNodeId: owner?.node_id ?? null,
-      });
-      return node === null ? [] : [[binding.bindingId, node] as const];
-    }),
+  const bindingNodes = new Map<string, JavaScriptSemanticGraphNode>();
+  for (const [index, binding] of ir.bindings.entries()) {
+    if (index % 64 === 0) yield;
+    const location = binding.definitions[0]?.location ?? null;
+    const kind = binding.kind === "parameter" ? "parameter" : "binding";
+    const owner = callableOwnerAt(location);
+    const node = retainNode(state, file, {
+      kind,
+      roleKey: `binding:${binding.bindingId}`,
+      location,
+      label: binding.name,
+      functionNodeId: owner?.node_id ?? null,
+    });
+    if (node !== null) bindingNodes.set(binding.bindingId, node);
+  }
+  const returnSiteNodes = yield* createReturnSiteNodes(
+    file,
+    ir,
+    callableNodes,
+    state,
   );
-  const returnSiteNodes = createReturnSiteNodes(file, ir, callableNodes, state);
-  const callSiteNodes = createCallSiteNodes(file, ir, callableNodes, state);
+  const callSiteNodes = yield* createCallSiteNodes(
+    file,
+    ir,
+    callableNodes,
+    state,
+  );
   const definitions: Omit<FileContext, "referenceNodesWithin"> = {
     file,
     ir,
@@ -328,42 +351,38 @@ const projectFile = (
     callableOwnerAt,
     callSiteAt: createSemanticCallSiteLookup(ir, callSiteNodes),
   };
-  projectDefinitionsAndReferences(definitions);
+  yield* projectDefinitionsAndReferences(definitions);
   const context: FileContext = {
     ...definitions,
     referenceNodesWithin: createSemanticNodeRangeLookup(
       definitions.referenceNodes,
     ),
   };
-  projectSemanticValues(context);
-  projectSemanticObjects(context);
-  projectCalls(context);
-  projectSemanticPromises(context);
-  projectSemanticEvents(context);
-  projectSemanticTimers(context);
-  projectSemanticChildProcesses(context);
-  projectSemanticConfiguration(context);
-  projectSemanticRequests(context);
-  projectSemanticBoundaries(context);
-  projectSemanticResources(context);
-  projectSemanticClosureCaptures(context);
-  projectSemanticFrontiers(context);
+  // Each pass completes before the next starts, so yielding between passes
+  // keeps projection order and results unchanged.
+  for (const project of FILE_PROJECTION_PASSES) {
+    yield;
+    const steps = project(context);
+    if (steps !== undefined) while (steps.next().done !== true) yield;
+  }
+  yield;
   return projectSemanticFunctionFingerprints(
     file,
     ir,
     callableNodes,
     state.evidenceContexts,
   );
-};
+}
 
-const createReturnSiteNodes = (
+function* createReturnSiteNodes(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   callables: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   state: BuilderState,
-): Map<string, JavaScriptSemanticGraphNode> => {
+): Generator<void, Map<string, JavaScriptSemanticGraphNode>> {
   const result = new Map<string, JavaScriptSemanticGraphNode>();
-  for (const callable of ir.callables) {
+  for (const [index, callable] of ir.callables.entries()) {
+    if (index % 64 === 0) yield;
     const owner = callables.get(callable.callableId);
     if (owner === undefined) continue;
     for (const site of callable.returnSites) {
@@ -379,16 +398,17 @@ const createReturnSiteNodes = (
     }
   }
   return result;
-};
+}
 
-const createCallSiteNodes = (
+function* createCallSiteNodes(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   callables: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
   state: BuilderState,
-): Map<string, JavaScriptSemanticGraphNode> => {
+): Generator<void, Map<string, JavaScriptSemanticGraphNode>> {
   const result = new Map<string, JavaScriptSemanticGraphNode>();
-  for (const call of ir.callSites) {
+  for (const [index, call] of ir.callSites.entries()) {
+    if (index % 64 === 0) yield;
     const owner =
       call.callerCallableId === null
         ? null
@@ -403,12 +423,13 @@ const createCallSiteNodes = (
     if (node !== null) result.set(call.callSiteId, node);
   }
   return result;
-};
+}
 
-const projectDefinitionsAndReferences = (
+function* projectDefinitionsAndReferences(
   context: Omit<FileContext, "referenceNodesWithin">,
-): void => {
-  for (const binding of context.ir.bindings) {
+): Generator<void, void> {
+  for (const [bindingIndex, binding] of context.ir.bindings.entries()) {
+    if (bindingIndex % 64 === 0) yield;
     const bindingNode = context.bindingNodes.get(binding.bindingId);
     if (bindingNode === undefined) continue;
     for (const [index, definition] of binding.definitions.entries()) {
@@ -428,6 +449,7 @@ const projectDefinitionsAndReferences = (
     }
   }
   for (const [index, reference] of context.ir.references.entries()) {
+    if (index % 64 === 0) yield;
     const expression = retainNode(context.state, context.file, {
       kind: "expression",
       roleKey: `reference:${String(index)}:${reference.role}:${reference.name}`,
@@ -458,7 +480,7 @@ const projectDefinitionsAndReferences = (
         resolution: "resolved",
       });
   }
-};
+}
 
 const projectCalls = (context: FileContext): void => {
   for (const call of context.ir.callSites) {
@@ -543,3 +565,22 @@ const createArgumentNode = (
       : `argument ${String(argument.index)}`,
     functionNodeId: callNode.function_node_id,
   });
+
+/** Per-file projection passes, run in this order with a yield between each. */
+const FILE_PROJECTION_PASSES: readonly ((
+  context: FileContext,
+) => Iterator<void, void> | void)[] = [
+  projectSemanticValues,
+  projectSemanticObjects,
+  projectCalls,
+  projectSemanticPromises,
+  projectSemanticEvents,
+  projectSemanticTimers,
+  projectSemanticChildProcesses,
+  projectSemanticConfiguration,
+  projectSemanticRequests,
+  projectSemanticBoundaries,
+  projectSemanticResources,
+  projectSemanticClosureCaptures,
+  projectSemanticFrontiers,
+];

@@ -624,7 +624,7 @@ describe("Apple path conventions", () => {
     ).toBe(true);
     expect(result.limitations).toEqual(
       expect.arrayContaining([
-        "Runtime families are inferred from inventory formats and paths.",
+        "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
         "A bridge basis is inferred from the native path and is repeated for every managed component.",
       ]),
     );

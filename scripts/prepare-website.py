@@ -1,16 +1,14 @@
 """Prepare downloads, the sitemap and the sharing image for the static website."""
 
-from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
-import re
 import sys
-from urllib.parse import quote
 import xml.etree.ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from website import PageMetadata, page_url
 
-SITE_ORIGIN = "https://rea.tools"
+
 EXAMPLE_FILES = (
     "package.json",
     "main.js",
@@ -21,47 +19,20 @@ EXAMPLE_FILES = (
 )
 
 
-class IndexPolicy(HTMLParser):
-    """Read indexing directives from the authored HTML head."""
-
-    def __init__(self):
-        super().__init__()
-        self.in_head = False
-        self.noindex = False
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "head":
-            self.in_head = True
-        if tag == "meta" and self.in_head:
-            attributes = dict(attrs)
-            if (attributes.get("name") or "").lower() in ("robots", "googlebot"):
-                directives = re.split(
-                    r"[\s,]+", (attributes.get("content") or "").lower()
-                )
-                self.noindex |= bool(set(directives) & {"noindex", "none"})
-
-    def handle_endtag(self, tag):
-        if tag == "head":
-            self.in_head = False
-
-
 def prepare_sitemap(site):
     """Discover HTML routes automatically, excluding pages marked noindex."""
     namespace = "http://www.sitemaps.org/schemas/sitemap/0.9"
     ET.register_namespace("", namespace)
     sitemap = ET.Element(f"{{{namespace}}}urlset")
     for path in sorted(site.rglob("*.html")):
-        policy = IndexPolicy()
+        policy = PageMetadata()
         policy.feed(path.read_text(encoding="utf-8"))
         if policy.noindex:
             continue
-        route = path.relative_to(site).as_posix()
-        if path.name == "index.html":
-            route = route.removesuffix("index.html")
         entry = ET.SubElement(sitemap, f"{{{namespace}}}url")
         ET.SubElement(
             entry, f"{{{namespace}}}loc"
-        ).text = f"{SITE_ORIGIN}/{quote(route, safe='/')}"
+        ).text = page_url(site, path)
     ET.indent(sitemap, space="  ")
     ET.ElementTree(sitemap).write(
         site / "sitemap.xml", encoding="utf-8", xml_declaration=True

@@ -90,24 +90,20 @@ const registerProcessTools = ({
     toolRegistrationOptions(captureContract),
     async (input, context) => {
       const progress = mcpProgressReporter(context);
-      await progress.report({
-        phase: captureContract.name,
-        completed: 0,
-        total: 1,
-        message: "started",
-      });
       const captured = await logToolExecution(
         logger,
         captureContract.name,
-        () => captureProcessScenario(input, context.mcpReq.signal),
+        () =>
+          captureProcessScenario(
+            input,
+            context.mcpReq.signal,
+            process.platform,
+            process.env,
+            undefined,
+            undefined,
+            progress,
+          ),
       );
-      await progress.report({
-        phase: captureContract.name,
-        completed: 1,
-        total: 1,
-        message: captured.ok ? "completed" : "failed",
-        terminal: true,
-      });
       if (!captured.ok)
         return server.delivery.toCallToolResult(captured, captureContract);
       const evidence = createProcessCaptureEvidence(input, captured.value);

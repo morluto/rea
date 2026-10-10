@@ -17,6 +17,7 @@ import {
   classifyArtifactBytes,
   createArtifactNode,
   createOccurrence,
+  noteUnreadContainerSuffix,
   nearestParent,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
@@ -161,7 +162,8 @@ const visitArtifactEntries = async (
         occurrence.hash_status = "unavailable";
         occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
       }
-      if (digested !== undefined) {
+      if (digested === undefined) noteUnreadContainerSuffix(occurrence);
+      else {
         context.nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
         occurrence.artifact_kind = digested.classification.kind;
@@ -176,7 +178,12 @@ const visitArtifactEntries = async (
       }
       context.occurrences.push(occurrence);
       context.occurrenceByPath.set(logicalPath, occurrence);
-      if (expandableAsar && digested !== undefined && !digested.mismatched) {
+      if (
+        expandableAsar &&
+        digested !== undefined &&
+        digested.classification.format === "asar" &&
+        !digested.mismatched
+      ) {
         const nested = new AsarArtifactReader(entry.adapterKey);
         context.ownedReaders.push(nested);
         await nested.prepareContainer(digested.node.sha256, context.signal);

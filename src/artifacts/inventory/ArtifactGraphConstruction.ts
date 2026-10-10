@@ -15,6 +15,7 @@ import type {
 import {
   hasZipSignature,
   zipPackageFormatForPath,
+  type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { mzWindowsHeaderOffset, parseDosMzHeader } from "../../domain/dosMz.js";
 
@@ -47,37 +48,66 @@ export const indexOccurrencesByPath = (
   return byPath;
 };
 
+/**
+ * Create an occurrence before its bytes are read. A container suffix is not a
+ * container family until the bytes are classified, so a member named like a
+ * container starts with an unknown format.
+ */
 export const createOccurrence = (
   entry: ArtifactEntry,
   path: string,
   parent: string | null,
-): MutableOccurrence => ({
-  occurrence_id: `occ_${digestCanonicalValue({ path, kind: entry.kind }, "Artifact")}`,
-  artifact_id: null,
-  parent_occurrence_id: parent,
-  logical_path: path,
-  entry_kind: entry.kind,
-  artifact_kind:
+): MutableOccurrence => {
+  const role =
     entry.kind === "directory"
-      ? path.toLowerCase().endsWith(".framework")
-        ? "framework"
-        : "container"
-      : classifyArtifactPath(path).kind,
-  artifact_format:
-    entry.kind === "directory"
-      ? "directory"
-      : classifyArtifactPath(path).format,
-  declared_size: entry.declaredSize,
-  compressed_size: entry.compressedSize,
-  executable: entry.executable,
-  encrypted: entry.encrypted,
-  hash_status: entry.encrypted ? "unavailable" : "not-hashed",
-  source_location:
-    entry.byteOffset === null || entry.declaredSize === null
-      ? null
-      : { offset: entry.byteOffset, length: entry.declaredSize },
-  limitations: [...entry.limitations],
-});
+      ? {
+          kind: path.toLowerCase().endsWith(".framework")
+            ? ("framework" as const)
+            : ("container" as const),
+          format: "directory" as const,
+        }
+      : containerSuffixFamily(path) === undefined
+        ? classifyArtifactPath(path)
+        : ({ kind: "unknown", format: "unknown" } as const);
+  return {
+    occurrence_id: `occ_${digestCanonicalValue({ path, kind: entry.kind }, "Artifact")}`,
+    artifact_id: null,
+    parent_occurrence_id: parent,
+    logical_path: path,
+    entry_kind: entry.kind,
+    artifact_kind: role.kind,
+    artifact_format: role.format,
+    declared_size: entry.declaredSize,
+    compressed_size: entry.compressedSize,
+    executable: entry.executable,
+    encrypted: entry.encrypted,
+    hash_status: entry.encrypted ? "unavailable" : "not-hashed",
+    source_location:
+      entry.byteOffset === null || entry.declaredSize === null
+        ? null
+        : { offset: entry.byteOffset, length: entry.declaredSize },
+    limitations: [...entry.limitations],
+  };
+};
+
+/** Record that an unread member's container suffix was not checked against bytes. */
+export const noteUnreadContainerSuffix = (
+  occurrence: MutableOccurrence,
+): void => {
+  if (occurrence.entry_kind === "directory") return;
+  const family = containerSuffixFamily(occurrence.logical_path);
+  if (family === undefined) return;
+  occurrence.limitations.push(
+    `The path suffix suggests ${family.toUpperCase()}, but these bytes were not read, so the container family is unknown.`,
+  );
+};
+
+const containerSuffixFamily = (
+  path: string,
+): "asar" | ZipPackageFormat | undefined => {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".asar") ? "asar" : zipPackageFormatForPath(lower);
+};
 
 /** Compare exact child names independently of host locale and traversal order. */
 export const materializeDirectoryNodes = (
@@ -284,6 +314,10 @@ export const nearestParent = (
   return undefined;
 };
 
+/**
+ * Assign a path role hint. Container families are not path roles: ZIP and
+ * ASAR families are chosen only after their bytes have been classified.
+ */
 export const classifyArtifactPath = (
   path: string,
 ): {
@@ -295,10 +329,6 @@ export const classifyArtifactPath = (
     return { kind: "source-map", format: "source-map" };
   if (/\.(?:m?js|cjs)$/u.test(lower))
     return { kind: "javascript", format: "javascript-bundle" };
-  if (lower.endsWith(".asar")) return { kind: "container", format: "asar" };
-  const archiveFormat = zipPackageFormatForPath(lower);
-  if (archiveFormat !== undefined)
-    return { kind: "container", format: archiveFormat };
   if (/\.framework(?:\/|$)/u.test(lower))
     return { kind: "framework", format: "file" };
   if (/\.(?:node|dylib|so)$/u.test(lower))
@@ -321,7 +351,29 @@ export const classifyArtifactContent = (
   readonly kind: ArtifactOccurrence["artifact_kind"];
   readonly format: ArtifactOccurrence["artifact_format"];
 } => {
-  return artifactRoleForFormat(path, classifyArtifactBytes(prefix, fileSize));
+  const format = classifyArtifactBytes(prefix, fileSize);
+  if (
+    format === "file" &&
+    path.toLowerCase().endsWith(".asar") &&
+    hasAsarHeader(prefix)
+  )
+    return { kind: "container", format: "asar" };
+  return artifactRoleForFormat(path, format);
+};
+
+/**
+ * Electron ASAR starts with a size pickle whose payload is one uint32, then
+ * a header pickle whose payload begins with a JSON object.
+ */
+export const hasAsarHeader = (prefix: Buffer): boolean => {
+  if (prefix.length < 17 || prefix.readUInt32LE(0) !== 4) return false;
+  const headerSize = prefix.readUInt32LE(4);
+  const payloadSize = prefix.readUInt32LE(8);
+  if (headerSize < 16 || payloadSize !== headerSize - 4) return false;
+  const stringLength = prefix.readUInt32LE(12);
+  return (
+    stringLength >= 2 && stringLength <= payloadSize - 4 && prefix[16] === 0x7b
+  );
 };
 
 const artifactRoleForFormat = (

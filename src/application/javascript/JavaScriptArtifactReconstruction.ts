@@ -90,7 +90,7 @@ export const reconstructJavaScriptArtifact = async (
     const semanticProjection = createJavaScriptSemanticGraphProjection();
     const analysis = await analyzeAndProjectJavaScriptArtifactFiles(
       files,
-      semanticProjection.projectFile,
+      semanticProjection.projectFileSteps,
       async (file, completed, total) => {
         abortIfNeeded(signal);
         await progress?.report({
@@ -101,6 +101,7 @@ export const reconstructJavaScriptArtifact = async (
         });
         abortIfNeeded(signal);
       },
+      signal,
     );
     await checkpointJavaScriptAnalysis(signal);
     abortIfNeeded(signal);

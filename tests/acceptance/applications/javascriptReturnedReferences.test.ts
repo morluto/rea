@@ -47,6 +47,10 @@ const writes = {
   constructor:
     "function Box() { return shared; } const t = new Box(); t.x = 2;",
   callback: "const get = () => shared; [0].forEach(() => { get().x = 2; });",
+  wideMethods: `const box = { ${Array.from(
+    { length: 64 },
+    (_, index) => `m${index}() { return shared; }`,
+  ).join(", ")} }; box.m0().x = 2; box.m63().other = 3;`,
 };
 const source = [
   ...Object.entries(writes).map(
@@ -61,6 +65,8 @@ const source = [
   "export function unused(){ const shared = {x: 1}; const get = () => shared; get(); return shared.x; }",
   "export function nestedCallable(){ const shared = {x: 1}; const get = () => { const inner = () => shared; return {x: 0}; }; get().x = 2; return shared.x; }",
   "export function unrelated(){ const shared = {x: 1}; const other = {x: 9}; const get = () => shared; get().x = 2; return other.x; }",
+  "export function receiverDistinctScopes(){ const shared = {x: 1}; const box = {outer(){ return shared; }, inner(){ const shared = {x: 9}; return shared; }, noop(){}}; box.noop(); return {outer: shared.x, inner: box.inner().x}; }",
+  "export function receiverDistinctPaths(){ const parent = {left: {x: 1}, right: {x: 9}, keep: 7}; const box = {left(){ return parent.left; }, right(){ return parent.right; }, noop(){}}; box.noop(); return {left: parent.left.x, right: parent.right.x, keep: parent.keep}; }",
 ].join("\n");
 
 const assertReturns = (fields: JavaScriptReturnFields): void => {
@@ -91,10 +97,57 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
   expect(fields("unrelated")).toContainEqual(
     expect.objectContaining({ path: "", state: "literal", value: 9 }),
   );
+  for (const path of ["/outer", "/inner"])
+    expect(fields("receiverDistinctScopes")).toContainEqual(
+      expect.objectContaining({ path, state: "unknown" }),
+    );
+  for (const path of ["/left", "/right"])
+    expect(fields("receiverDistinctPaths")).toContainEqual(
+      expect.objectContaining({ path, state: "unknown" }),
+    );
+  expect(fields("receiverDistinctPaths")).toContainEqual(
+    expect.objectContaining({ path: "/keep", state: "literal", value: 7 }),
+  );
 };
 
 cliTest(
   "preserves mutation uncertainty for objects returned by local calls",
   ({ cli }) => verifyJavaScriptReturnShapes(cli, source, assertReturns),
+  120_000,
+);
+
+cliTest(
+  "analyzes wide receiver returns without losing escaped reference facts",
+  ({ cli }) => {
+    const width = 160_000;
+    const object = Array.from(
+      { length: width },
+      (_, index) => `p${index}:0`,
+    ).join(",");
+    const array = "0,".repeat(width);
+    const wideSource = [
+      ["wideObject", `{${object},last:shared}`],
+      ["wideArray", `[${array}shared]`],
+    ]
+      .map(
+        ([name, value]) =>
+          `export function ${name}(){const shared={x:1};const box={wide(){return ${value}},noop(){}};box.noop();return {x:shared.x,keep:7};}`,
+      )
+      .join("\n");
+    return verifyJavaScriptReturnShapes(cli, wideSource, (fields) => {
+      for (const name of ["wideObject", "wideArray"]) {
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({ path: "/x", state: "unknown" }),
+        );
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({
+            path: "/keep",
+            state: "literal",
+            value: 7,
+          }),
+        );
+      }
+    });
+  },
   120_000,
 );
