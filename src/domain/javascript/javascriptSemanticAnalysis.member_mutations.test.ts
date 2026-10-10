@@ -38,6 +38,8 @@ describe("references returned by getters (#1494)", () => {
     "const box = { get v() { return shared; } }; const copy = box.v; copy.x = 2;",
     "const box = { get v() { return shared; }, set v(value) {} }; box.v.x = 2;",
     "const box = { get v() { return shared; } }; const copy = box?.v; copy.x = 2;",
+    "const box = { get [key]() { return shared; } }; box.v.x = 2;",
+    "const box = { get v() { return shared; } }; box[key].x = 2;",
   ])("invalidates a shared getter result after %s", (effect) => {
     expect(
       resultValue(`const shared = { x: 1 }; ${effect} return shared.x;`)

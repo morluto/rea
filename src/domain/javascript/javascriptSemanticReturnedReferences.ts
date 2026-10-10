@@ -58,7 +58,37 @@ export const createSemanticReturnedReferences = (
   const bindingCache = new Map<string, LocalCallableResolution>();
   const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
+  // Ordinary member reads cannot invoke a local getter whose key differs.
+  // Filter at the resolver boundary before flattening a receiver path: doing
+  // that for every prefix of a deep member chain makes the scan quadratic.
+  const getterKeys = new Set<string>();
+  let dynamicGetter = false;
+  if (kind === "get")
+    for (const node of state.callableNodesById.values()) {
+      if (
+        !(t.isObjectMethod(node) || t.isClassMethod(node)) ||
+        node.kind !== "get"
+      )
+        continue;
+      const key = semanticStaticPropertyKey(node.key, node.computed);
+      if (key === null) dynamicGetter = true;
+      else getterKeys.add(key);
+    }
   return (callee) => {
+    if (kind === "get" && !dynamicGetter) {
+      if (getterKeys.size === 0) return [];
+      const expression = unwrapJavaScriptExpression(callee).node;
+      if (
+        t.isMemberExpression(expression) ||
+        t.isOptionalMemberExpression(expression)
+      ) {
+        const key = semanticStaticPropertyKey(
+          expression.property,
+          expression.computed,
+        );
+        if (key !== null && !getterKeys.has(key)) return [];
+      }
+    }
     const existing = results.get(callee);
     if (existing !== undefined) return existing;
     const functions = new Set<t.Node>();

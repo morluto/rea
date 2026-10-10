@@ -11,7 +11,7 @@ it("analyzes direct returns after deep source without exhausting the default pro
   const root = await createTestTempDirectory("rea-deep-direct-returns-");
   await writeFile(
     join(root, "app.js"),
-    `export function render() { object${".property".repeat(20_000)}; function nested() { return "nested"; } class Inner { method() { return "method"; } } return "ready"; }`,
+    `export function render() { const box = { get unrelated() { return {}; } }; object${".property".repeat(20_000)}; function nested() { return "nested"; } class Inner { method() { return "method"; } } return "ready"; }`,
   );
   const service = new URL(
     "../../../dist/application/javascript/JavaScriptApplicationService.js",
@@ -39,6 +39,6 @@ it("analyzes direct returns after deep source without exhausting the default pro
   );
   expect(stderr).toBe("");
   const owners: unknown = JSON.parse(stdout);
-  expect(owners).toHaveLength(3);
-  expect(new Set(Array.isArray(owners) ? owners : []).size).toBe(3);
+  expect(owners).toHaveLength(4);
+  expect(new Set(Array.isArray(owners) ? owners : []).size).toBe(4);
 });
