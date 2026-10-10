@@ -2,7 +2,12 @@ import { z } from "zod";
 import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
-import { collectProcessCaptureIssues } from "./processCaptureValidation.js";
+import {
+  collectProcessCaptureIssues,
+  finalizationAgreementIssue,
+  finalizationConsistencyIssue,
+  finalizationManifestIssue,
+} from "./processCaptureValidation.js";
 import {
   filesystemCoverageSchema,
   processCaptureTruncationDetailsSchema,
@@ -40,6 +45,19 @@ export interface InteractionEvent {
   readonly type: "input" | "resize" | "signal";
   readonly data: string;
   readonly outcome: "dispatched" | "target_exited" | "failed";
+}
+
+/** Observed finalization attempts after a deadline fired. */
+export interface ProcessCaptureFinalization {
+  readonly requested_ms: number;
+  readonly elapsed_ms: number | null;
+  readonly signals: readonly {
+    readonly signal: "SIGTERM" | "SIGKILL";
+    readonly sent_at_ms: number;
+    readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+    /** Why delivery could not be verified; present only for unverified attempts. */
+    readonly reason?: string | undefined;
+  }[];
 }
 
 /** One filesystem state used for before/after comparison. */
@@ -209,6 +227,7 @@ export interface UnverifiedProcessCapture {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout";
+    readonly finalization?: ProcessCaptureFinalization | undefined;
   };
   readonly settlement: VerifiedProcessSettlement;
   readonly process_samples: readonly ProcessSample[];
@@ -290,7 +309,11 @@ export interface IncompleteProcessCaptureObservations {
     readonly code: number | null;
     readonly signal: number | null;
     readonly reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
+    readonly finalization?: ProcessCaptureFinalization | undefined;
   }>;
+  readonly finalization?:
+    | PartialProcessObservationField<ProcessCaptureFinalization>
+    | undefined;
   readonly settlement: PartialProcessObservationField<{
     readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
     readonly elapsed_ms: number;
@@ -385,6 +408,37 @@ const unverifiedCleanupProcessesSchema = z.array(
   z.strictObject({ pid: z.number().int().positive(), reason: z.string() }),
 );
 
+const processCaptureFinalizationSchema = z
+  .strictObject({
+    requested_ms: z.number().int().safe().positive(),
+    elapsed_ms: z.number().int().nonnegative().nullable(),
+    signals: z
+      .array(
+        z.strictObject({
+          signal: z.enum(["SIGTERM", "SIGKILL"]),
+          sent_at_ms: z.number().int().nonnegative(),
+          delivery: z.enum([
+            "signaled",
+            "gone",
+            "identity-changed",
+            "unverified",
+          ]),
+          reason: z.string().min(1).optional(),
+        }),
+      )
+      .min(1),
+  })
+  .superRefine((finalization, context) => {
+    for (const [index, attempt] of finalization.signals.entries())
+      if (attempt.reason !== undefined && attempt.delivery !== "unverified")
+        context.addIssue({
+          code: "custom",
+          path: ["signals", index, "reason"],
+          message:
+            "finalization reason is only allowed for an unverified delivery",
+        });
+  });
+
 const processCaptureShapeSchema = z.strictObject({
   manifest: z.strictObject({
     rea_version: z.string().min(1),
@@ -448,6 +502,7 @@ const processCaptureShapeSchema = z.strictObject({
     code: z.number().int().nullable(),
     signal: z.number().int().nullable(),
     reason: z.enum(["exited", "timeout", "idle_timeout"]),
+    finalization: processCaptureFinalizationSchema.optional(),
   }),
   settlement: z.discriminatedUnion("state", [
     z.object({
@@ -543,8 +598,12 @@ const incompleteProcessCaptureObservationsSchema = z.strictObject({
       code: z.number().int().nullable(),
       signal: z.number().int().nullable(),
       reason: z.enum(["exited", "timeout", "idle_timeout", "cancelled"]),
+      finalization: processCaptureFinalizationSchema.optional(),
     }),
   ),
+  finalization: partialObservationFieldSchema(
+    processCaptureFinalizationSchema,
+  ).optional(),
   settlement: partialObservationFieldSchema(
     z.strictObject({
       state: z.enum(["quiesced", "alive_at_deadline", "unverifiable"]),
@@ -604,6 +663,84 @@ export const partialProcessCaptureObservationSchema = z
         path: ["execution_failure"],
         message:
           "partial observations require incomplete cleanup or an execution failure",
+      });
+
+    const observedExit =
+      "capture" in partial
+        ? partial.capture.exit
+        : partial.observations.exit.state === "available"
+          ? partial.observations.exit.value
+          : undefined;
+    const observedFinalization =
+      "observations" in partial &&
+      partial.observations.finalization?.state === "available"
+        ? partial.observations.finalization.value
+        : undefined;
+    const committedManifest =
+      "capture" in partial
+        ? partial.capture.manifest
+        : partial.observations.manifest.state === "available"
+          ? partial.observations.manifest.value
+          : undefined;
+    const manifestFinalizationIssue = finalizationManifestIssue(
+      committedManifest?.scenario,
+      committedManifest?.comparison_contract,
+    );
+    const exitFinalizationIssue =
+      manifestFinalizationIssue ??
+      (observedExit === undefined
+        ? undefined
+        : finalizationConsistencyIssue(
+            observedExit,
+            committedManifest?.scenario,
+            committedManifest?.comparison_contract,
+          ));
+    const incompleteFinalizationIssue =
+      manifestFinalizationIssue ??
+      (observedFinalization === undefined
+        ? undefined
+        : finalizationConsistencyIssue(
+            observedExit === undefined
+              ? undefined
+              : { reason: observedExit.reason },
+            committedManifest?.scenario,
+            committedManifest?.comparison_contract,
+            { finalization: observedFinalization, allowNullElapsedMs: true },
+          ));
+    if (exitFinalizationIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["exit"],
+        message: exitFinalizationIssue,
+      });
+    if (incompleteFinalizationIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message: incompleteFinalizationIssue,
+      });
+
+    const agreementIssue = finalizationAgreementIssue(
+      observedExit?.finalization,
+      observedFinalization,
+    );
+    if (agreementIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message: agreementIssue,
+      });
+    if (
+      "observations" in partial &&
+      partial.observations.exit.state === "unavailable" &&
+      observedFinalization !== undefined &&
+      observedFinalization?.elapsed_ms !== null
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message:
+          "finalization elapsed_ms must be null when the exit observation is unavailable",
       });
 
     if ("observations" in partial) {

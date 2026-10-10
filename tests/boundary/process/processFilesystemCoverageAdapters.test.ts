@@ -9,6 +9,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { compareProcessCaptures } from "../../../src/domain/process/processComparison.js";
 import { parseProcessCapture } from "../../../src/domain/process/processCaptureParsing.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -59,6 +60,27 @@ const captureViaMcp = async (scenario: Record<string, unknown>) => {
   await client.ping();
   return evidence;
 };
+
+it("documents a finalization scenario and exit record that match the contract", async () => {
+  const document = await readFile("docs/process-capture.md", "utf8");
+  const blocks = [
+    ...(document.split("### Finalization interval")[1] ?? "").matchAll(
+      /```json\n([\s\S]*?)\n```/gu,
+    ),
+  ].map((match) => match[1]);
+  const [scenario, exit] = blocks;
+  if (scenario === undefined || exit === undefined)
+    throw new Error("Missing finalization examples");
+
+  expect(
+    parseProcessScenario(JSON.parse(scenario)).finalization_ms,
+    "the documented scenario is accepted and carries the interval",
+  ).toBe(1_500);
+  expect(
+    JSON.parse(exit),
+    "the documented exit record is the canonical finalized example",
+  ).toEqual(FINALIZED_PROCESS_CAPTURE_EXAMPLE.exit);
+});
 
 itWithCaptureCapability.each(["cli", "mcp"] as const)(
   "hashes the documented complete report despite omitted terminal output through %s",

@@ -81,11 +81,17 @@ const committedScenarioEvents = (
 export const processScenarioCommitment = (
   scenario: ProcessScenario,
   executableSha256?: string,
-): Readonly<Record<string, unknown>> => ({
-  ...scenario,
-  events: committedScenarioEvents(scenario.events, true),
-  executable_sha256: executableSha256 ?? null,
-});
+): Readonly<Record<string, unknown>> => {
+  // A zero interval is today's immediate kill; leaving it out keeps the
+  // committed identity of every scenario that predates the field unchanged.
+  const { finalization_ms: finalizationMs, ...committed } = scenario;
+  return {
+    ...committed,
+    ...(finalizationMs > 0 ? { finalization_ms: finalizationMs } : {}),
+    events: committedScenarioEvents(scenario.events, true),
+    executable_sha256: executableSha256 ?? null,
+  };
+};
 
 /** Project observation settings shared by capture and reconstruction. */
 export const processComparisonContract = (
@@ -103,6 +109,9 @@ export const processComparisonContract = (
   timeout_ms: scenario.timeout_ms,
   idle_timeout_ms: scenario.idle_timeout_ms,
   settle_ms: scenario.settle_ms,
+  ...(scenario.finalization_ms > 0
+    ? { finalization_ms: scenario.finalization_ms }
+    : {}),
   limits: scenario.limits,
   normalization: scenario.normalization,
   ...(scenario.normalization.ports
@@ -160,6 +169,15 @@ export const processScenarioSchema = z
     timeout_ms: positiveBudget.default(30_000),
     idle_timeout_ms: positiveBudget.default(30_000),
     settle_ms: z.number().int().safe().nonnegative().default(100),
+    finalization_ms: z
+      .number()
+      .int()
+      .safe()
+      .nonnegative()
+      .default(0)
+      .describe(
+        "Milliseconds a target may keep running after SIGTERM when timeout_ms or idle_timeout_ms fires, before SIGKILL; 0 sends SIGKILL immediately. Both signals reach the captured root only while its launch-time start identity still matches; cancellation ends the run at once.",
+      ),
     limits: z
       .strictObject({
         output_bytes: positiveBudget.default(1_000_000),
@@ -204,6 +222,18 @@ export const processScenarioSchema = z
       }),
   })
   .superRefine((scenario, context) => {
+    // Each budget is a safe integer, but their sum is not checked anywhere
+    // else. BigInt keeps the comparison exact beyond the representable range.
+    const lifecycleBudget =
+      BigInt(scenario.timeout_ms) +
+      BigInt(scenario.finalization_ms) +
+      BigInt(scenario.settle_ms);
+    if (lifecycleBudget > BigInt(Number.MAX_SAFE_INTEGER))
+      context.addIssue({
+        code: "custom",
+        message: `timeout_ms + finalization_ms + settle_ms must stay at or below ${String(Number.MAX_SAFE_INTEGER)} ms, the largest total exactly representable as a JavaScript number`,
+        path: ["timeout_ms"],
+      });
     for (let index = 1; index < scenario.events.length; index += 1) {
       const event = scenario.events[index];
       const previous = scenario.events[index - 1];

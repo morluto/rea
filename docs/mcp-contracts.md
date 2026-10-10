@@ -167,6 +167,9 @@ Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
 state separately from the execution failure.
+A process capture that fails during a finalization interval keeps every signal
+attempt and its delivery result in `details.partial_observation`, with
+`elapsed_ms` null when no exit was observed.
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
 

@@ -8,10 +8,14 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
-import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import {
+  captureProcessScenario,
+  type FinalizationHost,
+} from "../../../src/process/capture/ProcessHarness.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
+import { expectUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 import {
   type ProcessCaptureCleanupHost,
   observeLaunchedExecutable,
@@ -36,32 +40,6 @@ type PartialCapture = Extract<
 >["capture"];
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
-const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
-  const report = error.cleanupReport;
-  expect(error.reason, error.message).toBe("cleanup_incomplete");
-  expect(report?.owned_process_group.state).toBe("unverified");
-  const [summary, diagnostics] = (
-    report?.owned_process_group.reason ?? ""
-  ).split(": ");
-  expect(summary).toMatch(
-    /^process ownership token could not be read for [1-9][0-9]* live process\(es\)$/u,
-  );
-  const [breakdown, liveCandidates] =
-    diagnostics?.split("; live candidates ") ?? [];
-  const categories = breakdown?.split(", ") ?? [];
-  expect(categories.length).toBeGreaterThan(0);
-  const expectedCategory =
-    process.platform === "linux"
-      ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
-      : /^environment_unavailable=[1-9][0-9]*$/u;
-  for (const category of categories) expect(category).toMatch(expectedCategory);
-  expect(liveCandidates).toMatch(
-    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
-  );
-  expect(report?.terminal_renderer.state).toBe("cleaned");
-  expect(report?.temporary_root.state).toBe("cleaned");
-};
-
 const captureObservations = (
   result: CaptureRun,
 ): {
@@ -283,6 +261,10 @@ itWithCaptureCapability(
     if (partial === undefined || !("observations" in partial))
       throw new Error("expected incomplete process observations");
     const observations = partial.observations;
+    expect(
+      Object.keys(observations),
+      "a default scenario keeps the base observation keys through the run path",
+    ).not.toContain("finalization");
     expect(observations.frames.state).toBe("available");
     if (observations.frames.state !== "available")
       throw new Error("expected terminal output observations");
@@ -476,6 +458,364 @@ itWithCaptureCapability(
     if (cancelled.ok) throw new Error("expected cancellation");
     expect(cancelled.error.message).toContain("cancelled");
   },
+);
+
+const finalizationFixture = fileURLToPath(
+  new URL("../../fixtures/processFinalization.mjs", import.meta.url),
+);
+
+const captureFinalizationFixture = async (
+  mode: "cooperative" | "ignoring" | "exits",
+  scenario: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal,
+): Promise<{ readonly result: CaptureRun; readonly root: string }> => {
+  const root = await createTestTempDirectory("rea-finalization-");
+  const result = await captureProcessScenario(
+    parseProcessScenario({
+      executable: process.execPath,
+      arguments: [finalizationFixture, mode, root],
+      working_directory: root,
+      filesystem_observation_paths: [root],
+      idle_timeout_ms: 10_000,
+      ...scenario,
+    }),
+    signal,
+  );
+  return { result, root };
+};
+
+const observedFile = (
+  capture: ProcessCapture | PartialCapture,
+  name: string,
+): { readonly sha256: string | null } | undefined =>
+  capture.files_after.find((file) => file.path.endsWith(name));
+
+itWithCaptureCapability(
+  "lets a cooperative target write its final report within the finalization interval",
+  async () => {
+    // The deadline leaves Node enough time to register its SIGTERM handler.
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 1_500,
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
+      "timeout",
+    );
+    expect(
+      capture.exit.code,
+      "a deadline reason never declares a normal exit code",
+    ).toBeNull();
+    expect(capture.exit.finalization, "finalization is recorded").toMatchObject(
+      {
+        requested_ms: 1_500,
+        signals: [{ signal: "SIGTERM", delivery: "signaled" }],
+      },
+    );
+    expect(
+      capture.exit.finalization?.elapsed_ms,
+      "a cooperative exit ends before the interval does",
+    ).toBeLessThan(1_500);
+    expect(
+      observedFile(capture, "final.json")?.sha256,
+      "final report is retained with a digest",
+    ).toMatch(/^[0-9a-f]{64}$/u);
+    expect(
+      capture.frames.map(({ data }) => data).join(""),
+      "output written during finalization is captured",
+    ).toContain("finalized");
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "records no finalization when the target exits before any deadline",
+  async () => {
+    const { result } = await captureFinalizationFixture("exits", {
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "the target exited on its own").toBe("exited");
+    expect(capture.exit.code, "its exit code is kept").toBe(0);
+    expect(
+      capture.exit,
+      "no deadline fired, so nothing was finalized",
+    ).not.toHaveProperty("finalization");
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "starts finalization when the idle deadline fires",
+  async () => {
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 10_000,
+      idle_timeout_ms: 1_500,
+      finalization_ms: 1_200,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "idle deadline is the initiating reason").toBe(
+      "idle_timeout",
+    );
+    expect(
+      capture.exit.finalization,
+      "idle finalization is recorded",
+    ).toMatchObject({
+      requested_ms: 1_200,
+      signals: [{ signal: "SIGTERM", delivery: "signaled" }],
+    });
+    expect(
+      observedFile(capture, "final.json")?.sha256,
+      "final report is retained with a digest",
+    ).toMatch(/^[0-9a-f]{64}$/u);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "forces the kill when the target ignores the finalization signal",
+  async () => {
+    const { result } = await captureFinalizationFixture("ignoring", {
+      timeout_ms: 500,
+      finalization_ms: 1_500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
+      "timeout",
+    );
+    expect(
+      capture.exit.finalization,
+      "finalization attempts are recorded",
+    ).toMatchObject({
+      requested_ms: 1_500,
+      signals: [
+        { signal: "SIGTERM", delivery: "signaled" },
+        { signal: "SIGKILL", delivery: "signaled" },
+      ],
+    });
+    expect(
+      capture.exit.signal,
+      "the target that ignores SIGTERM and SIGINT ends on SIGKILL",
+    ).toBe(9);
+    expect(
+      capture.exit.finalization?.elapsed_ms,
+      "the whole interval elapsed before the kill",
+    ).toBeGreaterThanOrEqual(1_500);
+    expect(
+      capture.exit.finalization?.elapsed_ms,
+      "the kill followed the interval promptly",
+    ).toBeLessThan(4_000);
+    expect(
+      observedFile(capture, "final.json"),
+      "an ignored signal writes no final report",
+    ).toBeUndefined();
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "keeps the immediate kill when no finalization interval is configured",
+  async () => {
+    const { result } = await captureFinalizationFixture("cooperative", {
+      timeout_ms: 500,
+    });
+    const { capture } = captureObservations(result);
+
+    expect(capture.exit.reason, "deadline reason is unchanged").toBe("timeout");
+    expect(
+      capture.exit.signal,
+      "the default deadline still ends on SIGKILL",
+    ).toBe(9);
+    expect(
+      capture.exit,
+      "default captures carry no finalization record",
+    ).not.toHaveProperty("finalization");
+    expect(
+      observedFile(capture, "final.json"),
+      "SIGKILL leaves no final report",
+    ).toBeUndefined();
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "cancels before any deadline without starting finalization",
+  async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 1_500);
+    const started = Date.now();
+    const { result } = await captureFinalizationFixture(
+      "ignoring",
+      { timeout_ms: 20_000, finalization_ms: 20_000 },
+      controller.signal,
+    );
+
+    if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected cancelled process observations");
+    expect(
+      partial.observations.exit,
+      "cancellation before any deadline is not a finalization",
+    ).toMatchObject({ state: "available", value: { reason: "cancelled" } });
+    expect(
+      partial.observations.exit,
+      "no SIGTERM interval ran, so no finalization record exists",
+    ).not.toHaveProperty("value.finalization");
+    expect(
+      Date.now() - started,
+      "cancellation does not wait for either deadline",
+    ).toBeLessThan(10_000);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "cancels immediately while a finalization interval is running",
+  async () => {
+    const controller = new AbortController();
+    // Abort well after the 300 ms deadline so finalization is already running.
+    setTimeout(() => controller.abort(), 2_000);
+    const started = Date.now();
+    const { result } = await captureFinalizationFixture(
+      "ignoring",
+      { timeout_ms: 300, finalization_ms: 20_000 },
+      controller.signal,
+    );
+
+    if (result.ok) throw new Error("expected cancellation");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected cancelled process observations");
+    expect(
+      partial.observations.exit,
+      "cancellation is the exit reason and signal attempts are recorded",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        reason: "cancelled",
+        finalization: {
+          requested_ms: 20_000,
+          signals: [
+            { signal: "SIGTERM", delivery: "signaled" },
+            { signal: "SIGKILL", delivery: "signaled" },
+          ],
+        },
+      },
+    });
+    expect(
+      partial.observations.finalization,
+      "the attempts are published beside the exit, also for a failed run",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        requested_ms: 20_000,
+        signals: [
+          { signal: "SIGTERM", delivery: "signaled" },
+          { signal: "SIGKILL" },
+        ],
+      },
+    });
+    if (result.error.cleanupIncomplete) {
+      expectUnverifiedHostCleanup(result.error);
+      expect(
+        result.error.executionFailure,
+        "the host cleanup error wraps the cancellation",
+      ).toBe("process capture was cancelled");
+    }
+    const cancellation = result.error.cleanupIncomplete
+      ? result.error.cause
+      : result.error;
+    expect(cancellation, "cancellation wins over finalization").toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
+    expect(
+      Date.now() - started,
+      "cancellation does not wait for the finalization interval",
+    ).toBeLessThan(8_000);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "keeps the attempts when the escalation cannot be delivered through the retained identity",
+  async () => {
+    const calls: string[] = [];
+    let observedAt: number | undefined;
+    let firstSignalAt: number | undefined;
+    const finalizationHost: FinalizationHost = {
+      observe: async () => {
+        observedAt ??= performance.now();
+        return { state: "readable" as const, identity: "launch" };
+      },
+      signal: async (_pid, identity, signal) => {
+        firstSignalAt ??= performance.now();
+        calls.push(`${identity}:${signal}`);
+        return signal === "SIGTERM" ? "signaled" : "unverified";
+      },
+    };
+    const root = await createTestTempDirectory("rea-finalization-host-");
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        executable: process.execPath,
+        arguments: [finalizationFixture, "ignoring", root],
+        working_directory: root,
+        filesystem_observation_paths: [root],
+        idle_timeout_ms: 10_000,
+        timeout_ms: 500,
+        finalization_ms: 500,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      finalizationHost,
+    );
+
+    if (result.ok) throw new Error("expected an unobserved exit");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(result.error);
+    expect(
+      calls,
+      "both finalization signals went through the identity-checked host",
+    ).toEqual(["launch:SIGTERM", "launch:SIGKILL"]);
+    expect(
+      (firstSignalAt ?? 0) - (observedAt ?? Number.POSITIVE_INFINITY),
+      "the start identity was read at launch, well before the 500 ms deadline signalled",
+    ).toBeGreaterThanOrEqual(300);
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected incomplete process observations");
+    expect(
+      partial.observations.finalization,
+      "the attempts and their delivery results are published for a failed capture",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        requested_ms: 500,
+        elapsed_ms: null,
+        signals: [
+          { signal: "SIGTERM", delivery: "signaled" },
+          { signal: "SIGKILL", delivery: "unverified" },
+        ],
+      },
+    });
+    expect(
+      partial.observations.exit.state,
+      "no exit is invented when the escalation was not delivered",
+    ).toBe("unavailable");
+  },
+  15_000,
 );
 
 itWithCaptureCapability(

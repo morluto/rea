@@ -58,6 +58,8 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
   capture_process_scenario: {
     executable: "/usr/bin/true",
     working_directory: "/tmp",
+    timeout_ms: 30_000,
+    finalization_ms: 1_500,
   },
   compare_process_captures: {
     left: PROCESS_CAPTURE_REFERENCE,

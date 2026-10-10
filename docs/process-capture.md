@@ -175,6 +175,92 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+### Finalization interval
+
+By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
+target time to finish: when `timeout_ms` or `idle_timeout_ms` fires, REA sends
+`SIGTERM`, keeps capturing output and selected files, and sends `SIGKILL` once
+if the interval ends first. Cancellation is not delayed: it sends `SIGKILL`
+immediately, also during finalization, and ends the run as cancelled.
+
+```json
+{
+  "executable": "node",
+  "arguments": ["./job.mjs"],
+  "filesystem_observation_paths": ["./reports"],
+  "timeout_ms": 30000,
+  "finalization_ms": 1500
+}
+```
+
+Both finalization signals go to the captured root after its start identity is
+checked immediately before the call, so a process that replaced the root is not
+signalled; the check and the signal are separate operations, not one atomic
+step. The identity is read right after the process starts, not at the instant
+of the spawn: a root that exits and whose PID is reused before that first read
+is indistinguishable by this check. REA does not fall back to a bare PID kill
+for either finalization signal; where the identity cannot be read, the attempt
+is recorded as `unverified`. Cancellation before any deadline is unchanged and
+keeps the existing terminal kill. Descendants are not signalled during
+finalization; owned-process cleanup handles them afterwards.
+
+`exit.reason` keeps the initiating deadline (`timeout` or `idle_timeout`).
+`exit.code` is `null` for every deadline exit: it is not the target's observed
+exit code, and the observed signal stays in `exit.signal`. `exit.finalization`
+records what was observed and is absent when no finalization was attempted:
+
+```json
+{
+  "code": null,
+  "signal": 0,
+  "reason": "timeout",
+  "finalization": {
+    "requested_ms": 1500,
+    "elapsed_ms": 12,
+    "signals": [
+      { "signal": "SIGTERM", "sent_at_ms": 0, "delivery": "signaled" }
+    ]
+  }
+}
+```
+
+- `signals` lists each attempt in order: `SIGTERM` first, at most one `SIGKILL`.
+  `sent_at_ms` is the attempt time on a monotonic clock, relative to the start of
+  finalization, also for an attempt that could not be delivered.
+- `delivery` is `signaled` (the identity matched and the signal call returned),
+  `gone` (no live process matched), `identity-changed` (the PID now belongs to a
+  different process, which was not signalled) or `unverified` (the identity could
+  not be established or the call failed). None of them proves the process
+  exited.
+  An `unverified` attempt may carry a `reason` string naming why: an unavailable
+  identity and its reason, an inspection or signal error, or delivery that did
+  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  that bound can still complete later; it stays identity-checked, and its late
+  result is not added to the record.
+- `elapsed_ms` is when REA observed the exit, relative to the start of
+  finalization, or `null` when no exit was observed. The PTY layer can deliver the
+  exit slightly after the operating system ended the process.
+- The observed signal stays in `exit.signal`; `exit.code` is `null` for every
+  deadline exit. The record does not attribute an exit to a particular signal,
+  and a `SIGKILL` from a scenario event next to the escalation cannot be told
+  apart from it.
+- If the `SIGKILL` cannot be delivered, REA stops waiting for an exit, keeps every
+  observation collected so far with the delivery results, and releases the run
+  through owned-process cleanup.
+- The `SIGKILL` is not sequenced after the `SIGTERM` delivery result: the two
+  deliveries are independent, because cancellation must not wait for a slow
+  identity check.
+
+`timeout_ms + finalization_ms + settle_ms` must stay at or below
+`Number.MAX_SAFE_INTEGER` (9007199254740991), the largest total exactly
+representable as a JavaScript number; the scenario is rejected otherwise. This is
+a representability limit, not a timer limit. The nominal lifecycle budget is that
+sum; polling, snapshotting and cleanup lie outside it. Scenario `events` keep
+being dispatched during finalization and are recorded as usual. `finalization_ms`
+of `0`, the default, keeps today's behaviour and the committed identity of every
+existing scenario. `elapsed_ms` and `sent_at_ms` are timing data and take part in
+exit comparison like `settlement.elapsed_ms`.
+
 Every capture requires `truncation_details`, with separate accounting for:
 
 - `raw_terminal`: original UTF-8 PTY chunk bytes and observed/retained chunk
