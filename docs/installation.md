@@ -141,6 +141,15 @@ listed after the table because its connector is not one of these files:
 | OMP                | `omp`            |
 | Pi                 | `pi`             |
 | Hermes             | `hermes`         |
+| Trae               | `trae`           |
+
+For [Trae](https://docs.trae.ai/ide/add-mcp-servers), setup writes
+`mcpServers.rea` into the user-scope `mcp.json` under Trae's VS Code-style
+user directory (`%APPDATA%\Trae\User` on Windows,
+`~/Library/Application Support/Trae/User` on macOS, and
+`~/.config/Trae/User` elsewhere). Entries carry `command`, `args`, and
+`env`; stdio is the default transport. Trae has no personal skills
+directory, so setup does not install a skill copy.
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
 setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
