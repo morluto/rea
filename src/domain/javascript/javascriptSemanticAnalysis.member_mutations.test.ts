@@ -608,6 +608,21 @@ describe("property mutation collection on minified bundles", () => {
       ],
     });
   }, 30000);
+
+  it("indexes many returned object methods instead of rescanning the object", () => {
+    const methods = Array.from(
+      { length: 2000 },
+      (_, index) => `m${index}() { return shared; }`,
+    ).join(",");
+    const writes = Array.from(
+      { length: 2000 },
+      (_, index) => `box.m${index}().p${index} = ${index};`,
+    ).join(" ");
+    const value = resultValue(
+      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${writes} return shared.token;`,
+    );
+    expect(value?.status).toBe("unknown");
+  }, 30000);
 });
 
 describe("results of methods on an escaped receiver", () => {
