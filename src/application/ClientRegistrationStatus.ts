@@ -78,23 +78,7 @@ export const readClientRegistrationStatuses = async (
   for (const client of supportedClients(
     home,
     options.platform,
-    options.environment === undefined
-      ? undefined
-      : {
-          APPDATA: options.environment.APPDATA,
-          CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
-          CODEX_HOME: options.environment.CODEX_HOME,
-          COPILOT_HOME: options.environment.COPILOT_HOME,
-          GROK_HOME: options.environment.GROK_HOME,
-          OMP_PROFILE: options.environment.OMP_PROFILE,
-          OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
-          PI_CODING_AGENT_DIR: options.environment.PI_CODING_AGENT_DIR,
-          PI_CONFIG_DIR: options.environment.PI_CONFIG_DIR,
-          PI_PROFILE: options.environment.PI_PROFILE,
-          QWEN_HOME: options.environment.QWEN_HOME,
-          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
-          XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
-        },
+    options.environment,
   )) {
     if (
       !(await exists(client.markerPath)) &&
