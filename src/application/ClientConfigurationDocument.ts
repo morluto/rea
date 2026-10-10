@@ -78,6 +78,7 @@ export const clientConfigurationServersKey = (
     case "hermes":
       return "mcp_servers";
     case "opencode":
+    case "zcode":
       return "mcp";
     case "vscode":
       return "servers";
@@ -134,6 +135,18 @@ export const parseClientConfiguration = (
   const serversKey = clientConfigurationServersKey(format);
   const value = document[serversKey];
   const servers = value === undefined ? {} : objectSchema.parse(value);
+  // ZCode reads stdio servers from the nested `mcp.servers` table of
+  // `~/.zcode/cli/config.json`; entries carry `command`, `args`, and `env`.
+  if (format === "zcode") {
+    const nested = servers.servers;
+    return {
+      document,
+      servers: nested === undefined ? {} : objectSchema.parse(nested),
+      serversPath: [serversKey, "servers"],
+      dialect: format,
+      legacyServers: {},
+    };
+  }
   const native = servers.servers;
   // A V1 server named `servers` has a string `type` discriminator; the V2
   // table may instead hold a server object named `type`.
@@ -185,7 +198,11 @@ export const withClientServers = (
 ): Record<string, unknown> => {
   const [key = "", nested] = parsed.serversPath;
   if (nested === undefined) return { ...parsed.document, [key]: servers };
-  const outer = { ...objectSchema.parse(parsed.document[key]) };
+  // A fresh document may not hold the outer table yet (for example a new
+  // ZCode `config.json` without an `mcp` object), so treat absence as empty.
+  const outerValue = parsed.document[key];
+  const outer =
+    outerValue === undefined ? {} : { ...objectSchema.parse(outerValue) };
   if (removeLegacy !== undefined && !OPENCODE_V2_MCP_SETTINGS.has(removeLegacy))
     delete outer[removeLegacy];
   return { ...parsed.document, [key]: { ...outer, [nested]: servers } };
