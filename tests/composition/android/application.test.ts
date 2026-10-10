@@ -86,6 +86,12 @@ describe("Android application projection", () => {
     expect(left.bridge_candidates).toEqual([
       expect.objectContaining({ basis: "react-native-convention" }),
     ]);
+    expect(left.limitations).toEqual(
+      expect.arrayContaining([
+        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
+      ]),
+    );
     expect(JSON.stringify(left)).not.toContain("opaque signing");
   });
 
@@ -142,6 +148,45 @@ describe("Android application projection", () => {
     expect(projection.runtime_families).toEqual(["dalvik-art", "java-kotlin"]);
     expect(projection.limitations).toContain(
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
+    );
+  });
+});
+
+describe("case-distinct APK resource names", () => {
+  it("inventories and projects an APK whose resource names differ only in case", async () => {
+    const root = await createTestTempDirectory("rea-android-case-");
+    const path = join(root, "Shrunk.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "AndroidManifest.xml",
+      new Uint8ArrayReader(Uint8Array.from([3, 0, 8, 0])),
+    );
+    await writer.add(
+      "classes.dex",
+      new Uint8ArrayReader(
+        Uint8Array.from([0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0]),
+      ),
+    );
+    await writer.add("res/2F.xml", new TextReader("upper"));
+    await writer.add("res/2f.xml", new TextReader("lower"));
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    const result = projectAndroidApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    const projection = androidApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(result).normalized_result,
+    );
+    expect(projection.root_format).toBe("apk");
+    expect(projection.components.manifests).toHaveLength(1);
+    expect(projection.components.dex).toHaveLength(1);
+    expect(JSON.stringify(inventory)).toContain("res/2F.xml");
+    expect(JSON.stringify(inventory)).toContain("res/2f.xml");
+    expect(JSON.stringify(inventory)).toContain(
+      "English (en-US) Unicode case folding",
     );
   });
 });

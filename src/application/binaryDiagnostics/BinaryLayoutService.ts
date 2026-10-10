@@ -78,7 +78,8 @@ export class BinaryLayoutService {
           operation: OPERATION,
           parameters: input.data,
           result: value,
-          rawResult: value,
+          // The decoded report is the only representation; do not repeat it.
+          rawResult: null,
           confidence: "observed",
           limitations: value.limitations,
           locations: [{ kind: "artifact-path", path: value.artifact.path }],

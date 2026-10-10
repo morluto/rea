@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "34"
+  version: "35"
 ---
 
 # REA
@@ -62,13 +62,20 @@ with a version-pinned `rea-agents` package or continue through the CLI.
 A concrete CLI fallback for an operator-supplied JavaScript tree or ASAR is:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json > app-evidence.json
+jq -c '{source: {kind: "inline", evidence: .}, view: {kind: "summary"}}' app-evidence.json > app-view.json
+npx -y rea-agents@latest inspect-analysis-view app-view.json
 ```
 
-No MCP registration or native engine is required. Read the returned Evidence,
-graph, limitations, and unknowns with the same care as an MCP result; the CLI
-returns the Evidence record directly. This fallback does not establish that
-MCP is configured. Native CLI tasks still require their selected engine.
+No MCP registration or native engine is required. The CLI returns the complete
+Evidence record directly, and a real application can produce hundreds of
+megabytes, so save it to a file rather than reading it into context. Start from
+the summary view, then request a module page
+(`{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}`) or one
+module the same way, or pass the saved Evidence inline to
+`trace-application-feature`. Read graph, limitations, and unknowns with the
+same care as an MCP result. This fallback does not establish that MCP is
+configured. Native CLI tasks still require their selected engine.
 
 ## Route the target first
 

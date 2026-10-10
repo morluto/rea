@@ -84,7 +84,7 @@ describe("one-shot analysis cleanup outcomes", () => {
           operation: "read_bytes",
           subject: { local_path: path },
           normalized_result: { observation: "retained result" },
-          raw_result: { observation: "retained result" },
+          raw_result: null,
         },
       },
     });
@@ -198,7 +198,7 @@ describe("managed one-shot cleanup outcomes", () => {
               operation: "inspect_managed_artifact",
               observation: "retained result",
             },
-            rawResult: { observation: "retained result" },
+            rawResult: null,
             provider: { id: "fixture" },
           },
         },

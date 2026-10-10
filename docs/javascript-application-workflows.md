@@ -69,13 +69,12 @@ validation boundaries, and built-in resource acquisition/release.
 
 Mutation tracking covers explicit member assignments, updates, deletion, and
 loop assignment targets, including the supported local aliases and shared
-nested references. Calls such as `Object.assign`, `Reflect.set`, and
-`Reflect.deleteProperty`, and writes reaching a caller's object through another
-function's parameter, are not tracked by this mutation pass. These channels
-can leave an initializer-derived literal in the graph even after the runtime
-value changes. Treat such a result as an uncovered mutation channel, not as
-proof of the current runtime value; a follow-up needs to model that channel
-and verify its caller/alias behavior.
+nested references. Calls conservatively invalidate exposed mutable references;
+callee bodies and built-ins such as `Object.assign`, `Reflect.set`, and
+`Reflect.deleteProperty` are not interpreted to establish exact post-call
+values. This uncertainty does not prove that a call actually mutated a value.
+Interprocedural aliasing beyond the supported call-site references remains
+outside this mutation pass.
 
 Function fingerprints commit normalized syntax, control-flow shape, relation
 shape, literal sets, arity, and detected effects without using local names or
@@ -90,6 +89,44 @@ executed. Candidate edges are excluded by default, require explicit opt-in, and
 keep the result ambiguous. Runtime Evidence can later corroborate an exact
 mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
+
+Semantic literal nodes keep their complete value in `properties.value`; literal
+queries match that field. String labels use `string literal` when that is
+shorter than the complete JSON value. A literal's `identity.role_key` commits
+its canonical JSON value as `value-sha256:<digest>` when the digest key is
+shorter; smaller values keep their existing JSON key. This keeps large values
+out of identity and display metadata without expanding short values or
+truncating their Evidence.
+
+New analyses therefore produce different IDs for hashed literals from the
+earlier payload-bearing role keys. Use IDs returned by the selected parent
+graph and read literal values from `properties.value`, rather than decoding
+role keys or labels. Previously stored graphs and their original IDs remain
+valid inputs.
+
+Endpoint nodes keep the exact endpoint in each observation's `properties.value`;
+semantic request and response nodes keep it in `properties.endpoint`. Endpoint
+identity keys use `value-sha256:<digest>` over the canonical JSON string when
+that is shorter, or when the original value starts with the reserved digest
+prefix. Other short endpoint keys remain unchanged. Endpoint labels use the
+shorter of the exact value and `<kind> endpoint`; semantic request/response
+labels use the shorter of the endpoint and operation method. These labels are
+display metadata, not endpoint lookup values.
+
+New analyses therefore change hashed endpoint IDs and longer endpoint labels.
+Use IDs from the selected graph and read the complete endpoint properties;
+previously stored graphs still support their original IDs. Literal endpoint
+search, semantic tracing, and version comparison use the preserved values.
+
+Event and listener nodes likewise preserve the complete event name in
+`properties.event_name`. Event role keys use the same reserved-prefix string
+digest rule, scoped to the emitter; repeated registrations, removals, and
+dispatches keep one event per exact emitter/name pair. Long event labels use
+`event`, and listener labels use the shorter of `<method>:<name>` and
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
+change hashed event IDs and longer event/listener labels; query the preserved
+name or select IDs from the parent graph. Previously stored graphs keep their
+original IDs and remain valid trace inputs.
 
 ## Version comparison
 
@@ -146,6 +183,17 @@ Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
 keys, and parser recovery remain partial or unknown.
+Objects and arrays passed to calls, constructors, or tagged templates, used
+as method receivers, or stored through property targets are not assumed
+unchanged afterward. Property stores conservatively retain reference escape
+uncertainty rather than pretending to execute later writes. Aliases
+and shared children in spread and rest copies retain that uncertainty; copied
+primitive slots and unrelated containing properties remain known. Object rest
+excludes consumed keys, array rest excludes the consumed prefix for known
+arrays, and later explicit data properties and methods replace earlier object
+spread references. A known array prefix does not expose values from a following
+spread. Accessors, custom or uncertain iteration, unknown computed keys, and
+unknown spread lengths retain conservative uncertainty.
 Nested callable returns are not assigned to their parent callable. Projected
 graph observations carry source ranges but never source text.
 
@@ -171,6 +219,8 @@ value alone does not make an observed property uncertain. `summary.added` and
 `summary.removed` count
 presence-level add/remove as well as literal value add/remove;
 `summary.unknown` does not absorb complete-coverage presence-only gaps.
+A partial comparison still records an unknown in the MCP session when matching
+uncertain projections produce no changes and `summary.unknown` is zero.
 
 The output includes exact selector candidates, omissions, Evidence links,
 coverage, and limitations; it does not execute JavaScript. When runtime

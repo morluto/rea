@@ -12,6 +12,7 @@ import type {
 import {
   boundedExpression,
   collectContextBridgeMembers,
+  electronCalleeName,
   electronStaticValue,
   objectProperty,
 } from "./electronStaticAnalysisValues.js";
@@ -19,7 +20,6 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
-  calleeName,
   range,
   staticPath,
   staticPathResolutionContext,
@@ -42,7 +42,7 @@ const inspectBrowserWindow = (
   node: t.NewExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const name = calleeName(node.callee);
+  const name = electronCalleeName(node.callee, context);
   if (name !== "BrowserWindow" && !name.endsWith(".BrowserWindow")) return;
   const options = argumentNode(node.arguments[0]);
   const collected = collectWindowOptions(context.source, options);
@@ -165,7 +165,7 @@ const inspectContextBridge = (
   node: t.CallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const name = calleeName(node.callee);
+  const name = electronCalleeName(node.callee, context);
   const main =
     name === "contextBridge.exposeInMainWorld" ||
     name.endsWith(".contextBridge.exposeInMainWorld");
@@ -213,7 +213,7 @@ const inspectUtilityProcess = (
   node: t.CallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const name = calleeName(node.callee);
+  const name = electronCalleeName(node.callee, context);
   if (name !== "utilityProcess.fork" && !name.endsWith(".utilityProcess.fork"))
     return;
   const moduleNode = argumentNode(node.arguments[0]);

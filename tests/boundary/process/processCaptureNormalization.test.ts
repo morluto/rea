@@ -64,6 +64,7 @@ itWithCaptureCapability(
     ).toBe(true);
     expect(capture.manifest.comparison_contract).toMatchObject({
       port_normalization_version: "contextual-endpoints-v2",
+      rendered_line_format: "trailing-spaces-trimmed-v1",
     });
     expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
     expect(capture.cleanup).toMatchObject({

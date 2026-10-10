@@ -23,6 +23,38 @@ const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const contract = toolContract("compare_web_captures");
 
+async function capturePassivePair(
+  provider: CdpBrowserProvider,
+  browser: Awaited<ReturnType<typeof startFakeCdpBrowser>>,
+) {
+  const produced = await provider.inspectPage(
+    inspectWebPageInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      target_id: "allowed-page",
+      allowed_origins: [browser.allowedOrigin, "https://private.example.test"],
+      observation_ms: 0,
+      include_json_body_shapes: true,
+      include_websocket_shapes: true,
+    }),
+  );
+  if (!produced.ok) throw produced.error;
+  // Capture order must not turn identical frame identities into a DOM change.
+  produced.value.frames = [null, browser.allowedOrigin, ""].map(
+    (origin, index) => ({
+      frame_id: String(index),
+      parent_frame_id: null,
+      url: "about:blank",
+      origin,
+    }),
+  );
+  const reordered = structuredClone(produced.value);
+  reordered.frames.reverse();
+  return {
+    before: { inspection: produced.value },
+    after: { inspection: reordered },
+  };
+}
+
 describe("browser comparison input boundary", () => {
   it("advertises complete producer captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
@@ -51,40 +83,12 @@ describe("browser comparison input boundary", () => {
       );
       if (advertised === undefined) throw new Error("Missing comparison tool");
       expect(advertised.inputSchema.type).toBe("object");
-      expect(advertised.inputSchema.anyOf).toHaveLength(2);
+      // Anthropic tool input schemas reject root combinators.
+      expect(advertised.inputSchema).not.toHaveProperty("anyOf");
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
       const validate = ajv.compile(advertised.inputSchema);
-      const produced = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          target_id: "allowed-page",
-          allowed_origins: [
-            browser.allowedOrigin,
-            "https://private.example.test",
-          ],
-          observation_ms: 0,
-          include_json_body_shapes: true,
-          include_websocket_shapes: true,
-        }),
-      );
-      if (!produced.ok) throw produced.error;
-      // The same frame URL can occur under different origins. Capture order
-      // must not turn identical frame identities into a DOM change.
-      produced.value.frames = [null, browser.allowedOrigin, ""].map(
-        (origin, index) => ({
-          frame_id: String(index),
-          parent_frame_id: null,
-          url: "about:blank",
-          origin,
-        }),
-      );
-      const reordered = structuredClone(produced.value);
-      reordered.frames.reverse();
-      const passive = {
-        before: { inspection: produced.value },
-        after: { inspection: reordered },
-      };
+      const passive = await capturePassivePair(provider, browser);
       const scenario = contract.examples[0]?.input;
       if (scenario === undefined) throw new Error("Missing scenario example");
       const withoutNormalization = Object.fromEntries(
@@ -99,12 +103,19 @@ describe("browser comparison input boundary", () => {
         { before: { inspection: {} }, after: passive.after },
         {
           before: passive.before,
-          after: { inspection: produced.value, webmcp: {} },
+          after: { ...passive.after, webmcp: {} },
         },
         { before_scenario: {}, after_scenario: {} },
         { before_scenario: scenario.before_scenario },
-        { ...passive, ...scenario },
         { ...passive, normalization: { rules: [] } },
+        {
+          before_scenario: scenario.before_scenario,
+          normalization: { rules: [] },
+        },
+        {
+          after_scenario: scenario.after_scenario,
+          normalization: { rules: [] },
+        },
         { ...passive, unexpected: true },
         {
           ...scenario,
@@ -119,26 +130,39 @@ describe("browser comparison input boundary", () => {
           },
         },
       ];
-      const cases = [
+      // The projection leaves group exclusion to the canonical runtime parser.
+      const mixedGroups = [{ ...passive, ...scenario }];
+      for (const { input, advertisedValid, runtimeValid } of [
         ...[passive, scenario, withoutNormalization].map((input) => ({
           input,
-          expected: true,
+          advertisedValid: true,
+          runtimeValid: true,
         })),
-        ...invalid.map((input) => ({ input, expected: false })),
-      ];
-      for (const { input, expected } of cases) {
-        expect(validate(input), JSON.stringify(validate.errors)).toBe(expected);
+        ...invalid.map((input) => ({
+          input,
+          advertisedValid: false,
+          runtimeValid: false,
+        })),
+        ...mixedGroups.map((input) => ({
+          input,
+          advertisedValid: true,
+          runtimeValid: false,
+        })),
+      ]) {
+        expect(validate(input), JSON.stringify(validate.errors)).toBe(
+          advertisedValid,
+        );
         expect(
           browserCaptureComparisonInputSchema.safeParse(input).success,
-        ).toBe(expected);
+        ).toBe(runtimeValid);
         const beforeCalls = calls;
         const result = await client.callTool({
           name: contract.name,
           arguments: input,
         });
-        expect(calls - beforeCalls).toBe(expected ? 1 : 0);
-        expect(result.isError === true).toBe(!expected);
-        if (expected)
+        expect(calls - beforeCalls).toBe(runtimeValid ? 1 : 0);
+        expect(result.isError === true).toBe(!runtimeValid);
+        if (runtimeValid)
           expect(result.structuredContent).toMatchObject({
             operation: contract.name,
             normalized_result: compareBrowserCaptures(
@@ -147,6 +171,10 @@ describe("browser comparison input boundary", () => {
           });
       }
       const parsedPassive = browserCaptureComparisonInputSchema.parse(passive);
+      expect(parsedPassive).toEqual({
+        before: { ...passive.before, webmcp: null },
+        after: { ...passive.after, webmcp: null },
+      });
       expect(compareBrowserCaptures(parsedPassive)).toMatchObject({
         dimensions: { dom_structure: { status: "unchanged" } },
       });

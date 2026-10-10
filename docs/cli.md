@@ -20,6 +20,23 @@ files when neither `--provider` nor `--snapshot` is supplied. See
 [JavaScript artifact reconstruction](javascript-artifact-reconstruction.md)
 for results, integrity checks and coverage.
 
+The complete application Evidence can be hundreds of megabytes for a real
+application. When an agent or a person reads the result, save it to a file and
+project a summary, a module page or one module from the saved Evidence:
+
+```bash
+rea analyze-javascript-application /absolute/path/to/app --json > app-evidence.json
+jq -c '{source: {kind: "inline", evidence: .}, view: {kind: "summary"}}' app-evidence.json > app-view.json
+rea inspect-analysis-view app-view.json
+```
+
+For example, a 334 MB Obsidian application Evidence file yields a summary view
+of about 10 KB. Replace the view with
+`{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}` for a
+module page. See
+[JavaScript application workflows](javascript-application-workflows.md) for
+views, feature traces and comparisons that take the same saved Evidence.
+
 ## Native analysis
 
 Configure [Hopper or Ghidra](installation.md#hopper), or the
@@ -179,7 +196,10 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Output and exit status
 
 The default terminal format is TOON. Use `--json` when saving results for a
-JSON consumer. Output selection and formatting do not change operation status.
+JSON consumer. `--json` is indented on a terminal and compact when piped or
+redirected, which keeps large results smaller for agents and scripts; pipe
+through `jq .` for indented files. Output selection and formatting do not change
+operation status.
 
 | Status    | Meaning                                                                                                                                              |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

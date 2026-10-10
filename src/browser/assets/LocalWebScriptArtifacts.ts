@@ -25,6 +25,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
   async load(input: SelectedWebScriptInput, options?: ExecutionOptions) {
     let field: readonly (string | number)[] = ["manifest_path"];
     let targetPath = input.manifest_path;
+    let callerSelected = true;
     try {
       const manifestBytes = await readWebArtifactJson(
         input.manifest_path,
@@ -58,6 +59,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       const root = resolve(dirname(input.manifest_path));
       const sourcePath = join(root, "files", portable);
       targetPath = sourcePath;
+      callerSelected = false;
       await assertContained(root, sourcePath);
       const sourceBytes = await readStableArtifact(
         sourcePath,
@@ -99,7 +101,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       return err(
         webArtifactReadError(
           cause,
-          { operation: this.operation, field, targetPath },
+          { operation: this.operation, field, targetPath, callerSelected },
           options?.signal,
         ),
       );

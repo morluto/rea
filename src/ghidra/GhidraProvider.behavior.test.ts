@@ -198,6 +198,32 @@ describe("Ghidra Mach-O slice support", () => {
 });
 
 describe("Ghidra platform support", () => {
+  it("commits the PE role and managed classification to profile identity", async () => {
+    const ghidra = provider({ ...installationHost(), platform: "win32" });
+    const application = peTarget("x86_64");
+    const library = {
+      ...application,
+      executableRole: "shared-library",
+    } as const;
+    const digests = new Set<string>();
+    for (const target of [
+      application,
+      library,
+      { ...library, managed: true },
+    ]) {
+      const resolved = await ghidra.resolveAnalysisProfile(target);
+      if (!resolved.ok) throw resolved.error;
+      const profile = resolved.value.profile;
+      if (profile === null) throw new Error("Expected a PE analysis profile");
+      expect(profile.parameters).toMatchObject({
+        executable_role: target.executableRole,
+        managed: target.managed,
+      });
+      digests.add(profile.digest);
+    }
+    expect(digests.size).toBe(3);
+  });
+
   it("keeps Windows annotation mutation unavailable independently of native controls", () => {
     const ghidra = provider({ ...installationHost(), platform: "win32" });
     expect(
@@ -270,7 +296,7 @@ describe("Ghidra platform support", () => {
     expect(
       ghidra.inspectTargetSupport({
         ...nativeApplication,
-        executableRole: "shared-library",
+        executableRole: "non-executable",
       }),
     ).toMatchObject({
       status: "unsupported",
@@ -295,45 +321,59 @@ describe("Ghidra platform support", () => {
       code: "architecture_unsupported",
     });
   });
-  it("admits generated PE32 applications while rejecting unsupported x86 roles", async () => {
+});
+
+describe("Ghidra Windows PE fixture admission", () => {
+  it("admits generated PE32 and PE32+ DLLs and applications while preserving native-only Windows admission", async () => {
     const root = fileURLToPath(new URL("../../", import.meta.url));
     await promisify(execFile)(process.execPath, [
       join(root, "scripts/create-ghidra-windows-fixture.mjs"),
     ]);
-    const path = join(root, "build/fixtures/rea-ghidra-windows-x86.exe");
-    const bytes = await readFile(path);
-    const metadata = parseExecutableHeader(bytes, "x64");
-    expect(metadata).toMatchObject({
-      ok: true,
-      value: {
-        format: "pe",
-        architecture: "x86",
-        executableRole: "application",
-        managed: false,
-      },
-    });
-    if (!metadata.ok) throw new Error(metadata.error);
-    if (metadata.value.format !== "pe")
-      throw new Error("Expected a PE fixture");
-    const target: BinaryTarget = {
-      path,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      kind: "executable",
-      ...metadata.value,
-    };
     const ghidra = provider({ ...installationHost(), platform: "win32" });
-    expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
-    for (const [candidate, code] of [
-      [
-        { ...target, executableRole: "shared-library" },
-        "target_role_unsupported",
-      ],
-      [{ ...target, managed: true }, "managed_target_unsupported"],
-    ] as const)
-      expect(ghidra.inspectTargetSupport(candidate)).toMatchObject({
-        status: "unsupported",
-        code,
-      });
+    for (const architecture of ["x86", "x86_64"] as const) {
+      for (const dll of [false, true]) {
+        const path = join(
+          root,
+          "build/fixtures",
+          `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${dll ? "dll" : "exe"}`,
+        );
+        const bytes = await readFile(path);
+        const metadata = parseExecutableHeader(bytes, "x64");
+        const role = dll ? "shared-library" : "application";
+        expect(metadata).toMatchObject({
+          ok: true,
+          value: {
+            format: "pe",
+            architecture,
+            executableRole: role,
+            managed: false,
+          },
+        });
+        if (!metadata.ok) throw new Error(metadata.error);
+        if (metadata.value.format !== "pe")
+          throw new Error("Expected a PE fixture");
+        const target: BinaryTarget = {
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          kind: "executable",
+          ...metadata.value,
+        };
+        expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
+        for (const [candidate, code] of [
+          [
+            { ...target, executableRole: "non-executable" },
+            "target_role_unsupported",
+          ],
+          [{ ...target, managed: true }, "managed_target_unsupported"],
+          [{ ...target, architecture: "arm64" }, "architecture_unsupported"],
+        ] as const) {
+          expect(ghidra.inspectTargetSupport(candidate)).toMatchObject({
+            status: "unsupported",
+            code,
+          });
+        }
+      }
+    }
   });
 });
 
@@ -500,24 +540,23 @@ describe("Ghidra client projection", () => {
 });
 
 describe("Ghidra result projection", () => {
+  const createElfClient = async (ghidra: GhidraProvider) => {
+    const target = executableTarget("elf", "x86_64");
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    if (resolved.value.profile === null)
+      throw new Error("Expected a bound Ghidra profile");
+    return ghidra.createClient(target, resolved.value.profile);
+  };
+
   it("rejects malformed inventory output before Evidence creation", async () => {
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok({ items: "not-an-inventory" })),
       close: () => Promise.resolve(ok(null)),
     }));
-    const resolved = await ghidra.resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok) throw resolved.error;
-    if (resolved.value.profile === null)
-      throw new Error("Expected a bound Ghidra profile");
-
-    await expect(
-      ghidra
-        .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
-        .execute("list_procedures", {}),
-    ).resolves.toMatchObject({
+    const client = await createElfClient(ghidra);
+    await expect(client.execute("list_procedures", {})).resolves.toMatchObject({
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
@@ -546,21 +585,13 @@ describe("Ghidra result projection", () => {
           ),
         close: () => Promise.resolve(ok(null)),
       }));
-      const resolved = await ghidra.resolveAnalysisProfile(
-        executableTarget("elf", "x86_64"),
-      );
-      if (!resolved.ok) throw resolved.error;
-      if (resolved.value.profile === null)
-        throw new Error("Expected a bound Ghidra profile");
-
+      const client = await createElfClient(ghidra);
       await expect(
-        ghidra
-          .createClient(
-            executableTarget("elf", "x86_64"),
-            resolved.value.profile,
-          )
-          .execute("list_procedures", {}),
-      ).resolves.toMatchObject({ ok: false, error: { _tag: tag } });
+        client.execute("list_procedures", {}),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: tag },
+      });
     },
   );
 
@@ -582,19 +613,12 @@ describe("Ghidra result projection", () => {
         ),
       close: () => Promise.resolve(ok(null)),
     }));
-    const resolved = await ghidra.resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok) throw resolved.error;
-    if (resolved.value.profile === null)
-      throw new Error("Expected a bound profile");
+    const client = await createElfClient(ghidra);
     await expect(
-      ghidra
-        .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
-        .execute("annotate_native_function", {
-          procedure: "0x10100",
-          name: "bad name",
-        }),
+      client.execute("annotate_native_function", {
+        procedure: "0x10100",
+        name: "bad name",
+      }),
     ).resolves.toMatchObject({
       ok: false,
       error: {
@@ -622,16 +646,10 @@ describe("Ghidra result projection", () => {
         ),
       close: () => Promise.resolve(ok(null)),
     }));
-    const resolved = await ghidra.resolveAnalysisProfile(
-      executableTarget("elf", "x86_64"),
-    );
-    if (!resolved.ok) throw resolved.error;
-    if (resolved.value.profile === null)
-      throw new Error("Expected a bound Ghidra profile");
-
-    const result = await ghidra
-      .createClient(executableTarget("elf", "x86_64"), resolved.value.profile)
-      .execute("procedure_pseudo_code", { procedure: "main" });
+    const client = await createElfClient(ghidra);
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: "main",
+    });
     expect(result).toMatchObject({
       ok: false,
       error: { _tag: tag },

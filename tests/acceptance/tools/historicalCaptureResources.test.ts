@@ -83,18 +83,22 @@ it("reports real HAR heap exhaustion through CLI and MCP and preserves server us
   });
   expect(JSON.stringify(response)).not.toContain("caller-marked");
   expect(JSON.stringify(response)).not.toContain("rea doctor");
-  await expect(
-    execute(process.execPath, [
-      cli,
-      "inspect-web-network-capture",
-      path,
-      "har",
-      "--json",
-    ]),
-  ).rejects.toMatchObject({
-    code: 1,
-    stdout: expect.stringContaining('"code": "resource_constraint"'),
-  });
+  const failed: unknown = await execute(process.execPath, [
+    cli,
+    "inspect-web-network-capture",
+    path,
+    "har",
+    "--json",
+  ]).then(
+    () => undefined,
+    (cause: unknown) => cause,
+  );
+  expect(failed).toMatchObject({ code: 1 });
+  const stdout =
+    typeof failed === "object" && failed !== null && "stdout" in failed
+      ? String(failed.stdout)
+      : "";
+  expect(JSON.parse(stdout)).toMatchObject({ code: "resource_constraint" });
   const small = join(root, "small.har");
   await writeFile(small, capture(2));
   await client.ping();

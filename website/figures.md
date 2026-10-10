@@ -94,6 +94,14 @@ APK's selected Java and an explanatory summary.
 APK, methods, source attribution and reconstruction checks. Keep the block
 formula, default settings, slider outputs and reference cases consistent.
 
+## Touhou reconstruction essay
+
+The essay opens with a takeaway and develops its argument in prose. It has no
+opening flow figure. Project dates and the attributed README excerpt support
+the narrative; detailed milestone references are available in a native
+disclosure. Their provenance is documented in
+[evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
+
 ## Original image generation prompts
 
 ## Prompt 1
