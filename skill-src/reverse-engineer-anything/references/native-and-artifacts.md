@@ -34,6 +34,14 @@ cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
 
+For a completed `analyze_function` dossier, use `inspect_analysis_view` with
+`view: {kind: "native", facet: "value_flow_operations", offset: 0, limit: 32}`
+and the exact retained Evidence ID to read selected facts without reanalysis.
+Native facets also include procedure, pseudocode, assembly, callers/callees,
+references, and value-flow summaries. Pseudocode offsets and limits count UTF-16
+code units; use the returned `next_offset` for continuation. Provider limitations
+and unavailable facts remain explicit; the complete parent Evidence is retained.
+
 To see which functions or Objective-C methods a Mach-O actually calls in one
 run, use `observe_native_calls` with explicit breakpoints and a bounded
 `duration_ms`/`max_events`. It launches a new process under LLDB, so the target

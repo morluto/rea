@@ -118,6 +118,16 @@ Use IDs from the selected graph and read the complete endpoint properties;
 previously stored graphs still support their original IDs. Literal endpoint
 search, semantic tracing, and version comparison use the preserved values.
 
+Event and listener nodes likewise preserve the complete event name in
+`properties.event_name`. Event role keys use the same reserved-prefix string
+digest rule, scoped to the emitter; repeated registrations, removals, and
+dispatches keep one event per exact emitter/name pair. Long event labels use
+`event`, and listener labels use the shorter of `<method>:<name>` and
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
+change hashed event IDs and longer event/listener labels; query the preserved
+name or select IDs from the parent graph. Previously stored graphs keep their
+original IDs and remain valid trace inputs.
+
 ## Version comparison
 
 REA pairs entities only when a tier produces one unique candidate on each side.
