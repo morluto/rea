@@ -21,9 +21,11 @@ export interface JebMcpConnection {
 const toolResultSchema = z.object({
   isError: z.boolean().optional(),
   structuredContent: z.record(z.string(), z.unknown()).optional(),
-  content: z.array(
-    z.object({ type: z.string(), text: z.string().optional() }).passthrough(),
-  ),
+  content: z
+    .array(
+      z.object({ type: z.string(), text: z.string().optional() }).passthrough(),
+    )
+    .default([]),
 });
 
 /** Decode a JEB MCP tool result without inventing an empty observation. */
@@ -32,11 +34,9 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
   const blocks = result.content.flatMap((block) =>
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
-  if (result.isError === true)
-    throw new AnalysisProtocolError(
-      `JEB MCP tool failed: ${blocks.join("\n")}`,
-    );
   if (result.structuredContent !== undefined) {
+    // isError envelopes carry JEB's {success:false, message} refusal semantics;
+    // decode them so the provider can preserve the engine's own reason.
     return jsonValueSchema.parse(result.structuredContent);
   }
   if (blocks.length !== 1)
@@ -46,6 +46,10 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
   try {
     return jsonValueSchema.parse(JSON.parse(blocks[0] ?? "null"));
   } catch {
+    if (result.isError === true)
+      throw new AnalysisProtocolError(
+        `JEB MCP tool failed: ${blocks[0] ?? "unexplained engine failure"}`,
+      );
     return blocks[0] ?? null;
   }
 };
