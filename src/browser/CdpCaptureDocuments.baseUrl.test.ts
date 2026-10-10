@@ -198,6 +198,23 @@ describe("empty form destinations with a document base URL", () => {
     },
   );
 
+  it("keeps the first value when an attribute name repeats", () => {
+    const value = snapshot();
+    const later = `${origin}/later`;
+    value.strings.push(later);
+    const href = value.strings.indexOf("href");
+    const guide = value.strings.indexOf("guide");
+    const nodes = value.documents[0]?.nodes;
+    if (nodes === undefined) throw new TypeError("Expected a DOM snapshot");
+    nodes.attributes[2] = [href, guide, href, value.strings.length - 1];
+    const result = capture(value);
+    expect(result.nodes[2]?.attribute_names).toEqual(["href", "href"]);
+    expect(result.urls.map(({ url }) => url)).toContain(
+      `${origin}/screens/guide`,
+    );
+    expect(result.urls.map(({ url }) => url)).not.toContain(later);
+  });
+
   it("does not apply form semantics to an action attribute on another element", () => {
     const baseUrl = `${origin}/assets/`;
     const value = snapshot(baseUrl);

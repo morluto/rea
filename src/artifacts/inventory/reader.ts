@@ -5,6 +5,7 @@ import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
+import { ZIP_NON_ENTRY_TAIL_LIMITATION } from "../../domain/zipPackageFormat.js";
 
 export const createReader = async (
   path: string,
@@ -39,7 +40,15 @@ export const inventoryLimitations = (
   format: ArtifactOccurrence["artifact_format"],
   reader: ArtifactReader | undefined,
 ): string[] => {
-  if (reader !== undefined) return [];
+  if (reader !== undefined)
+    return reader.format === "zip" ||
+      reader.format === "ipa" ||
+      reader.format === "apk" ||
+      reader.format === "msix" ||
+      reader.format === "appx"
+      ? [ZIP_NON_ENTRY_TAIL_LIMITATION]
+      : [];
+  // dmg and pkg reach here only after classifyRootFormat matched their bytes.
   if (format === "dmg" || format === "pkg")
     return [
       `${format.toUpperCase()} root hash is observed; child inventory requires a native macOS adapter.`,

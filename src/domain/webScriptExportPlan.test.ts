@@ -46,7 +46,6 @@ describe("captured script path projection", () => {
   it.each([
     ["https://a.test/main.js", "https://a.test/main.js"],
     ["https://a.test/main.js", "https://a.test/main.js?v=2"],
-    ["https://a.test/A/main.js", "https://a.test/a/other.js"],
     ["https://a.test/main.js", "https://a.test/main.js/child.js"],
   ])(
     "isolates every version in a conflicting layout (%s, %s)",
@@ -98,6 +97,25 @@ describe("captured script path projection", () => {
       });
     },
   );
+
+  it("keeps case-distinct URL paths until the destination collides", () => {
+    const planned = planWebScriptExport([
+      source("https://a.test/A/main.js"),
+      source("https://a.test/a/other.js", 2),
+    ]);
+    expect(
+      planned.every(
+        ({ record }) =>
+          record.content.state === "exported" &&
+          record.content.layout === "url-path",
+      ),
+    ).toBe(true);
+    const paths = planned.map(({ record }) =>
+      record.content.state === "exported" ? record.content.relative_path : "",
+    );
+    expect(paths[0]).toMatch(/\/A\/main\.js$/u);
+    expect(paths[1]).toMatch(/\/a\/other\.js$/u);
+  });
 
   it("does not choose a canonical version when a competing source is unavailable", () => {
     const missing: CapturedWebScript = {

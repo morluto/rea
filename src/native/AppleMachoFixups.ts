@@ -6,6 +6,11 @@ import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
 export interface FixupCommands {
   /** Absolute file range of `LC_DYLD_CHAINED_FIXUPS` data. */
   readonly chained: { readonly offset: number; readonly size: number } | null;
+  /** Absolute file ranges of `LC_DYLD_INFO(_ONLY)` rebase streams. */
+  readonly rebases: readonly {
+    readonly offset: number;
+    readonly size: number;
+  }[];
   /** Absolute file ranges of `LC_DYLD_INFO(_ONLY)` bind streams. */
   readonly binds: readonly {
     readonly offset: number;
@@ -35,6 +40,10 @@ export interface PointerFixups {
   readonly formats: readonly string[];
   readonly failures: readonly string[];
   readonly issues: readonly DecodeIssue[];
+  /** Fixup segments or bind streams this reader walked. */
+  readonly examined: number;
+  /** Rebase opcode bytes present in the load command and not decoded. */
+  readonly unreadRebaseBytes: number;
   /** Decode the pointer stored at `address` whose raw 64-bit value is `raw`. */
   decode(address: bigint, raw: bigint): DecodedPointer;
 }
@@ -250,6 +259,8 @@ const chainedFixups = (
     formats,
     failures: issues.map(({ message }) => message),
     issues,
+    examined: Math.max(ranges.length, 1),
+    unreadRebaseBytes: 0,
     decode(address, raw) {
       const segment = ranges.find(
         ({ from, to }) => address >= from && address < to,
@@ -421,12 +432,18 @@ export const parsePointerFixups = (
 ): PointerFixups => {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
   if (commands.chained !== null) return chainedFixups(image, commands.chained);
+  const unreadRebaseBytes = commands.rebases.reduce(
+    (total, rebase) => total + rebase.size,
+    0,
+  );
   if (commands.binds.length === 0)
     return {
       kind: "none",
       formats: [],
       failures: [],
       issues: [],
+      examined: 0,
+      unreadRebaseBytes,
       decode: (_address, raw) => ({ kind: "rebase", target: raw }),
     };
   const binds = new Map<bigint, Import>();
@@ -446,6 +463,8 @@ export const parsePointerFixups = (
     issues: failures.map((message) =>
       issue("pointer_fixups", "bind_stream_decode_failed", message),
     ),
+    examined: commands.binds.length,
+    unreadRebaseBytes,
     decode(address, raw) {
       const bound = binds.get(address);
       return bound === undefined

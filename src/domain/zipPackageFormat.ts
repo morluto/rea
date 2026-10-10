@@ -28,3 +28,7 @@ export const zipPackageFormatForPath = (
   if (lower.endsWith(".appx") || lower.endsWith(".appxbundle")) return "appx";
   return undefined;
 };
+
+/** Inventory cannot see bytes that are not central-directory entries. */
+export const ZIP_NON_ENTRY_TAIL_LIMITATION =
+  "ZIP inventory lists central-directory entries only. Bytes after the central directory, including an APK Signing Block or a ZIP comment, are not occurrences.";

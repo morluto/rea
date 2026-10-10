@@ -358,5 +358,5 @@ const selectArchitecture = (
     );
     if (variant !== undefined) return variant;
   }
-  return normalized;
+  return null;
 };

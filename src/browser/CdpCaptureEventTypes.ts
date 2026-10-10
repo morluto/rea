@@ -12,6 +12,8 @@ export interface CapturedScript {
   readonly sourceMapUrl: string | null;
   readonly sourceMapRawUrl: string | null;
   readonly executionContextKey: string | null;
+  /** Frame observed when this script was parsed. Later context reuse does not move it. */
+  readonly frameId: string | null;
 }
 
 export type NetworkState = WebPageInspection["network"]["requests"][number];

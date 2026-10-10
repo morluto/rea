@@ -1,6 +1,10 @@
 import { isBuiltin } from "node:module";
 import { posix } from "node:path";
 
+import {
+  normalizeJoinedLogicalPath,
+  logicalPathEscapesRoot,
+} from "../../domain/artifactIdentity.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   admitsCanonicalPathSyntax,
@@ -326,12 +330,8 @@ const confineCandidate = (
   input: ResolveArtifactPathInput,
   candidate: string,
 ): string | ArtifactPathResolution => {
-  const normalized = posix.normalize(candidate);
-  if (
-    normalized === ".." ||
-    normalized.startsWith("../") ||
-    normalized.startsWith("/")
-  )
+  const normalized = normalizeJoinedLogicalPath(candidate);
+  if (logicalPathEscapesRoot(normalized))
     return unresolvedOutcome(input, "rejected", [
       "The resolved candidate escapes the canonical artifact root.",
     ]);
