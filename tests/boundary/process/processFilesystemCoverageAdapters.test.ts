@@ -169,9 +169,14 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     await writeFile(join(root, "z.txt"), "unchanged");
     const scenario = {
       executable: process.execPath,
-      arguments: ["-e", "require('node:fs').writeFileSync('a.txt','added')"],
+      arguments: [
+        "-e",
+        "const fs=require('node:fs');fs.mkdirSync('added');fs.writeFileSync('added/a.txt','added')",
+      ],
       working_directory: root,
-      filesystem_observation_paths: [root],
+      // Before capture the first root is absent. After capture it consumes
+      // both entries, so the unchanged second root is certainly unexamined.
+      filesystem_observation_paths: [join(root, "added"), join(root, "z.txt")],
       limits: { files: 2 },
     };
     const evidence = await (adapter === "cli" ? captureViaCli : captureViaMcp)(
@@ -181,13 +186,13 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     expect(capture.truncated).toBe(true);
     expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
     expect(
-      capture.filesystem_effects.find(({ path }) => path === "root_0:z.txt")
+      capture.filesystem_effects.find(({ path }) => path === "root_1:.")
         ?.status,
     ).toBe("unknown");
     expect(
       capture.filesystem_checkpoints
         .find(({ name }) => name === "after_settlement")
-        ?.effects.find(({ path }) => path === "root_0:z.txt")?.status,
+        ?.effects.find(({ path }) => path === "root_1:.")?.status,
     ).toBe("unknown");
   },
   20_000,

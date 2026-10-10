@@ -68,18 +68,18 @@ export const closeCdpTargetSession = async (
           // Best-effort domain cleanup; transport close is the definitive boundary.
         }
       }
-      if (!cleanup.signal.aborted && sessionId !== undefined)
-        try {
-          await connection.send(
-            "Target.detachFromTarget",
-            { sessionId },
-            undefined,
-            cleanup.signal,
-          );
-        } catch {
-          // Best-effort detach; transport close is the definitive boundary.
-        }
     }
+    if (!cleanup.signal.aborted && sessionId !== undefined)
+      try {
+        await connection.send(
+          "Target.detachFromTarget",
+          { sessionId },
+          undefined,
+          cleanup.signal,
+        );
+      } catch {
+        // Best-effort detach; transport close is the definitive boundary.
+      }
   } finally {
     clearTimeout(timeout);
     cleanup.abort();

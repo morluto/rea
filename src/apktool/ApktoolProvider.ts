@@ -157,7 +157,7 @@ const runApktool = async (
         timeoutMs: limits.timeoutMs,
         diagnosticBytes: limits.maxOutputBytes,
       },
-      (signal === undefined ? {} : { signal }),
+      signal === undefined ? {} : { signal },
     );
     return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
   } catch (cause) {

@@ -291,7 +291,7 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
 });
 
 it.each(["termination", "verification"] as const)(
-  "retains observations and releases the temporary root when process %s throws",
+  "retains observations and the temporary root when process %s throws",
   async (stage) => {
     const cleanupFailure = new Error(`${stage} inspection failed`);
     const removeTemporaryRoot = vi.fn(async () => undefined);
@@ -319,8 +319,11 @@ it.each(["termination", "verification"] as const)(
       host,
     });
 
-    expect(removeTemporaryRoot).toHaveBeenCalledWith("/fixture/root");
-    expect(cleanup.temporary_root).toEqual({ state: "cleaned", reason: null });
+    expect(removeTemporaryRoot).not.toHaveBeenCalled();
+    expect(cleanup.temporary_root).toEqual({
+      state: "unverified",
+      reason: `temporary root retained because owned process cleanup is failed: ${cleanupFailure.message}`,
+    });
     expect(cleanup.owned_process_group).toMatchObject({
       state: "failed",
       reason: cleanupFailure.message,

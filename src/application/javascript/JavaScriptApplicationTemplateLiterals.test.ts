@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
@@ -31,7 +32,15 @@ const graphIdentities = async (source: string) => {
         ...(identity.strategy === "artifact-local-key"
           ? {
               namespace: identity.namespace,
-              key: identity.key.replace(/^[0-9a-f]{64}:/u, ""),
+              key:
+                identity.namespace === "module-export"
+                  ? JSON.stringify(
+                      z
+                        .array(z.string())
+                        .parse(JSON.parse(identity.key))
+                        .slice(1),
+                    )
+                  : identity.key.replace(/^[0-9a-f]{64}:/u, ""),
             }
           : {}),
       }))

@@ -17,27 +17,33 @@ it.each(["after", "before"] as const)(
   "keeps absence unknown when the %s snapshot omits an existing file",
   async (partialSide) => {
     const root = await createTestTempDirectory("rea-fs-partial-absence-");
-    await writeFile(join(root, "z.txt"), "unchanged");
+    const names = ["a.txt", "z.txt"];
+    for (const name of names) await writeFile(join(root, name), "unchanged");
     const scenario = parseProcessScenario({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
       limits: { files: 2 },
     });
-    if (partialSide === "before") await writeFile(join(root, "a.txt"), "other");
-    const before = await snapshotRoots(scenario);
-    if (partialSide === "after") await writeFile(join(root, "a.txt"), "other");
-    else await rm(join(root, "a.txt"));
-    const after = await snapshotRoots(scenario);
-    expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
+    const partial = await snapshotRoots(scenario);
+    const omitted = names.find(
+      (name) => !partial.files.some(({ path }) => path === `root_0:${name}`),
+    );
+    if (omitted === undefined)
+      throw new Error("Expected an omitted fixture file");
+    for (const name of names) if (name !== omitted) await rm(join(root, name));
+    const complete = await snapshotRoots(scenario);
+    const before = partialSide === "before" ? partial : complete;
+    const after = partialSide === "after" ? partial : complete;
+    expect(await readFile(join(root, omitted), "utf8")).toBe("unchanged");
     const effect = classifyFilesystemEffects(before, after).find(
-      ({ path }) => path === "root_0:z.txt",
+      ({ path }) => path === `root_0:${omitted}`,
     );
     expect(effect?.status).toBe("unknown");
     expect(effect).toMatchObject(
       partialSide === "after"
-        ? { before: { path: "root_0:z.txt" }, after: null }
-        : { before: null, after: { path: "root_0:z.txt" } },
+        ? { before: { path: `root_0:${omitted}` }, after: null }
+        : { before: null, after: { path: `root_0:${omitted}` } },
     );
   },
 );

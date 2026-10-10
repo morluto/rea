@@ -553,7 +553,7 @@ it("shares concurrent close and retries browser cleanup after failure", async ()
   expect(cleanupSettlements).toEqual([false, true]);
 });
 
-it("keeps failed event finalization failed across cleanup retries", async () => {
+it("reports event finalization failure before allowing settled cleanup retries", async () => {
   const finishEvents = vi
     .fn<() => Promise<void>>()
     .mockRejectedValue(new Error("event finalization failed"));
@@ -567,10 +567,9 @@ it("keeps failed event finalization failed across cleanup retries", async () => 
 
   await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
     reason: "cleanup_failed",
+    cleanup: { reason: "event finalization failed" },
   });
-  await expect(cleanup.close(finishEvents)).rejects.toMatchObject({
-    reason: "cleanup_failed",
-  });
+  await expect(cleanup.close(finishEvents)).resolves.toBeUndefined();
   expect(finishEvents).toHaveBeenCalledTimes(1);
   expect(closeBrowser).toHaveBeenCalledTimes(1);
 });

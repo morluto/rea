@@ -195,8 +195,12 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
       "files_limit",
     );
     expect(
-      result.files_after.find(({ path }) => path === "root_0:b.txt")?.sha256,
+      result.files_before.find(({ path }) => path === "root_0:b.txt")?.sha256,
     ).toBeNull();
+    const after = result.files_after.find(
+      ({ path }) => path === "root_0:b.txt",
+    );
+    if (after !== undefined) expect(after.sha256).toBeNull();
     expect(processSourceTruncated(result, "terminal_rendered")).toBe(true);
     expect(compareProcessCaptures(result, result)).toMatchObject({
       terminal: "unknown",
