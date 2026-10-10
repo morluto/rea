@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import {
+  digestProcessCommitment,
   parseProcessScenario,
   processComparisonContract,
   processScenarioCommitment,
@@ -104,4 +105,27 @@ it.each([
   expect(parse, "the message names the representability limit").toThrow(
     "exactly representable",
   );
+});
+
+it("keeps the committed identity of a scenario without finalization byte for byte", () => {
+  const scenario = parseProcessScenario({
+    executable: "/usr/bin/true",
+    arguments: ["-x"],
+    working_directory: "/tmp",
+    environment: { A: "b" },
+    filesystem_observation_paths: ["/tmp"],
+    timeout_ms: 5_000,
+    idle_timeout_ms: 2_000,
+    settle_ms: 50,
+  });
+
+  // Digests computed from the compiled base commit before finalization_ms existed.
+  expect(
+    digestProcessCommitment(processScenarioCommitment(scenario)),
+    "the full scenario commitment is unchanged",
+  ).toBe("b50005d26269bd1db4a49c79e05bca67c3a18d837b45cd1c8ff591c01eb7623a");
+  expect(
+    digestProcessCommitment(processComparisonContract(scenario)),
+    "the comparison contract commitment is unchanged",
+  ).toBe("675b759347a737a4f1cbfbf2fc759258d9c877216513f2f4dad3ed1e9e6e7631");
 });
