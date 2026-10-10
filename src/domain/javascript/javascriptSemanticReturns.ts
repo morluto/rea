@@ -26,10 +26,8 @@ import {
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticReturnCoverage } from "./javascriptSemanticCoverage.js";
-import {
-  childNodes,
-  traverseJavaScriptAst,
-} from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 
 interface ReturnExpression {
   readonly node: t.Node | null;
@@ -123,27 +121,10 @@ const callableNodes = (program: t.Program): Map<string, t.Node> => {
   return output;
 };
 
-const directReturnExpressions = (callable: t.Node): ReturnExpression[] => {
-  if (
-    t.isArrowFunctionExpression(callable) &&
-    !t.isBlockStatement(callable.body)
-  )
-    return [{ node: callable.body, location: range(callable.body) }];
-  if (!t.isFunction(callable)) return [];
-  const output: ReturnExpression[] = [];
-  const pending = childNodes(callable.body).reverse();
-  while (pending.length > 0) {
-    const node = pending.pop();
-    if (node === undefined || t.isFunction(node) || t.isClass(node)) continue;
-    if (t.isReturnStatement(node)) {
-      output.push({ node: node.argument ?? null, location: range(node) });
-      continue;
-    }
-    // Reverse children so the explicit stack retains source-tree order.
-    for (const child of childNodes(node).reverse()) pending.push(child);
-  }
-  return output;
-};
+const directReturnExpressions = (callable: t.Node): ReturnExpression[] =>
+  semanticCallableResultExpressions(callable)
+    .filter(({ kind }) => kind === "return")
+    .map(({ node, site }) => ({ node, location: range(site) }));
 
 const callableIdsForBinding = (
   binding: JavaScriptSemanticBindingState,

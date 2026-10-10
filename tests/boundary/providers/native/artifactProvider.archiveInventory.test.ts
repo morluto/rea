@@ -66,6 +66,9 @@ describe("artifact archive inventory", () => {
         inspection.substeps[0]?.evidence.normalized_result,
       ).occurrences,
     ).toHaveLength(3);
+    // Occurrences name every logical path; neither Evidence repeats them.
+    expect(inspectionEvidence.locations).toEqual([]);
+    expect(inspection.substeps[0]?.evidence.locations).toEqual([]);
     expect(inspection.observations.map(({ kind }) => kind)).toEqual([
       "root-manifest",
     ]);

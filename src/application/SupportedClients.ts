@@ -20,6 +20,7 @@ export interface SetupClient {
     | "grok"
     | "omp"
     | "pi"
+    | "hermes"
     | "unsupported";
 }
 
@@ -28,21 +29,7 @@ type ClientPath = readonly string[] | ((paths: ClientPathContext) => string);
 interface ClientPathContext {
   readonly home: string;
   readonly platform: NodeJS.Platform;
-  readonly env: {
-    readonly APPDATA?: string | undefined;
-    readonly CLAUDE_CONFIG_DIR?: string | undefined;
-    readonly CODEX_HOME?: string | undefined;
-    readonly COPILOT_HOME?: string | undefined;
-    readonly GROK_HOME?: string | undefined;
-    readonly OMP_PROFILE?: string | undefined;
-    readonly OPENCODE_CONFIG?: string | undefined;
-    readonly PI_CODING_AGENT_DIR?: string | undefined;
-    readonly PI_CONFIG_DIR?: string | undefined;
-    readonly PI_PROFILE?: string | undefined;
-    readonly QWEN_HOME?: string | undefined;
-    readonly SAND_DATA_ROOT?: string | undefined;
-    readonly XDG_CONFIG_HOME?: string | undefined;
-  };
+  readonly env: Readonly<NodeJS.ProcessEnv>;
 }
 
 interface ClientDefinition {
@@ -51,6 +38,7 @@ interface ClientDefinition {
   readonly configPath: ClientPath;
   readonly markerPath: ClientPath;
   readonly format: NonNullable<SetupClient["format"]>;
+  readonly skillPath?: ClientPath;
 }
 
 const vscodeUserDirectory = ({
@@ -111,6 +99,50 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME ?? join(home, ".grok");
+
+/**
+ * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
+ * Hermes's own resolver (`%LOCALAPPDATA%\\hermes` on Windows, `~/.hermes`
+ * elsewhere), including the optional `HERMES_DATA_DIR_SUFFIX` that is appended
+ * to the literal `hermes`/`.hermes` directory name.
+ */
+const hermesDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  const override = env.HERMES_HOME?.trim();
+  if (override) {
+    const expandedVariables = override.replace(
+      /\$(\w+|\{[^}]*\})/gu,
+      (match, variable: string) => {
+        const key = variable.startsWith("{") ? variable.slice(1, -1) : variable;
+        return env[key] ?? match;
+      },
+    );
+    const expanded =
+      platform === "win32"
+        ? expandedVariables.replace(
+            /%([^%]+)%/gu,
+            (match, variable: string) => env[variable] ?? match,
+          )
+        : expandedVariables;
+    if (expanded === "~") return home;
+    if (
+      expanded.startsWith("~/") ||
+      (platform === "win32" && expanded.startsWith("~\\"))
+    )
+      return join(home, expanded.slice(2));
+    return resolve(expanded);
+  }
+  const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
+  return platform === "win32"
+    ? join(
+        env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
+        `hermes${suffix}`,
+      )
+    : join(home, `.hermes${suffix}`);
+};
 
 /** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
 const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
@@ -251,6 +283,8 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "claude_code",
     displayName: "Claude Code",
+    skillPath: ({ home, env }: ClientPathContext) =>
+      join(env.CLAUDE_CONFIG_DIR ?? join(home, ".claude"), "skills"),
     configPath: (context: ClientPathContext) =>
       join(claudeCodeConfigDirectory(context), ".claude.json"),
     markerPath: claudeCodeMarkerDirectory,
@@ -375,6 +409,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "pi",
   },
   {
+    name: "hermes",
+    displayName: "Hermes",
+    skillPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "skills"),
+    configPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "config.yaml"),
+    markerPath: hermesDirectory,
+    format: "hermes",
+  },
+  {
     name: "grok_bot",
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
@@ -390,21 +434,7 @@ const resolvePath = (path: ClientPath, context: ClientPathContext): string =>
 export const supportedClients = (
   home: string,
   platform: NodeJS.Platform = process.platform,
-  env: ClientPathContext["env"] = {
-    APPDATA: process.env.APPDATA,
-    CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-    CODEX_HOME: process.env.CODEX_HOME,
-    COPILOT_HOME: process.env.COPILOT_HOME,
-    GROK_HOME: process.env.GROK_HOME,
-    OMP_PROFILE: process.env.OMP_PROFILE,
-    OPENCODE_CONFIG: process.env.OPENCODE_CONFIG,
-    PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
-    PI_CONFIG_DIR: process.env.PI_CONFIG_DIR,
-    PI_PROFILE: process.env.PI_PROFILE,
-    QWEN_HOME: process.env.QWEN_HOME,
-    SAND_DATA_ROOT: process.env.SAND_DATA_ROOT,
-    XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-  },
+  env: ClientPathContext["env"] = process.env,
 ): readonly SetupClient[] => {
   const context = { home, platform, env };
   return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => {
@@ -427,4 +457,46 @@ export const supportedClients = (
       };
     }
   });
+};
+
+/** Resolve personal skill roots using the same client environment as setup. */
+export const clientSkillDirectories = (
+  home: string,
+  clientIds: readonly string[] | undefined,
+  environment: Readonly<NodeJS.ProcessEnv> = {},
+  platform: NodeJS.Platform = process.platform,
+): readonly { readonly client: string; readonly directory: string }[] => {
+  const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
+  const selected =
+    clientIds === undefined
+      ? [
+          "shared",
+          ...definitions
+            .filter(({ skillPath }) => skillPath !== undefined)
+            .map(({ name }) => name),
+        ]
+      : clientIds.length === 0
+        ? ["shared"]
+        : clientIds;
+  const destinations = new Map<string, { client: string; directory: string }>();
+  for (const client of selected) {
+    const definition = definitions.find(({ name }) => name === client);
+    const directory =
+      definition?.skillPath === undefined
+        ? join(home, ".agents", "skills")
+        : resolvePath(definition.skillPath, {
+            home,
+            platform,
+            env: environment,
+          });
+    if (!destinations.has(directory))
+      destinations.set(directory, {
+        client:
+          directory === join(home, ".agents", "skills") ? "shared" : client,
+        directory,
+      });
+  }
+  return [...destinations.values()].sort((left, right) =>
+    left.directory.localeCompare(right.directory),
+  );
 };

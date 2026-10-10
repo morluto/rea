@@ -194,10 +194,8 @@ class ArtifactClient implements AnalysisClient {
               this.target.sourcePath ?? this.target.path,
               result.manifest,
             ),
-            locations: result.artifacts.map(({ relative_path: path }) => ({
-              kind: "artifact-path" as const,
-              path,
-            })),
+            // Each extracted file's path is already in artifacts.
+            locations: [],
           }),
         );
       }
@@ -211,10 +209,8 @@ class ArtifactClient implements AnalysisClient {
             this.target.sourcePath ?? this.target.path,
             result.manifest,
           ),
-          locations: result.occurrences.map(({ logical_path: path }) => ({
-            kind: "artifact-path" as const,
-            path,
-          })),
+          // Each occurrence's logical path is already in the result.
+          locations: [],
         }),
       );
     } catch (cause: unknown) {
@@ -323,17 +319,14 @@ class ArtifactClient implements AnalysisClient {
       this.target.sourcePath ?? this.target.path,
       inventory.manifest,
     );
-    const locations = inventory.occurrences.map(({ logical_path: path }) => ({
-      kind: "artifact-path" as const,
-      path,
-    }));
     const inventoryEvidence = createEvidence(subject, ARTIFACT_GRAPH_PROVIDER, {
       operation: "inventory_artifact",
       parameters: inventoryParameters,
       result: inventory,
       rawResult: null,
       limitations: inventory.limitations,
-      locations,
+      // The nested inventory already names every occurrence's logical path.
+      locations: [],
     });
     const result = createArtifactInspection(inventoryEvidence);
     await options?.progress?.report({
@@ -347,7 +340,7 @@ class ArtifactClient implements AnalysisClient {
         rawResult: null,
         limitations: result.limitations,
         subject,
-        locations,
+        locations: [],
       }),
     );
   }

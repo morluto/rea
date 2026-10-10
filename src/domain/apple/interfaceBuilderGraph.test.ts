@@ -552,3 +552,32 @@ it("names the archive once per evidence record", () => {
     evidence.filter(({ description }) => description.includes(relativePath)),
   ).toEqual([]);
 });
+
+it("states each object's class, label, and ID once", () => {
+  const { objects } = parseInterfaceBuilderRecords({
+    "com.apple.ibtool.document.objects": {
+      "7": {
+        customClass: "NSButton",
+        label: "Start",
+        objectID: "7",
+        nibValues: { NSContents: "Start" },
+      },
+      button: { class: "UIButton", title: "Build", objectID: "authored" },
+    },
+  });
+  expect(objects).toEqual([
+    expect.objectContaining({
+      id: "7",
+      class_name: "NSButton",
+      name: "Start",
+      attributes: { nibValues: { NSContents: "Start" } },
+    }),
+    expect.objectContaining({
+      id: "button",
+      class_name: "UIButton",
+      name: "Build",
+      // Values that differ from the canonical fields stay as authored.
+      attributes: { class: "UIButton", title: "Build", objectID: "authored" },
+    }),
+  ]);
+});

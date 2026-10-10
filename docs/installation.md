@@ -140,6 +140,7 @@ listed after the table because its connector is not one of these files:
 | Grok Build         | `grok_build`     |
 | OMP                | `omp`            |
 | Pi                 | `pi`             |
+| Hermes             | `hermes`         |
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
 setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
@@ -182,6 +183,17 @@ For OMP, setup writes a `type: "stdio"` entry to the user-level
 registration. Doctor treats an `enabled: false` entry as active when
 `enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
 it. Run setup under each profile that should load REA.
+
+For Hermes, setup writes a `mcp_servers.rea` entry to `config.yaml`, preserving
+comments and unrelated settings. It resolves that file from `HERMES_HOME`, else
+from the platform default Hermes itself uses — `%LOCALAPPDATA%\hermes` on
+Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Hermes
+connects an entry unless `enabled` is false, so setup states `enabled: true`.
+
+Hermes personal skills install under the active Hermes home's `skills` directory.
+REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
+and home expansion before resolving that profile. Setup previews the resolved
+configuration and skill destinations; doctor and uninstall use those same paths.
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native

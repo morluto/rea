@@ -50,10 +50,9 @@ describe("artifact inventory entry order", () => {
         const parent = artifactOccurrenceAt(observed, parentPath);
         expect(observed.edges).toContainEqual(
           expect.objectContaining({
-            logical_path: path,
+            occurrence_id: occurrence.occurrence_id,
             relation: "contains",
             parent_artifact_id: parent.artifact_id,
-            child_artifact_id: occurrence.artifact_id,
           }),
         );
       }
