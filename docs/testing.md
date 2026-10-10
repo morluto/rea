@@ -167,6 +167,26 @@ fix for that client/model limit. It preserves the complete catalog and schemas.
 Live model APIs, native Windows and default OS-home skill discovery remain
 unverified.
 
+`verify:grok-client` requires installed Grok Build (verified with the official
+Linux x64 1.0.50 binary); select it with `REA_VERIFY_GROK_COMMAND`. This optional
+POSIX lane isolates `GROK_HOME`, an independent Git workspace and additional
+skill roots, disables foreign configuration discovery, guards setup writes,
+preserves unrelated registrations/backups and checks idempotence. Call mode
+loads the full skill through native `read_file`, queries all REA names and input
+schemas through native `search_tool`, and calls analysis through `use_tool`.
+If discovery reports `partial`, the native agent diagnoses REA registration and
+retries discovery. No startup-timeout override or fixed readiness delay is used.
+A larger Unicode-path fixture exercises native result offloading: the full
+retained Evidence is validated against its named schema, then native terminal
+queries recover the selected export facts, subject and full artifact digest in
+the next model request. This verifies useful artifact recovery without claiming
+that every offloaded graph fact enters model context. Native line-number and
+truncation envelopes remain in the request artifacts. Use `-- chat` for ordinary
+chat, or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
+The loopback OpenAI completions/SSE custom model declares a one-million-token
+context and synthetic usage. Live xAI APIs, native Windows and default OS-home
+skill discovery remain unverified.
+
 `verify:omp-client` requires installed OMP (verified with the official Linux x64
 18.8.7 binary); select it with `REA_VERIFY_OMP_COMMAND`. This optional POSIX lane
 isolates the default agent, global config and XDG roots, guards setup targets,
