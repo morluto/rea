@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticObjectPatternKeys,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import {
   semanticArrayIndex,
   type JavaScriptSemanticPropertyPath,
@@ -136,16 +139,7 @@ const visit = (
                   ...source.projection,
                   {
                     excludedKeys: [
-                      ...new Set(
-                        pattern.properties.flatMap((property) => {
-                          if (t.isRestElement(property)) return [];
-                          const key = semanticStaticPropertyKey(
-                            property.key,
-                            property.computed,
-                          );
-                          return key === null ? [] : [key];
-                        }),
-                      ),
+                      ...new Set(semanticObjectPatternKeys(pattern)),
                     ].sort(compareUnicodeCodePoints),
                   },
                 ],
