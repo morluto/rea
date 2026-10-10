@@ -23,11 +23,13 @@ import {
   type ArtifactGraphManifest,
   type ArtifactNode,
   type ArtifactOccurrence,
+  type IntegrityContradiction,
 } from "../../domain/artifactGraph.js";
 import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventory } from "../inventory/ArtifactInventory.js";
+import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 
 /** Local extraction input with the output root chosen by the adapter. */
 export interface ArtifactExtractionInput {
@@ -35,6 +37,7 @@ export interface ArtifactExtractionInput {
   readonly inputFormat: BinaryTarget["format"];
   readonly outputRoot: string;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly integrityPolicy: ArtifactIntegrityPolicyName;
 }
 
 /** Extract every regular inventory occurrence into an exclusively owned absent root. */
@@ -49,6 +52,7 @@ export const extractArtifact = async (
   const snapshot = await scanArtifactInventory(sourcePath, {
     signal,
     environment: input.environment,
+    integrity: { mode: input.integrityPolicy },
   });
   return materializeArtifactInventory(input, sourcePath, snapshot, signal);
 };
@@ -100,6 +104,9 @@ export const materializeArtifactInventory = async (
     manifest: snapshot.manifest,
     occurrences,
     nodes,
+    integrityContradictions: snapshot.integrity_contradictions.filter(
+      ({ occurrence_id: id }) => selectedIds.has(id),
+    ),
   };
   const selected = activeOccurrences.map((occurrence) => {
     // REA never decrypts archive entries, so an encrypted entry makes the
@@ -109,6 +116,24 @@ export const materializeArtifactInventory = async (
         "extract_artifact",
         input.inputPath,
         `Archive entry ${occurrence.logical_path} is encrypted; REA does not decrypt archive entries, so the archive cannot be extracted completely`,
+      );
+    // Inventory keeps an ASAR unpacked entry whose companion file is absent,
+    // but extraction cannot materialize bytes it never observed.
+    if (
+      occurrence.entry_kind === "file" &&
+      occurrence.artifact_id === null &&
+      occurrence.hash_status === "unavailable"
+    )
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        `ASAR unpacked companion bytes are unavailable for ${occurrence.logical_path}`,
+        undefined,
+        {
+          logicalPath: occurrence.logical_path,
+          declaredSha256: null,
+          calculatedSha256: null,
+          unpacked: true,
+        },
       );
     if (
       (occurrence.entry_kind !== "file" && occurrence.entry_kind !== "slice") ||
@@ -293,8 +318,14 @@ const createExtractionResult = (
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
     provenance: [],
+    integrity_contradictions: inventory.integrityContradictions,
     limitations: [
       "All regular files in the active artifact were materialized; nested archive contents remain represented by their containing file.",
+      ...(inventory.integrityContradictions.length === 0
+        ? []
+        : [
+            `${String(inventory.integrityContradictions.length)} extracted file(s) contradict declared integrity metadata; their bytes are observed-untrusted.`,
+          ]),
     ],
   });
 };
@@ -303,6 +334,7 @@ interface LoadedInventory {
   readonly manifest: ArtifactGraphManifest;
   readonly occurrences: ReadonlyMap<string, ArtifactOccurrence>;
   readonly nodes: ReadonlyMap<string, ArtifactNode>;
+  readonly integrityContradictions: readonly IntegrityContradiction[];
 }
 
 const collectOccurrences = (

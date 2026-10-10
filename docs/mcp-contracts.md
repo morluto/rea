@@ -350,3 +350,15 @@ and reconstruction cannot treat it as unchanged.
 canonical `integrity_contradictions` records and marks application graph
 coverage partial when any mismatch is continued. Contradicted nested ASARs
 remain opaque.
+
+`extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
+on `rea extract-artifact`. With `record-and-continue` it writes the observed
+bytes and returns the `integrity_contradictions` records for the extracted
+files. An active ASAR unpacked entry whose companion file is absent cannot be
+materialized; extraction fails as `unavailable` with that logical path.
+
+Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
+writing the archive header, so their declared hashes no longer match. Electron
+does not check unpacked companions against those hashes at runtime. Integrity
+failures for such entries name this cause and the operation to rerun with
+`record-and-continue`; REA does not exempt unpacked entries silently.

@@ -190,8 +190,7 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error.userMessage !== undefined) return error.userMessage;
   const standardMessage = standardErrorMessage(error._tag);
   if (standardMessage !== undefined) return standardMessage;
-  if (error instanceof ArtifactOperationError)
-    return artifactMessage(error.operation, error.reason);
+  if (error instanceof ArtifactOperationError) return artifactMessage(error);
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing"
       ? `Evidence ${error.evidenceId} is not retained in this session. Supply complete inline Evidence, re-run its producer, or import its bundle before using this reference.`
@@ -326,20 +325,37 @@ const START_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
   "HopperStartError",
 ]);
 
-const artifactMessage = (
-  operation: ArtifactOperationError["operation"],
-  reason: ArtifactOperationError["reason"],
-): string => {
+/** Operations that accept integrity_policy for declared-integrity mismatches. */
+const INTEGRITY_POLICY_OPERATIONS: ReadonlySet<
+  ArtifactOperationError["operation"]
+> = new Set([
+  "inventory_artifact",
+  "inspect_artifact",
+  "extract_artifact",
+  "analyze_javascript_application",
+]);
+
+const artifactMessage = ({
+  operation,
+  reason,
+  artifactDetails: details,
+}: ArtifactOperationError): string => {
   if (reason === "cancelled")
     return "Artifact operation was cancelled. Start it again when ready.";
   if (reason === "limit")
     return "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.";
   if (reason === "path")
     return "Artifact contains an unsafe or conflicting internal path. Inspect the reported path and correct the artifact before retrying.";
+  if (reason === "unavailable" && details?.unpacked === true)
+    return `ASAR unpacked companion bytes are unavailable for ${details.logicalPath}. Select the archive in place with its .unpacked directory beside it, then retry.`;
   if (reason === "unavailable")
     return "Artifact processing is unavailable for the current target or host. Check artifact support and required tools.";
-  if (reason === "integrity" && operation === "analyze_javascript_application")
-    return "Artifact bytes contradict declared integrity. If expected, rerun analyze_javascript_application with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.";
+  if (reason === "integrity" && INTEGRITY_POLICY_OPERATIONS.has(operation))
+    return `${
+      details?.unpacked === true && details.calculatedSha256 !== null
+        ? `Declared ASAR integrity for unpacked entry ${details.logicalPath} contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive.`
+        : "Artifact bytes contradict declared integrity."
+    } If expected, rerun ${operation === "inventory_artifact" ? "inspect_artifact" : operation} with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";

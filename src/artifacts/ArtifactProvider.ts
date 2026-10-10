@@ -183,6 +183,7 @@ class ArtifactClient implements AnalysisClient {
             inputFormat: this.target.format,
             outputRoot: parsed.output_root,
             environment: this.environment,
+            integrityPolicy: parsed.integrity_policy,
           },
           options?.signal,
         );

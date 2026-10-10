@@ -225,6 +225,7 @@ export const artifactExtractionResultSchema = z.object({
     residual_paths: z.array(boundedRelativePathSchema),
   }),
   provenance: z.array(artifactCommandSchema),
+  integrity_contradictions: z.array(integrityContradictionSchema),
   limitations: z.array(z.string()),
 });
 
