@@ -67,7 +67,7 @@ import type {
 } from "../../domain/process/processCapture.js";
 import { partialProcessCaptureObservationSchema } from "../../domain/process/processCapture.js";
 interface TerminalExitOptions {
-  readonly terminal: IPty;
+  readonly terminal: Pick<IPty, "onExit" | "kill">;
   readonly scenario: ProcessScenario;
   readonly started: number;
   readonly lastOutput: () => number;
@@ -676,11 +676,15 @@ export const awaitTerminalExit = async ({
     // A deadline with a finalization interval sends SIGTERM first and keeps
     // observing; SIGKILL follows only when the interval elapses or the request
     // is cancelled.
+    // The interval is measured on the monotonic clock so a wall-clock change
+    // cannot shorten it or produce a negative elapsed time.
     let finalizationStartedAt: number | undefined;
-    let forcedKillAfterMs: number | undefined;
+    let escalationSent = false;
     const forceKill = (): void => {
-      if (finalizationStartedAt !== undefined)
-        forcedKillAfterMs ??= Date.now() - finalizationStartedAt;
+      if (finalizationStartedAt !== undefined) {
+        if (escalationSent) return;
+        escalationSent = true;
+      }
       terminal.kill("SIGKILL");
     };
     const terminateAtDeadline = (): void => {
@@ -688,10 +692,16 @@ export const awaitTerminalExit = async ({
         terminal.kill("SIGKILL");
         return;
       }
-      finalizationStartedAt = Date.now();
+      finalizationStartedAt = performance.now();
       terminal.kill("SIGTERM");
     };
     terminal.onExit((exit) => {
+      // Measures when the exit was observed, not when the operating system
+      // ended the process; the PTY layer can deliver the notification late.
+      const finalizationElapsedMs =
+        finalizationStartedAt === undefined
+          ? undefined
+          : Math.round(performance.now() - finalizationStartedAt);
       recordEvent("lifecycle", 0);
       for (const [eventIndex, event] of scenario.events.entries()) {
         if (dispatchedEventIndexes.has(eventIndex)) continue;
@@ -718,18 +728,19 @@ export const awaitTerminalExit = async ({
       resolveExit({
         ...exit,
         reason,
-        ...(finalizationStartedAt === undefined
+        ...(finalizationElapsedMs === undefined
           ? {}
           : {
               finalization: {
                 requested_ms: scenario.finalization_ms,
                 signal: "SIGTERM" as const,
+                // A kill is only attributed when the harness sent SIGKILL and
+                // the observed exit shows its effect.
                 outcome:
-                  forcedKillAfterMs === undefined
-                    ? ("target_exited" as const)
-                    : ("forced_kill" as const),
-                elapsed_ms:
-                  forcedKillAfterMs ?? Date.now() - finalizationStartedAt,
+                  escalationSent && exit.signal === 9
+                    ? ("forced_kill" as const)
+                    : ("target_exited" as const),
+                elapsed_ms: finalizationElapsedMs,
               },
             }),
       });
@@ -740,7 +751,10 @@ export const awaitTerminalExit = async ({
         reason = "cancelled";
         forceKill();
       } else if (finalizationStartedAt !== undefined) {
-        if (Date.now() - finalizationStartedAt >= scenario.finalization_ms)
+        if (
+          performance.now() - finalizationStartedAt >=
+          scenario.finalization_ms
+        )
           forceKill();
       } else if (Date.now() - started >= scenario.timeout_ms) {
         reason = "timeout";

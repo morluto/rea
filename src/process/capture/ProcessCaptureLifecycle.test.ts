@@ -51,6 +51,7 @@ const start = (
     }),
     started: Date.now(),
     lastOutput: () => Date.now(),
+    signal: undefined,
     timers: new Set<ProcessTimer>(),
     interactions: [],
     dispatchedEventIndexes: new Set<number>(),
