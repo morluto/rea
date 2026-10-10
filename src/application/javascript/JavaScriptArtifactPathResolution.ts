@@ -195,22 +195,105 @@ const bareModuleCandidate = (
     return unresolvedOutcome(input, "external", [
       "The bare specifier is a Node builtin, package import map, or invalid package name.",
     ]);
-  if (declared !== packageName)
-    return unresolvedOutcome(input, "external", [
-      "Bare package subpaths remain unresolved unless an exact package-exports subpath model is available.",
-    ]);
+  const subpath =
+    declared === packageName ? null : declared.slice(packageName.length + 1);
   const source = input.files.get(input.sourcePath);
   let directory = posix.dirname(input.sourcePath);
   while (true) {
-    const candidate = posix.join(directory, "node_modules", declared);
+    const candidate = posix.join(directory, "node_modules", packageName);
     if (hasContainerCandidate(input.files, candidate, source?.container_sha256))
-      return candidate;
+      return subpath === null
+        ? candidate
+        : packageSubpathCandidate(input, candidate, subpath, source);
     if (directory === "." || directory === "") break;
     directory = posix.dirname(directory);
   }
   return unresolvedOutcome(input, "external", [
     "No matching bare package was inventoried in an enclosing node_modules directory.",
   ]);
+};
+
+/**
+ * Resolve a bare package subpath against the selected package. A declared
+ * exports map encapsulates the subpath: only its exact key can select a
+ * target, and a missing or null target never falls through to a file, index,
+ * or another package. Without an exports map, legacy file and directory-index
+ * lookup applies, mirroring bare package names.
+ */
+const packageSubpathCandidate = (
+  input: ResolveArtifactPathInput,
+  packageDirectory: string,
+  subpath: string,
+  source: JavaScriptArtifactFile | undefined,
+): string | ArtifactPathResolution => {
+  const packagePath = posix.join(packageDirectory, "package.json");
+  const packageFile = input.files.get(packagePath);
+  if (
+    packageFile === undefined ||
+    (source !== undefined &&
+      packageFile.container_sha256 !== source.container_sha256)
+  )
+    return legacySubpathCandidate(input, packageDirectory, subpath);
+  if (!packageFile.text.included)
+    return unresolvedOutcome(input, "unavailable", [
+      `Directory package metadata ${packagePath} was inventoried but its text is unavailable: ${packageFile.text.reason}.`,
+    ]);
+  const exported = packageSubpathTarget(
+    packageFile.text.value,
+    subpath,
+    input.moduleKind,
+  );
+  if (exported.status === "invalid")
+    return unresolvedOutcome(input, "unavailable", [
+      `Directory package metadata ${packagePath} is not valid package JSON.`,
+    ]);
+  if (exported.status === "rejected")
+    return unresolvedOutcome(input, "rejected", [
+      `Package metadata ${packagePath}: ${exported.limitation}`,
+    ]);
+  if (exported.status === "absent")
+    return legacySubpathCandidate(input, packageDirectory, subpath);
+  if (exported.status === "unmatched")
+    return unresolvedOutcome(input, "external", [
+      `Directory package metadata ${packagePath} declares no exports target for subpath ./${subpath}; exports encapsulation permits no file or index lookup. It declares ${exported.declared.join(", ") || "a root target only"}.`,
+    ]);
+  if (exported.status === "blocked")
+    return unresolvedOutcome(input, "external", [
+      `Directory package metadata ${packagePath} blocks subpath ./${subpath} with an explicit null exports target.`,
+    ]);
+  // An exports target names one exact file; Node tries no extension or index.
+  return resolvePackagePath(
+    {
+      declaredPath: exported.value,
+      sourcePath: packagePath,
+      context: "package-entrypoint",
+      files: input.files,
+    },
+    new Set([packagePath]),
+    "full",
+    true,
+  );
+};
+
+const legacySubpathCandidate = (
+  input: ResolveArtifactPathInput,
+  packageDirectory: string,
+  subpath: string,
+): string | ArtifactPathResolution => {
+  const confined = confineCandidate(
+    input,
+    posix.join(packageDirectory, subpath),
+  );
+  if (typeof confined !== "string") return confined;
+  const resolved = resolveFileCandidates(input, [
+    ...fileCandidates(confined),
+    ...indexCandidates(confined),
+  ]);
+  return resolved === null
+    ? unresolvedOutcome(input, "not-found", [
+        `No extension or index candidate for package subpath ${confined} exists in the inventoried artifact container.`,
+      ])
+    : outcome(input, resolved);
 };
 
 const barePackageName = (specifier: string): string | null => {
@@ -515,16 +598,8 @@ const packageExport = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): PackageExportOutcome => {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    const keys = Object.keys(value);
-    if (
-      keys.some((key) => key.startsWith(".")) &&
-      keys.some((key) => !key.startsWith("."))
-    )
-      return {
-        status: "rejected",
-        limitation:
-          "The package exports configuration mixes subpath keys and condition keys.",
-      };
+    const mixing = mixedExportKeys(Object.keys(value));
+    if (mixing !== undefined) return { status: "rejected", limitation: mixing };
   }
   const root =
     typeof value === "object" && value !== null && Object.hasOwn(value, ".")
@@ -541,6 +616,66 @@ const packageExport = (
         declared:
           typeof root === "object" && root !== null ? Object.keys(root) : [],
       }
+    : { status: "value", value: first };
+};
+
+const mixedExportKeys = (keys: readonly string[]): string | undefined =>
+  keys.some((key) => key.startsWith(".")) &&
+  keys.some((key) => !key.startsWith("."))
+    ? "The package exports configuration mixes subpath keys and condition keys."
+    : undefined;
+
+type PackageSubpathOutcome =
+  | { readonly status: "value"; readonly value: string }
+  | { readonly status: "absent" }
+  | { readonly status: "invalid" }
+  | { readonly status: "rejected"; readonly limitation: string }
+  | { readonly status: "blocked" }
+  | { readonly status: "unmatched"; readonly declared: readonly string[] };
+
+/**
+ * Select the exports target for one exact subpath key, or report why none was
+ * selected. Only exact keys match; wildcards remain unsupported. A root-only
+ * exports value (string, array, or object without subpath keys) encapsulates
+ * every subpath, and an absent or null exports field leaves legacy lookup to
+ * the caller.
+ */
+const packageSubpathTarget = (
+  text: string,
+  subpath: string,
+  moduleKind: ResolveArtifactPathInput["moduleKind"],
+): PackageSubpathOutcome => {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (cause: unknown) {
+    // Reflect-based manifest reads fail closed as invalid.
+    void cause;
+    return { status: "invalid" };
+  }
+  if (typeof value !== "object" || value === null) return { status: "invalid" };
+  const rawExports = Reflect.get(value, "exports");
+  if (rawExports === undefined || rawExports === null)
+    return { status: "absent" };
+  if (typeof rawExports !== "object" || Array.isArray(rawExports))
+    return { status: "unmatched", declared: [] };
+  const keys = Object.keys(rawExports);
+  const mixing = mixedExportKeys(keys);
+  if (mixing !== undefined) return { status: "rejected", limitation: mixing };
+  const key = `./${subpath}`;
+  if (!Object.hasOwn(rawExports, key))
+    return { status: "unmatched", declared: keys };
+  const flattened = exportTargets(
+    Reflect.get(rawExports, key),
+    packageExportConditions(moduleKind),
+  );
+  if (flattened.kind === "invalid" || flattened.kind === "invalid-config")
+    return { status: "rejected", limitation: flattened.limitation };
+  if (flattened.kind === "unmatched")
+    return { status: "unmatched", declared: keys };
+  const first = flattened.values[0];
+  return first === undefined
+    ? { status: "blocked" }
     : { status: "value", value: first };
 };
 
