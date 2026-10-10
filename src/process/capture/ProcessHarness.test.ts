@@ -874,3 +874,32 @@ it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
     ).toBe(delivery);
   },
 );
+
+it("seeds a finalization observation only for a scenario with an interval", () => {
+  const seed = {
+    frames: [],
+    interactions: [],
+    samples: [],
+    eventJournal: [],
+    before: {
+      files: [],
+      truncated: false,
+      completeRoots: [],
+      coverage: emptyFilesystemCoverage,
+    },
+  };
+
+  expect(
+    Object.keys(createProcessCaptureObservationBuffer(seed)),
+    "a default scenario keeps the base observation keys",
+  ).not.toContain("finalization");
+  expect(
+    Object.keys(
+      createProcessCaptureObservationBuffer({
+        ...seed,
+        finalizationEnabled: true,
+      }),
+    ),
+    "a scenario with an interval carries the finalization observation",
+  ).toContain("finalization");
+});

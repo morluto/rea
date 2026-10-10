@@ -352,3 +352,37 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
   ).toMatchObject({ signal: "SIGKILL", delivery: "unverified" });
   expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
 }, 10_000);
+
+const activeTimers = (): number =>
+  process.getActiveResourcesInfo().filter((name) => name === "Timeout").length;
+
+it("leaves no referenced timer behind after a zero-interval exit", async () => {
+  const fake = fakeTerminal();
+  const before = activeTimers();
+  const pending = start(fake, { timeout_ms: 60, finalization_ms: 0 });
+  await waitFor(() => fake.signals.includes("terminal:SIGKILL"));
+  fake.deliverExit({ exitCode: 0, signal: 9 });
+
+  await pending;
+
+  expect(
+    activeTimers(),
+    "the zero path resolves without a bounded-wait timer",
+  ).toBeLessThanOrEqual(before);
+});
+
+it("cancels the bounded-wait timer once deliveries settle after an exit", async () => {
+  const fake = fakeTerminal();
+  const before = activeTimers();
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
+  await waitFor(() => fake.signals.includes("SIGTERM"));
+  fake.deliverExit({ exitCode: 0, signal: 0 });
+
+  await pending;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(
+    activeTimers(),
+    "no one-second grace timer outlives the finalized exit",
+  ).toBeLessThanOrEqual(before);
+});
