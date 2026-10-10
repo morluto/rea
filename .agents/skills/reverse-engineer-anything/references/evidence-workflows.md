@@ -38,3 +38,7 @@ or absence:
 Process captures are opt-in behavioral evidence, not a security sandbox. V3
 captures cannot be upgraded to V4; rerun the original scenario. Distinguish root
 exit from descendant settlement and require freshness when the task needs it.
+A timed-out target that must write a final report needs `finalization_ms`: REA
+sends SIGTERM to the captured root, keeps observing, and sends SIGKILL once
+after the interval. `exit.finalization.signals` lists each attempt with its
+delivery result; the observed exit stays in `exit.code` and `exit.signal`.

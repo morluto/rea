@@ -176,7 +176,7 @@ export const processScenarioSchema = z
       .nonnegative()
       .default(0)
       .describe(
-        "Milliseconds a target may keep running after SIGTERM when timeout_ms or idle_timeout_ms fires, before SIGKILL; 0 sends SIGKILL immediately. Cancellation always sends SIGKILL immediately.",
+        "Milliseconds a target may keep running after SIGTERM when timeout_ms or idle_timeout_ms fires, before SIGKILL; 0 sends SIGKILL immediately. Both signals reach the captured root only while its launch-time start identity still matches; cancellation ends the run at once.",
       ),
     limits: z
       .strictObject({

@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { digestProcessCommitment } from "./processScenario.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import { partialProcessCaptureObservationSchema } from "./processCapture.js";
+import { FINALIZED_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
 import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
 import {
   compareUnverifiedProcessCaptures as compareProcessCaptures,
@@ -520,6 +521,16 @@ it("validates finalization evidence in incomplete observations", () => {
     incomplete(undefined, differing).success,
     "an unavailable exit still cannot hide a contradictory manifest",
   ).toBe(false);
+});
+
+it("accepts the canonical finalized capture example", () => {
+  expect(
+    parseProcessCapture(FINALIZED_PROCESS_CAPTURE_EXAMPLE).exit,
+    "the advertised finalized example is a valid capture",
+  ).toMatchObject({
+    reason: "timeout",
+    finalization: { requested_ms: 1_500, signals: [{ signal: "SIGTERM" }] },
+  });
 });
 
 it("requires an explicit journal and validates complete journals", () => {
