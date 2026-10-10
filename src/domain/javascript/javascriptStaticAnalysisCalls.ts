@@ -65,6 +65,8 @@ export const inspectCall = (
     addReference(context, { node, kind: "service-worker", specifier: first });
   inspectEndpointCall(node, name, first, context);
   inspectStorageCall(node, name, first, context);
+  if (first === "audio" || first === "video")
+    noteMediaElementPreloads(node, accumulator);
   if (name.endsWith("loadFile") && first !== undefined)
     addLocatedFinding(context, {
       collection: accumulator.roles,
@@ -93,6 +95,23 @@ export const inspectCall = (
         location: range(node),
       },
     });
+};
+
+// Element factories such as jsx("audio", props) and createElement("video",
+// props) carry the HTML media `preload` hint ("none", "metadata", "auto"),
+// which never names an Electron preload script.
+const noteMediaElementPreloads = (
+  node: JavaScriptCallLike,
+  accumulator: AnalysisAccumulator,
+): void => {
+  const props = node.arguments[1];
+  if (!t.isObjectExpression(props)) return;
+  for (const property of props.properties)
+    if (
+      t.isObjectProperty(property) &&
+      semanticStaticPropertyName(property.key, property.computed) === "preload"
+    )
+      accumulator.mediaElementPreloads.add(property);
 };
 
 const requireCallSpecifier = (
@@ -201,6 +220,7 @@ export const inspectRoleProperty = (
   context: FindingContext,
 ): void => {
   if (semanticStaticPropertyName(node.key, node.computed) !== "preload") return;
+  if (context.accumulator.mediaElementPreloads.has(node)) return;
   const path = staticPath(node.value);
   if (path === undefined) return;
   addLocatedFinding(context, {
