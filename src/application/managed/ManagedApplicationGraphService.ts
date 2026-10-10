@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import { type AnalysisError } from "../../domain/analysisErrorBase.js";
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
   managedApplicationGraphResultSchema,
@@ -68,14 +72,7 @@ const createManagedApplicationGraphEvidence = (
 
 const subjectTarget = (
   input: ProjectManagedApplicationGraphInput,
-):
-  | {
-      readonly path: string;
-      readonly sha256: string;
-      readonly format: "pe";
-      readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
-    }
-  | undefined => {
+): EvidenceSubjectTarget | undefined => {
   const subject =
     input.managed_artifact?.subject ??
     input.managed_members?.subject ??

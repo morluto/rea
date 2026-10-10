@@ -570,6 +570,19 @@ describe("Ghidra FAT native decompiler admission", () => {
 describe("Ghidra native decompiler admission", () => {
   it.each([
     {
+      name: "a MIPS decompiler at the Linux x64 path",
+      options: {
+        environment: {},
+        installDir: INSTALL,
+        platform: "linux" as const,
+        architecture: "x64" as const,
+      },
+      executableHeader: (path: string) =>
+        path === LINUX_DECOMPILER
+          ? { bytes: elf(1, 1, 8), size: 52 }
+          : undefined,
+    },
+    {
       name: "a Linux x86-64 decompiler at the macOS arm64 path",
       options: {
         environment: {},

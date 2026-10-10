@@ -116,7 +116,9 @@ const assessNativeDecompiler = (
       const alternative = parseExecutableHeader(probe.bytes, node, probe.size);
       if (
         alternative.ok &&
-        !alternative.value.availableArchitectures.includes(expectedArchitecture)
+        !alternative.value.availableArchitectures.some(
+          (available) => available === expectedArchitecture,
+        )
       ) {
         parsed = alternative;
         break;

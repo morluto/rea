@@ -35,3 +35,25 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it("rejects an ELF target before attempting FAT64 source preparation", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-mips-boundary-");
+  // No file is created: format validation must precede any filesystem lookup.
+  const path = join(directory, "mips.elf");
+  const result = await resolveHopperMachOImage({
+    path,
+    sha256: "0".repeat(64),
+    kind: "executable",
+    format: "elf",
+    architecture: "mips",
+    availableArchitectures: ["mips"],
+    mips: { elfClass: 32, byteOrder: "little", type: 2, flags: 0x70001001 },
+  });
+  if (result.ok)
+    throw new Error("An ELF target entered Mach-O image preparation");
+  expect(result.error).toMatchObject({
+    _tag: "BinaryTargetError",
+    path,
+    reason: "Hopper FAT64 image preparation requires a Mach-O target",
+  });
+});

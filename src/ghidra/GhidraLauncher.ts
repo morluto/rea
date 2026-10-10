@@ -1,6 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { mkdir } from "node:fs/promises";
-import { basename, dirname, join, win32 } from "node:path";
+import { basename, dirname, join, posix, win32 } from "node:path";
 
 import writeFileAtomic from "write-file-atomic";
 
@@ -134,6 +134,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
       const headlessArguments = ghidraHeadlessArguments({
+        platform,
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         bridgeScriptPath: this.options.bridgeScriptPath,
@@ -358,6 +359,7 @@ const cleanupStartedProcess = (
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */
 export interface GhidraHeadlessArgumentOptions {
+  readonly platform?: NodeJS.Platform;
   readonly projectRoot: string;
   readonly targetPath: string;
   readonly bridgeScriptPath: string;
@@ -371,52 +373,65 @@ export interface GhidraHeadlessArgumentOptions {
 /** Build the complete read-only headless invocation in deterministic order. */
 export const ghidraHeadlessArguments = (
   options: GhidraHeadlessArgumentOptions,
-): readonly string[] => [
-  options.projectRoot,
-  "rea-project",
-  "-import",
-  options.targetPath,
-  ...(options.dosMz === true
-    ? [
-        "-loader",
-        "MzLoader",
-        "-processor",
-        "x86:LE:16:Real Mode",
-        "-cspec",
-        "default",
-      ]
-    : options.dosCom === true
+): readonly string[] => {
+  // Bridge script paths use the target platform's syntax, which differs from
+  // the host when building a cross-platform invocation.
+  const scriptPath =
+    (options.platform ?? process.platform) === "win32" ? win32 : posix;
+  const bridgeDirectory = scriptPath.dirname(options.bridgeScriptPath);
+  return [
+    options.projectRoot,
+    "rea-project",
+    "-import",
+    options.targetPath,
+    ...(options.dosMz === true
       ? [
           "-loader",
-          "BinaryLoader",
-          "-loader-baseAddr",
-          "1000:0100",
+          "MzLoader",
           "-processor",
           "x86:LE:16:Real Mode",
           "-cspec",
           "default",
         ]
+      : options.dosCom === true
+        ? [
+            "-loader",
+            "BinaryLoader",
+            "-loader-baseAddr",
+            "1000:0100",
+            "-processor",
+            "x86:LE:16:Real Mode",
+            "-cspec",
+            "default",
+          ]
+        : []),
+    "-readOnly",
+    "-deleteProject",
+    "-log",
+    options.ghidraLogPath,
+    "-scriptlog",
+    options.scriptLogPath,
+    "-scriptPath",
+    bridgeDirectory,
+    ...(options.dosCom === true
+      ? [
+          "-preScript",
+          scriptPath.join(bridgeDirectory, "ReaGhidraPrepareCom.java"),
+        ]
       : []),
-  "-readOnly",
-  "-deleteProject",
-  "-log",
-  options.ghidraLogPath,
-  "-scriptlog",
-  options.scriptLogPath,
-  "-scriptPath",
-  dirname(options.bridgeScriptPath),
-  ...(options.dosCom === true
-    ? [
-        "-preScript",
-        join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
-      ]
-    : []),
-  "-postScript",
-  // Ghidra checks the caller's cwd before scriptPath for a basename. Select
-  // the packaged source explicitly so unrelated entries cannot shadow it.
-  options.bridgeScriptPath,
-  options.descriptorPath,
-];
+    ...((options.platform ?? process.platform) === "win32"
+      ? []
+      : [
+          "-postScript",
+          scriptPath.join(bridgeDirectory, "ReaGhidraNoReturnFix.java"),
+        ]),
+    "-postScript",
+    // Ghidra checks the caller's cwd before scriptPath for a basename. Select
+    // the packaged source explicitly so unrelated entries cannot shadow it.
+    options.bridgeScriptPath,
+    options.descriptorPath,
+  ];
+};
 
 const ghidraRuntimePaths = (runtimeRoot: string) => ({
   projectRoot: join(runtimeRoot, "project"),
