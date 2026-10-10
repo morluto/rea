@@ -56,4 +56,39 @@ describe("CDP execution-context retention", () => {
     });
     expect(electronFrames.size).toBe(0);
   });
+
+  it("keeps a script on the frame stored when it was parsed", () => {
+    const request = inspectWebPageInputSchema.parse({
+      cdp_endpoint: "http://127.0.0.1:9222",
+      allowed_origins: ["https://app.example.test"],
+      target_id: "page-1",
+    });
+    const browser = new CdpCaptureEvents(
+      request,
+      new Set(["https://app.example.test"]),
+    );
+    browser.beginAuthorizedFrame("frame-old");
+    browser.beginAuthorizedFrame("frame-new");
+    browser.ingest({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 7, auxData: { frameId: "frame-old" } } },
+    });
+    browser.ingest({
+      method: "Debugger.scriptParsed",
+      params: {
+        scriptId: "script-1",
+        url: "https://app.example.test/app.js",
+        executionContextId: 7,
+      },
+    });
+    browser.ingest({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 7, auxData: { frameId: "frame-new" } } },
+    });
+    const script = browser.scripts.get("script-1");
+    if (script === undefined) throw new TypeError("Expected captured script");
+    expect(
+      browser.frameForScript(script, new Set(["frame-old", "frame-new"])),
+    ).toBe("frame-old");
+  });
 });

@@ -73,15 +73,27 @@ export const traceNativeUiAction = async (
         ),
       );
     graph = joinInterfaceBuilderDispatch(decoded.data.graph, metadata.result);
+    const archiveDecode = decoded.data.graph.coverage.find(
+      (facet) => facet.facet === "archive_decode",
+    );
+    const documentsFound = decoded.data.documents.length > 0;
     coverage.push({
       facet: "interface_builder_archives",
-      status: decoded.data.documents.length > 0 ? "complete" : "unsupported",
+      status:
+        archiveDecode?.status === "partial" ||
+        archiveDecode?.status === "complete" ||
+        archiveDecode?.status === "unsupported"
+          ? archiveDecode.status
+          : documentsFound
+            ? "complete"
+            : "unsupported",
       reason:
-        decoded.data.documents.length > 0
+        archiveDecode?.reason ??
+        (documentsFound
           ? null
-          : "no_compiled_interface_builder_archives_found",
-      examined: decoded.data.documents.length,
-      omitted: 0,
+          : "no_compiled_interface_builder_archives_found"),
+      examined: archiveDecode?.examined ?? decoded.data.documents.length,
+      omitted: archiveDecode?.omitted ?? 0,
     });
     const bounded = boundUiGraph(graph, input.max_nodes, input.max_edges);
     graph = bounded.graph;

@@ -611,3 +611,39 @@ describe("property mutation collection on minified bundles", () => {
     });
   }, 30000);
 });
+
+describe("results of methods on an escaped receiver", () => {
+  it("makes every method's distinct result uncertain, not only the called one", () => {
+    expect(
+      resultValue(
+        'const first = { t: "A" }; const second = { t: "B" }; const kept = { t: "C" }; const box = { a() { return first; }, b() { return second; }, c() { return first; } }; box.a(); return [first.t, second.t, kept.t];',
+      ),
+    ).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "unknown" } },
+        { value: { status: "unknown" } },
+        { value: { status: "literal", value: "C" } },
+      ],
+    });
+  });
+
+  it("keeps a shared result uncertain across a wide escaped receiver (#1495)", () => {
+    const count = 2000;
+    const methods = Array.from(
+      { length: count },
+      (_, index) => `m${index}() { return shared; },`,
+    ).join(" ");
+    const calls = Array.from(
+      { length: count },
+      (_, index) => `box.m${index}().p${index} = ${index};`,
+    ).join(" ");
+    const value = resultValue(
+      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`,
+    );
+    expect(value).toMatchObject({
+      status: "array",
+      items: [{ value: { status: "unknown" } }],
+    });
+  }, 30000);
+});
