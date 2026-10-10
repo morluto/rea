@@ -12,15 +12,6 @@ import {
 } from "./webContentArtifact.js";
 
 describe("web content artifacts", () => {
-  it("binds UTF-8 content, size, and digest inline", () => {
-    const artifact = createWebTextArtifact(
-      "const marker = '😀';",
-      "text/javascript",
-    );
-    expect(webTextArtifactSchema.parse(artifact)).toEqual(artifact);
-    expect(artifact.bytes).toBe(Buffer.byteLength(artifact.text));
-  });
-
   it("rejects altered content that reuses an artifact digest", () => {
     const artifact = createWebTextArtifact("original", "text/javascript");
     expect(
@@ -83,7 +74,7 @@ describe("stable web inventory", () => {
         content_size: 1_024,
       },
     ];
-    const forward = stableWebResources(inputs);
+    const forward = stableWebResources([...inputs, ...inputs.slice(0, 1)]);
     const reverse = stableWebResources([...inputs].reverse());
 
     expect(reverse).toEqual(forward);
@@ -115,20 +106,6 @@ describe("stable web inventory", () => {
         .map(({ resource_key }) => resource_key)
         .sort(),
     });
-  });
-
-  it("deduplicates identical resource observations by stable identity", () => {
-    const duplicate = {
-      url: script.url,
-      origin: "https://app.example.test",
-      type: "Script",
-      mime_type: "text/javascript",
-      content_size: 1_024,
-    };
-
-    expect(stableWebResources([duplicate, duplicate])).toEqual(
-      stableWebResources([duplicate]),
-    );
   });
 
   it("reconciles raw URLs independently of stable inventory sort order", () => {

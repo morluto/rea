@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+
 import {
   analysisProfileSchema,
   analysisProfilesEqual,
@@ -463,7 +465,10 @@ const hasCanonicalQueryOrder = (
 ): boolean => {
   let previous: string | undefined;
   for (const { query_id: queryId } of entries) {
-    if (previous !== undefined && previous.localeCompare(queryId) > 0)
+    if (
+      previous !== undefined &&
+      compareUnicodeCodePoints(previous, queryId) > 0
+    )
       return false;
     previous = queryId;
   }

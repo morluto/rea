@@ -52,6 +52,7 @@ export class LocalWebModuleArtifacts implements WebModuleArtifactPort {
             operation: "trace_web_module_imports",
             field: ["import_map", "path"],
             targetPath: selected.path,
+            callerSelected: true,
           },
           options?.signal,
         ),

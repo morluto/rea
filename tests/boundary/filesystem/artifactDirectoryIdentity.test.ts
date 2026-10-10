@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
-import { compareCodePoints } from "../../../src/domain/canonicalOrdering.js";
-import { canonicalDigest } from "../../../src/domain/comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../../../src/domain/unicodeCodePointOrder.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { compareArtifacts } from "../../../src/domain/artifactComparison.js";
 import type { ArtifactInventoryResult } from "../../../src/domain/artifactGraph.js";
@@ -54,9 +54,9 @@ const directoryIdForChildren = (
   inventory: ArtifactInventoryResult,
   paths: readonly string[],
 ) =>
-  `art_${canonicalDigest(
+  `art_${digestCanonicalValue(
     {
-      sha256: canonicalDigest(
+      sha256: digestCanonicalValue(
         {
           kind: "directory",
           children: paths
@@ -69,7 +69,7 @@ const directoryIdForChildren = (
               };
             })
             .sort((left, right) =>
-              compareCodePoints(String(left.name), String(right.name)),
+              compareUnicodeCodePoints(String(left.name), String(right.name)),
             ),
         },
         "Artifact",

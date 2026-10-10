@@ -9,9 +9,20 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createElectronEvidence } from "../../../src/application/javascript/ElectronEvidence.js";
 import { analyzeJavaScriptApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
-import { reconcileJavaScriptRuntime } from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import {
+  parseRuntimeReconciliationInput,
+  reconcileJavaScriptRuntime,
+} from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
+import { reconcileJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createWebTextArtifact } from "../../../src/domain/webContentArtifact.js";
+
+const reconcileInput = (input: unknown) =>
+  reconcileJavaScriptRuntime(
+    parseRuntimeReconciliationInput(
+      reconcileJavaScriptRuntimeInputSchema.parse(input),
+    ),
+  );
 
 const SOURCE = `const worker = new Worker("./worker.js");\nexport const observed = worker;\n`;
 const execute = promisify(execFile);
@@ -36,7 +47,7 @@ it("keeps byte-identical cross-layer candidates explicitly ambiguous", async () 
     writeFile(join(runtime, "app.js"), SOURCE),
     writeFile(join(runtime, "index.html"), "<script></script>"),
   ]);
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [
       {
         role: "application",
@@ -82,7 +93,7 @@ it("retains all runtime entities and static load states without projection caps"
     }),
   ];
 
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [{ role: "application", analysis: staticEvidence }],
     runtime_observations: runtimeObservations,
   });
@@ -121,7 +132,7 @@ it("rejects runtime source bytes whose Evidence omits source-capture approval", 
   });
 
   expect(() =>
-    reconcileJavaScriptRuntime({
+    reconcileInput({
       static_layers: [{ role: "application", analysis: staticEvidence }],
       runtime_observations: [contradictoryRuntime],
     }),
@@ -131,7 +142,7 @@ it("rejects runtime source bytes whose Evidence omits source-capture approval", 
 it("keeps graph omission counts unknown when a runtime section is unavailable", async () => {
   const fixture = await applicationFixture();
   temporary.push(fixture);
-  const result = reconcileJavaScriptRuntime({
+  const result = reconcileInput({
     static_layers: [
       { role: "application", analysis: await analyzeFixture(fixture) },
     ],

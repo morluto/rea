@@ -793,6 +793,37 @@ describe("typed unavailability without dispatching", () => {
     expect(clients[0]?.closed).toBe(1);
     expect(clients[1]?.closed).toBe(1);
   });
+
+  it("cancels a composed admission queued behind open without invoking it", async () => {
+    const [first] = await createBinarySessionTargets();
+    const health = createDeferred<ReturnType<typeof ok>>();
+    const session = createTestBinarySession(
+      () => new ControllableAnalysisClient(health.promise),
+    );
+    const opening = session.open(first);
+    const controller = new AbortController();
+    let invoked = false;
+    const admitted = session.withAdmittedAnalysis(
+      "binary_overview",
+      controller.signal,
+      async () => {
+        invoked = true;
+        return null;
+      },
+    );
+    controller.abort();
+    await expect(admitted).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "binary_overview",
+      },
+    });
+    expect(invoked).toBe(false);
+    health.resolve(ok(null));
+    expect((await opening).ok).toBe(true);
+    await session.close();
+  });
 });
 
 describe("active client replacement", () => {

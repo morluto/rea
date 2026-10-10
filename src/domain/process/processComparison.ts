@@ -291,20 +291,6 @@ const differingContractFields = (
     )
     .sort();
 
-const truncatedComparison = (): ProcessCaptureComparison => ({
-  status: "truncated",
-  terminal: "truncated",
-  interaction: "truncated",
-  exit: "truncated",
-  filesystem: "truncated",
-  process: "truncated",
-  first_divergence: {
-    status: "unknown",
-    reason: "At least one capture is truncated.",
-  },
-  limitations: ["At least one capture is truncated."],
-});
-
 const applyTraceVerdict = (
   dimensions: ComparisonDimensions,
   specification: ProcessTraceSpecification,
@@ -427,18 +413,6 @@ export const compareProcessCaptures = (
   } = {},
 ): ProcessCaptureComparison => {
   assertComparable(left, right, options);
-  if (
-    (left.truncated && left.truncation_details === undefined) ||
-    (right.truncated && right.truncation_details === undefined)
-  ) {
-    const truncated = truncatedComparison();
-    return options.traceSpecification === undefined
-      ? truncated
-      : {
-          ...truncated,
-          trace: compareProcessTraces(left, right, options.traceSpecification),
-        };
-  }
   const sameNormalization = sameJsonValue(
     left.normalization,
     right.normalization,

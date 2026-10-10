@@ -1,4 +1,4 @@
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptJsonModuleObservation } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 
@@ -31,7 +31,7 @@ export const analyzeJavaScriptJsonModule = (
   }
   const keys =
     typeof value === "object" && value !== null && !Array.isArray(value)
-      ? Object.keys(value).sort(compareCodePoints)
+      ? Object.keys(value).sort(compareUnicodeCodePoints)
       : [];
   const retained = keys;
   return {

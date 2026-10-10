@@ -14,13 +14,13 @@ import {
   type JavaScriptSemanticScopeState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
-import { range, stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
   semanticStaticPropertyKey,
@@ -68,25 +68,33 @@ export const collectSemanticModuleLink = (
 ): void => {
   if (t.isImportDeclaration(node)) collectImports(node, state);
   else if (t.isExportAllDeclaration(node))
-    addModuleLink(state, {
-      kind: "re-export",
-      specifier: node.source.value,
-      importedName: "*",
-      localName: null,
-      exportedName: "*",
-      location: range(node),
-    });
+    addModuleLink(
+      state,
+      {
+        kind: "re-export",
+        specifier: node.source.value,
+        importedName: "*",
+        localName: null,
+        exportedName: "*",
+        location: range(node),
+      },
+      node,
+    );
   else if (t.isExportNamedDeclaration(node)) collectNamedExports(node, state);
   else if (t.isExportDefaultDeclaration(node))
-    addModuleLink(state, {
-      kind: "export",
-      specifier: null,
-      importedName: null,
-      localName: defaultDeclarationName(node.declaration),
-      exportedName: "default",
-      callableId: semanticCallableIdForNode(node.declaration),
-      location: range(node),
-    });
+    addModuleLink(
+      state,
+      {
+        kind: "export",
+        specifier: null,
+        importedName: null,
+        localName: defaultDeclarationName(node.declaration),
+        exportedName: "default",
+        callableId: semanticCallableIdForNode(node.declaration),
+        location: range(node),
+      },
+      node,
+    );
   else if (t.isVariableDeclarator(node)) collectRequireLink(node, state);
   else if (t.isAssignmentExpression(node)) collectCommonJsExport(node, state);
 };
@@ -160,7 +168,7 @@ export const immutableSemanticScopes = (
     bindingsComplete: scope.bindingsComplete,
     bindingIds: [...scope.bindings.values()]
       .map(({ bindingId }) => bindingId)
-      .sort(compareCodePoints),
+      .sort(compareUnicodeCodePoints),
   }));
 
 /** Evaluate and freeze bindings into deterministic IR order. */
@@ -178,7 +186,9 @@ export const immutableSemanticBindings = (
       value: evaluateSemanticBinding(binding, state),
       provenance: evaluateSemanticProvenance(binding, state),
     }))
-    .sort((left, right) => compareCodePoints(left.bindingId, right.bindingId));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.bindingId, right.bindingId),
+    );
 
 const callableKind = (
   node: t.Node,
@@ -231,27 +241,35 @@ const collectImports = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (node.specifiers.length === 0)
-    addModuleLink(state, {
-      kind: "import",
-      specifier: node.source.value,
-      importedName: null,
-      localName: null,
-      exportedName: null,
-      location: range(node),
-    });
+    addModuleLink(
+      state,
+      {
+        kind: "import",
+        specifier: node.source.value,
+        importedName: null,
+        localName: null,
+        exportedName: null,
+        location: range(node),
+      },
+      node,
+    );
   for (const specifier of node.specifiers)
-    addModuleLink(state, {
-      kind: "import",
-      specifier: node.source.value,
-      importedName: t.isImportDefaultSpecifier(specifier)
-        ? "default"
-        : t.isImportNamespaceSpecifier(specifier)
-          ? "*"
-          : propertyName(specifier.imported),
-      localName: specifier.local.name,
-      exportedName: null,
-      location: range(specifier),
-    });
+    addModuleLink(
+      state,
+      {
+        kind: "import",
+        specifier: node.source.value,
+        importedName: t.isImportDefaultSpecifier(specifier)
+          ? "default"
+          : t.isImportNamespaceSpecifier(specifier)
+            ? "*"
+            : propertyName(specifier.imported),
+        localName: specifier.local.name,
+        exportedName: null,
+        location: range(specifier),
+      },
+      node,
+    );
 };
 
 const collectNamedExports = (
@@ -260,25 +278,33 @@ const collectNamedExports = (
 ): void => {
   if (node.declaration !== null && node.declaration !== undefined)
     for (const localName of declarationNames(node.declaration))
-      addModuleLink(state, {
-        kind: "export",
-        specifier: null,
-        importedName: null,
-        localName,
-        exportedName: localName,
-        callableId: declarationCallableId(node.declaration, localName),
-        location: range(node.declaration),
-      });
+      addModuleLink(
+        state,
+        {
+          kind: "export",
+          specifier: null,
+          importedName: null,
+          localName,
+          exportedName: localName,
+          callableId: declarationCallableId(node.declaration, localName),
+          location: range(node.declaration),
+        },
+        node,
+      );
   for (const specifier of node.specifiers)
     if (t.isExportSpecifier(specifier))
-      addModuleLink(state, {
-        kind: node.source == null ? "export" : "re-export",
-        specifier: node.source?.value ?? null,
-        importedName: propertyName(specifier.local),
-        localName: node.source == null ? propertyName(specifier.local) : null,
-        exportedName: propertyName(specifier.exported),
-        location: range(specifier),
-      });
+      addModuleLink(
+        state,
+        {
+          kind: node.source == null ? "export" : "re-export",
+          specifier: node.source?.value ?? null,
+          importedName: propertyName(specifier.local),
+          localName: node.source == null ? propertyName(specifier.local) : null,
+          exportedName: propertyName(specifier.exported),
+          location: range(specifier),
+        },
+        node,
+      );
 };
 
 const collectRequireLink = (
@@ -288,14 +314,18 @@ const collectRequireLink = (
   const origin = semanticRequireOrigin(node.init, state);
   if (origin === undefined) return;
   for (const binding of requirePatternBindings(node.id, origin.importedPath))
-    addModuleLink(state, {
-      kind: "require",
-      specifier: origin.specifier,
-      importedName: binding.importedName,
-      localName: binding.localName,
-      exportedName: null,
-      location: range(node),
-    });
+    addModuleLink(
+      state,
+      {
+        kind: "require",
+        specifier: origin.specifier,
+        importedName: binding.importedName,
+        localName: binding.localName,
+        exportedName: null,
+        location: range(node),
+      },
+      node,
+    );
 };
 
 const requirePatternBindings = (
@@ -332,15 +362,19 @@ const collectCommonJsExport = (
   const exportedName = commonJsExportName(node.left, state);
   if (exportedName === undefined) return;
   const origin = semanticRequireOrigin(node.right, state);
-  addModuleLink(state, {
-    kind: "commonjs-export",
-    specifier: origin?.specifier ?? null,
-    importedName: origin?.importedPath.at(-1) ?? null,
-    localName: t.isIdentifier(node.right) ? node.right.name : null,
-    exportedName,
-    callableId: semanticCallableIdForNode(node.right),
-    location: range(node),
-  });
+  addModuleLink(
+    state,
+    {
+      kind: "commonjs-export",
+      specifier: origin?.specifier ?? null,
+      importedName: origin?.importedPath.at(-1) ?? null,
+      localName: t.isIdentifier(node.right) ? node.right.name : null,
+      exportedName,
+      callableId: semanticCallableIdForNode(node.right),
+      location: range(node),
+    },
+    node,
+  );
 };
 
 const addModuleLink = (
@@ -348,8 +382,18 @@ const addModuleLink = (
   link: Omit<JavaScriptSemanticModuleLink, "callableId"> & {
     readonly callableId?: string | null;
   },
+  referenceNode: t.Node,
 ): void => {
-  state.moduleLinks.push({ ...link, callableId: link.callableId ?? null });
+  const collected = { ...link, callableId: link.callableId ?? null };
+  state.moduleLinks.push(collected);
+  if (link.localName !== null) {
+    const binding = resolveSemanticBindingState(
+      state,
+      referenceNode,
+      link.localName,
+    );
+    if (binding !== undefined) state.moduleLinkBindings.set(collected, binding);
+  }
 };
 
 /** Deterministic callable identity shared by collection and return recovery. */

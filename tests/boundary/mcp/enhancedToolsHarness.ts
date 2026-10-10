@@ -24,7 +24,7 @@ export const inventory = (values: Readonly<Record<string, string>>) =>
 export const resources: Array<{ close(): Promise<void> }> = [];
 
 export const connect = async (analysis: AnalysisOperationPort) => {
-  const server = createServer(analysis);
+  const server = createServer({ kind: "fixed", analysis });
   const client = new Client({ name: "enhanced-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

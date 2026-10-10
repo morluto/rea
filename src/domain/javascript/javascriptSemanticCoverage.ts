@@ -1,4 +1,10 @@
 import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueTypes.js";
+import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
+import {
+  SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+  SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+} from "./javascriptSemanticResourceLimits.js";
 
 /** Exact retention state for one callable's direct returns. */
 export type JavaScriptSemanticReturnCoverage = {
@@ -39,6 +45,33 @@ export const semanticCoverage = (
 export const semanticCoverageResourceLimits = (
   coverage: JavaScriptSemanticCoverage,
 ): readonly JavaScriptSemanticResourceLimit[] => coverage.resourceLimits ?? [];
+
+const semanticResourceBounds: Record<
+  JavaScriptSemanticResourceLimit,
+  Pick<ApplicationCoverage["limits"][number], "value" | "unit">
+> = {
+  "primitive-candidates": {
+    value: SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
+    unit: "items",
+  },
+  "primitive-bytes": {
+    value: SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
+    unit: "bytes",
+  },
+  "expression-depth": {
+    value: SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+    unit: "depth",
+  },
+};
+
+/** Map semantic evaluator bounds to their caller-visible application coverage. */
+export const semanticResourceLimitCoverage = (
+  resourceLimits: readonly JavaScriptSemanticResourceLimit[],
+): ApplicationCoverage["limits"] =>
+  resourceLimits.map((resourceLimit) => ({
+    name: `javascript_semantic_${resourceLimit.replaceAll("-", "_")}`,
+    ...semanticResourceBounds[resourceLimit],
+  }));
 
 /** Classify one callable's direct-return coverage. */
 export const semanticReturnCoverage = (

@@ -12,9 +12,12 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
   const session = createTestBinarySession(() => {
     throw new Error("Binary provider must not start");
   });
-  const server = createServer(session, session, {
-    webRuntime: new WebRuntimeService(recordingWebRuntimePort()),
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      webRuntime: new WebRuntimeService(recordingWebRuntimePort()),
+    },
+  );
   const client = new Client({ name: "web-runtime-contract", version: "1" });
   onTestFinished(async () => {
     await client.close();

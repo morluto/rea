@@ -1,13 +1,22 @@
+import { constants } from "node:buffer";
+import { createHash } from "node:crypto";
 import { Writable } from "node:stream";
 
+import { Cli } from "incur";
 import { describe, expect, it } from "vitest";
 
 import { writeJsonOutput } from "../../../src/cli/jsonOutput.js";
-import { createStreamedCliJsonOutput } from "../../../src/cli/streamedJsonOutput.js";
+import {
+  createStreamedCliJsonOutput,
+  streamCliCommandResults,
+} from "../../../src/cli/streamedJsonOutput.js";
+import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
+import { silentLogger } from "../../../src/logger.js";
 
 const collect = async (
   value: unknown,
   format: "json" | "jsonl" = "json",
+  terminal = true,
 ): Promise<string> => {
   const chunks: Buffer[] = [];
   const destination = new Writable({
@@ -20,6 +29,7 @@ const collect = async (
       callback();
     },
   });
+  if (terminal) Object.defineProperty(destination, "isTTY", { value: true });
   await writeJsonOutput(value, destination, format);
   return Buffer.concat(chunks).toString("utf8");
 };
@@ -42,6 +52,16 @@ describe("incremental CLI JSON", () => {
     const shared = { value: "shared" };
     const value = { copies: [shared, shared] };
     expect(await collect(value)).toBe(`${JSON.stringify(value, null, 2)}\n`);
+  });
+
+  it("indents JSON only for a terminal and writes piped JSON compactly", async () => {
+    const value = { nested: [{ value: null }], text: "雪𝟠" };
+    expect(await collect(value, "json", true)).toBe(
+      `${JSON.stringify(value, null, 2)}\n`,
+    );
+    expect(await collect(value, "json", false)).toBe(
+      `${JSON.stringify(value)}\n`,
+    );
   });
 
   it("writes compact JSONL records and preserves an empty record set", async () => {
@@ -70,6 +90,7 @@ describe("incremental CLI JSON", () => {
         }, 1);
       },
     });
+    Object.defineProperty(destination, "isTTY", { value: true });
     await writeJsonOutput({ leaf }, destination);
     expect(largestChunk).toBeLessThan(Buffer.byteLength(leaf));
     const actual = Buffer.concat(chunks).toString("utf8");
@@ -140,7 +161,6 @@ describe("streamed CLI result surface", () => {
   it.each([
     [],
     ["--format", "md"],
-    ["--json", "--token-count"],
     ["--json", "--token-limit", "5"],
     ["--json", "--format", "invalid"],
   ])("delegates unsupported output controls %j", (...arguments_) => {
@@ -167,4 +187,106 @@ describe("streamed CLI result surface", () => {
     expect(output.handled).toBe(true);
     expect(output.failed).toBe(true);
   });
+
+  it("streams managed command output past the engine string limit and declines oversized token counting", async () => {
+    const leaf = "x".repeat(64 * 1024);
+    const count = Math.ceil(constants.MAX_STRING_LENGTH / leaf.length) + 1;
+    const value = { methods: Array.from({ length: count }, () => leaf) };
+    const expected = createHash("sha256");
+    const encodedLeaf = JSON.stringify(leaf);
+    const prefix = '{\n  "methods": [\n    ';
+    const separator = ",\n    ";
+    const suffix = "\n  ]\n}\n";
+    expected.update(prefix);
+    for (let index = 0; index < count; index += 1) {
+      if (index > 0) expected.update(separator);
+      expected.update(encodedLeaf);
+    }
+    expected.update(suffix);
+    const expectedCharacters =
+      prefix.length +
+      count * encodedLeaf.length +
+      (count - 1) * separator.length +
+      suffix.length;
+    expect(expectedCharacters).toBeGreaterThan(constants.MAX_STRING_LENGTH);
+
+    const actual = createHash("sha256");
+    let bytes = 0;
+    const destination = new Writable({
+      write(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        actual.update(chunk);
+        callback();
+      },
+    });
+    const cli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(cli, silentLogger, async (path, operation) => {
+      expect(path).toBe("fixture.dll");
+      expect(operation).toBe("inspect_managed_members");
+      return value;
+    });
+    // A terminal destination exercises the indented encoding past the limit.
+    Object.defineProperty(destination, "isTTY", { value: true });
+    const argv = ["inspect-managed-members", "fixture.dll", "--json"];
+    const output = createStreamedCliJsonOutput(argv, destination);
+    if (output === undefined) throw new Error("Missing JSON output surface");
+    streamCliCommandResults(cli, output);
+    let exitCode = 0;
+    let fallbackBytes = 0;
+    await cli.serve(argv, {
+      stdout: (text) => {
+        if (!output.handled) fallbackBytes += text.length;
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(fallbackBytes).toBe(0);
+    expect(bytes).toBe(expectedCharacters);
+    expect(actual.digest("hex")).toBe(expected.digest("hex"));
+
+    const chunks: Buffer[] = [];
+    const tokenArgv = [...argv, "--token-count", "--full-output"];
+    const tokenOutput = createStreamedCliJsonOutput(
+      tokenArgv,
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      }),
+    );
+    if (tokenOutput === undefined)
+      throw new Error("Missing token-count output surface");
+    const tokenCli = Cli.create("rea-output-test", { sync: false });
+    registerManagedCommands(tokenCli, silentLogger, async () => value);
+    streamCliCommandResults(tokenCli, tokenOutput);
+    await tokenCli.serve(tokenArgv, {
+      stdout: (text) => {
+        if (!tokenOutput.handled) fallbackBytes += text.length;
+      },
+      exit: (code) => {
+        exitCode = code;
+      },
+    });
+    expect(exitCode).toBe(1);
+    expect(fallbackBytes).toBe(0);
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toMatchObject({
+      ok: false,
+      error: {
+        code: "resource_constraint",
+        remediation: {
+          action: expect.stringContaining("Remove --token-count"),
+        },
+        details: {
+          reported_limits: {
+            formatted_characters: expectedCharacters - 1,
+            max_string_characters: constants.MAX_STRING_LENGTH,
+          },
+        },
+      },
+      meta: { command: "inspect-managed-members" },
+    });
+  }, 60_000);
 });

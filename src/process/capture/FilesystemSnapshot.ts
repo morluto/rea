@@ -2,18 +2,14 @@ import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, readdir, readlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import type { FileHandle } from "node:fs/promises";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
-import type { Stats } from "node:fs";
 import type { FilesystemCoverage } from "../../domain/process/processCaptureCoverage.js";
-
-import type { FileState } from "../../domain/process/processCapture.js";
-export interface SnapshotResult {
-  readonly files: readonly FileState[];
-  readonly truncated: boolean;
-  /** Root aliases whose path enumeration was exhausted, regardless of hash coverage. */
-  readonly completeRoots: readonly string[];
-  readonly coverage?: FilesystemCoverage;
-}
+import type { Stats } from "node:fs";
+import type {
+  FileState,
+  ProcessFilesystemSnapshot,
+} from "../../domain/process/processCapture.js";
 
 const hasSameIdentity = (
   before: Stats,
@@ -34,6 +30,23 @@ const hasSameFileState = (before: Stats, after: Stats): boolean =>
   before.mtimeMs === after.mtimeMs &&
   before.ctimeMs === after.ctimeMs;
 
+const fileUnavailableSystemCode = (cause: unknown): string | undefined => {
+  if (!(cause instanceof Error) || !("code" in cause)) return undefined;
+  const code = cause.code;
+  return typeof code === "string" &&
+    [
+      "EACCES",
+      "EISDIR",
+      "ELOOP",
+      "ENOTDIR",
+      "ENOENT",
+      "EPERM",
+      "ESTALE",
+    ].includes(code)
+    ? code
+    : undefined;
+};
+
 const lstatIfPresent = async (path: string): Promise<Stats | undefined> => {
   try {
     return await lstat(path);
@@ -44,26 +57,51 @@ const lstatIfPresent = async (path: string): Promise<Stats | undefined> => {
   }
 };
 
+/** Reports a complete digest or an explicit per-file reason hashing was omitted. */
+export type FileHashOutcome =
+  | { readonly state: "hashed"; readonly sha256: string }
+  | {
+      readonly state: "omitted";
+      readonly reason: "file_changed_or_short_read" | "file_unavailable";
+      readonly system_code: string | null;
+    };
+
 /** Hash a file only when its opened descriptor still matches the captured path state. */
 export const hashFile = async (
   path: string,
   expected: Stats,
   maxBytes: number,
   signal?: AbortSignal,
-): Promise<string | null> => {
+): Promise<FileHashOutcome> => {
   signal?.throwIfAborted();
-  const handle = await open(
-    path,
-    fsConstants.O_RDONLY |
-      (fsConstants.O_NOFOLLOW ?? 0) |
-      (fsConstants.O_NONBLOCK ?? 0),
-  );
+  let handle: FileHandle;
+  try {
+    handle = await open(
+      path,
+      fsConstants.O_RDONLY |
+        (fsConstants.O_NOFOLLOW ?? 0) |
+        (fsConstants.O_NONBLOCK ?? 0),
+    );
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    const systemCode = fileUnavailableSystemCode(cause);
+    if (systemCode === undefined) throw cause;
+    return {
+      state: "omitted",
+      reason: "file_unavailable",
+      system_code: systemCode,
+    };
+  }
   try {
     signal?.throwIfAborted();
     const stats = await handle.stat();
     signal?.throwIfAborted();
     if (!hasSameFileState(expected, stats) || stats.size > maxBytes)
-      return null;
+      return {
+        state: "omitted",
+        reason: "file_changed_or_short_read",
+        system_code: null,
+      };
     const hash = createHash("sha256");
     const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes));
     let position = 0;
@@ -75,14 +113,33 @@ export const hashFile = async (
         Math.min(buffer.length, stats.size - position),
         position,
       );
-      if (bytesRead === 0) return null;
+      if (bytesRead === 0)
+        return {
+          state: "omitted",
+          reason: "file_changed_or_short_read",
+          system_code: null,
+        };
       hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;
     }
     const after = await handle.stat();
     signal?.throwIfAborted();
-    if (!hasSameFileState(stats, after)) return null;
-    return hash.digest("hex");
+    if (!hasSameFileState(stats, after))
+      return {
+        state: "omitted",
+        reason: "file_changed_or_short_read",
+        system_code: null,
+      };
+    return { state: "hashed", sha256: hash.digest("hex") };
+  } catch (cause: unknown) {
+    signal?.throwIfAborted();
+    const systemCode = fileUnavailableSystemCode(cause);
+    if (systemCode === undefined) throw cause;
+    return {
+      state: "omitted",
+      reason: "file_unavailable",
+      system_code: systemCode,
+    };
   } finally {
     await handle.close();
   }
@@ -92,7 +149,7 @@ export const hashFile = async (
 export const snapshotRoots = async (
   scenario: ProcessScenario,
   signal?: AbortSignal,
-): Promise<SnapshotResult> => {
+): Promise<ProcessFilesystemSnapshot> => {
   const entries: FileState[] = [];
   const completeRoots: string[] = [];
   let remainingBytes = scenario.limits.file_bytes;
@@ -141,22 +198,34 @@ export const snapshotRoots = async (
       return true;
     }
     if (stats.isFile()) {
-      const sha256 =
-        remainingBytes >= stats.size
-          ? await hashFile(path, stats, remainingBytes, signal)
-          : null;
-      remainingBytes -= sha256 === null ? 0 : stats.size;
-      if (sha256 === null) {
-        truncated = true;
-        hashOmissions.push({
+      let sha256: string | null = null;
+      let omission: FilesystemCoverage["hash_omissions"][number] | undefined;
+      if (remainingBytes < stats.size) {
+        omission = {
           path: `${rootAlias}:${relativePath}`,
           size_bytes: stats.size,
           remaining_budget_bytes: remainingBytes,
-          reason:
-            remainingBytes < stats.size
-              ? "file_bytes_budget"
-              : "file_changed_or_short_read",
-        });
+          reason: "file_bytes_budget",
+          system_code: null,
+        };
+      } else {
+        const outcome = await hashFile(path, stats, remainingBytes, signal);
+        if (outcome.state === "hashed") {
+          sha256 = outcome.sha256;
+          remainingBytes -= stats.size;
+        } else {
+          omission = {
+            path: `${rootAlias}:${relativePath}`,
+            size_bytes: stats.size,
+            remaining_budget_bytes: remainingBytes,
+            reason: outcome.reason,
+            system_code: outcome.system_code,
+          };
+        }
+      }
+      if (omission !== undefined) {
+        truncated = true;
+        hashOmissions.push(omission);
       }
       entries.push({
         path: `${rootAlias}:${relativePath}`,

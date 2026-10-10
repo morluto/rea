@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA, yerel bir ikili dosyayı incelerken Hopper içinde analiz köprüsünü başlatıyor" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="REA topluluğu">
 <tr>
@@ -154,6 +154,8 @@ Yerel makine kodu içeren ikili dosya biçimleri ve ana bilgisayar desteği sağ
 
 ## Örnek çalışmalar
 
+[![DX-Ball ses kaydırma, Notion pano köprüsü ve TH04 mermi halkası örneklerinin çizimleri](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: Sesin stereo konumlandırma hesabını yeniden oluşturma
 
 Bir ses çağrısından konumu stereo konumlandırmaya dönüştüren yardımcı fonksiyona ilerleyin, talimatları inceleyin ve eksik sözde kodu C'ye dönüştürün. Yeniden oluşturulan kod, özgün x86 üzerinde 3.205 test durumunu geçer ve derlenmiş fonksiyonun 63 baytının tamamını yeniden üretir.
@@ -200,7 +202,7 @@ REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştır
 <details>
 <summary><strong>skills.sh üzerinden skill yüklemek ne yapar?</strong></summary>
 
-Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `rea setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](docs/installation.md#skill-only-installation) belgesine bakın.
+Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `npx rea-agents setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](docs/installation.md#skill-only-installation) belgesine bakın.
 
 </details>
 
@@ -252,19 +254,9 @@ Web sitesindeki [uygulamalı rehberlerden](https://rea.tools/guides/) başlayın
 
 Güvenlik açıklarını [SECURITY.md](SECURITY.md) üzerinden bildirin.
 
-## Katkıda bulunma
-
-REA'ya katkınızı bekliyoruz! Hata bildirmek veya özellik önermek için bir [issue açın](https://github.com/morluto/rea/issues); kodu veya belgeleri geliştirmek için bir [pull request gönderin](https://github.com/morluto/rea/pulls).
-
-Geliştirme ortamı ve kontroller için [CONTRIBUTING.md](CONTRIBUTING.md), doğrulama süreçleri için [test rehberi](docs/testing.md) ve proje yapısı için [mimari harita](docs/architecture.mermaid) belgelerine bakın.
-
-## Proje bağlantıları
-
-[Web sitesi](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Güvenlik](SECURITY.md)
-
 ## Yıldız geçmişi
 
-🎉 **GitHub'da 30.000 yıldız — teşekkürler!**
+🎉 **GitHub'da 50.000 yıldız — teşekkürler!**
 
 REA'yı kullanan, hata bildiren, özellik talep eden, derlemeleri test eden ve düzeltmelere katkıda bulunan herkese teşekkürler.
 
@@ -279,6 +271,12 @@ REA'yı kullanan, hata bildiren, özellik talep eden, derlemeleri test eden ve d
 ## Sorumluluk reddi
 
 REA, yasal tersine mühendislik araştırması, analizi ve yeniden oluşturma için araçlar sağlar. Gerekli izinleri almak ve geçerli yasalara uymak sizin sorumluluğunuzdadır. Proje yasa dışı veya yetkisiz kullanımı desteklemez.
+
+## Katkıda bulunma
+
+REA'ya katkınızı bekliyoruz! Hata bildirmek veya özellik önermek için bir [issue açın](https://github.com/morluto/rea/issues); kodu veya belgeleri geliştirmek için bir [pull request gönderin](https://github.com/morluto/rea/pulls).
+
+Geliştirme ortamı ve kontroller için [CONTRIBUTING.md](CONTRIBUTING.md), doğrulama süreçleri için [test rehberi](docs/testing.md) ve proje yapısı için [mimari harita](docs/architecture.mermaid) belgelerine bakın.
 
 ## Lisans
 

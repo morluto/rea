@@ -2,7 +2,7 @@ import type {
   JavaScriptSemanticPrimitive,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticPrimitiveKey } from "./javascriptSemanticProvenance.js";
 import {
   SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
@@ -21,6 +21,11 @@ export const semanticPrimitiveSet = (
         status: "unknown",
         reason: "Nonfinite numbers are outside the JSON primitive lattice.",
       };
+    if (typeof value === "number" && Object.is(value, -0))
+      return {
+        status: "unknown",
+        reason: "Negative zero cannot be preserved by JSON primitive evidence.",
+      };
     uniqueValues.add(value);
     if (uniqueValues.size > SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT)
       return semanticResourceLimitUnknown("primitive-candidates");
@@ -35,7 +40,7 @@ export const semanticPrimitiveSet = (
     return semanticResourceLimitUnknown("primitive-bytes");
   const unique = [...uniqueValues]
     .map((value) => ({ key: semanticPrimitiveKey(value), value }))
-    .sort((left, right) => compareCodePoints(left.key, right.key))
+    .sort((left, right) => compareUnicodeCodePoints(left.key, right.key))
     .map(({ value }) => value);
   const only = unique[0];
   return unique.length === 1 && only !== undefined

@@ -15,7 +15,7 @@ import {
   electronStaticValue,
   objectProperty,
 } from "./electronStaticAnalysisValues.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { addLocatedFinding } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentNode,
@@ -150,7 +150,9 @@ const collectWebPreferences = (
     if (value.status === "dynamic") unknown += 1;
     preferences.push({ name, value });
   }
-  preferences.sort((left, right) => compareCodePoints(left.name, right.name));
+  preferences.sort((left, right) =>
+    compareUnicodeCodePoints(left.name, right.name),
+  );
   return {
     status: "object-literal",
     preferences,

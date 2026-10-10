@@ -3,7 +3,10 @@ import {
   createImmutableJavaScriptSemanticGraphSteps,
   type JavaScriptSemanticGraph,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type {
+  JavaScriptSemanticFingerprint,
+  JavaScriptSemanticGraphNode,
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
@@ -118,7 +121,7 @@ export const buildJavaScriptSemanticGraph = ({
     if (analyzed.semantic !== null)
       projection.projectFile(analyzed.file, analyzed.semantic.ir);
   }
-  return projection.finish(rootArtifactSha256, applicationGraph, analysis);
+  return projection.finish(rootArtifactSha256, applicationGraph);
 };
 
 /** File-local semantic projection that does not retain consumed source IR. */
@@ -130,12 +133,10 @@ export interface JavaScriptSemanticGraphProjection {
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
-    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
-    analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
@@ -143,7 +144,7 @@ export interface JavaScriptSemanticGraphProjection {
 export const createJavaScriptSemanticGraphProjection =
   (): JavaScriptSemanticGraphProjection => {
     const state = emptyState({ nodes: [] });
-    const fingerprints: JavaScriptSemanticGraph["fingerprints"][number][] = [];
+    const fingerprints: JavaScriptSemanticFingerprint[] = [];
     let truncatedFiles = 0;
     const projectSource = (
       file: JavaScriptArtifactFile,
@@ -171,18 +172,32 @@ export const createJavaScriptSemanticGraphProjection =
       factory: (input: unknown) => Value,
       rootArtifactSha256: string,
       applicationGraph: BuilderInput["applicationGraph"],
-      analysis: Pick<JavaScriptArtifactAnalysis, "truncated_scopes">,
     ): Value => {
       bindSemanticGraphApplicationNodes(state, applicationGraph);
       if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
+      const relations = [...state.relations.values()];
       const unknowns = [...state.unknowns.values()];
+      type Family = (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number];
+      const retainedByFamily = new Map<Family, number>();
+      const unknownIdsByFamily = new Map<Family, string[]>();
+      for (const relation of relations) {
+        const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
+        retainedByFamily.set(family, (retainedByFamily.get(family) ?? 0) + 1);
+      }
+      for (const unknown of unknowns) {
+        const identifiers = unknownIdsByFamily.get(unknown.family);
+        if (identifiers === undefined)
+          unknownIdsByFamily.set(unknown.family, [unknown.unknown_id]);
+        else identifiers.push(unknown.unknown_id);
+      }
       const graph = factory({
         schema: "JavaScriptSemanticRelationGraph",
         root_artifact_sha256: rootArtifactSha256,
         application_graph_id: applicationGraph.graph_id,
         root_node_ids: [...state.roots],
+        evidence_contexts: state.evidenceContexts.contexts,
         nodes: [...state.nodes.values()],
-        relations: [...state.relations.values()],
+        relations,
         fingerprints,
         unknowns,
         coverage: {
@@ -202,16 +217,10 @@ export const createJavaScriptSemanticGraphProjection =
               : [],
           families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
             family,
-            status: semanticFamilyStatus(family, analysis),
-            retained_relations: [...state.relations.values()].filter(
-              (relation) =>
-                JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
-                family,
-            ).length,
+            status: semanticFamilyStatus(family),
+            retained_relations: retainedByFamily.get(family) ?? 0,
             omitted_relations: truncatedFiles > 0 ? null : 0,
-            unknown_ids: unknowns
-              .filter((unknown) => unknown.family === family)
-              .map(({ unknown_id: identifier }) => identifier),
+            unknown_ids: unknownIdsByFamily.get(family) ?? [],
           })),
         },
         limitations: [
@@ -232,24 +241,23 @@ export const createJavaScriptSemanticGraphProjection =
       state.relations.clear();
       state.unknowns.clear();
       state.roots.clear();
+      state.evidenceContexts.clear();
       fingerprints.length = 0;
       return graph;
     };
     return {
       projectFile: projectSource,
-      finish: (rootArtifactSha256, applicationGraph, analysis) =>
+      finish: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createJavaScriptSemanticGraph,
           rootArtifactSha256,
           applicationGraph,
-          analysis,
         ),
-      finishImmutableSteps: (rootArtifactSha256, applicationGraph, analysis) =>
+      finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createImmutableJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
-          analysis,
         ),
     };
   };
@@ -258,7 +266,7 @@ const projectFile = (
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
-): JavaScriptSemanticGraph["fingerprints"][number][] => {
+): JavaScriptSemanticFingerprint[] => {
   const moduleNode = retainNode(state, file, {
     kind: "module",
     roleKey: "module",
@@ -340,7 +348,12 @@ const projectFile = (
   projectSemanticResources(context);
   projectSemanticClosureCaptures(context);
   projectSemanticFrontiers(context);
-  return projectSemanticFunctionFingerprints(file, ir, callableNodes);
+  return projectSemanticFunctionFingerprints(
+    file,
+    ir,
+    callableNodes,
+    state.evidenceContexts,
+  );
 };
 
 const createReturnSiteNodes = (

@@ -48,9 +48,12 @@ cliTest(
     const session = createTestBinarySession(() => {
       throw new Error("no binary acquisition");
     });
-    const server = createServer(session, session, {
-      webModuleTrace: createWebModuleTraceService(environment),
-    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        webModuleTrace: createWebModuleTraceService(environment),
+      },
+    );
     const client = new Client({ name: "module-cli-parity", version: "1" });
     onTestFinished(async () => {
       await client.close();

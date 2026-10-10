@@ -20,8 +20,12 @@ it("creates source-map graph relationships only for real comments", async () => 
   ).toEqual([]);
   expect(
     withoutDirective.graph.edges.filter(
-      ({ relation, properties }) =>
-        relation === "maps_to" && properties.declared_url !== undefined,
+      ({ relation, target_node_id }) =>
+        relation === "maps_to" &&
+        withoutDirective.graph.nodes.some(
+          ({ kind, node_id }) =>
+            kind === "source-map" && node_id === target_node_id,
+        ),
     ),
   ).toEqual([]);
 
@@ -32,12 +36,17 @@ it("creates source-map graph relationships only for real comments", async () => 
   expect(
     withDirective.graph.nodes.filter(({ kind }) => kind === "source-map"),
   ).toHaveLength(1);
+  const nodes = new Map(
+    withDirective.graph.nodes.map((node) => [node.node_id, node]),
+  );
+  const sourceMapEdge = withDirective.graph.edges.find(
+    ({ relation, target_node_id }) =>
+      relation === "maps_to" &&
+      nodes.get(target_node_id)?.kind === "source-map",
+  );
   expect(
-    withDirective.graph.edges
-      .filter(
-        ({ relation, properties }) =>
-          relation === "maps_to" && properties.declared_url !== undefined,
-      )
-      .map(({ properties }) => properties.declared_url),
-  ).toEqual(["real.map"]);
+    nodes
+      .get(sourceMapEdge?.target_node_id ?? "")
+      ?.observations.map(({ properties }) => properties.declared_url),
+  ).toContain("real.map");
 });

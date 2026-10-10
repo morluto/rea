@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 
 import {
   findExportNode,
@@ -147,6 +148,38 @@ describe("CommonJS and ESM module relationships", () => {
     });
     expect(graph.limitations.join(" ")).toMatch(/incomplete/iu);
   });
+});
+
+it("does not assign one module origin to an export with colliding path encodings", async () => {
+  const root = await createTestTempDirectory("rea-ambiguous-module-origin-");
+  await writeFixtureFiles(root, {
+    "index.js": String.raw`
+        import * as ns from "./fixture.js";
+        const selected = choice ? ns["a\0b"] : ns.a.b;
+        export { selected };
+      `,
+    "fixture.js": "export const fixture = true;\n",
+  });
+  const { graph } = await reconstructJavaScriptFixture(root);
+  const applicationGraph = parseJavaScriptApplicationGraph(
+    JSON.parse(JSON.stringify(graph)),
+  );
+  const selectedExport = findExportNode(
+    applicationGraph,
+    "index.js",
+    "selected",
+  );
+  if (selectedExport === undefined)
+    throw new Error("Expected the selected export node");
+
+  expect(
+    applicationGraph.edges.filter(
+      ({ relation, source_node_id, properties }) =>
+        relation === "imports" &&
+        source_node_id === selectedExport.node_id &&
+        properties.local_name === "selected",
+    ),
+  ).toEqual([]);
 });
 
 describe("complete static application projections", () => {

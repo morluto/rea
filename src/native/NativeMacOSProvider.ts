@@ -82,6 +82,7 @@ import {
 export class NativeMacOSProvider implements AnalysisProvider {
   readonly #capabilities: readonly CapabilityDescriptor[];
   readonly #environment: NodeJS.ProcessEnv;
+  readonly #tracerFactory: () => NativeCallTracer;
 
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
@@ -89,9 +90,11 @@ export class NativeMacOSProvider implements AnalysisProvider {
       environment,
     ),
     platform: NodeJS.Platform = process.platform,
-    private readonly tracer: NativeCallTracer = new LldbCallTracer(environment),
+    tracerFactory?: () => NativeCallTracer,
   ) {
     this.#environment = snapshotEnvironment(environment, platform);
+    this.#tracerFactory =
+      tracerFactory ?? (() => new LldbCallTracer(this.#environment));
     this.#capabilities = nativeMacOSCapabilities(platform);
   }
 
@@ -107,7 +110,7 @@ export class NativeMacOSProvider implements AnalysisProvider {
     return new NativeMacOSClient(
       target,
       this.runner,
-      this.tracer,
+      this.#tracerFactory(),
       this.#environment,
     );
   }
@@ -246,7 +249,7 @@ class NativeMacOSClient implements AnalysisClient {
   }
 
   close(): Promise<Result<null, AnalysisError>> {
-    return Promise.resolve(ok(null));
+    return this.tracer.close();
   }
 
   #dispatch(
@@ -283,6 +286,16 @@ class NativeMacOSClient implements AnalysisClient {
   async #listArchitectures(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
+    // lipo reads only Mach-O; its refusal of a PE, ELF, or plist target is not
+    // a tool failure that a retry or `rea doctor` could repair.
+    if (this.target.format !== "mach-o")
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          "list_architectures",
+          "Active artifact is not Mach-O.",
+        ),
+      );
     const capture = await this.#run(
       "list_architectures",
       "lipo",

@@ -5,10 +5,7 @@ import {
   runProviderAnalysis as executeProviderAnalysis,
   runManagedProviderExecution as executeManagedProvider,
 } from "../application/DirectAnalysis.js";
-import {
-  runCapabilityStatus as executeCapabilityStatus,
-  runProviderStatus as executeProviderStatus,
-} from "../application/DirectAnalysisStatus.js";
+import { runSessionStatus as executeSessionStatus } from "../application/DirectAnalysisStatus.js";
 import type { DirectAnalysisDependencies } from "../application/DirectAnalysisDependencies.js";
 import { createBinarySession, createManagedBinarySession } from "./binary.js";
 
@@ -26,8 +23,7 @@ export const createDirectAnalysis = (
   return {
     runDirectAnalysis: executeDirectAnalysis.bind(undefined, dependencies),
     runProviderAnalysis: executeProviderAnalysis.bind(undefined, dependencies),
-    runProviderStatus: executeProviderStatus.bind(undefined, dependencies),
-    runCapabilityStatus: executeCapabilityStatus.bind(undefined, dependencies),
+    runSessionStatus: executeSessionStatus.bind(undefined, dependencies),
   };
 };
 

@@ -42,7 +42,11 @@ export const classifySwiftSymbol = (
     const kind = mangling.charAt(end);
     const nominal = NOMINAL_CATEGORIES.get(kind);
     if (nominal === undefined) {
-      if (kind === "E" && category !== null) category = "extensions";
+      // Current swiftc emits protocol descriptors as `…<Nominal>Mp` without
+      // the nominal `P` marker (e.g. `_$s4main7ScoringMp`). Decode that exact
+      // suffix; unknown substitution encodings stay unclassified, never guessed.
+      if (mangling.slice(end) === "Mp") category = "protocols";
+      else if (kind === "E" && category !== null) category = "extensions";
       break;
     }
     category = nominal;

@@ -223,14 +223,17 @@ const addChildUnknown = (input: ChildUnknownInput): void => {
     input;
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: node?.node_id ?? null,
-      family: "child-process",
-      relation_kinds: relationKinds,
-      reason: "ambiguous-target",
-      detail,
-      candidate_node_ids: candidateNodeIds,
-      evidence: unknownSemanticEvidence(context.file, location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: node?.node_id ?? null,
+        family: "child-process",
+        relation_kinds: relationKinds,
+        reason: "ambiguous-target",
+        detail,
+        candidate_node_ids: candidateNodeIds,
+        evidence: unknownSemanticEvidence(context.file, location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };

@@ -1,9 +1,9 @@
-import { writeFile } from "node:fs/promises";
+import { lstat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { classifyRoot } from "../../../src/artifacts/inventory/classify.js";
+import { classifyAndHashRoot } from "../../../src/artifacts/inventory/classify.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -19,7 +19,9 @@ describe("ZIP signature detection", () => {
       const root = await createTestTempDirectory("rea-zip-signature-");
       const path = join(root, "input");
       await writeFile(path, Buffer.from(signature));
-      expect(await classifyRoot(path, false)).toBe(archive ? "zip" : "file");
+      expect(
+        (await classifyAndHashRoot(path, false, await lstat(path))).format,
+      ).toBe(archive ? "zip" : "file");
       const target = await parseBinaryTarget(path);
       if (archive)
         expect(target).toMatchObject({ ok: true, value: { format: "zip" } });
@@ -37,7 +39,9 @@ describe("ZIP signature detection", () => {
       const root = await createTestTempDirectory("rea-zip-short-");
       const path = join(root, "input");
       await writeFile(path, Buffer.from(bytes));
-      expect(await classifyRoot(path, false)).toBe("file");
+      expect(
+        (await classifyAndHashRoot(path, false, await lstat(path))).format,
+      ).toBe("file");
       expect((await parseBinaryTarget(path)).ok).toBe(false);
     },
   );

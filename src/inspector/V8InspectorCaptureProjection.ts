@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 
 import type {
-  JavaScriptRuntimeLocation,
   JavaScriptRuntimeObservation,
+  JavaScriptRuntimeTargetLocation,
   JavaScriptRuntimeTargetList,
   ObserveJavaScriptRuntimeInput,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import {
   authorizeRuntimeLocation,
   inspectorExclusionKey,
+  projectReportedRuntimeUrl,
   throwIfRuntimeObservationCancelled,
 } from "./JavaScriptRuntimeScope.js";
 import type { CaptureState, ScriptDraft } from "./V8InspectorProvider.js";
@@ -43,6 +44,7 @@ interface FinalizeCaptureInput {
     rawUrl: string,
     signal?: AbortSignal,
   ) => ReturnType<typeof authorizeRuntimeLocation>;
+  readonly locationMode?: "verify" | "reported";
   readonly signal?: AbortSignal;
 }
 
@@ -60,29 +62,32 @@ export const finalizeInspectorCapture = async ({
   target,
   state,
   authorizeLocation = authorizeRuntimeLocation,
+  locationMode = "verify",
   signal,
 }: FinalizeCaptureInput): Promise<JavaScriptRuntimeObservation> => {
-  throwIfRuntimeObservationCancelled(signal);
+  if (locationMode === "verify") throwIfRuntimeObservationCancelled(signal);
   const exclusions = createInspectorExclusionCounts();
   const scripts = new Map<
     string,
     JavaScriptRuntimeObservation["scripts"]["items"][number]
   >();
   const draftsByUrl = new Map<string, ScriptDraft[]>();
-  for (const draft of state.scripts) {
-    const drafts = draftsByUrl.get(draft.rawUrl) ?? [];
-    drafts.push(draft);
-    draftsByUrl.set(draft.rawUrl, drafts);
-  }
+  if (locationMode === "verify")
+    for (const draft of state.scripts) {
+      const drafts = draftsByUrl.get(draft.rawUrl) ?? [];
+      drafts.push(draft);
+      draftsByUrl.set(draft.rawUrl, drafts);
+    }
   const groups = [...draftsByUrl];
   const authorizedGroups: AuthorizedLocationGroup[] = new Array(groups.length);
   let nextGroup = 0;
   let stopScheduling = false;
+  let unresolvedScripts = 0;
   const worker = async (): Promise<void> => {
     try {
       for (;;) {
-        throwIfRuntimeObservationCancelled(signal);
         if (stopScheduling) return;
+        throwIfRuntimeObservationCancelled(signal);
         const index = nextGroup;
         nextGroup += 1;
         const group = groups[index];
@@ -99,18 +104,23 @@ export const finalizeInspectorCapture = async ({
       throw cause;
     }
   };
-  const workerResults = await Promise.allSettled(
-    Array.from(
-      { length: Math.min(LOCATION_AUTHORIZATION_WORKERS, groups.length) },
-      worker,
-    ),
-  );
+  const workerResults =
+    locationMode === "verify"
+      ? await Promise.allSettled(
+          Array.from(
+            { length: Math.min(LOCATION_AUTHORIZATION_WORKERS, groups.length) },
+            worker,
+          ),
+        )
+      : [];
   const failedWorker = workerResults.find(
     (result) => result.status === "rejected",
   );
-  throwIfRuntimeObservationCancelled(signal);
+  if (locationMode === "verify") throwIfRuntimeObservationCancelled(signal);
   if (failedWorker?.status === "rejected") throw failedWorker.reason;
-  for (const { drafts, decision } of authorizedGroups) {
+  for (const group of authorizedGroups) {
+    if (group === undefined) continue;
+    const { drafts, decision } = group;
     for (const draft of drafts) {
       if (!decision.allowed) {
         exclusions[inspectorExclusionKey(decision.reason)] += 1;
@@ -120,6 +130,13 @@ export const finalizeInspectorCapture = async ({
       scripts.set(script.script_key, script);
     }
   }
+  if (locationMode === "reported")
+    for (const draft of state.scripts) {
+      const location = partialScriptLocation(draft.rawUrl);
+      if (location.kind === "unresolved") unresolvedScripts += 1;
+      const script = scriptFromDraft(draft, location);
+      scripts.set(script.script_key, script);
+    }
   const items = [...scripts.values()].sort((left, right) =>
     left.script_key < right.script_key
       ? -1
@@ -141,7 +158,7 @@ export const finalizeInspectorCapture = async ({
           ? 1
           : 0,
     );
-  throwIfRuntimeObservationCancelled(signal);
+  if (locationMode === "verify") throwIfRuntimeObservationCancelled(signal);
   return {
     runtime,
     target: {
@@ -189,6 +206,11 @@ export const finalizeInspectorCapture = async ({
             "The discovery-reported file location cannot be verified; loaded script locations are resolved independently from Debugger.scriptParsed.",
           ]
         : []),
+      ...(unresolvedScripts === 0
+        ? []
+        : [
+            `${String(unresolvedScripts)} observed script location${unresolvedScripts === 1 ? " remains" : "s remain"} unverified; raw URLs and script metadata are retained.`,
+          ]),
       "Scripts collected before attachment may have been garbage-collected and therefore omitted.",
       "A bounded observation window cannot establish that an unobserved script or behavior never occurs.",
       "The declared Node/Electron process role is not authenticated by the Inspector protocol.",
@@ -199,7 +221,7 @@ export const finalizeInspectorCapture = async ({
 
 const scriptFromDraft = (
   draft: ScriptDraft,
-  location: JavaScriptRuntimeLocation,
+  location: JavaScriptRuntimeTargetLocation,
 ): JavaScriptRuntimeObservation["scripts"]["items"][number] => {
   const stable = JSON.stringify({
     location,
@@ -216,5 +238,17 @@ const scriptFromDraft = (
     length: draft.length,
     is_module: draft.isModule,
     status: "observed-loaded",
+  };
+};
+
+const partialScriptLocation = (
+  reportedUrl: string,
+): JavaScriptRuntimeTargetLocation => {
+  const projection = projectReportedRuntimeUrl(reportedUrl);
+  if (projection.allowed) return projection.location;
+  return {
+    kind: "unresolved",
+    reported_url: reportedUrl,
+    reason: "location-authorization-not-attempted",
   };
 };

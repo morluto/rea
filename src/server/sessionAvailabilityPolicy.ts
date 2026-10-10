@@ -2,14 +2,12 @@ import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
 import { platform } from "node:process";
 
-export type SessionAvailability = AvailabilityPolicy;
-
 export interface SessionAvailabilityDefaults {
   readonly optionalProviderLoadFailures?:
     | OptionalProviderLoadFailures
     | undefined;
   readonly optionalFeatures?: Pick<
-    SessionAvailability,
+    AvailabilityPolicy,
     | "evmInterfaceEnabled"
     | "browserObservationEnabled"
     | "browserScenarioEnabled"
@@ -27,9 +25,9 @@ export interface SessionAvailabilityDefaults {
 
 /** Select configured availability reporting or the target-free defaults. */
 export const sessionAvailabilityPolicy = (
-  configured: (() => SessionAvailability) | undefined,
+  configured: (() => AvailabilityPolicy) | undefined,
   defaults: SessionAvailabilityDefaults,
-): (() => SessionAvailability) => {
+): (() => AvailabilityPolicy) => {
   const policy =
     configured ??
     (() => ({

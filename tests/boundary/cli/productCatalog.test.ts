@@ -27,8 +27,9 @@ import {
   createCliInventory,
   cliCommandDescriptionIssues,
   cliCommandOptionNames,
+} from "../../../scripts/lib/catalog-cli.mjs";
+import {
   createProductCatalog,
-  providerCatalogDigest,
   serializeProductCatalog,
 } from "../../../scripts/lib/product-catalog.mjs";
 
@@ -77,9 +78,6 @@ describe("canonical product catalog", () => {
       catalog.providers.find(({ id }) => id === GHIDRA_PROVIDER_IDENTITY.id)
         ?.capabilities,
     ).toEqual([...GHIDRA_OPERATIONS].sort());
-    expect(catalog.runtime_catalog.digests.providers_sha256).toBe(
-      providerCatalogDigest(catalog.providers),
-    );
     expect(
       JSON.parse(await readFile("docs/public/product-catalog.json", "utf8")),
     ).toEqual(catalog);
@@ -204,19 +202,6 @@ describe("canonical product catalog drift", () => {
     );
     expect(issues).toContain(
       "README_zh.md: documentation links differ from README.md",
-    );
-  });
-
-  it("changes the provider projection digest when provider facts drift", async () => {
-    const catalog = await createProductCatalog(root);
-    const firstProvider = catalog.providers[0];
-    if (firstProvider === undefined) throw new TypeError("Missing provider");
-    const driftedProviders = [
-      { ...firstProvider, name: `${firstProvider.name} drifted` },
-      ...catalog.providers.slice(1),
-    ];
-    expect(providerCatalogDigest(driftedProviders)).not.toBe(
-      catalog.runtime_catalog.digests.providers_sha256,
     );
   });
 

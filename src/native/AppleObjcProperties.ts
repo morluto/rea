@@ -21,20 +21,32 @@ export const parsePropertyAttributes = (
   attributes: string,
 ): ObjcProperty => {
   const tokens = attributes.length === 0 ? [] : splitAttributes(attributes);
+  const typeAttributes = tokens.filter((token) => token[0] === "T");
+  const typeAttribute =
+    typeAttributes.length === 1 ? typeAttributes[0] : undefined;
+  const typeEncoding =
+    typeAttribute !== undefined && typeAttribute.length > 1
+      ? typeAttribute.slice(1)
+      : null;
   const value = (code: string): string | null =>
-    tokens.find((token) => token.startsWith(code))?.slice(1) ?? null;
+    tokens.find((token) => token[0] === code)?.slice(1) ?? null;
   return {
     name,
-    type_encoding: value("T"),
+    type_encoding: typeEncoding,
     attributes: tokens.map((token) => ({
       name: token.slice(0, 1),
       value: token.slice(1),
-      is_weak: token === "W",
-      is_atomic: false,
-      is_copy: token === "C",
-      is_strong: token === "&",
     })),
-    is_readonly: tokens.includes("R"),
+    atomicity: tokens.includes("N")
+      ? "nonatomic"
+      : typeEncoding === null
+        ? null
+        : "atomic",
+    is_readonly: tokens.includes("R")
+      ? true
+      : typeEncoding === null
+        ? null
+        : false,
     getter: value("G"),
     setter: value("S"),
   };

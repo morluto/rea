@@ -11,15 +11,28 @@ export const requireTruthfulMemoryRegions = (segments) => {
     ...(Array.isArray(segment.sections) ? segment.sections : []),
   ]);
   for (const region of regions) {
+    if (
+      typeof region?.name !== "string" ||
+      region.name.length === 0 ||
+      typeof region.start !== "string" ||
+      typeof region.end !== "string"
+    ) {
+      throw new Error(
+        "list_segments omitted observed region identity or bounds",
+      );
+    }
     for (const permission of ["readable", "writable", "executable"]) {
-      if (![true, false, null].includes(region?.[permission])) {
-        throw new Error(`list_segments omitted tri-state ${permission}`);
+      if (region[permission] !== null) {
+        throw new Error(
+          `list_segments invented or omitted unknown ${permission}`,
+        );
       }
     }
     if (
       region.provenance !== "hopper-public-python-api" ||
       region.permissions?.available !== false ||
-      typeof region.permissions.reason !== "string"
+      typeof region.permissions.reason !== "string" ||
+      region.permissions.reason.length === 0
     ) {
       throw new Error("list_segments omitted permission provenance");
     }
@@ -141,6 +154,15 @@ export async function verifyRealHopperFixture({
     "procedure_references",
   );
   assert.deepEqual(entryDossier.unresolved_calls, observed.unresolved_calls);
+  assert.equal(
+    observed.reference_kinds_available,
+    false,
+    "Hopper's partial CallReference observations do not expose detailed reference kinds",
+  );
+  assert.ok(
+    Array.isArray(observed.unresolved_calls),
+    "procedure_references omitted its observed unresolved CallReference results",
+  );
   for (const call of calls) {
     assert.equal(call.call.provider_type, 2);
     assert.equal(

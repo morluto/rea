@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA inicia su puente de análisis dentro de Hopper mientras inspecciona un binario nativo" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="Comunidad REA">
 <tr>
@@ -154,6 +154,8 @@ Los formatos nativos y los sistemas anfitriones compatibles varían según el pr
 
 ## Casos prácticos
 
+[![Ilustraciones de los casos de panoramización de sonido de DX-Ball, el puente del portapapeles de Notion y el anillo de proyectiles de TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: reconstruir un cálculo de panoramización de sonido
 
 Sigue una llamada de sonido hasta la función auxiliar que convierte la posición en panoramización, inspecciona las instrucciones y transforma el pseudocódigo incompleto en C. La reconstrucción supera 3.205 casos con el x86 original y reproduce los 63 bytes de la función compilada.
@@ -200,7 +202,7 @@ REA inicia Hopper cuando una operación lo necesita. En macOS, puede aparecer un
 <details>
 <summary><strong>¿Qué hace la instalación de la skill desde skills.sh?</strong></summary>
 
-La skill proporciona instrucciones de investigación a tu agente. Usa `rea setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](docs/installation.md#skill-only-installation).
+La skill proporciona instrucciones de investigación a tu agente. Usa `npx rea-agents setup` para registrar el servidor MCP de REA e instalar las instrucciones correspondientes; después reinicia tu agente. Consulta [instalación solo de la skill](docs/installation.md#skill-only-installation).
 
 </details>
 
@@ -252,19 +254,9 @@ Empieza con las [guías prácticas](https://rea.tools/guides/) del sitio web. Pa
 
 Informa de vulnerabilidades siguiendo [SECURITY.md](SECURITY.md).
 
-## Contribuir
-
-¡Nos encantaría que ayudaras con REA! [Abre una issue](https://github.com/morluto/rea/issues) para comunicar un error o proponer una función, o [envía una pull request](https://github.com/morluto/rea/pulls) para mejorar el código o la documentación.
-
-Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](docs/testing.md) para los procesos de verificación y el [mapa de arquitectura](docs/architecture.mermaid) para la estructura del proyecto.
-
-## Enlaces del proyecto
-
-[Sitio web](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Seguridad](SECURITY.md)
-
 ## Historial de estrellas
 
-🎉 **30.000 estrellas en GitHub: ¡gracias!**
+🎉 **50.000 estrellas en GitHub: ¡gracias!**
 
 Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban compilaciones y contribuyen con correcciones.
 
@@ -279,6 +271,12 @@ Gracias a quienes usan REA, informan de errores, solicitan funciones, prueban co
 ## Aviso legal
 
 REA proporciona herramientas para la investigación, el análisis y la reconstrucción mediante ingeniería inversa conforme a la ley. Eres responsable de obtener las autorizaciones necesarias y cumplir las leyes aplicables. El proyecto no respalda usos ilegales ni no autorizados.
+
+## Contribuir
+
+¡Nos encantaría que ayudaras con REA! [Abre una issue](https://github.com/morluto/rea/issues) para comunicar un error o proponer una función, o [envía una pull request](https://github.com/morluto/rea/pulls) para mejorar el código o la documentación.
+
+Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para preparar el entorno de desarrollo y las comprobaciones, la [guía de pruebas](docs/testing.md) para los procesos de verificación y el [mapa de arquitectura](docs/architecture.mermaid) para la estructura del proyecto.
 
 ## Licencia
 

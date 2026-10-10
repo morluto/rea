@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 const connect = async (analysis: AnalysisOperationPort) => {
-  const server = createServer(analysis);
+  const server = createServer({ kind: "fixed", analysis });
   const client = new Client({
     name: "integration-test",
     version: "1.0.0",
@@ -107,10 +107,7 @@ it("advertises the complete currently available inventory with a session", async
         close: () => Promise.resolve(resultOk(null)),
       }) satisfies AnalysisClient,
   );
-  const server = createServer(
-    { execute: () => Promise.resolve(ok(null)) },
-    session,
-  );
+  const server = createServer({ kind: "session", session });
   const client = new Client({
     name: "integration-test",
     version: "1.0.0",

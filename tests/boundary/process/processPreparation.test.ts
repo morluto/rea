@@ -3,6 +3,10 @@ import { expect, it, vi } from "vitest";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { prepareProcessCapture } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
+
+const emptyFilesystemCoverage =
+  emptyProcessCapture().truncation_details.filesystem_before;
 
 it("prepares ownership inspection before snapshotting or allocating a target run", async () => {
   const failure = new Error("native process identity inspection unavailable");
@@ -53,7 +57,12 @@ it("cleans the temporary root when cancellation arrives during identity capture"
         working_directory: "/tmp",
       }),
       controller.signal,
-      async () => ({ files: [], truncated: false, completeRoots: [] }),
+      async () => ({
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage,
+      }),
       host,
     ),
   ).rejects.toThrow(/cancelled/u);

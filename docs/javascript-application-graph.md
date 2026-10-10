@@ -73,6 +73,18 @@ The directed relation vocabulary is `contains`, `loads`, `imports`, `maps_to`,
 and `changed_from`. Provider names are deliberately absent from both
 vocabularies.
 
+For a `maps_to` edge targeting a source-map node, the edge carries
+`resolved_path` and `declared_url_sha256`. The target node's reference
+observation carries that same digest and the exact `declared_url`; match the
+digest to select the URL belonging to that edge when several references share
+one physical source map. The full URL is kept out of node identity, display
+label, and edge properties, so large inline data URLs are stored once per
+source-map reference.
+
+Consumers previously reading `edge.properties.declared_url` should follow
+`target_node_id` and select the observation by `declared_url_sha256` instead.
+Node labels serve display; the observation preserves the original URL.
+
 For example, a source-owned synthetic fixture proves this path without using a
 third-party application:
 

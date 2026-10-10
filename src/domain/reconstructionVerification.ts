@@ -6,6 +6,7 @@ import { z } from "zod";
 import { artifactComparisonResultSchema } from "./artifactComparison.js";
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { comparisonSourceEvidenceSides } from "./comparisonSourceEvidence.js";
 import { parseEvidence, type Evidence } from "./evidence.js";
 import { parseEvidenceBundle } from "./evidenceBundle.js";
@@ -76,7 +77,9 @@ export const verifyReconstruction = (
   const heads = reconstructionUnknownHeads(bundle.unknowns);
   const results = specification.claims
     .map((claim) => evaluateClaim(claim, records, heads))
-    .sort((left, right) => left.claim_id.localeCompare(right.claim_id, "en"));
+    .sort((left, right) =>
+      compareUnicodeCodePoints(left.claim_id, right.claim_id),
+    );
   const failed = count(results, "fail");
   const unresolved = count(results, "unknown");
   const probes = reconstructionProbes(results, heads);
@@ -88,7 +91,7 @@ export const verifyReconstruction = (
     specification_sha256: digest({
       ...specification,
       claims: [...specification.claims].sort((left, right) =>
-        left.claim_id.localeCompare(right.claim_id, "en"),
+        compareUnicodeCodePoints(left.claim_id, right.claim_id),
       ),
     }),
     summary: {

@@ -1,9 +1,10 @@
 import { constants } from "node:fs";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
+import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -14,7 +15,11 @@ import {
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
-import { canonicalSkillNeedsInstall } from "./SetupSkill.js";
+import {
+  claudeCodeSkillsDirectory,
+  readInstalledSkillIdentity,
+  type InstalledSkillIdentity,
+} from "./SetupSkill.js";
 import { CATALOG_IDENTITY } from "../catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../identity.js";
 import {
@@ -91,18 +96,11 @@ export interface DoctorHost {
   manualHopperPaths(): Promise<readonly string[]>;
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
   installationPaths?(): Promise<readonly string[]>;
-  installedSkillIdentity?(): Promise<InstalledSkillIdentity | undefined>;
+  installedSkillIdentity?(
+    clientIds: readonly string[],
+  ): Promise<InstalledSkillIdentity | undefined>;
   clientRegistrations?(): Promise<readonly ClientRegistrationStatus[]>;
   ilspyCmdVersion?(path: string): Promise<string | undefined>;
-}
-
-/** Observed skill metadata and comparison with the packaged instruction bundle. */
-interface InstalledSkillIdentity {
-  readonly version: string | null;
-  readonly toolCount: number | null;
-  readonly catalogDigest: string | null;
-  /** Whether all managed instruction and reference files match this package. */
-  readonly canonical: boolean;
 }
 
 /** Structured result returned by the read-only doctor workflow. */
@@ -142,8 +140,6 @@ interface DoctorIdentity {
   readonly skill: {
     readonly installed_version: string | null;
     readonly installed_tool_count: number | null;
-    /** Legacy catalog digest observed in older bundles; current bundles omit it. */
-    readonly installed_catalog_digest: string | null;
     readonly state: "aligned" | "stale" | "missing";
     readonly remediation: string | null;
   };
@@ -160,12 +156,13 @@ export const runDoctor = async (
   host: DoctorHost = systemDoctorHost(),
   requestedScope?: DoctorScope,
 ): Promise<DoctorReport> => {
+  const scope = normalizeDoctorScope(requestedScope, target);
   const {
     checks: diagnosticChecks,
     hopperPath,
     providerInspections,
   } = await collectDoctorDiagnostics(target, host);
-  const identity = await collectDoctorIdentity(host);
+  const identity = await collectDoctorIdentity(host, scope);
   const checks = [...diagnosticChecks, ...identity.checks];
   const providers = {
     hopperAvailable:
@@ -177,7 +174,6 @@ export const runDoctor = async (
     providerInspections,
   };
   const environmentHealthy = doctorHealthy(checks, providers);
-  const scope = normalizeDoctorScope(requestedScope, target);
   const scoped = scopeDoctorChecks({
     checks,
     registrations: identity.value.registrations,
@@ -201,14 +197,20 @@ export const runDoctor = async (
 
 const collectDoctorIdentity = async (
   host: DoctorHost,
+  scope: DoctorScopeReport,
 ): Promise<{
   readonly checks: readonly DoctorCheck[];
   readonly value: DoctorIdentity;
 }> => {
   const installationPaths = (await host.installationPaths?.()) ?? [];
-  const installedSkillIdentity = await host.installedSkillIdentity?.();
-  const skillAligned = skillIdentityAligned(installedSkillIdentity);
   const registrations = (await host.clientRegistrations?.()) ?? [];
+  const skillClientIds =
+    scope.mode === "audit-wide"
+      ? registrations.map(({ client }) => client)
+      : scope.clients;
+  const installedSkillIdentity =
+    await host.installedSkillIdentity?.(skillClientIds);
+  const skillAligned = skillIdentityAligned(installedSkillIdentity);
   return {
     checks: [
       ...(skillAligned ? [] : [skillIdentityCheck(installedSkillIdentity)]),
@@ -236,7 +238,6 @@ const collectDoctorIdentity = async (
       skill: {
         installed_version: installedSkillIdentity?.version ?? null,
         installed_tool_count: installedSkillIdentity?.toolCount ?? null,
-        installed_catalog_digest: installedSkillIdentity?.catalogDigest ?? null,
         state:
           installedSkillIdentity === undefined
             ? "missing"
@@ -324,10 +325,18 @@ export const systemDoctorHost = (
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: readLinuxDistribution,
     async validTarget(path) {
-      return (await parseBinaryTarget(path, process.cwd(), architecture)).ok;
+      return (
+        await parseBinaryTarget(path, {
+          cwd: process.cwd(),
+          hostArchitecture: architecture,
+        })
+      ).ok;
     },
     async inspectTarget(path) {
-      const result = await parseBinaryTarget(path, process.cwd(), architecture);
+      const result = await parseBinaryTarget(path, {
+        cwd: process.cwd(),
+        hostArchitecture: architecture,
+      });
       if (result.ok)
         return {
           name: "target",
@@ -336,19 +345,21 @@ export const systemDoctorHost = (
           detail: path,
         };
       const error = result.error;
+      const targetError =
+        error instanceof BinaryTargetError ? error : undefined;
       return {
         name: "target",
         ok: false,
         classification:
-          error.constraint === "directory_requires_file"
+          targetError?.constraint === "directory_requires_file"
             ? "unsupported_target"
             : "config_drift",
         detail: path,
         details: {
-          reason: error.reason,
-          ...(error.constraint === undefined
+          reason: targetError?.reason ?? error.message,
+          ...(targetError?.constraint === undefined
             ? {}
-            : { constraint: error.constraint }),
+            : { constraint: targetError.constraint }),
         },
         remediation: analysisErrorRemediationAction(error),
       };
@@ -426,7 +437,12 @@ export const systemDoctorHost = (
         return [];
       }
     },
-    installedSkillIdentity: () => installedSkillIdentity(homeDirectory),
+    installedSkillIdentity: (clientIds) =>
+      readInstalledSkillIdentity(
+        homeDirectory,
+        clientIds,
+        claudeCodeSkillsDirectory(homeDirectory, environment),
+      ),
     clientRegistrations: () =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
         platform,
@@ -489,34 +505,6 @@ const manualHopperPaths = async (home: string): Promise<readonly string[]> => {
     }
   }
   return paths;
-};
-
-const readInstalledSkill = (home: string): Promise<string> =>
-  readFile(
-    join(home, ".agents/skills", PRODUCT_IDENTITY.skillName, "SKILL.md"),
-    "utf8",
-  );
-
-const installedSkillIdentity = async (
-  home: string,
-): Promise<InstalledSkillIdentity | undefined> => {
-  try {
-    const content = await readInstalledSkill(home);
-    const countText = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
-    return {
-      canonical: !(await canonicalSkillNeedsInstall(home)),
-      version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
-      toolCount:
-        countText === undefined ? null : Number.parseInt(countText, 10),
-      catalogDigest:
-        /^\s{2}catalog_digest:\s*"([a-f0-9]{64})"\s*$/mu.exec(content)?.[1] ??
-        null,
-    };
-  } catch (cause: unknown) {
-    // best-effort cleanup: optional skill probing; failure means unknown.
-    void cause;
-    return undefined;
-  }
 };
 
 const uniqueLines = (value: string): string[] => [

@@ -1,10 +1,13 @@
-import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
+import { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
 
 import { createPackage, listPackage, uncache } from "@electron/asar";
 import { describe, expect, it } from "vitest";
 
+import { scanCanonicalArtifactInventory } from "../../../src/artifacts/inventory/scanCanonical.js";
+import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -165,7 +168,121 @@ describe("ASAR inventory freshness", () => {
       }
     },
   );
+});
 
+describe("ASAR captured-byte identity", () => {
+  it("rejects same-size nested-container replacement between hashing and interpretation", async () => {
+    const fixture = await archiveFixture();
+    const originalSize = (await lstat(fixture.archive)).size;
+    const directory = new DirectoryArtifactReader(fixture.bundle);
+    await expect(
+      scanCanonicalArtifactInventory(fixture.bundle, {}, async () => ({
+        format: directory.format,
+        entries: (signal) => directory.entries(signal),
+        provenance: () => directory.provenance(),
+        close: () => directory.close(),
+        async open(entry, signal) {
+          const source = await directory.open(entry, signal);
+          return Readable.from(
+            (async function* () {
+              yield* source;
+              await fixture.replace();
+              expect((await lstat(fixture.archive)).size).toBe(originalSize);
+            })(),
+          );
+        },
+      })),
+    ).rejects.toMatchObject({
+      reason: "integrity",
+      message: expect.stringContaining("changed before interpretation"),
+    });
+  });
+
+  it("isolates interleaved readers from replacement headers and packed bytes", async () => {
+    const fixture = await archiveFixture();
+    await writeFile(join(fixture.source, "second.js"), "original metadata");
+    await createPackage(fixture.source, fixture.archive);
+    const first = new AsarArtifactReader(fixture.archive);
+    const second = new AsarArtifactReader(fixture.archive);
+    const left = first.entries()[Symbol.asyncIterator]();
+    const right = second.entries()[Symbol.asyncIterator]();
+    try {
+      const initial = await left.next();
+      if (initial.done) throw new Error("Expected first member");
+      expect(initial.value.path).toBe("old.js");
+      await fixture.replace();
+      await writeFile(join(fixture.source, "second.js"), "replaced metadata");
+      await createPackage(fixture.source, fixture.archive);
+      const replacement = await right.next();
+      if (replacement.done) throw new Error("Expected replacement member");
+      expect(replacement.value.path).toBe("new.js");
+      const originalMember = await left.next();
+      const replacementMember = await right.next();
+      if (originalMember.done || replacementMember.done)
+        throw new Error("Expected second members");
+      expect(originalMember.value.declaredSha256).not.toBe(
+        replacementMember.value.declaredSha256,
+      );
+      expect(
+        (await buffer(await first.open(originalMember.value))).toString(),
+      ).toBe("original metadata");
+      await first.close();
+      expect(
+        (await buffer(await second.open(replacementMember.value))).toString(),
+      ).toBe("replaced metadata");
+    } finally {
+      await left.return?.();
+      await right.return?.();
+      await first.close();
+      await second.close();
+    }
+  });
+
+  it("retains a completed inventory and snapshot ownership when cleanup fails", async () => {
+    const fixture = await archiveFixture();
+    const attempts: string[] = [];
+    const reader = new AsarArtifactReader(
+      fixture.archive,
+      undefined,
+      async (path) => {
+        attempts.push(path);
+        if (attempts.length === 1) throw new Error("snapshot removal denied");
+        await rm(path, { recursive: true, force: true });
+      },
+    );
+    try {
+      const failure: unknown = await scanCanonicalArtifactInventory(
+        fixture.archive,
+        {},
+        async () => reader,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({
+        cleanup: { resources: [attempts[0]] },
+        partialObservation: {
+          kind: "artifact-inventory",
+          inventory: {
+            occurrences: expect.arrayContaining([
+              expect.objectContaining({
+                logical_path: "old.js",
+                hash_status: "verified",
+              }),
+            ]),
+          },
+        },
+      });
+      const root = attempts[0];
+      if (root === undefined) throw new Error("Expected owned snapshot");
+      expect((await lstat(root)).isDirectory()).toBe(true);
+      await reader.close();
+      expect(attempts).toEqual([root, root]);
+      await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await reader.close();
+    }
+  });
+});
+
+describe("ASAR reader lifecycle", () => {
   it("refreshes a header cached before the reader was created", async () => {
     const fixture = await archiveFixture();
     try {

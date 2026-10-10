@@ -6,7 +6,7 @@ import {
   collectJavaScriptExports,
   fingerprintJavaScriptAst,
 } from "./javascriptAstFingerprint.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { addFindingOnce } from "./javascriptStaticAnalysisFindings.js";
 import {
   argumentValue,
@@ -66,7 +66,7 @@ export const inspectBundlerRegistration = (
     unknown_async_chunk_keys:
       runtimeValue.unknownAsyncChunkKeys + recovered.unknownAsyncChunkKeys,
     modules: recovered.modules.sort((left, right) =>
-      compareCodePoints(left.module_key, right.module_key),
+      compareUnicodeCodePoints(left.module_key, right.module_key),
     ),
     location: range(call),
   };
@@ -107,7 +107,7 @@ export const inspectEsbuildWrapper = (
     async_chunk_keys: recovered.asyncChunkKeys,
     unknown_async_chunk_keys: recovered.unknownAsyncChunkKeys,
     modules: recovered.modules.sort((left, right) =>
-      compareCodePoints(left.module_key, right.module_key),
+      compareUnicodeCodePoints(left.module_key, right.module_key),
     ),
     location: range(call),
   };
@@ -225,7 +225,7 @@ const runtimeMetadata = (node: t.Node | null | undefined): RuntimeMetadata => {
       asyncChunkKeys: [],
       unknownAsyncChunkKeys: 0,
     };
-  const entries = collectBundlerEntryModuleKeys(node, requireName);
+  const entries = collectBundlerCallArgumentValues(node, requireName);
   const asyncChunks = collectBundlerAsyncChunkKeys(node, requireName);
   return {
     requireName,
@@ -235,11 +235,6 @@ const runtimeMetadata = (node: t.Node | null | undefined): RuntimeMetadata => {
     unknownAsyncChunkKeys: asyncChunks.unknown,
   };
 };
-
-const collectBundlerEntryModuleKeys = (
-  factory: BundlerFunction,
-  requireName: string,
-): StaticValues => collectBundlerCallArgumentValues(factory, requireName);
 
 const collectBundlerAsyncChunkKeys = (
   factory: BundlerFunction,
@@ -277,7 +272,7 @@ const isBundlerFunction = (
   t.isObjectMethod(node);
 
 const uniqueValues = (values: readonly string[], unknown = 0): StaticValues => {
-  const unique = [...new Set(values)].sort(compareCodePoints);
+  const unique = [...new Set(values)].sort(compareUnicodeCodePoints);
   return {
     values: unique,
     unknown,

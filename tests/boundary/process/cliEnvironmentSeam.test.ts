@@ -70,7 +70,7 @@ describe("the CLI takes its environment as an input", () => {
     // environment rather than whatever the process happens to carry.
     const result = await createDirectAnalysis({
       REA_LOG_LEVEL: "not-a-level",
-    }).runCapabilityStatus();
+    }).runSessionStatus();
     expect(result).toMatchObject({ error: expect.anything() });
   });
 });

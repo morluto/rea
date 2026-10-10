@@ -1,5 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -14,7 +15,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
-import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
@@ -35,8 +35,7 @@ it("runs every managed static inspection independently of an active native targe
     new ManagedStaticProvider(),
   ]);
   const server = createServer(
-    session,
-    sessionWithUnrelatedNativeTarget(session),
+    { kind: "session", session },
     {
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
@@ -133,8 +132,7 @@ it("opens a managed PE and executes the managed static provider through MCP", as
     new ManagedStaticProvider(),
   ]);
   const server = createServer(
-    session,
-    sessionWithUnrelatedNativeTarget(session),
+    { kind: "session", session },
     {
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
@@ -288,28 +286,6 @@ const inspectManagedStaticWorkflow = async (
   return members;
 };
 
-const sessionWithUnrelatedNativeTarget = (
-  session: BinarySession,
-): BinarySession => {
-  const nativeTarget: BinaryTarget = {
-    kind: "executable",
-    format: "pe",
-    path: "C:\\Windows\\System32\\notepad.exe",
-    sha256: "a".repeat(64),
-    architecture: "x86_64",
-    availableArchitectures: ["x86_64"],
-    executableRole: "application",
-    managed: false,
-  };
-  return new Proxy(session, {
-    get(target, property, receiver) {
-      if (property === "activeTarget") return () => nativeTarget;
-      const value: unknown = Reflect.get(target, property, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-  });
-};
-
 const methodFrom = (members: Record<string, unknown>) =>
   z
     .array(
@@ -410,13 +386,30 @@ const verifyImport = async (
     operation: "import_managed_reconstruction",
     provider: { id: "rea-dotnet-workflows" },
     confidence: "inferred",
+    authority: "analyst-inference",
     normalized_result: {
+      phase: "reconstruction-import",
       executed: false,
+      decompiler: { name: "ilspycmd", version: "9.1.0.7988", family: "ilspy" },
       summary: { imported_methods: 1, decompiled_csharp_methods: 1 },
       methods: [
         {
           token: method.token,
-          validation: { canonical_observation: false },
+          signature_sha256: method.signature.raw_sha256,
+          normalized_il_sha256: method.body.normalized_il_sha256,
+          reconstruction: {
+            kind: "decompiled-csharp",
+            language: "csharp",
+            text_sha256: createHash("sha256")
+              .update("internal static void Main() { }")
+              .digest("hex"),
+          },
+          validation: {
+            matched_static_member: true,
+            exact_build_required: true,
+            canonical_observation: false,
+            confidence_floor: "inference",
+          },
         },
       ],
     },

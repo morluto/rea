@@ -1,4 +1,5 @@
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   canonicalExportShapeValue,
   digestExportShapeValue,
@@ -107,7 +108,7 @@ const sortChanges = (
     }))
     .sort(
       (left, right) =>
-        compareCodePoints(left.sortKey, right.sortKey) ||
+        compareUnicodeCodePoints(left.sortKey, right.sortKey) ||
         left.index - right.index,
     )
     .map(({ change }) => change);

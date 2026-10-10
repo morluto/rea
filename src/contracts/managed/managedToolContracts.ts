@@ -1,18 +1,16 @@
 import { z } from "zod";
+import { isAbsolute } from "node:path";
 
 import type { ToolContract } from "../toolContractTypes.js";
 import { managedOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
-import {
-  isAbsoluteLocalPath,
-  localPathStringSchema,
-} from "../../domain/localPath.js";
+import { localPathStringSchema } from "../../domain/localPath.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedTargetInputSchema = z.strictObject({
   path: localPathStringSchema
-    .refine(isAbsoluteLocalPath, {
+    .refine(isAbsolute, {
       message:
         "path must be an absolute local filesystem path (for example /tmp/Example.dll or C:\\Example.dll)",
     })

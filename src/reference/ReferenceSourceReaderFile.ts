@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -13,7 +14,6 @@ import {
   validateDirectory,
 } from "./ReferenceSourceReaderValidate.js";
 import {
-  type BigStats,
   type ReferenceSourceEntry,
   type StableFileRequest,
 } from "./ReferenceSourceReaderTypes.js";
@@ -23,7 +23,7 @@ const READ_CHUNK_BYTES = 64 * 1024;
 type PreparedFileRead =
   | {
       readonly status: "ready";
-      readonly before: BigStats;
+      readonly before: BigIntStats;
     }
   | { readonly status: "failed"; readonly entry: ReferenceSourceEntry };
 
@@ -33,12 +33,12 @@ type FileContentsRead =
 
 type FinalizeFileReadRequest = {
   readonly root: string;
-  readonly rootIdentity: BigStats;
+  readonly rootIdentity: BigIntStats;
   readonly absolute: string;
   readonly path: string;
   readonly handle: FileHandle;
-  readonly before: BigStats;
-  readonly parentBefore: { readonly ok: true; readonly stats: BigStats };
+  readonly before: BigIntStats;
+  readonly parentBefore: { readonly ok: true; readonly stats: BigIntStats };
   readonly chunks: Buffer[];
   readonly total: number;
   readonly signal?: AbortSignal;

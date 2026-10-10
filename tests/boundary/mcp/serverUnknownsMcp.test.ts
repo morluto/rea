@@ -6,7 +6,6 @@ import { afterEach, expect, it } from "vitest";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
   AnalysisClient,
-  AnalysisOperationPort,
   AnalysisProvider,
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
@@ -62,7 +61,17 @@ const providerWithCapabilities = (
     identity: () => identity,
     capabilities: () => capabilities,
     createClient: () => ({
-      execute: () => Promise.resolve(ok(null)),
+      execute: (operation) => {
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              "fixture",
+              operation,
+              "Decompiler is not installed.",
+            ),
+          ),
+        );
+      },
       close: () => Promise.resolve(resultOk(null)),
     }),
   };
@@ -79,25 +88,10 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
 };
 
 it("does not record capability unavailability without supporting Evidence", async () => {
-  const received: Array<Readonly<Record<string, unknown>>> = [];
-  const analysis: AnalysisOperationPort = {
-    execute: (name, arguments_) => {
-      received.push(arguments_);
-      return Promise.resolve(
-        err(
-          new AnalysisCapabilityUnavailableError(
-            "partial",
-            name,
-            "Decompiler is not installed.",
-          ),
-        ),
-      );
-    },
-  };
   const session = createTestBinarySession(
     providerWithCapabilities(["procedure_pseudo_code"]),
   );
-  const server = createServer(analysis, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "unavailable-unknown", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -118,10 +112,9 @@ it("does not record capability unavailability without supporting Evidence", asyn
   expect(unavailable.isError).toBe(true);
   expect(structured(unavailable)).toMatchObject({
     error: {
-      category: "unsupported_provider",
+      category: "unavailable",
     },
   });
-  expect(received[0]).toMatchObject({ procedure: "main" });
   expect(
     structured(await client.callTool({ name: "list_unknowns", arguments: {} })),
   ).toMatchObject({
@@ -166,10 +159,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
   const rightEvidence = captureEvidence(right);
   expect(session.recordEvidence(leftEvidence).ok).toBe(true);
   expect(session.recordEvidence(rightEvidence).ok).toBe(true);
-  const server = createServer(
-    { execute: () => Promise.resolve(ok(null)) },
-    session,
-  );
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "comparison-unknown", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

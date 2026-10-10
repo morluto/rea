@@ -127,8 +127,8 @@ const eventBase = {
 const eventUrl = sanitizedBrowserUrlSchema.nullable();
 const networkEventShape = {
   ...eventBase,
-  transaction_id: z.string().min(1).optional(),
-  redirected_from_transaction_id: z.string().min(1).nullable().optional(),
+  transaction_id: z.string().min(1),
+  redirected_from_transaction_id: z.string().min(1).nullable(),
   method: z.string().min(1),
   url: sanitizedBrowserUrlSchema,
   resource_type: z.string().min(1),

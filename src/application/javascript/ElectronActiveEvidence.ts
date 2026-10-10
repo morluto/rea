@@ -1,4 +1,4 @@
-import { canonicalDigest } from "../../domain/comparisonSemantics.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import type { ProviderIdentity } from "../AnalysisProvider.js";
 import type { Evidence, EvidenceObservation } from "../../domain/evidence.js";
 import { createEvidence } from "../../domain/evidence.js";
@@ -44,6 +44,6 @@ const parameters = (
   const scenario = jsonObjectSchema.parse(input);
   return {
     ...scenario,
-    scenario_sha256: canonicalDigest(scenario, "Electron scenario"),
+    scenario_sha256: digestCanonicalValue(scenario, "Electron scenario"),
   };
 };

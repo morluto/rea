@@ -20,7 +20,7 @@ import {
 } from "../../fixtures/binarySession.js";
 
 const connect = async (analysis: AnalysisOperationPort) => {
-  const server = createServer(analysis);
+  const server = createServer({ kind: "fixed", analysis });
   const client = new Client({ name: "argument-parity", version: "1.0.0" });
   onTestFinished(async () => {
     await client.close();

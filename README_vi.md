@@ -11,7 +11,7 @@
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
 [![CI](https://img.shields.io/github/actions/workflow/status/morluto/rea/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/morluto/rea/actions/workflows/ci.yml)
 [![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](docs/mcp-contracts.md#generated-catalog)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22.19%2B-339933?style=flat-square&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](LICENSE)
 [![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
@@ -28,7 +28,7 @@
 
 <img src="docs/assets/rea-hopper-analysis.png" alt="REA khởi chạy cầu nối phân tích bên trong Hopper khi kiểm tra tệp nhị phân mã máy" width="1200" />
 
-<br />
+<br /><br />
 
 <table aria-label="Cộng đồng REA">
 <tr>
@@ -154,6 +154,8 @@ Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà k
 
 ## Các nghiên cứu điển hình
 
+[![Minh họa các ví dụ về cân bằng âm thanh DX-Ball, cầu nối bảng nhớ tạm Notion và vòng đạn TH04](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
+
 ### DX-Ball: tái tạo phép tính phân bố âm thanh trái phải
 
 Lần theo lời gọi âm thanh đến hàm hỗ trợ chuyển vị trí thành giá trị phân bố âm thanh, kiểm tra các lệnh và chuyển mã giả chưa đầy đủ sang C. Bản tái tạo vượt qua 3.205 trường hợp kiểm thử với x86 gốc và tái tạo đủ 63 byte của hàm đã biên dịch.
@@ -200,7 +202,7 @@ REA khởi chạy Hopper khi một thao tác cần đến nó. Trên macOS, hộ
 <details>
 <summary><strong>Cài skill từ skills.sh có tác dụng gì?</strong></summary>
 
-Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `rea setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](docs/installation.md#skill-only-installation).
+Skill cung cấp hướng dẫn điều tra cho tác nhân. Dùng `npx rea-agents setup` để đăng ký máy chủ MCP của REA và cài hướng dẫn tương ứng, sau đó khởi động lại tác nhân. Xem [chỉ cài skill](docs/installation.md#skill-only-installation).
 
 </details>
 
@@ -252,19 +254,9 @@ Bắt đầu với [hướng dẫn thực hành](https://rea.tools/guides/) trê
 
 Báo cáo lỗ hổng theo [SECURITY.md](SECURITY.md).
 
-## Đóng góp
-
-Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
-
-Xem [CONTRIBUTING.md](CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](docs/testing.md) về các luồng xác minh và [sơ đồ kiến trúc](docs/architecture.mermaid) về cấu trúc dự án.
-
-## Liên kết dự án
-
-[Trang web](https://rea.tools/) · [npm](https://www.npmjs.com/package/rea-agents) · [skills.sh](https://skills.sh/morluto/rea/reverse-engineer-anything) · [Issues](https://github.com/morluto/rea/issues) · [Bảo mật](SECURITY.md)
-
 ## Lịch sử sao
 
-🎉 **30.000 sao trên GitHub — xin cảm ơn!**
+🎉 **50.000 sao trên GitHub — xin cảm ơn!**
 
 Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính năng, kiểm thử bản dựng và đóng góp bản sửa lỗi.
 
@@ -279,6 +271,12 @@ Cảm ơn mọi người đã sử dụng REA, báo lỗi, đề xuất tính n�
 ## Miễn trừ trách nhiệm
 
 REA cung cấp công cụ cho nghiên cứu dịch ngược, phân tích và tái tạo hợp pháp. Bạn có trách nhiệm có được các quyền cho phép cần thiết và tuân thủ luật áp dụng. Dự án không ủng hộ việc sử dụng trái pháp luật hoặc không được cho phép.
+
+## Đóng góp
+
+Chúng tôi hoan nghênh bạn giúp phát triển REA! [Mở issue](https://github.com/morluto/rea/issues) để báo lỗi hoặc đề xuất tính năng, hoặc [gửi pull request](https://github.com/morluto/rea/pulls) để cải thiện mã hay tài liệu.
+
+Xem [CONTRIBUTING.md](CONTRIBUTING.md) về thiết lập môi trường phát triển và các bước kiểm tra, [hướng dẫn kiểm thử](docs/testing.md) về các luồng xác minh và [sơ đồ kiến trúc](docs/architecture.mermaid) về cấu trúc dự án.
 
 ## Giấy phép
 

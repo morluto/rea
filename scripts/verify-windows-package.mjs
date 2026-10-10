@@ -115,6 +115,10 @@ try {
     COPILOT_HOME: join(home, ".copilot"),
     GROK_HOME: join(home, ".grok"),
     SAND_DATA_ROOT: join(home, ".grokbot"),
+    OMP_PROFILE: undefined,
+    PI_CODING_AGENT_DIR: undefined,
+    PI_CONFIG_DIR: undefined,
+    PI_PROFILE: undefined,
   };
   await mkdir(join(home, ".config", "opencode"), { recursive: true });
   await writeFile(

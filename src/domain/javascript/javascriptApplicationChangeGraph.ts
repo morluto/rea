@@ -1,6 +1,6 @@
 import {
   createJavaScriptApplicationEdge,
-  createJavaScriptApplicationGraph,
+  createImmutableJavaScriptApplicationGraphSteps,
   createJavaScriptApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
@@ -9,7 +9,8 @@ import type {
   ApplicationNode,
 } from "./javascriptApplicationGraphSchemas.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
-import { compareCodePoints, uniqueSorted } from "../canonicalOrdering.js";
+import { uniqueSorted } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationVersionComparisonItem } from "./javascriptApplicationVersionComparisonSchemas.js";
 
 interface ChangeGraphInput {
@@ -58,7 +59,7 @@ export const buildJavaScriptApplicationChangeGraph = (
   const candidateEdges = uniqueEdges([...sourceEdges, ...comparisonEdges]);
   const rootNodeIds = preferredRoots.filter((nodeId) => retained.has(nodeId));
   const fallbackRoot = mergedNodes[0]?.node_id;
-  const graph = createJavaScriptApplicationGraph({
+  const steps = createImmutableJavaScriptApplicationGraphSteps({
     schema: "JavaScriptApplicationGraph",
     root_node_ids:
       rootNodeIds.length > 0
@@ -76,7 +77,9 @@ export const buildJavaScriptApplicationChangeGraph = (
       "The change graph contains compared entities and their retained relationships; it is not an executable application.",
     ]),
   });
-  return { graph };
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return { graph: next.value };
 };
 
 const nodeCandidates = (
@@ -218,7 +221,7 @@ const sourceCoverageLimits = (input: ChangeGraphInput) =>
         (limit) => [`${limit.name}\0${limit.value}\0${limit.unit}`, limit],
       ),
     ).values(),
-  ].sort((left, right) => compareCodePoints(left.name, right.name));
+  ].sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 
 const combineOmittedCounts = (left: number | null, right: number | null) =>
   left === null || right === null ? null : left + right;
@@ -238,7 +241,7 @@ const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
           .map((observation) => [observation.observation_id, observation]),
       ).values(),
     ].sort((left, right) =>
-      compareCodePoints(left.observation_id, right.observation_id),
+      compareUnicodeCodePoints(left.observation_id, right.observation_id),
     );
     return createJavaScriptApplicationNode({
       kind: first.kind,
@@ -250,11 +253,11 @@ const mergeNodes = (nodes: readonly ApplicationNode[]): ApplicationNode[] => {
     });
   });
   return merged.sort((left, right) =>
-    compareCodePoints(left.node_id, right.node_id),
+    compareUnicodeCodePoints(left.node_id, right.node_id),
   );
 };
 
 const uniqueEdges = (edges: readonly ApplicationEdge[]): ApplicationEdge[] =>
   [...new Map(edges.map((edge) => [edge.edge_id, edge])).values()].sort(
-    (left, right) => compareCodePoints(left.edge_id, right.edge_id),
+    (left, right) => compareUnicodeCodePoints(left.edge_id, right.edge_id),
   );

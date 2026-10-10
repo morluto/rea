@@ -25,7 +25,12 @@ export const filesystemCoverageSchema = z.strictObject({
       path: z.string(),
       size_bytes: z.number().int().nonnegative(),
       remaining_budget_bytes: z.number().int().nonnegative(),
-      reason: z.enum(["file_bytes_budget", "file_changed_or_short_read"]),
+      reason: z.enum([
+        "file_bytes_budget",
+        "file_changed_or_short_read",
+        "file_unavailable",
+      ]),
+      system_code: z.string().nullable(),
     }),
   ),
 });
@@ -63,7 +68,7 @@ const omitted = (retention: TerminalRetention): boolean =>
 const filesystemTruncated = (coverage: FilesystemCoverage): boolean =>
   coverage.enumeration_truncated || coverage.hash_omissions.length > 0;
 
-/** Derive the legacy aggregate flag from independent producer observations. */
+/** Derive the aggregate truncation flag from independent producer observations. */
 export const hasCaptureTruncation = (
   details: ProcessCaptureTruncationDetails,
 ): boolean =>
@@ -73,13 +78,12 @@ export const hasCaptureTruncation = (
   filesystemTruncated(details.filesystem_after) ||
   details.process.sampling_partial;
 
-/** Older truncated captures lack enough information to localize missing observations. */
+/** Whether producer accounting reports a gap in the selected observation source. */
 export const processSourceTruncated = (
   capture: UnverifiedProcessCapture,
   source: ProcessObservationSource,
 ): boolean => {
   const details = capture.truncation_details;
-  if (details === undefined) return capture.truncated;
   switch (source) {
     case "terminal_raw":
       return omitted(details.raw_terminal);

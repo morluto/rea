@@ -41,7 +41,13 @@ export interface AnalysisExecution {
   readonly subject: EvidenceSubjectTarget | null;
 }
 
-/** Build a validated atomic provider observation at an adapter boundary. */
+/**
+ * Build a validated atomic provider observation at an adapter boundary.
+ *
+ * Pass `rawResult` only for a provider representation distinct from
+ * `result`. Omitting it records `null` rather than a second complete copy of
+ * the normalized result in every Evidence record and tool response.
+ */
 export const createAnalysisExecution = (
   result: unknown,
   provider: ProviderIdentity,
@@ -56,7 +62,7 @@ export const createAnalysisExecution = (
   result: jsonValueSchema.parse(result),
   rawResult:
     options.rawResult === undefined
-      ? jsonValueSchema.parse(result)
+      ? null
       : jsonValueSchema.parse(options.rawResult),
   provider,
   ...(options.analysisProfile === undefined

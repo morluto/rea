@@ -12,6 +12,12 @@ import type { NativeCallTracer } from "../../../../src/native/LldbCallTracer.js"
 import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { NativeCommandFailure } from "../../../../src/native/CommandRunner.js";
+import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import { createDeferred } from "../../../fixtures/binarySession.js";
+import {
+  NativeFixtureRunner,
+  nativeMachoTarget,
+} from "../../../fixtures/nativeCommands.js";
 
 const EVENT = {
   sequence: 0,
@@ -83,11 +89,13 @@ const fixtureTracer = (
       return outcome === "cancelled"
         ? {
             kind: "cancelled",
+            targetLaunched: false,
             targetIdentity: undefined,
             cleanupFailure: undefined,
           }
         : {
             kind: "exited",
+            targetLaunched: false,
             exitCode: 1,
             output: "bridge reported target integrity failure",
             targetIdentity: undefined,
@@ -108,6 +116,56 @@ const fixtureTracer = (
 };
 
 describe("LLDB failure retention through the production tracer", () => {
+  it("waits for an active trace before client close removes its runtime root", async () => {
+    const launchGate = createDeferred<void>();
+    const launchStarted = createDeferred<void>();
+    const tracer = new LldbCallTracer(
+      {},
+      async (_executable, arguments_) => {
+        const { config } = await configFromArguments(arguments_);
+        await writeFile(
+          config.observation_path,
+          `${JSON.stringify({ kind: "event", event: EVENT })}\n`,
+        );
+        await writeFile(config.stdout_capture_path, "captured prefix");
+        launchStarted.resolve();
+        await launchGate.promise;
+        return {
+          kind: "exited",
+          targetLaunched: false,
+          exitCode: 0,
+          output: "",
+          targetIdentity: undefined,
+          cleanupFailure: undefined,
+        };
+      },
+      async () => ok(fakeTool),
+    );
+    const client = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner(),
+      "darwin",
+      () => tracer,
+    ).createClient(nativeMachoTarget(request.executable));
+    const tracePromise = tracer.trace(request);
+    await launchStarted.promise;
+    let closeFinished = false;
+    const closePromise = client.close().then((result) => {
+      closeFinished = true;
+      return result;
+    });
+    await Promise.resolve();
+    expect(closeFinished).toBe(false);
+    launchGate.resolve();
+    const [trace, close] = await Promise.all([tracePromise, closePromise]);
+    expect(close.ok).toBe(true);
+    if (trace.ok) throw new Error("expected missing LLDB result");
+    expect(trace.error.partialObservation).toMatchObject({
+      events: [EVENT],
+      process: { stdout: { text: "captured prefix", complete: false } },
+    });
+  });
+
   it("names the missing LLDB requirement instead of asking for another target", async () => {
     const tracer = new LldbCallTracer(
       {},

@@ -69,11 +69,6 @@ describe("ASAR entry streaming", () => {
       await writeFile(join(source, "small.js"), "module.exports = 1;\n");
       await createPackageWithOptions(source, archive, {});
 
-      const identity = await lstat(archive);
-      const probe = await openFile(archive, "r");
-      expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
-      await probe.close();
-      await waitForNoMatchingDescriptor(identity);
       const reader = new AsarArtifactReader(archive);
 
       try {
@@ -83,6 +78,12 @@ describe("ASAR entry streaming", () => {
         }
         const entry = entries.find(({ path }) => path === "small.js");
         if (entry === undefined) throw new Error("Expected packed ASAR member");
+        const snapshot = await reader.openContainer();
+        const identity = await lstat(snapshot.path);
+        await buffer(snapshot);
+        const probe = await openFile(snapshot.path, "r");
+        expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
+        await probe.close();
         expect(await matchingDescriptorCount(identity)).toBe(0);
         const output = await reader.open(entry);
         expect(await matchingDescriptorCount(identity)).toBeGreaterThan(0);
@@ -108,7 +109,6 @@ describe("ASAR entry streaming", () => {
       await writeFile(join(source, "small.js"), "module.exports = 1;\n");
       await createPackageWithOptions(source, archive, {});
 
-      const identity = await lstat(archive);
       const reader = new AsarArtifactReader(archive);
 
       try {
@@ -116,6 +116,9 @@ describe("ASAR entry streaming", () => {
         for await (const entry of reader.entries()) entries.push(entry);
         const entry = entries.find(({ path }) => path === "small.js");
         if (entry === undefined) throw new Error("Expected packed ASAR member");
+        const snapshot = await reader.openContainer();
+        const identity = await lstat(snapshot.path);
+        await buffer(snapshot);
         const controller = new AbortController();
         const opening = reader.open(entry, controller.signal);
         controller.abort();
@@ -127,7 +130,7 @@ describe("ASAR entry streaming", () => {
     },
   );
 
-  it("classifies a missing packed member container as an I/O failure", async () => {
+  it("keeps captured packed bytes readable after the original container disappears", async () => {
     const root = await createTestTempDirectory("rea-asar-missing-member-");
     const source = join(root, "source");
     const archive = join(root, "fixture.asar");
@@ -142,10 +145,9 @@ describe("ASAR entry streaming", () => {
       const entry = entries.find(({ path }) => path === "small.js");
       if (entry === undefined) throw new Error("Expected packed ASAR member");
       await rm(archive);
-      await expect(reader.open(entry)).rejects.toMatchObject({
-        reason: "io",
-        cause: { code: "ENOENT" },
-      });
+      expect((await buffer(await reader.open(entry))).toString()).toBe(
+        "module.exports = 1;\n",
+      );
     } finally {
       await reader.close();
     }
@@ -205,7 +207,7 @@ describe("ASAR entry producer identity", () => {
     ["packed to unpacked", false],
     ["unpacked to packed", true],
   ] as const)(
-    "rejects a retained %s entry after a new entries pass",
+    "rejects a retained %s entry after closing and recapturing the archive",
     async (_transition, wasUnpacked) => {
       const root = await createTestTempDirectory("rea-asar-entry-refresh-");
       const source = join(root, "source");
@@ -236,6 +238,7 @@ describe("ASAR entry producer identity", () => {
           archive,
           wasUnpacked ? {} : { unpack: "small.js" },
         );
+        await reader.close();
         const currentEntries = [];
         for await (const entry of reader.entries()) currentEntries.push(entry);
         const current = currentEntries.find(({ path }) => path === "small.js");
@@ -345,7 +348,7 @@ describe("ASAR read failures", () => {
   );
 
   it.each(["missing", "replaced"] as const)(
-    "validates the container before returning a zero-length member when it is %s",
+    "reads a captured zero-length member when the original container is %s",
     async (change) => {
       const root = await createTestTempDirectory("rea-asar-empty-member-");
       const source = join(root, "source");
@@ -363,11 +366,7 @@ describe("ASAR read failures", () => {
         if (change === "missing") await rm(archive);
         else await writeFile(archive, "replacement container");
 
-        await expect(reader.open(entry)).rejects.toMatchObject(
-          change === "missing"
-            ? { reason: "io", cause: { code: "ENOENT" } }
-            : { reason: "integrity" },
-        );
+        expect(await buffer(await reader.open(entry))).toHaveLength(0);
       } finally {
         await reader.close();
       }

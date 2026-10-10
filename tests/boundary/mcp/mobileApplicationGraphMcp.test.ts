@@ -27,7 +27,7 @@ async function connect() {
   const session = createTestBinarySession(() => {
     throw new Error("mobile graph projection must not launch a provider");
   });
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({
     name: "mobile-application-graph-test",
     version: "1",

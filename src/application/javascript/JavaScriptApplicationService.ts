@@ -60,6 +60,7 @@ export const analyzeJavaScriptApplicationValidated = async (
       {
         input_path: input.input_path,
         format: input.format,
+        integrity_policy: input.integrity_policy,
       },
       options.signal,
       options.progress,

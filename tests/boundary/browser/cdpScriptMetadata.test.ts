@@ -12,7 +12,7 @@ import { publishWebScripts } from "../../../src/browser/assets/PublishWebScripts
 import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAdapters.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationParsing.js";
+import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { projectRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationRuntime.js";
 import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";

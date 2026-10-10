@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { access, chmod, mkdir } from "node:fs/promises";
+import { access, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,7 @@ import type { Logger } from "pino";
 
 import { ok } from "../../../../src/domain/result.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
+import { GhidraHeadlessLauncher } from "../../../../src/ghidra/GhidraLauncher.js";
 import type { GhidraDiagnostic } from "../../../../src/ghidra/GhidraClientTypes.js";
 import type {
   GhidraLaunchSession,
@@ -19,6 +20,7 @@ import type {
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../../../../src/ghidra/GhidraSessionValues.js";
 import { waitForExit as waitForChildExit } from "../../../support/process/processFixture.js";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const fixturePath = fileURLToPath(
   new URL("../../../fixtures/fakeGhidra.mjs", import.meta.url),
@@ -743,3 +745,119 @@ it("preserves failed startup and retained Ghidra cleanup capabilities until a ve
   expect(cleanupAttempts).toBe(3);
   await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "Ghidra launcher rollback ownership",
+  () => {
+    it.each([
+      ["ownership manifest write failure", false, "start"],
+      ["cancellation after process creation", true, "cancelled"],
+    ] as const)(
+      "retains the original process and runtime roots after %s until cleanup succeeds",
+      async (failureMode, cancelAfterSpawn, expectedKind) => {
+        const root = await createTestTempDirectory("rea-ghidra-rollback-");
+        const java = join(root, "jdk", "bin", "java");
+        await mkdir(join(root, "jdk", "bin"), { recursive: true });
+        await writeFile(
+          java,
+          "#!/usr/bin/env node\n// LaunchSupport fixture emits no optional values.\n",
+        );
+        await chmod(java, 0o755);
+
+        const controller = new AbortController();
+        let cleanupAllowed = false;
+        let child: ChildProcess | undefined;
+        let runtimeRoot: string | undefined;
+        const headless = new GhidraHeadlessLauncher({
+          environment: process.env,
+          javaHome: join(root, "jdk"),
+          analyzeHeadlessPath: "/unused/ghidra/support/analyzeHeadless",
+          bridgeScriptPath: "/unused/rea/ReaGhidraBridge.java",
+          spawnProcess: async ({ runId }) => {
+            const spawned = spawn(
+              process.execPath,
+              ["-e", "setInterval(() => {}, 1000)"],
+              { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+            );
+            child = spawned;
+            await new Promise<void>((resolve, reject) => {
+              spawned.once("spawn", () => resolve());
+              spawned.once("error", reject);
+            });
+            if (cancelAfterSpawn)
+              controller.abort(new Error("rollback cancellation fixture"));
+            const pid = spawned.pid;
+            if (pid === undefined) throw new Error("fixture child has no PID");
+            return {
+              process: spawned,
+              ownership: {
+                runId,
+                leaderPid: pid,
+                processGroupId: pid,
+                expectedParentPid: process.pid,
+              },
+              cleanup: async () => {
+                if (!cleanupAllowed)
+                  return {
+                    cleaned: false as const,
+                    reason: `${failureMode} cleanup is still unavailable`,
+                  };
+                if (spawned.exitCode === null && spawned.signalCode === null)
+                  spawned.kill("SIGTERM");
+                const exited = await waitForChildExit(spawned, 5_000);
+                return exited
+                  ? { cleaned: true as const, signaled: true }
+                  : {
+                      cleaned: false as const,
+                      reason: "fixture child did not exit",
+                    };
+              },
+            };
+          },
+        });
+        const launcher: GhidraLauncher = {
+          async launch(session, options) {
+            runtimeRoot = session.runtimeRoot;
+            if (!cancelAfterSpawn)
+              await mkdir(join(session.runtimeRoot, "ownership.json"));
+            return headless.launch(session, options);
+          },
+        };
+        const client = clientFor(launcher, { startupTimeoutMs: 10_000 });
+        onTestFinished(async () => {
+          cleanupAllowed = true;
+          await client.close();
+        });
+
+        const started = await client.start(
+          cancelAfterSpawn ? controller.signal : undefined,
+        );
+        expect(started).toMatchObject({
+          ok: false,
+          error: {
+            kind: expectedKind,
+            cleanupFailure: { cleanupIncomplete: true },
+          },
+        });
+        if (started.ok) throw new Error("expected startup rollback failure");
+        expect(started.error.message).toContain(
+          cancelAfterSpawn ? "startup was cancelled" : "headless launch failed",
+        );
+        if (!cancelAfterSpawn)
+          expect(started.error.message).toContain("ownership.json");
+        if (runtimeRoot === undefined || child === undefined)
+          throw new Error("fixture did not retain the started process owner");
+        await access(runtimeRoot);
+        expect(child.exitCode).toBeNull();
+        expect(child.signalCode).toBeNull();
+
+        cleanupAllowed = true;
+        await expect(client.close()).resolves.toEqual(ok(null));
+        await expect(access(runtimeRoot)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        await expect(waitForExit(child)).resolves.toBe(true);
+      },
+    );
+  },
+);

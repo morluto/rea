@@ -1,50 +1,8 @@
 import { expect, it } from "vitest";
 
-import { buildJavaScriptSemanticGraph } from "./JavaScriptSemanticGraphBuilder.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { graphForJavaScript as graphFor } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { analyzeJavaScriptSemantics } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { topLevelBinding } from "../../domain/javascript/javascriptSemanticAnalysis.fixture.js";
-
-const SHA256 = "a".repeat(64);
-const GRAPH_ID = `jag_${"b".repeat(64)}`;
-
-const graphFor = (source: string) => {
-  const file: JavaScriptArtifactFile = {
-    path: "app.js",
-    container_sha256: SHA256,
-    sha256: SHA256,
-    bytes: Buffer.byteLength(source),
-    inventory_artifact_id: `art_${SHA256}`,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value: source },
-  };
-  const analysis: JavaScriptArtifactAnalysis = {
-    files: [
-      {
-        file,
-        javascript: null,
-        semantic: { ir: analyzeJavaScriptSemantics(source) },
-      },
-    ],
-    packages: [],
-    json_modules: [],
-    html_scripts: [],
-    source_maps: [],
-    visited_ast_nodes: 0,
-    findings: 0,
-    modules: 0,
-    parse_failures: 0,
-    truncated_scopes: 0,
-    limitations: [],
-  };
-  return buildJavaScriptSemanticGraph({
-    rootArtifactSha256: SHA256,
-    applicationGraph: { graph_id: GRAPH_ID, nodes: [] },
-    analysis,
-  });
-};
 
 const dynamicScopeUnknowns = (source: string) =>
   graphFor(source).unknowns.filter(({ reason }) => reason === "dynamic-scope");

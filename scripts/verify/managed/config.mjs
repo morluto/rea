@@ -50,31 +50,3 @@ export const comparisonLimits = {
 export const defaultIlBody = Buffer.from([
   0x32, 0x02, 0x7b, 0x01, 0x00, 0x00, 0x04, 0x28, 0x01, 0x00, 0x00, 0x0a, 0x2a,
 ]);
-
-export function functionDossier(name) {
-  return {
-    procedure: {
-      address: "0x401000",
-      name,
-      classification: {
-        external: false,
-        thunk: false,
-        thunk_target: null,
-        provenance: "synthetic-provider",
-      },
-      signature: null,
-      locals: [],
-    },
-    pseudocode: "",
-    assembly: [],
-    comments: [],
-    callers: [],
-    callees: [],
-    incoming_references: [],
-    outgoing_references: [],
-    referenced_strings: [],
-    referenced_names: [],
-    basic_blocks: [],
-    limitations: [],
-  };
-}

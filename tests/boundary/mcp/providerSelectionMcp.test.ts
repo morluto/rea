@@ -43,7 +43,10 @@ describe("provider selection over MCP", () => {
         candidate("alpha", starts),
       ]),
     );
-    const server = createServer(session, session, { logger: silentLogger });
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
     const mcp = new Client({ name: "provider-selection", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

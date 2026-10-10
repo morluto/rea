@@ -5,7 +5,7 @@ import { z } from "zod";
 const positiveBudget = z.number().int().safe().positive();
 const timedEventBase = { at_ms: z.number().int().safe().nonnegative() };
 const reservedRunIdEnvironmentName = "REA_PROCESS_RUN_ID";
-const ENVIRONMENT_NAME_CHARACTER = "[^=\\u0000]";
+const ENVIRONMENT_NAME_CHARACTER = "[^=\\x00]";
 
 /**
  * Nonempty environment names other than the reserved run identifier. The
@@ -20,7 +20,7 @@ const environmentNamePattern = (reserved: string): RegExp => {
     const character = reserved[index] ?? "";
     // Diverge here, match the next reserved character, or (after a nonempty
     // prefix) end the name early.
-    const choice = `[^=\\u0000${character}]${ENVIRONMENT_NAME_CHARACTER}*|${character}${rest}`;
+    const choice = `[^=\\x00${character}]${ENVIRONMENT_NAME_CHARACTER}*|${character}${rest}`;
     rest = index === 0 ? choice : `(?:${choice})?`;
   }
   return new RegExp(`^(?:${rest})$`, "u");
@@ -38,7 +38,7 @@ const environmentName = z
 const childProcessString = z
   .string()
   .regex(
-    /^[^\u0000]*$/u,
+    /^[^\x00]*$/u,
     "Values passed to operating-system APIs cannot contain NUL",
   );
 export const normalizationSchema = z.object({

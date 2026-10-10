@@ -15,7 +15,7 @@ describe("reconstruction coverage MCP", () => {
       execute: () => Promise.resolve(observed(null)),
       close: () => Promise.resolve(resultOk(null)),
     }));
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({ name: "coverage-mcp-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

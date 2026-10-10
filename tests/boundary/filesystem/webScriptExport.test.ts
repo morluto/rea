@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -9,6 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { describe, expect, it, onTestFinished } from "vitest";
 
@@ -19,6 +21,7 @@ import { selectScriptCapture } from "../../../src/browser/assets/ScriptCaptureAd
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { webScriptExportResultSchema } from "../../../src/domain/webScriptExport.js";
+import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   scriptCaptureEvidenceFixture,
@@ -272,6 +275,128 @@ describe("captured script publication failures and cleanup", () => {
 });
 
 describe("captured script selection failures", () => {
+  it("accepts a capture symlink to a regular file and preserves its selected path", async () => {
+    const { root, input } = await setup();
+    const selected = join(root, "selected-capture.json");
+    await symlink(input.capture_path, selected, "file");
+
+    const result = await exportWebScripts({ ...input, capture_path: selected });
+    if (!result.ok) throw result.error;
+    expect(result.value.subject?.local_path).toBe(selected);
+    expect(
+      webScriptExportResultSchema.parse(result.value.normalized_result)
+        .capture_sha256,
+    ).toBe(
+      createHash("sha256")
+        .update(await readFile(input.capture_path))
+        .digest("hex"),
+    );
+    await expect(
+      access(join(input.output_directory, "manifest.json")),
+    ).resolves.toBeUndefined();
+  });
+
+  it
+    .skipIf(process.platform === "win32")
+    .each(["a named pipe", "a symlink to a named pipe"])(
+    "rejects %s without waiting for a writer or creating output",
+    async (kind) => {
+      const { root, input } = await setup();
+      const fifoPath = join(root, "capture.pipe");
+      await promisify(execFile)("mkfifo", [fifoPath]);
+      const selected =
+        kind === "a named pipe"
+          ? fifoPath
+          : join(root, "selected-capture.json");
+      if (selected !== fifoPath) await symlink(fifoPath, selected, "file");
+
+      const outcome = await readWithoutFifoWriter(fifoPath, () =>
+        exportWebScripts({ ...input, capture_path: selected }),
+      );
+      expect(outcome.state).toBe("completed");
+      if (outcome.state !== "completed")
+        throw new Error("Capture read waited for a FIFO writer");
+      if (outcome.result.ok)
+        throw new Error("Expected invalid capture selection");
+      expect(projectAnalysisError(outcome.result.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["capture_path"],
+              reason: "invalid_value",
+              message: expect.stringContaining("regular file"),
+            },
+          ],
+        },
+      });
+      expect(
+        JSON.stringify(projectAnalysisError(outcome.result.error)),
+      ).toContain(selected);
+      await expect(access(input.output_directory)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "rejects a character device as a capture selection before parsing bytes",
+    async () => {
+      const { input } = await setup();
+      const result = await exportWebScripts({
+        ...input,
+        capture_path: "/dev/null",
+      });
+      if (result.ok) throw new Error("Expected invalid capture selection");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["capture_path"],
+              reason: "invalid_value",
+              message: expect.stringContaining("regular file"),
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
+        "/dev/null",
+      );
+      await expect(access(input.output_directory)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "honors a pre-aborted capture export before opening a named pipe",
+    async () => {
+      const { root, input } = await setup();
+      const fifoPath = join(root, "capture.pipe");
+      await promisify(execFile)("mkfifo", [fifoPath]);
+      const controller = new AbortController();
+      controller.abort();
+
+      const outcome = await readWithoutFifoWriter(fifoPath, () =>
+        exportWebScripts(
+          { ...input, capture_path: fifoPath },
+          { signal: controller.signal },
+        ),
+      );
+      expect(outcome.state).toBe("completed");
+      if (outcome.state !== "completed")
+        throw new Error("Aborted capture read waited for a FIFO writer");
+      if (outcome.result.ok) throw new Error("Expected cancellation");
+      expect(outcome.result.error._tag).toBe("AnalysisCancelledError");
+      await expect(access(input.output_directory)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    },
+  );
+});
+
+describe("captured script path and permission failures", () => {
   it("reports a directory selected as the capture as invalid input", async () => {
     const { root, input } = await setup();
     const directory = join(root, "captures");

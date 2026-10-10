@@ -2,11 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import {
-  semanticBinding,
-  semanticReferenceAt,
-} from "./javascriptSemanticIr.js";
-import {
   programScope,
+  bindingById,
   bindingsNamed,
   onlyBinding,
   topLevelBinding,
@@ -88,12 +85,12 @@ describe("JavaScript semantic analysis: structure 1", () => {
     );
     if (shadowReference === undefined || shadowReference.bindingId === null)
       throw new Error("Missing shadow reference");
-    expect(semanticBinding(ir, shadowReference.bindingId)).toEqual(shadow);
+    expect(bindingById(ir, shadowReference.bindingId)).toEqual(shadow);
     expect(
-      semanticReferenceAt(
-        ir,
-        shadowReference.location.start.line,
-        shadowReference.location.start.column,
+      ir.references.find(
+        ({ location }) =>
+          location.start.line === shadowReference.location.start.line &&
+          location.start.column === shadowReference.location.start.column,
       ),
     ).toEqual(shadowReference);
   });

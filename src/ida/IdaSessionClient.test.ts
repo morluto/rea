@@ -1,4 +1,5 @@
 import { readFile, readdir, rm } from "node:fs/promises";
+import { sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -95,11 +96,40 @@ describe("headless IDA producer pagination", () => {
     const dossier = functionDossierSchema.parse(result.value.result);
     expect(dossier.pseudocode).toBe("first line\nsecond line");
     expect(dossier.assembly).toEqual(["0x1000: push rbp", "0x1001: ret"]);
+    expect(dossier).toMatchObject({
+      procedure: {
+        classification: null,
+        body: {
+          available: false,
+          reason: "IDA MCP does not report complete function body ranges.",
+        },
+      },
+      native_api: null,
+      native_value_flow: null,
+    });
     await client.close();
   });
 });
 
 describe("attached IDA observation semantics", () => {
+  it("accepts a normalized spelling of the bound document path", async () => {
+    const { target, producer, client } = await fixture();
+    const equivalent =
+      process.platform === "win32"
+        ? target.path.toLowerCase().replaceAll("\\", "/")
+        : target.path.split(sep).join(`${sep}.${sep}`);
+
+    const result = await client.execute("list_procedures", {
+      document: equivalent,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(producer.calls.some(({ name }) => name === "list_functions")).toBe(
+      true,
+    );
+    await client.close();
+  });
+
   it("rejects an unrelated document before connecting or opening a provider", async () => {
     const { producer, client } = await fixture();
     const result = await client.execute("list_procedures", {

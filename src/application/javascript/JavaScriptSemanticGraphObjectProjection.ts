@@ -168,14 +168,17 @@ const addObjectUnknown = (
   const relation = OBJECT_RELATIONS[operation.kind];
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: node?.node_id ?? null,
-      family: "object-flow",
-      relation_kinds: [relation],
-      reason: "ambiguous-target",
-      detail: `Static ${operation.kind} property ${operation.propertyPath === null ? "path is unresolved" : semanticPropertyPointer(operation.propertyPath)} has ${target.presence} presence; its receiver is ${target.receiverResolved ? "a retained container" : "unresolved or not a retained container"}; object identity is ${operation.resolution}.`,
-      candidate_node_ids: [],
-      evidence: unknownSemanticEvidence(context.file, operation.location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: node?.node_id ?? null,
+        family: "object-flow",
+        relation_kinds: [relation],
+        reason: "ambiguous-target",
+        detail: `Static ${operation.kind} property ${operation.propertyPath === null ? "path is unresolved" : semanticPropertyPointer(operation.propertyPath)} has ${target.presence} presence; its receiver is ${target.receiverResolved ? "a retained container" : "unresolved or not a retained container"}; object identity is ${operation.resolution}.`,
+        candidate_node_ids: [],
+        evidence: unknownSemanticEvidence(context.file, operation.location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };

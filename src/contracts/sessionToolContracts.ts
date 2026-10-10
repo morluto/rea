@@ -1,9 +1,7 @@
 import { z } from "zod";
 
-import {
-  isAbsoluteLocalPath,
-  localPathStringSchema,
-} from "../domain/localPath.js";
+import { isAbsolute } from "node:path";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { artifactComparisonInputSchema } from "../domain/artifactComparison.js";
 import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 import { callPathInputSchema } from "../domain/callPathSchemas.js";
@@ -57,7 +55,7 @@ const session = <
 /** Session-owned Evidence bundle export options. */
 export const exportEvidenceBundleInputSchema = z.strictObject({
   path: localPathStringSchema
-    .refine(isAbsoluteLocalPath, {
+    .refine(isAbsolute, {
       message:
         "path must be an absolute local filesystem path (for example /tmp/rea/evidence.json or C:\\rea\\evidence.json)",
     })

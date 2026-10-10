@@ -120,18 +120,21 @@ const addEventUnknown = (
 ): void => {
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: event.node_id,
-      family: "event",
-      relation_kinds: [relation],
-      reason: "ambiguous-target",
-      detail:
-        operation.eventName === null
-          ? `Dynamic ${operation.method} event name remains unresolved.`
-          : `Static ${operation.method} emitter identity is partial.`,
-      candidate_node_ids: [],
-      evidence: unknownSemanticEvidence(context.file, operation.location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: event.node_id,
+        family: "event",
+        relation_kinds: [relation],
+        reason: "ambiguous-target",
+        detail:
+          operation.eventName === null
+            ? `Dynamic ${operation.method} event name remains unresolved.`
+            : `Static ${operation.method} emitter identity is partial.`,
+        candidate_node_ids: [],
+        evidence: unknownSemanticEvidence(context.file, operation.location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };
 
@@ -210,14 +213,17 @@ const projectTimerCancellation = (
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(
     context.state,
-    createJavaScriptSemanticGraphUnknown({
-      node_id: callSite?.node_id ?? null,
-      family: "timer",
-      relation_kinds: ["cancels-timer"],
-      reason: "ambiguous-target",
-      detail: `Static ${operation.method} handle resolution was ${operation.resolution}.`,
-      candidate_node_ids: [],
-      evidence: unknownSemanticEvidence(context.file, operation.location),
-    }),
+    createJavaScriptSemanticGraphUnknown(
+      {
+        node_id: callSite?.node_id ?? null,
+        family: "timer",
+        relation_kinds: ["cancels-timer"],
+        reason: "ambiguous-target",
+        detail: `Static ${operation.method} handle resolution was ${operation.resolution}.`,
+        candidate_node_ids: [],
+        evidence: unknownSemanticEvidence(context.file, operation.location),
+      },
+      context.state.evidenceContexts,
+    ),
   );
 };

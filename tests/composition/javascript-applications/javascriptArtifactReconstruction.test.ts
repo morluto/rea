@@ -1,3 +1,7 @@
+import {
+  primitiveCandidateExpansionSource,
+  primitiveByteExpansionSource,
+} from "../../fixtures/javascriptPrimitiveExpansion.js";
 import { createHash } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -70,11 +74,7 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
     expect(buildJavaScriptArtifactGraph(snapshot, files, compact)).toEqual(
       graph,
     );
-    const semantic = projection.finish(
-      snapshot.manifest.root_sha256,
-      graph,
-      compact,
-    );
+    const semantic = projection.finish(snapshot.manifest.root_sha256, graph);
     expect(semantic).toEqual(
       buildJavaScriptSemanticGraph({
         rootArtifactSha256: snapshot.manifest.root_sha256,
@@ -106,23 +106,8 @@ it("preserves graph commitments and export shapes when consuming file-local IR",
 
 it("reports semantic value resource limits in application graph coverage", async () => {
   const root = await createTestTempDirectory("rea-javascript-semantic-limit-");
-  const expression = Array.from(
-    { length: 20 },
-    () => '(true ? "a" : "b")',
-  ).join(" + ");
-  await writeFile(
-    join(root, "app.js"),
-    `const answer = { nested: ${expression} };`,
-  );
-  const declarations = ['const value0 = "x";'];
-  for (let index = 1; index <= 30; index += 1) {
-    const previous = `value${String(index - 1)}`;
-    declarations.push(
-      `const value${String(index)} = ${previous} + ${previous};`,
-    );
-  }
-  declarations.push("const answer = value30;");
-  await writeFile(join(root, "growth.js"), declarations.join("\n"));
+  await writeFile(join(root, "app.js"), primitiveCandidateExpansionSource());
+  await writeFile(join(root, "growth.js"), primitiveByteExpansionSource());
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
@@ -144,6 +129,26 @@ it("reports semantic value resource limits in application graph coverage", async
         }),
       ]),
     });
+    const sourceModuleLimits = graph.nodes
+      .filter(({ kind }) => kind === "javascript-module")
+      .flatMap(({ observations }) => observations)
+      .filter(
+        ({ evidence }) =>
+          evidence.extractor.operation === "recover-source-module",
+      )
+      .flatMap(({ evidence }) => evidence.coverage.limits);
+    expect(sourceModuleLimits).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_candidates",
+          unit: "items",
+        }),
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+          unit: "bytes",
+        }),
+      ]),
+    );
     expect(graph.limitations).toContain(
       "Primitive candidate budget exceeded (maximum 256 alternatives).",
     );

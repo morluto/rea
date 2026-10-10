@@ -14,6 +14,7 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
 export interface SemanticProjectedBinding {
@@ -56,15 +57,11 @@ const assignedSourceIs = (node: t.Node, source: t.Node): boolean => {
   let value = source;
   while (true) {
     if (t.isAwaitExpression(value)) value = value.argument;
-    else if (
-      t.isParenthesizedExpression(value) ||
-      t.isTSAsExpression(value) ||
-      t.isTSTypeAssertion(value) ||
-      t.isTypeCastExpression(value) ||
-      t.isTSSatisfiesExpression(value)
-    )
-      value = value.expression;
-    else break;
+    else {
+      const unwrapped = unwrapJavaScriptExpression(value).node;
+      if (unwrapped === value) break;
+      value = unwrapped;
+    }
   }
   return value === node;
 };

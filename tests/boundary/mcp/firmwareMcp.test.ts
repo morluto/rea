@@ -16,9 +16,12 @@ it("executes named firmware contracts with inline Evidence and no native binary 
   const session = createTestBinarySession(() => {
     throw new Error("Firmware inspection must not acquire a native provider");
   });
-  const server = createServer(session, session, {
-    firmwareAnalysis: fixture.provider,
-  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      firmwareAnalysis: fixture.provider,
+    },
+  );
   const client = new Client({ name: "firmware-regression", version: "1" });
   onTestFinished(async () => {
     await client.close();

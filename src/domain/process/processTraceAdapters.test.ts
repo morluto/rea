@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./processCaptureExample.js";
+import { accountFullyObservedProcessCapture } from "./processCapture.fixture.js";
 import { compareProcessCaptures } from "./processComparison.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { ProcessTraceSpecification } from "./processTraceSpecification.js";
@@ -94,26 +95,29 @@ describe("declared trace comparison nonconformance", () => {
   });
 
   it("does not mask distinct payloads when both traces are nonconforming", () => {
+    const parsedCapture = parseProcessCapture(capture);
     const withTerminal = (data: string) =>
-      parseProcessCapture({
-        ...capture,
-        frames: [{ sequence: 0, at_ms: 1, data }],
-        event_journal: [
-          {
-            capture_order: 0,
-            collection: "filesystem_checkpoints",
-            index: 0,
-          },
-          { capture_order: 1, collection: "frames", index: 0 },
-          { capture_order: 2, collection: "lifecycle", index: 0 },
-          { capture_order: 3, collection: "lifecycle", index: 1 },
-          {
-            capture_order: 4,
-            collection: "filesystem_checkpoints",
-            index: 1,
-          },
-        ],
-      });
+      parseProcessCapture(
+        accountFullyObservedProcessCapture({
+          ...parsedCapture,
+          frames: [{ sequence: 0, at_ms: 1, data }],
+          event_journal: [
+            {
+              capture_order: 0,
+              collection: "filesystem_checkpoints",
+              index: 0,
+            },
+            { capture_order: 1, collection: "frames", index: 0 },
+            { capture_order: 2, collection: "lifecycle", index: 0 },
+            { capture_order: 3, collection: "lifecycle", index: 1 },
+            {
+              capture_order: 4,
+              collection: "filesystem_checkpoints",
+              index: 1,
+            },
+          ],
+        }),
+      );
     const specification: ProcessTraceSpecification = {
       events: [
         {

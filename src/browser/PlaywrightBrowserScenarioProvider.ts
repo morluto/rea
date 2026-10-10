@@ -25,7 +25,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
-  BrowserScenarioSessionFactory,
+  BrowserScenarioSessionOpener,
   BrowserScenarioSessionPort,
 } from "./BrowserScenarioSessionPort.js";
 import {
@@ -226,14 +226,14 @@ const globalCompleteness = (
 };
 
 const runScenario = async (
-  factory: BrowserScenarioSessionFactory,
+  openSession: BrowserScenarioSessionOpener,
   scenario: BrowserScenario,
   options: ExecutionOptions,
 ): Promise<BrowserScenarioCapture> => {
   if (options.signal?.aborted === true)
     throw new BrowserObservationError(OPERATION, "cancelled");
   const startedAt = Date.now();
-  const session = await factory.open(
+  const session = await openSession(
     scenario,
     options.signal === undefined ? {} : { signal: options.signal },
   );
@@ -337,7 +337,7 @@ const runScenario = async (
 
 /** Controlled Playwright/CDP scenario driver with exact process ownership. */
 export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapturePort {
-  constructor(private readonly factory: BrowserScenarioSessionFactory) {}
+  constructor(private readonly openSession: BrowserScenarioSessionOpener) {}
 
   identity(): ProviderIdentity {
     return PLAYWRIGHT_BROWSER_SCENARIO_PROVIDER_IDENTITY;
@@ -348,7 +348,7 @@ export class PlaywrightBrowserScenarioProvider implements BrowserScenarioCapture
     options: ExecutionOptions = {},
   ): Promise<Result<BrowserScenarioCapture, AnalysisError>> {
     try {
-      return ok(await runScenario(this.factory, scenario, options));
+      return ok(await runScenario(this.openSession, scenario, options));
     } catch (cause: unknown) {
       if (cause instanceof AnalysisError) return err(cause);
       return err(

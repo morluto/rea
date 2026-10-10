@@ -42,7 +42,7 @@ afterEach(async () => {
 describe("guided prompts over MCP", () => {
   it("lists and renders all workflows without changing the tool inventory", async () => {
     const session = fixtureSession();
-    const client = await connect(createServer(session, session));
+    const client = await connect(createServer({ kind: "session", session }));
     resources.push(session);
 
     const toolsBeforePrompts = (await client.listTools()).tools;
@@ -96,7 +96,7 @@ describe("guided prompts over MCP", () => {
     const session = fixtureSession(() => {
       executions += 1;
     });
-    const client = await connect(createServer(session, session));
+    const client = await connect(createServer({ kind: "session", session }));
     resources.push(session);
 
     for (const contract of PROMPT_CONTRACTS) {
@@ -126,7 +126,7 @@ describe("guided prompts over MCP", () => {
     const session = fixtureSession(() => {
       executions += 1;
     });
-    const client = await connect(createServer(session, session));
+    const client = await connect(createServer({ kind: "session", session }));
     resources.push(session);
 
     for (const contract of PROMPT_CONTRACTS)
@@ -180,7 +180,7 @@ it("preserves caller-selected paths and verbatim crash signals", async () => {
   await writeFile(targetPath, "owned prompt target", "utf8");
   await expect(readFile(targetPath.trim(), "utf8")).rejects.toThrow();
   const session = fixtureSession();
-  const client = await connect(createServer(session, session));
+  const client = await connect(createServer({ kind: "session", session }));
   resources.push(session);
 
   for (const [name, arguments_] of [
@@ -234,7 +234,7 @@ describe("guided prompt completion registry", () => {
           }),
         ).ok,
       ).toBe(true);
-    const client = await connect(createServer(session, session));
+    const client = await connect(createServer({ kind: "session", session }));
     resources.push(session);
 
     const result = await client.complete({
@@ -355,7 +355,7 @@ describe("guided prompt completion lifecycle", () => {
     const session = createTestBinarySession((target) =>
       lifecycleClient(basename(target.path, ".hop"), procedureRequests),
     );
-    const client = await connect(createServer(session, session));
+    const client = await connect(createServer({ kind: "session", session }));
     resources.push(session);
 
     expect(await complete(client, "document", "")).toEqual([]);

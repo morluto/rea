@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 
@@ -9,15 +10,14 @@ import {
 } from "./ReferenceSourceReaderErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
 import {
-  type BigStats,
   type ReferenceSourceFailureCode,
   type ReferenceSourceResult,
 } from "./ReferenceSourceReaderTypes.js";
 
-export const bigLstat = (path: string): Promise<BigStats> =>
+export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });
 
-export const sameFile = (left: BigStats, right: BigStats): boolean =>
+export const sameFile = (left: BigIntStats, right: BigIntStats): boolean =>
   left.dev === right.dev &&
   left.ino === right.ino &&
   left.size === right.size &&
@@ -32,11 +32,11 @@ export const noFollowOpenSupported = (): boolean =>
 
 export const validateDirectory = async (
   root: string,
-  rootIdentity: BigStats,
+  rootIdentity: BigIntStats,
   path: string,
   signal?: AbortSignal,
 ): Promise<
-  | { readonly ok: true; readonly stats: BigStats }
+  | { readonly ok: true; readonly stats: BigIntStats }
   | {
       readonly ok: false;
       readonly code: ReferenceSourceFailureCode;
@@ -94,7 +94,7 @@ export const prepareRoot = async (
 ): Promise<
   ReferenceSourceResult<{
     readonly canonicalRoot: string;
-    readonly rootIdentity: BigStats;
+    readonly rootIdentity: BigIntStats;
   }>
 > => {
   if (isAborted(signal)) return err(cancelled());

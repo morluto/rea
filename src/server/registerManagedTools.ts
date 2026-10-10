@@ -2,7 +2,6 @@ import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
@@ -15,16 +14,17 @@ import { isManagedToolName } from "../contracts/managed/managedToolContracts.js"
 /** Register execution-free managed PE/CLI inspection. */
 export const registerManagedTools = (
   server: EvidenceMcpServer,
-  analysis: AnalysisOperationPort,
   options: {
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
-    readonly session: BinarySessionPort | undefined;
+    readonly withAdmittedAnalysis: import("./analysisAdmission.js").WithAdmittedAnalysis;
   },
 ): void => {
   let selectedManagedPath: string | undefined;
-  const managedAnalysis: AnalysisOperationPort = {
+  const analysisForAdmission = (
+    analysis: AnalysisOperationPort,
+  ): AnalysisOperationPort => ({
     execute: async (operation, parameters, executionOptions) => {
       if (!isManagedToolName(operation))
         return analysis.execute(operation, parameters, executionOptions);
@@ -57,11 +57,9 @@ export const registerManagedTools = (
         selectedManagedPath = requestedPath;
       return execution;
     },
-  };
-  registerEvidenceTools(
-    server,
-    managedAnalysis,
-    MANAGED_TOOL_CONTRACTS,
-    options,
-  );
+  });
+  registerEvidenceTools(server, MANAGED_TOOL_CONTRACTS, {
+    ...options,
+    analysisForAdmission,
+  });
 };

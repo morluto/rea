@@ -1,13 +1,11 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { LazyAnalysisProvider } from "../application/binary/LazyAnalysisProvider.js";
+import { artifactCapabilities } from "../artifacts/ArtifactProviderMetadata.js";
 import {
-  ARTIFACT_PROVIDER_IDENTITY,
-  artifactCapabilities,
-} from "../artifacts/ArtifactProviderMetadata.js";
-import {
-  MANAGED_STATIC_PROVIDER_IDENTITY,
-  managedStaticCapabilities,
-} from "../dotnet/ManagedStaticProviderMetadata.js";
+  ARTIFACT_GRAPH_PROVIDER,
+  MANAGED_STATIC_PROVIDER,
+} from "../application/InvestigationProviders.js";
+import { managedStaticCapabilities } from "../dotnet/ManagedStaticProviderMetadata.js";
 import {
   NATIVE_MACOS_PROVIDER_IDENTITY,
   nativeMacOSCapabilities,
@@ -25,7 +23,7 @@ export const auxiliaryAnalysisProviderDeclarations = (
   const environment = snapshotEnvironment(selectedEnvironment, platform);
   return [
     {
-      identity: ARTIFACT_PROVIDER_IDENTITY,
+      identity: ARTIFACT_GRAPH_PROVIDER,
       capabilities: artifactCapabilities(platform),
       load: async () => {
         const { ArtifactProvider } =
@@ -43,7 +41,7 @@ export const auxiliaryAnalysisProviderDeclarations = (
       },
     },
     {
-      identity: MANAGED_STATIC_PROVIDER_IDENTITY,
+      identity: MANAGED_STATIC_PROVIDER,
       capabilities: managedStaticCapabilities(),
       load: async () => {
         const { ManagedStaticProvider } =

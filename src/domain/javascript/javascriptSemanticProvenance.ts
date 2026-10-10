@@ -3,7 +3,7 @@ import type {
   JavaScriptModuleOrigin,
 } from "./javascriptSemanticIr.js";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 /** Construct exact local provenance without inventing module origins. */
 export const semanticLocalProvenance = (): JavaScriptBindingProvenance => ({
@@ -44,11 +44,11 @@ export const uniqueSemanticOrigins = (
       origins.map((origin) => [semanticOriginKey(origin), origin]),
     ).values(),
   ].sort((left, right) =>
-    compareCodePoints(semanticOriginKey(left), semanticOriginKey(right)),
+    compareUnicodeCodePoints(semanticOriginKey(left), semanticOriginKey(right)),
   );
 
 const semanticOriginKey = (origin: JavaScriptModuleOrigin): string =>
-  `${origin.specifier}\0${origin.importedPath.join("\0")}`;
+  JSON.stringify([origin.specifier, origin.importedPath]);
 
 /** Canonically distinguish primitive values across type boundaries. */
 export const semanticPrimitiveKey = (

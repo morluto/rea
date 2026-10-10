@@ -35,6 +35,33 @@ const targetObservation = (value: unknown) =>
     ),
   );
 
+const functionDossier = {
+  procedure: {
+    address: "0x1",
+    name: "entry",
+    classification: null,
+    body: {
+      available: false,
+      reason: "The provider did not report complete function body ranges.",
+    },
+    signature: null,
+    locals: [],
+  },
+  pseudocode: "return 0;",
+  assembly: [],
+  comments: [],
+  callers: [],
+  callees: [],
+  incoming_references: [],
+  outgoing_references: [],
+  referenced_strings: [],
+  referenced_names: [],
+  basic_blocks: [],
+  native_api: null,
+  native_value_flow: null,
+  limitations: [],
+};
+
 const fixturePort = (): AnalysisOperationPort => ({
   // oxlint-disable-next-line complexity -- this fixture exhaustively serves the registered MCP surface.
   execute: (name, arguments_) => {
@@ -138,7 +165,16 @@ const fixturePort = (): AnalysisOperationPort => ({
         );
       case "list_segments":
         return Promise.resolve(
-          ok([{ name: "__TEXT", start: "0x1000", end: "0x2000" }]),
+          ok([
+            {
+              name: "__TEXT",
+              start: "0x1000",
+              end: "0x2000",
+              readable: null,
+              writable: null,
+              executable: null,
+            },
+          ]),
         );
       case "current_document":
         return Promise.resolve(ok("fixture"));
@@ -151,26 +187,7 @@ const fixturePort = (): AnalysisOperationPort => ({
       case "search_procedures":
         return Promise.resolve(ok(inventory({})));
       case "analyze_function":
-        return Promise.resolve(
-          targetObservation({
-            procedure: {
-              address: "0x1",
-              name: "entry",
-              signature: null,
-              locals: [],
-            },
-            pseudocode: "return 0;",
-            assembly: [],
-            comments: [],
-            callers: [],
-            callees: [],
-            incoming_references: [],
-            outgoing_references: [],
-            referenced_strings: [],
-            referenced_names: [],
-            basic_blocks: [],
-          }),
-        );
+        return Promise.resolve(targetObservation(functionDossier));
       default:
         return Promise.resolve(ok(null));
     }
@@ -186,7 +203,7 @@ afterEach(async () => {
 });
 
 const connect = async (analysis: AnalysisOperationPort = fixturePort()) => {
-  const server = createServer(analysis);
+  const server = createServer({ kind: "fixed", analysis });
   const client = new Client({ name: "enhanced-test", version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

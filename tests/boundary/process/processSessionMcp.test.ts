@@ -27,9 +27,12 @@ itWithCaptureCapability(
   "records process residuals linked to capture Evidence",
   async () => {
     const session = createTestBinarySession(createCacheProvider([]));
-    const server = createServer(session, session, {
-      logger: silentLogger,
-    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+      },
+    );
     const mcp = new Client({ name: "process-unknown", version: "1.0.0" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

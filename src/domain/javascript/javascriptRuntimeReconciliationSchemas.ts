@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { evidenceSchema } from "../evidence.js";
 import { javascriptRuntimeUnresolvedLocationSchema } from "./javascriptRuntimeObservation.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
@@ -85,7 +85,7 @@ function normalizeRuntimeMappings(
       mappings.map((mapping) => [runtimeMappingKey(mapping), mapping]),
     ).values(),
   ].sort((left, right) =>
-    compareCodePoints(runtimeMappingKey(left), runtimeMappingKey(right)),
+    compareUnicodeCodePoints(runtimeMappingKey(left), runtimeMappingKey(right)),
   );
 }
 

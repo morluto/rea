@@ -247,9 +247,15 @@ describe("compiled CLI JSON path ambiguity", () => {
         });
 
         expect(result.json).toMatchObject({
-          code: "invalid_request",
+          code: "access_denied",
           input_path: input,
           input_reason: "read-failed",
+          details: {
+            operation: "capture_browser_scenario",
+            path: input,
+            system_code: "EACCES",
+            boundary: "filesystem-read",
+          },
         });
         expect(result.exitCode).toBe(1);
       } finally {

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 import { z } from "zod";
@@ -27,6 +26,8 @@ import {
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "./InvestigationProviders.js";
+import { readRegularFile } from "./RegularFileRead.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -152,7 +153,7 @@ const readCapture = async (
   signal: AbortSignal | undefined,
 ): Promise<Result<Buffer, AnalysisError>> => {
   try {
-    return ok(await readFile(path, { signal }));
+    return ok(await readRegularFile(path, signal));
   } catch (cause: unknown) {
     const code =
       cause instanceof Error && "code" in cause ? String(cause.code) : "";
@@ -160,16 +161,24 @@ const readCapture = async (
       return err(
         new AnalysisAccessDeniedError(OPERATION, path, code, { cause }),
       );
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR")
+    if (
+      cause instanceof NonRegularFileReadError ||
+      code === "ENOENT" ||
+      code === "ENOTDIR" ||
+      code === "EISDIR" ||
+      code === "ENXIO"
+    )
       return err(
         new AnalysisInputError(OPERATION, { cause }, [
           {
             path: ["capture_path"],
             reason: "invalid_value",
             message:
-              code === "EISDIR"
-                ? `Selected capture is a directory, not a file: ${path}`
-                : `Selected capture could not be read (${code}): ${path}`,
+              cause instanceof NonRegularFileReadError && code !== "EISDIR"
+                ? cause.message
+                : code === "EISDIR"
+                  ? `Selected capture is a directory, not a file: ${path}`
+                  : `Selected capture could not be read (${code}): ${path}`,
           },
         ]),
       );

@@ -55,7 +55,6 @@ export const directAnalysisCleanupFailure = (
             "execution_failure" in primary.data.details
               ? (primary.data.details.execution_failure ?? primary.data.code)
               : primary.data.code,
-          primary_error: projection,
           cleanup_error: cleanup,
         },
       };

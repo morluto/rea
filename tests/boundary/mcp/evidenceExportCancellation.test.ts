@@ -28,7 +28,7 @@ it.each([false, true])(
       },
     );
     expect(session.recordEvidence(evidence).ok).toBe(true);
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client({
       name: "evidence-export-cancellation",
       version: "1",

@@ -184,6 +184,7 @@ export const ghidraFunctionDossier = (includeAssembly = true): JsonValue => {
           sequence: 0,
           opcode: "COPY",
           is_dead: false,
+          block_membership: "member",
           inputs: [
             {
               kind: "constant",
@@ -201,6 +202,8 @@ export const ghidraFunctionDossier = (includeAssembly = true): JsonValue => {
         },
       ],
       def_use: [],
+      parameters: [],
+      parameter_uses: [],
       effects: [],
       truncated: false,
       omitted_operations_lower_bound: 0,

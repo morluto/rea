@@ -3,7 +3,7 @@ import type {
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
 } from "./javascriptSemanticGraphSchemas.js";
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import { isJavaScriptSemanticOwnershipRelation as ownershipRelation } from "./javascriptSemanticQueryRelations.js";
 import {
@@ -68,6 +68,11 @@ export const queryJavaScriptSemanticGraph = (
     result.retainedRelations,
     input,
   );
+  const retainedContextIds = new Set([
+    ...result.retainedNodes.map(({ evidence }) => evidence.context_id),
+    ...result.retainedRelations.map(({ evidence }) => evidence.context_id),
+    ...relevantUnknowns.map(({ evidence }) => evidence.context_id),
+  ]);
   const assessment = assessJavaScriptSemanticQuery({
     graph,
     totalSeeds: seeds.length,
@@ -83,6 +88,9 @@ export const queryJavaScriptSemanticGraph = (
     direction: input.direction,
     status: assessment.status,
     seed_node_ids: retainedSeeds,
+    evidence_contexts: graph.evidence_contexts.filter(({ context_id }) =>
+      retainedContextIds.has(context_id),
+    ),
     nodes: result.retainedNodes,
     relations: result.retainedRelations,
     unknowns: relevantUnknowns,
@@ -147,7 +155,7 @@ const buildAdjacency = (
   }
   for (const entries of adjacency.values())
     entries.sort((left, right) =>
-      compareCodePoints(
+      compareUnicodeCodePoints(
         `${left.relation.relation_id}\0${left.nextNodeId}`,
         `${right.relation.relation_id}\0${right.nextNodeId}`,
       ),

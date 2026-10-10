@@ -12,7 +12,7 @@ describe("ordinary MCP progress and cancellation", () => {
     const analysis: AnalysisOperationPort = {
       execute: () => Promise.resolve(observed("0x1000")),
     };
-    const server = createServer(analysis);
+    const server = createServer({ kind: "fixed", analysis });
     const client = new Client({ name: "progress-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
@@ -59,7 +59,7 @@ describe("ordinary MCP progress and cancellation", () => {
         return err(new AnalysisCancelledError(operation));
       },
     };
-    const server = createServer(analysis);
+    const server = createServer({ kind: "fixed", analysis });
     const client = new Client({ name: "cancellation-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();

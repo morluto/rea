@@ -149,52 +149,78 @@ describe("root input presentation", () => {
       { anyOf: [branch, branch] },
       (property) => `Parameter ${property}`,
     );
-    const branches = z
-      .array(z.record(z.string(), z.unknown()))
-      .parse(presented.anyOf);
-    expect(branches).toHaveLength(2);
-    for (const presentedBranch of branches) {
-      expect(presentedBranch).toMatchObject(branch);
-      const properties = presentedBranch.properties;
-      if (typeof properties !== "object" || properties === null)
-        throw new Error("Missing branch properties");
-      expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
-      expect(Object.hasOwn(properties, "__proto__")).toBe(true);
-    }
+    expect(presented).not.toHaveProperty("anyOf");
+    expect(presented).toMatchObject({
+      type: "object",
+      required: ["__proto__"],
+      additionalProperties: false,
+    });
+    const properties = presented.properties;
+    if (typeof properties !== "object" || properties === null)
+      throw new Error("Missing root properties");
+    expect(Object.getPrototypeOf(properties)).toBe(Object.prototype);
+    expect(Object.hasOwn(properties, "__proto__")).toBe(true);
   });
 
-  it("preserves root alternatives, required pairs, and mixed-family exclusions", () => {
-    const schema = z.union([
-      z.strictObject({ before: z.string(), after: z.string() }),
-      z.strictObject({
-        before_scenario: z.number(),
-        after_scenario: z.number(),
-      }),
-    ]);
-    const canonical = z.toJSONSchema(schema, { io: "input" });
-    const advertised = presentInputJsonSchema(
-      canonical,
-      (property) => property,
-    );
-    const validate = new Ajv2020({ strict: false }).compile(advertised);
-    for (const input of [
-      {},
-      { before: "first" },
-      { before: "first", after: "second" },
-      { before_scenario: 1, after_scenario: 2 },
-      { before: "first", after_scenario: 2 },
-      {
+  it.each(["draft-2020-12", "draft-07"] as const)(
+    "advertises complete root groups while runtime keeps the exact union in %s",
+    (target) => {
+      const schema = z.union([
+        z.strictObject({ before: z.string(), after: z.string() }),
+        z.strictObject({
+          before_scenario: z.number(),
+          after_scenario: z.number(),
+          normalization: z.boolean().optional(),
+        }),
+      ]);
+      const canonical = z.toJSONSchema(schema, { io: "input", target });
+      const advertised = presentInputJsonSchema(
+        canonical,
+        (property) => property,
+      );
+      // Anthropic tool input schemas reject anyOf, oneOf, and allOf at the root.
+      for (const combinator of ["anyOf", "oneOf", "allOf"])
+        expect(advertised).not.toHaveProperty(combinator);
+      expect(advertised.description).toBe(
+        "Provide a complete input group: before + after; before_scenario + after_scenario + [normalization].",
+      );
+      const ajv =
+        target === "draft-2020-12"
+          ? new Ajv2020({ strict: false })
+          : new Ajv({ strict: false });
+      const validate = ajv.compile(advertised);
+      for (const input of [
+        { before: "first", after: "second" },
+        { before_scenario: 1, after_scenario: 2 },
+        { before_scenario: 1, after_scenario: 2, normalization: true },
+      ]) {
+        expect(schema.safeParse(input).success).toBe(true);
+        expect(validate(input)).toBe(true);
+      }
+      for (const input of [
+        {},
+        { before: "first" },
+        { unexpected: true },
+        { before_scenario: 1, after_scenario: "wrong" },
+        { before_scenario: 1, normalization: true },
+        { after_scenario: 2, normalization: true },
+      ]) {
+        expect(schema.safeParse(input).success).toBe(false);
+        expect(validate(input)).toBe(false);
+      }
+      // Cross-group exclusion is enforced only by the canonical runtime parser.
+      const mixed = {
         before: "first",
         after: "second",
         before_scenario: 1,
         after_scenario: 2,
-      },
-      { before_scenario: 1, after_scenario: "wrong" },
-    ])
-      expect(validate(input)).toBe(schema.safeParse(input).success);
-  });
+      };
+      expect(validate(mixed)).toBe(true);
+      expect(schema.safeParse(mixed).success).toBe(false);
+    },
+  );
 
-  it("retains reference siblings and does not manufacture root branch constraints", () => {
+  it("keeps a root branch whose reference siblings cannot be merged", () => {
     const branch = { $ref: "#/$defs/object", additionalProperties: false };
     const root = {
       $defs: {
@@ -205,7 +231,7 @@ describe("root input presentation", () => {
     const presented = presentInputJsonSchema(root, (property) => property);
     expect(presented.anyOf).toEqual([branch]);
     const ajv = new Ajv2020({ strict: false });
-    for (const sample of [{}, { value: "value" }, null])
+    for (const sample of [{}, { value: "value" }, { other: 1 }, null])
       expect(ajv.compile(presented)(sample)).toBe(ajv.compile(root)(sample));
   });
 

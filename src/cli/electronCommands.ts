@@ -24,7 +24,6 @@ import {
   javascriptApplicationOptions,
 } from "../cliObservationOptions.js";
 import { runCliJavaScriptApplicationAnalysis } from "./javascriptApplicationAnalysis.js";
-import type { CliResultOutput } from "./streamedJsonOutput.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
@@ -32,11 +31,10 @@ export const registerElectronCommands = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
-  resultOutput?: CliResultOutput,
 ): void => {
   registerElectronObservationCommands(cli, logger);
   registerElectronActiveCommand(cli, logger, environment);
-  registerJavaScriptApplicationCommand(cli, logger, resultOutput);
+  registerJavaScriptApplicationCommand(cli, logger);
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -184,7 +182,6 @@ const registerElectronPageInspection = (
 const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
-  resultOutput?: CliResultOutput,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
     description:
@@ -193,18 +190,15 @@ const registerJavaScriptApplicationCommand = (
       path: z.string().describe("ASAR or extracted application path"),
     }),
     options: javascriptApplicationOptions,
-    run: ({ args, options, format }) =>
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.analyzeJavaScriptApplication, () =>
           runCliJavaScriptApplicationAnalysis(
-            { input_path: args.path, format: options.artifactFormat },
-            resultOutput === undefined
-              ? undefined
-              : {
-                  output: resultOutput,
-                  command: CLI_COMMANDS.analyzeJavaScriptApplication,
-                  format,
-                },
+            {
+              input_path: args.path,
+              format: options.artifactFormat,
+              integrity_policy: options.integrityPolicy,
+            },
             signal,
           ),
         ),

@@ -269,6 +269,14 @@ const applicationGraphEvidenceBaseSchema = z.strictObject({
   evidence_ids: z.array(prefixedDigestSchema("ev")),
 });
 
+/** Shared provenance fields apart from the fact-specific evidence location. */
+export const applicationGraphEvidenceContextSchema =
+  applicationGraphEvidenceBaseSchema.omit({ location: true });
+
+/** Exact coordinates retained on each graph fact. */
+export const applicationGraphEvidenceLocationSchema =
+  applicationLocationReferenceSchema;
+
 type EvidenceValue = z.infer<typeof applicationGraphEvidenceBaseSchema>;
 
 const checkAuthorityState = (
@@ -474,6 +482,11 @@ export const applicationNodeIdentitySchema = z.discriminatedUnion("strategy", [
 /** Evidence coordinates attached to one graph observation or edge. */
 export type ApplicationGraphEvidence = z.infer<
   typeof applicationGraphEvidenceSchema
+>;
+
+/** Provenance shared by facts with the same non-location evidence. */
+export type ApplicationGraphEvidenceContext = z.infer<
+  typeof applicationGraphEvidenceContextSchema
 >;
 
 /** Explicit stable identity strategy for one application entity. */

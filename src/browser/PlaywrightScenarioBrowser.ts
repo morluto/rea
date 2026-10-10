@@ -16,18 +16,24 @@ import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.j
 
 const OPERATION = "capture_browser_scenario" as const;
 
+const throwIfScenarioCancelled = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted === true)
+    throw new BrowserObservationError(OPERATION, "cancelled");
+};
+
 export interface OpenedScenarioBrowser {
   readonly context: BrowserContext;
   readonly page: Page;
-  readonly browser: Browser;
+  readonly browser: Pick<Browser, "contexts" | "close" | "version">;
   readonly profilePath: string | undefined;
   readonly cleanup: PlaywrightScenarioBrowserCleanupOwner;
 }
 
 /** Provider actions retained until the owned browser and profile are released. */
-export interface PlaywrightScenarioCleanupResources {
+interface PlaywrightScenarioCleanupResources {
   readonly closeBrowser: () => Promise<void>;
   readonly removeProfile: (() => Promise<void>) | undefined;
+  readonly onSettled?: (browserClosed: boolean) => void;
 }
 
 /** Owns one browser connection and optional private profile through cleanup retries. */
@@ -49,9 +55,13 @@ export class PlaywrightScenarioBrowserCleanupOwner {
     const cleanup = this.#closePromise ?? this.#closeResources(finishEvents);
     if (this.#closePromise === undefined) {
       this.#closePromise = cleanup;
-      void cleanup.catch(() => {
-        if (this.#closePromise === cleanup) this.#closePromise = undefined;
-      });
+      void cleanup.then(
+        () => this.resources.onSettled?.(this.#browserClosed),
+        () => {
+          if (this.#closePromise === cleanup) this.#closePromise = undefined;
+          this.resources.onSettled?.(this.#browserClosed);
+        },
+      );
     }
     return this.#awaitCleanup(cleanup, signal);
   }
@@ -115,6 +125,116 @@ export class PlaywrightScenarioBrowserCleanupOwner {
   }
 }
 
+interface AttachedScenarioWaiter {
+  readonly signal: AbortSignal | undefined;
+  readonly resolve: (release: () => void) => void;
+  readonly reject: (error: BrowserObservationError) => void;
+  onAbort: (() => void) | undefined;
+}
+
+interface AttachedScenarioAdmission {
+  active: boolean;
+  readonly waiters: AttachedScenarioWaiter[];
+  cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
+}
+
+interface AttachedScenarioLease {
+  readonly admission: AttachedScenarioAdmission;
+  readonly release: () => void;
+}
+
+const attachedScenarioAdmissions = new Map<string, AttachedScenarioAdmission>();
+
+const releaseAttachedScenario = (
+  key: string,
+  admission: AttachedScenarioAdmission,
+): void => {
+  const waiter = admission.waiters.shift();
+  if (waiter === undefined) {
+    admission.active = false;
+    if (
+      admission.cleanupOwner === undefined &&
+      attachedScenarioAdmissions.get(key) === admission
+    )
+      attachedScenarioAdmissions.delete(key);
+    return;
+  }
+
+  if (waiter.onAbort !== undefined)
+    waiter.signal?.removeEventListener("abort", waiter.onAbort);
+  if (waiter.signal?.aborted === true) {
+    waiter.reject(new BrowserObservationError(OPERATION, "cancelled"));
+    releaseAttachedScenario(key, admission);
+    return;
+  }
+  waiter.resolve(createAttachedScenarioRelease(key, admission));
+};
+
+const createAttachedScenarioRelease = (
+  key: string,
+  admission: AttachedScenarioAdmission,
+): (() => void) => {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    releaseAttachedScenario(key, admission);
+  };
+};
+
+const acquireAttachedScenario = (
+  scenario: Extract<BrowserScenario["browser"], { readonly mode: "connect" }>,
+  signal: AbortSignal | undefined,
+): Promise<AttachedScenarioLease> => {
+  if (signal?.aborted === true)
+    return Promise.reject(new BrowserObservationError(OPERATION, "cancelled"));
+
+  const key = JSON.stringify([scenario.cdp_endpoint, scenario.target_id]);
+  const admission =
+    attachedScenarioAdmissions.get(key) ??
+    ({
+      active: false,
+      waiters: [],
+      cleanupOwner: undefined,
+    } satisfies AttachedScenarioAdmission);
+  attachedScenarioAdmissions.set(key, admission);
+
+  return new Promise((resolve, reject) => {
+    const grant = (release: () => void): void =>
+      resolve({ admission, release });
+    if (!admission.active) {
+      admission.active = true;
+      grant(createAttachedScenarioRelease(key, admission));
+      return;
+    }
+
+    const waiter: AttachedScenarioWaiter = {
+      signal,
+      resolve: (release) => grant(release),
+      reject,
+      onAbort: undefined,
+    };
+    admission.waiters.push(waiter);
+    if (signal !== undefined) {
+      const onAbort = (): void => {
+        const index = admission.waiters.indexOf(waiter);
+        if (index < 0) return;
+        admission.waiters.splice(index, 1);
+        signal.removeEventListener("abort", onAbort);
+        reject(new BrowserObservationError(OPERATION, "cancelled"));
+        if (!admission.active && admission.waiters.length === 0)
+          releaseAttachedScenario(key, admission);
+      };
+      waiter.onAbort = onAbort;
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+    }
+  });
+};
+
 const allowedBrowserEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): Record<string, string | undefined> => {
@@ -142,14 +262,17 @@ const allowedBrowserEnvironment = (
   );
 };
 const findConnectedPage = async (
-  browser: Browser,
+  browser: Pick<Browser, "contexts">,
   targetId: string,
+  signal: AbortSignal | undefined,
 ): Promise<{ readonly context: BrowserContext; readonly page: Page }> => {
   for (const context of browser.contexts())
     for (const page of context.pages()) {
       const session = await context.newCDPSession(page);
       try {
+        throwIfScenarioCancelled(signal);
         const { targetInfo } = await session.send("Target.getTargetInfo");
+        throwIfScenarioCancelled(signal);
         if (targetInfo.targetId !== targetId) continue;
         return { context, page };
       } finally {
@@ -162,33 +285,35 @@ const findConnectedPage = async (
 const configureAttachedEnvironment = async (
   context: BrowserContext,
   page: Page,
-  scenario: BrowserScenario,
+  environment: BrowserScenario["environment"],
+  signal: AbortSignal | undefined,
 ): Promise<void> => {
-  await page.setViewportSize({
-    width: scenario.environment.viewport.width,
-    height: scenario.environment.viewport.height,
-  });
+  // setViewportSize also resizes the external browser window. The scenario's
+  // CDP metrics override below supplies the viewport and expires on disconnect.
   await page.emulateMedia({
-    colorScheme: scenario.environment.color_scheme,
-    reducedMotion: scenario.environment.reduced_motion,
+    colorScheme: environment.color_scheme,
+    reducedMotion: environment.reduced_motion,
   });
+  throwIfScenarioCancelled(signal);
   const session = await context.newCDPSession(page);
-  try {
-    await session.send("Emulation.setDeviceMetricsOverride", {
-      width: scenario.environment.viewport.width,
-      height: scenario.environment.viewport.height,
-      deviceScaleFactor: scenario.environment.viewport.device_scale_factor,
-      mobile: false,
-    });
-    await session.send("Emulation.setLocaleOverride", {
-      locale: scenario.environment.locale,
-    });
-    await session.send("Emulation.setTimezoneOverride", {
-      timezoneId: scenario.environment.timezone,
-    });
-  } finally {
-    await session.detach();
-  }
+  throwIfScenarioCancelled(signal);
+  // Chromium resets these overrides when the CDP session detaches. Keep it on
+  // the scenario transport until cleanup disconnects the attached browser.
+  await session.send("Emulation.setDeviceMetricsOverride", {
+    width: environment.viewport.width,
+    height: environment.viewport.height,
+    deviceScaleFactor: environment.viewport.device_scale_factor,
+    mobile: false,
+    dontSetVisibleSize: true,
+  });
+  throwIfScenarioCancelled(signal);
+  await session.send("Emulation.setLocaleOverride", {
+    locale: environment.locale,
+  });
+  throwIfScenarioCancelled(signal);
+  await session.send("Emulation.setTimezoneOverride", {
+    timezoneId: environment.timezone,
+  });
 };
 
 /** Preserve an operation failure while reporting any incomplete cleanup. */
@@ -226,40 +351,97 @@ export const failBrowserScenarioOperation = async (
   throw primaryFailure;
 };
 
+type ScenarioBrowserLauncher = Pick<
+  typeof chromium,
+  "launchPersistentContext"
+> & {
+  readonly connectOverCDP: (
+    endpoint: string,
+  ) => Promise<Pick<Browser, "contexts" | "close" | "version">>;
+};
+
+type AttachedBrowserRequest = Extract<
+  BrowserScenario["browser"],
+  { readonly mode: "connect" }
+>;
+
+const openAttachedScenarioBrowser = async (
+  browserRequest: AttachedBrowserRequest,
+  environment: BrowserScenario["environment"],
+  launcher: ScenarioBrowserLauncher,
+  signal: AbortSignal | undefined,
+): Promise<OpenedScenarioBrowser> => {
+  const lease = await acquireAttachedScenario(browserRequest, signal);
+  let cleanupOwner: PlaywrightScenarioBrowserCleanupOwner | undefined;
+  try {
+    const priorOwner = lease.admission.cleanupOwner;
+    if (priorOwner !== undefined) await priorOwner.close();
+    throwIfScenarioCancelled(signal);
+
+    const browser = await launcher.connectOverCDP(browserRequest.cdp_endpoint);
+    const cleanup: PlaywrightScenarioBrowserCleanupOwner =
+      new PlaywrightScenarioBrowserCleanupOwner({
+        closeBrowser: () => browser.close(),
+        onSettled: (browserClosed) => {
+          if (browserClosed && lease.admission.cleanupOwner === cleanup)
+            lease.admission.cleanupOwner = undefined;
+          lease.release();
+        },
+        removeProfile: undefined,
+      });
+    cleanupOwner = cleanup;
+    lease.admission.cleanupOwner = cleanup;
+    throwIfScenarioCancelled(signal);
+    const target = await withPlaywrightExecutionBoundary(
+      () => findConnectedPage(browser, browserRequest.target_id, signal),
+      undefined,
+      signal,
+    );
+    throwIfScenarioCancelled(signal);
+    await withPlaywrightExecutionBoundary(
+      () =>
+        configureAttachedEnvironment(
+          target.context,
+          target.page,
+          environment,
+          signal,
+        ),
+      undefined,
+      signal,
+    );
+    return {
+      ...target,
+      browser,
+      profilePath: undefined,
+      cleanup,
+    };
+  } catch (cause: unknown) {
+    if (cleanupOwner === undefined) {
+      lease.release();
+      throw cause;
+    }
+    const cleanup = cleanupOwner;
+    return failBrowserScenarioOperation(() => cleanup.close(), cause);
+  }
+};
+
 /** Launch or attach using the caller-selected environment and browser engine. */
 export const openPlaywrightScenarioBrowser = async (
   scenario: BrowserScenario,
   environment: Readonly<Record<string, string | undefined>>,
-  launcher: Pick<
-    typeof chromium,
-    "connectOverCDP" | "launchPersistentContext"
-  > = chromium,
+  options: {
+    readonly launcher?: ScenarioBrowserLauncher;
+    readonly signal?: AbortSignal | undefined;
+  } = {},
 ): Promise<OpenedScenarioBrowser> => {
-  if (scenario.browser.mode === "connect") {
-    const browser = await launcher.connectOverCDP(
-      scenario.browser.cdp_endpoint,
-      { timeout: 0 },
+  const launcher = options.launcher ?? chromium;
+  if (scenario.browser.mode === "connect")
+    return openAttachedScenarioBrowser(
+      scenario.browser,
+      scenario.environment,
+      launcher,
+      options.signal,
     );
-    const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
-      closeBrowser: () => browser.close(),
-      removeProfile: undefined,
-    });
-    try {
-      const target = await findConnectedPage(
-        browser,
-        scenario.browser.target_id,
-      );
-      await configureAttachedEnvironment(target.context, target.page, scenario);
-      return {
-        ...target,
-        browser,
-        profilePath: undefined,
-        cleanup,
-      };
-    } catch (cause: unknown) {
-      return failBrowserScenarioOperation(() => cleanup.close(), cause);
-    }
-  }
 
   const profilePath = await mkdtemp(join(tmpdir(), "rea-browser-scenario-"));
   let context: BrowserContext;

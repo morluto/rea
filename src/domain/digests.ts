@@ -35,8 +35,3 @@ export const prefixedDigestSchema = (prefix: string): z.ZodString =>
 /** True when `value` is a bare digest. */
 export const isDigest = (value: unknown): value is string =>
   typeof value === "string" && SHA256_PATTERN.test(value);
-
-/** True when `value` is a digest carrying `prefix`. */
-export const isPrefixedDigest = (value: unknown, prefix: string): boolean =>
-  typeof value === "string" &&
-  prefixedDigestSchema(prefix).safeParse(value).success;

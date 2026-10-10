@@ -35,7 +35,7 @@ const resources: Array<{ close(): Promise<void> }> = [];
 const connect = async (
   execute: AnalysisOperationPort["execute"],
 ): Promise<Client> => {
-  const server = createServer({ execute });
+  const server = createServer({ kind: "fixed", analysis: { execute } });
   const client = new Client({ name: "native-contract-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

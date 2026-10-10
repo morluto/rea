@@ -23,7 +23,7 @@ describe("per-request client capability reporting", () => {
     "reports the negotiated capability %j",
     async (capabilities, form, url) => {
       const session = createTestBinarySession(createCacheProvider([]));
-      const server = createServer(session, session);
+      const server = createServer({ kind: "session", session });
       const client = new Client({ name: "capabilities-test", version: "1" });
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
@@ -61,7 +61,7 @@ describe("initialize-scoped client metadata", () => {
     meta?: Record<string, unknown>,
   ) => {
     const session = createTestBinarySession(createCacheProvider([]));
-    const server = createServer(session, session);
+    const server = createServer({ kind: "session", session });
     const client = new Client(
       { name: "initialize-test", version: "2" },
       { capabilities },

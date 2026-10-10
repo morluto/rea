@@ -40,100 +40,115 @@ const matchingModes = [
 describe.each(memberFields)(
   "$kind seeds for $nodeKind / $field",
   ({ kind, nodeKind, field }) => {
-    it.each(matchingModes)(
-      "matches scalar and array values with $match / $value / case-sensitive $case_sensitive",
-      (mode) => {
-        const values: readonly [JsonValue, string][] = [
-          ["openProject", ""],
-          [["closeProject", "openProject"], "[1]"],
-        ];
-        for (const [value, suffix] of values) {
-          const node = memberNode(nodeKind, { [field]: value });
-          expect(
-            findApplicationFeatureSeeds([node], { kind, ...mode }),
-          ).toEqual([propertyMatch(node, `${field}${suffix}`)]);
-        }
-      },
-    );
-
-    it("keeps exact, case-sensitive, and non-string exclusions", () => {
-      const node = memberNode(nodeKind, {
-        [field]: [null, 42, true, "openProject"],
-      });
-      for (const value of ["Project", "OPENPROJECT", "42", "true", "null"])
-        expect(findApplicationFeatureSeeds([node], seed(kind, value))).toEqual(
-          [],
-        );
-      expect(
-        findApplicationFeatureSeeds([node], {
-          ...seed(kind, "Project"),
-          match: null,
-        }),
-      ).toEqual([]);
-    });
-
-    it("retains actual indexes through nested arrays and object properties", () => {
-      const properties = {
-        nested: [{ [field]: [null, 42, false, [["openProject"]]] }],
-      };
-      const node = memberNode(nodeKind, properties);
-      const before = structuredClone(node);
-
-      expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([
-        propertyMatch(node, `nested[0].${field}[3][0][0]`),
-      ]);
-      expect(node).toEqual(before);
-      expect(properties.nested[0]?.[field]).toEqual([
-        null,
-        42,
-        false,
-        [["openProject"]],
-      ]);
-    });
-
-    it("preserves literal dotted-field suffixes for scalars and arrays", () => {
+    it("retains scalar and array member locations", () => {
       const values: readonly [JsonValue, string][] = [
         ["openProject", ""],
-        [["openProject"], "[0]"],
+        [["closeProject", "openProject"], "[1]"],
       ];
       for (const [value, suffix] of values) {
-        const node = memberNode(nodeKind, { [`nested.${field}`]: value });
+        const node = memberNode(nodeKind, { [field]: value });
         expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([
-          propertyMatch(node, `nested.${field}${suffix}`),
-        ]);
-      }
-    });
-
-    it("does not select near-fields, literal bracket keys, or object descendants", () => {
-      const cases = [
-        {
-          properties: { [`other_${field}`]: "openProject" },
-          path: `other_${field}`,
-        },
-        { properties: { [`${field}[0]`]: "openProject" }, path: `${field}[0]` },
-        {
-          properties: { [`nested.${field}[0]`]: ["openProject"] },
-          path: `nested.${field}[0][0]`,
-        },
-        {
-          properties: { [field]: { name: "openProject" } },
-          path: `${field}.name`,
-        },
-        {
-          properties: { [field]: [{ name: "openProject" }] },
-          path: `${field}[0].name`,
-        },
-      ];
-      for (const { properties, path } of cases) {
-        const node = memberNode(nodeKind, properties);
-        expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([]);
-        expect(findApplicationFeatureSeeds([node], seed("string"))).toEqual([
-          propertyMatch(node, path),
+          propertyMatch(node, `${field}${suffix}`),
         ]);
       }
     });
   },
 );
+
+describe("shared array-member matching semantics", () => {
+  const kind = "api";
+  const nodeKind = "context-bridge-api";
+  const field = "members";
+
+  it.each(matchingModes)(
+    "matches $match / $value / case-sensitive $case_sensitive",
+    (mode) => {
+      const node = memberNode(nodeKind, {
+        members: ["closeProject", "openProject"],
+      });
+      expect(findApplicationFeatureSeeds([node], { kind, ...mode })).toEqual([
+        propertyMatch(node, "members[1]"),
+      ]);
+    },
+  );
+
+  it("keeps exact, case-sensitive, and non-string exclusions", () => {
+    const node = memberNode(nodeKind, {
+      [field]: [null, 42, true, "openProject"],
+    });
+    for (const value of ["Project", "OPENPROJECT", "42", "true", "null"])
+      expect(findApplicationFeatureSeeds([node], seed(kind, value))).toEqual(
+        [],
+      );
+    expect(
+      findApplicationFeatureSeeds([node], {
+        ...seed(kind, "Project"),
+        match: null,
+      }),
+    ).toEqual([]);
+  });
+
+  it("retains actual indexes through nested arrays and object properties", () => {
+    const properties = {
+      nested: [{ [field]: [null, 42, false, [["openProject"]]] }],
+    };
+    const node = memberNode(nodeKind, properties);
+    const before = structuredClone(node);
+
+    expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([
+      propertyMatch(node, `nested[0].${field}[3][0][0]`),
+    ]);
+    expect(node).toEqual(before);
+    expect(properties.nested[0]?.[field]).toEqual([
+      null,
+      42,
+      false,
+      [["openProject"]],
+    ]);
+  });
+
+  it("preserves literal dotted-field suffixes for scalars and arrays", () => {
+    const values: readonly [JsonValue, string][] = [
+      ["openProject", ""],
+      [["openProject"], "[0]"],
+    ];
+    for (const [value, suffix] of values) {
+      const node = memberNode(nodeKind, { [`nested.${field}`]: value });
+      expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([
+        propertyMatch(node, `nested.${field}${suffix}`),
+      ]);
+    }
+  });
+
+  it("does not select near-fields, literal bracket keys, or object descendants", () => {
+    const cases = [
+      {
+        properties: { [`other_${field}`]: "openProject" },
+        path: `other_${field}`,
+      },
+      { properties: { [`${field}[0]`]: "openProject" }, path: `${field}[0]` },
+      {
+        properties: { [`nested.${field}[0]`]: ["openProject"] },
+        path: `nested.${field}[0][0]`,
+      },
+      {
+        properties: { [field]: { name: "openProject" } },
+        path: `${field}.name`,
+      },
+      {
+        properties: { [field]: [{ name: "openProject" }] },
+        path: `${field}[0].name`,
+      },
+    ];
+    for (const { properties, path } of cases) {
+      const node = memberNode(nodeKind, properties);
+      expect(findApplicationFeatureSeeds([node], seed(kind))).toEqual([]);
+      expect(findApplicationFeatureSeeds([node], seed("string"))).toEqual([
+        propertyMatch(node, path),
+      ]);
+    }
+  });
+});
 
 describe("feature seed selection controls", () => {
   it.each([

@@ -1,4 +1,4 @@
-import { compareCodePoints } from "../canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import {
   featureSeedMatchMode,
@@ -30,7 +30,7 @@ export const findApplicationFeatureSeeds = (
   nodes
     .flatMap((node) => seedMatch(node, seed))
     .sort((left, right) =>
-      compareCodePoints(
+      compareUnicodeCodePoints(
         `${left.node_id}\0${left.basis}\0${left.field}`,
         `${right.node_id}\0${right.basis}\0${right.field}`,
       ),
@@ -230,7 +230,9 @@ const propertyFields = (
       continue;
     }
     if (current !== null && typeof current === "object") {
-      for (const key of Object.keys(current).sort(compareCodePoints).reverse())
+      for (const key of Object.keys(current)
+        .sort(compareUnicodeCodePoints)
+        .reverse())
         pending.push({
           current: current[key] ?? null,
           path: `${path}.${key}`,

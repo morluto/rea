@@ -23,6 +23,15 @@ artifact digest and structural graph ID. Semantic tracing requires the semantic
 relation graph and reports when it is unavailable rather than treating missing
 data as an empty graph.
 
+The semantic graph wire format stores shared non-location provenance once in
+its required `evidence_contexts` table. Each node, relation, fingerprint, and
+unknown retains its exact `evidence.location` and names the owning context with
+`evidence.context_id`. This is a breaking representation change: consumers
+reading fields such as `evidence.authority` must look up the context by ID and
+combine its fields with the fact's location. Semantic trace results include the
+canonical context subset referenced by their returned facts, so those facts
+remain self-contained in the response.
+
 ## Feature tracing
 
 Select one literal seed kind: node ID, route, string, API, IPC channel, module,
@@ -60,13 +69,12 @@ validation boundaries, and built-in resource acquisition/release.
 
 Mutation tracking covers explicit member assignments, updates, deletion, and
 loop assignment targets, including the supported local aliases and shared
-nested references. Calls such as `Object.assign`, `Reflect.set`, and
-`Reflect.deleteProperty`, and writes reaching a caller's object through another
-function's parameter, are not tracked by this mutation pass. These channels
-can leave an initializer-derived literal in the graph even after the runtime
-value changes. Treat such a result as an uncovered mutation channel, not as
-proof of the current runtime value; a follow-up needs to model that channel
-and verify its caller/alias behavior.
+nested references. Calls conservatively invalidate exposed mutable references;
+callee bodies and built-ins such as `Object.assign`, `Reflect.set`, and
+`Reflect.deleteProperty` are not interpreted to establish exact post-call
+values. This uncertainty does not prove that a call actually mutated a value.
+Interprocedural aliasing beyond the supported call-site references remains
+outside this mutation pass.
 
 Function fingerprints commit normalized syntax, control-flow shape, relation
 shape, literal sets, arity, and detected effects without using local names or
@@ -81,6 +89,20 @@ executed. Candidate edges are excluded by default, require explicit opt-in, and
 keep the result ambiguous. Runtime Evidence can later corroborate an exact
 mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
+
+Semantic literal nodes keep their complete value in `properties.value`; literal
+queries match that field. String labels use `string literal` when that is
+shorter than the complete JSON value. A literal's `identity.role_key` commits
+its canonical JSON value as `value-sha256:<digest>` when the digest key is
+shorter; smaller values keep their existing JSON key. This keeps large values
+out of identity and display metadata without expanding short values or
+truncating their Evidence.
+
+New analyses therefore produce different IDs for hashed literals from the
+earlier payload-bearing role keys. Use IDs returned by the selected parent
+graph and read literal values from `properties.value`, rather than decoding
+role keys or labels. Previously stored graphs and their original IDs remain
+valid inputs.
 
 ## Version comparison
 
@@ -137,6 +159,15 @@ Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
 keys, and parser recovery remain partial or unknown.
+Objects and arrays passed to calls, constructors, or tagged templates, or used
+as method receivers, are not assumed unchanged after the invocation. Aliases
+and shared children in spread and rest copies retain that uncertainty; copied
+primitive slots and unrelated containing properties remain known. Object rest
+excludes consumed keys, array rest excludes the consumed prefix for known
+arrays, and later explicit data properties and methods replace earlier object
+spread references. A known array prefix does not expose values from a following
+spread. Accessors, custom or uncertain iteration, unknown computed keys, and
+unknown spread lengths retain conservative uncertainty.
 Nested callable returns are not assigned to their parent callable. Projected
 graph observations carry source ranges but never source text.
 
@@ -162,6 +193,8 @@ value alone does not make an observed property uncertain. `summary.added` and
 `summary.removed` count
 presence-level add/remove as well as literal value add/remove;
 `summary.unknown` does not absorb complete-coverage presence-only gaps.
+A partial comparison still records an unknown in the MCP session when matching
+uncertain projections produce no changes and `summary.unknown` is zero.
 
 The output includes exact selector candidates, omissions, Evidence links,
 coverage, and limitations; it does not execute JavaScript. When runtime
@@ -174,6 +207,10 @@ or process workflows.
 All five CLI commands accept inline JSON or a path to a JSON file. The CLI
 returns an Evidence record directly. Put the full records in a later CLI input;
 a separate CLI process has no retained MCP connection state.
+
+File inputs must be regular files; symlinks to regular files are accepted.
+Directories, named pipes and device files produce an input error before JSON
+parsing.
 
 For a literal string trace, analyze your supplied tree once, then build the
 input from the saved Evidence (replace the target and seed):

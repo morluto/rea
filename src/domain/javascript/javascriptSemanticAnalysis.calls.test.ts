@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
-import { semanticBinding } from "./javascriptSemanticIr.js";
 import {
+  bindingById,
   onlyCallable,
   topLevelBinding,
 } from "./javascriptSemanticAnalysis.fixture.js";
@@ -39,7 +39,7 @@ describe("JavaScript semantic analysis: calls 1", () => {
         .filter(({ callSiteId }) => callSiteId === call.callSiteId)
         .map(({ argumentIndex, parameterBindingId }) => ({
           argumentIndex,
-          parameter: semanticBinding(ir, parameterBindingId)?.name,
+          parameter: bindingById(ir, parameterBindingId)?.name,
         })),
     ).toEqual([
       { argumentIndex: 0, parameter: "value" },
@@ -309,7 +309,7 @@ describe("JavaScript semantic rest parameter flow", () => {
       expect(
         ir.argumentFlows.map(({ argumentIndex, parameterBindingId }) => [
           argumentIndex,
-          semanticBinding(ir, parameterBindingId)?.name,
+          bindingById(ir, parameterBindingId)?.name,
         ]),
       ).toEqual(expected);
     },

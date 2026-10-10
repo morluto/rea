@@ -1,7 +1,8 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
-import { compareCodePoints } from "../../domain/canonicalOrdering.js";
+import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
-import { createReadStream } from "node:fs";
+import { AsarArtifactReader } from "../AsarArtifactReader.js";
+
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
@@ -30,8 +31,9 @@ import {
   artifactGraphDigest,
   artifactManifestId,
 } from "../../domain/artifactIdentity.js";
-import { classifyRoot } from "./classify.js";
-import { hashReadable, type HashResult } from "../ArtifactHash.js";
+import { classifyAndHashRoot } from "./classify.js";
+import { type HashResult } from "../ArtifactHash.js";
+import { hashStableRootArtifact } from "./hashStableRootArtifact.js";
 import { createReader, inventoryLimitations } from "./reader.js";
 import {
   scanReader,
@@ -49,16 +51,19 @@ export const scanCanonicalArtifactInventory = async (
 ): Promise<ArtifactInventorySnapshot> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
-  const rootFormat = await classifyRoot(path, metadata.isDirectory());
-  const rootDigest = metadata.isDirectory()
-    ? null
-    : await hashReadable(createReadStream(path), options.signal);
+  const { format: rootFormat, digest: rootDigest } = await classifyAndHashRoot(
+    path,
+    metadata.isDirectory(),
+    metadata,
+    options.signal,
+  );
   const reader = await readerFactory(
     path,
     rootFormat,
     options.environment ?? {},
     options.signal,
   );
+  const ownedReaders: ArtifactReader[] = reader === undefined ? [] : [reader];
   let outcome:
     | {
         readonly kind: "completed";
@@ -66,8 +71,11 @@ export const scanCanonicalArtifactInventory = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
+    if (reader instanceof AsarArtifactReader)
+      await reader.prepareContainer(rootDigest?.sha256, options.signal);
     const { nodes, occurrences, pendingContradictions } = await scanReader(
       reader,
+      ownedReaders,
       options.signal,
       integrity,
     );
@@ -88,22 +96,26 @@ export const scanCanonicalArtifactInventory = async (
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
-  try {
-    await reader?.close();
-  } catch (cleanupCause: unknown) {
-    const cleanup = ArtifactReaderFailure.cleanupObservation(
-      cleanupCause,
-      `artifact reader for ${path}`,
-    );
-    const primary = outcome.kind === "failed" ? outcome.cause : cleanupCause;
-    throw ArtifactReaderFailure.withCleanup(
-      primary,
-      cleanup,
-      outcome.kind === "completed"
-        ? { kind: "artifact-inventory", inventory: outcome.snapshot }
-        : undefined,
-    );
+  let cleanupFailure: ArtifactReaderFailure | undefined;
+  for (const owned of ownedReaders.reverse()) {
+    try {
+      await owned.close();
+    } catch (cleanupCause: unknown) {
+      const cleanup = ArtifactReaderFailure.cleanupObservation(
+        cleanupCause,
+        `artifact reader for ${path}`,
+      );
+      cleanupFailure = ArtifactReaderFailure.withCleanup(
+        cleanupFailure ??
+          (outcome.kind === "failed" ? outcome.cause : cleanupCause),
+        cleanup,
+        outcome.kind === "completed"
+          ? { kind: "artifact-inventory", inventory: outcome.snapshot }
+          : undefined,
+      );
+    }
   }
+  if (cleanupFailure !== undefined) throw cleanupFailure;
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.snapshot;
 };
@@ -240,7 +252,7 @@ const verifyRootDigest = async (
   signal: AbortSignal | undefined,
 ): Promise<void> => {
   if (rootDigest === null) return;
-  const verified = await hashReadable(createReadStream(path), signal);
+  const verified = await hashStableRootArtifact(path, signal);
   if (
     verified.sha256 !== rootDigest.sha256 ||
     verified.bytes !== rootDigest.bytes
@@ -253,18 +265,20 @@ const verifyRootDigest = async (
 
 const sortNodes = (nodes: ArtifactNode[]): ArtifactNode[] =>
   nodes.sort((left, right) =>
-    compareCodePoints(left.artifact_id, right.artifact_id),
+    compareUnicodeCodePoints(left.artifact_id, right.artifact_id),
   );
 
 const sortOccurrences = (
   occurrences: MutableOccurrence[],
 ): MutableOccurrence[] =>
   occurrences.sort((left, right) =>
-    compareCodePoints(left.logical_path, right.logical_path),
+    compareUnicodeCodePoints(left.logical_path, right.logical_path),
   );
 
 const sortEdges = <T extends { edge_id: string }>(edges: T[]): T[] =>
-  edges.sort((left, right) => compareCodePoints(left.edge_id, right.edge_id));
+  edges.sort((left, right) =>
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
+  );
 
 const buildManifest = ({
   rootNode,

@@ -1,39 +1,30 @@
 # Contributing to REA
 
-REA welcomes focused bug fixes, documentation improvements, tests, and reverse-engineering workflow enhancements. Open an issue before a large contract or architecture change so its scope can be agreed before implementation.
+REA welcomes focused bug fixes, documentation improvements, tests, and reverse-engineering workflows. For large contract or architecture changes, explain the intended scope and link the relevant issue or design discussion.
 
 ## Choosing a contribution
 
-Small contributions are welcome when they solve a concrete problem, including
-broken commands, misleading documentation, and missing regression coverage.
-Explain the problem, keep the diff focused, and share how you checked the change.
+Explain the concrete problem, keep related corrections together, and report
+verification and unavailable coverage. Contributions should justify their review
+and maintenance cost. Keep cosmetic polish with useful fixes; confusing or
+incorrect user instructions warrant standalone corrections. Collect other
+cosmetic-only suggestions in an issue rather than separate PRs.
 
-Please avoid standalone cosmetic changes without a clear benefit, such as fixing
-a typo in an internal comment, changing capitalization or punctuation in
-already-clear prose, or reformatting unchanged code. Include related polish in a
-useful fix when practical. For cosmetic-only suggestions, please open an issue
-instead of a standalone PR so they can be collected and addressed together.
-Corrections to confusing explanations or incorrect instructions are welcome.
-
-Avoid speculative cleanup without a concrete problem to solve. Keep related
-corrections in one PR.
-
-Before requesting review, read the final diff and run the relevant checks. Be clear
-about anything you couldn't test. You should be able to explain the changes you
-submit.
-
-We may decline changes when the benefit doesn't justify the review or maintenance
-work.
-
-For capability organization and provider composition, follow the incremental
-[migration guide](docs/capability-migration.md). Run `npm run verify:test-discovery`
-after adding or moving tests.
+For capability organization and provider composition, use the
+[architecture map](docs/architecture.mermaid). Production factories in
+`src/composition/` construct fresh providers without starting engines or acquiring
+targets; optional adapter failures must preserve successful peers. Run
+`npm run verify:test-discovery` after adding or moving tests. Resolved import
+boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
 
 ## Development setup
 
-REA development requires Node.js 24.18.x and npm 11.16.x (pinned toolchain via `nvm use`; the supported runtime range is Node.js ^22.19 || ^24.11 || >=26, as the README badge states). Real-Hopper verification additionally requires either macOS 12+ or an officially supported Linux host (Ubuntu 24.04+, Fedora 41+, 64-bit Arch, or CachyOS) and an installed Hopper application. Linux demo verification uses its own private Xvfb display and does not require a desktop session. Run `nvm use` before installing dependencies.
+Use the development toolchain pinned in `.nvmrc` and
+`package.json#packageManager`. Run `nvm use` before installing dependencies;
+installed-package runtime support is documented in
+[installation](docs/installation.md#start-setup).
 
 ```bash
 npm ci
@@ -48,7 +39,8 @@ catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
 
-Keep dependencies flowing inward through the existing domain, contracts, provider, application, server, and adapter layers. Parse unknown values at process and protocol boundaries, model expected failures with `Result`, and preserve the canonical tool inventory defined by `TOOL_CONTRACTS` unless a deliberate contract change updates every verifier, generated catalog artifact, and snapshot. Keep tool discovery complete and report capability- and session-scoped availability through `binary_session`.
+Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
+protocols in adapters and shared CLI/MCP workflows in the application layer.
 
 ## Documentation website
 
@@ -74,112 +66,77 @@ The separate GitHub Pages host uses only the manual
 
 ## Development feedback and PR verification
 
-For an ordinary edit, run the relevant regression and cached static checks:
+Select checks for the behavior changed. For a source edit:
 
 ```bash
 npm run test:focused -- src/config.test.ts
 npm run check:fast
 ```
 
-`test:local` selects dirty source tests without building; explicit source test
-paths run even on a clean tree. `check:changed` adds source tests affected since
-the branch merge base with `origin/main`. Use `npm run test:changed -- --base
-REVISION` to choose another base. Changed-test selection follows the import
-graph and is feedback, not complete correctness evidence. Inspect relevant
-boundary and provider behavior explicitly; see [docs/testing.md](docs/testing.md).
+`test:local` runs source tests without building. `check:changed` combines cached
+static checks with source tests affected since the merge base with `origin/main`.
+Import-graph selection can miss runtime registration, bridges, and generated data;
+select relevant boundary tests explicitly. See [testing](docs/testing.md#developer-commands)
+for commands, test placement, pruning, and real-provider prerequisites.
 
-Before handing off a PR, run the relevant tests, `npm run check`, and
-`npm run docs:check` when contracts or generated metadata change. Record which
-checks ran. CI owns complete deterministic tests and aggregate coverage. Use
-`npm run check:pr` for a deliberate full local gate on broad changes or when
-investigating CI failures; it is not required after each edit, rebase, or push.
-Packaging, setup, installation, or distribution changes also require
-`npm run verify:package` and `npm pack --dry-run`. Provider behavior changes
-require the matching real-provider `verify:*` lane.
+Before requesting review, run relevant tests and `npm run check`; add
+`npm run docs:check` when contracts or generated metadata change. Record the
+checks and unavailable coverage. CI owns the full deterministic suite and
+coverage. `npm run check:pr` is an optional full local gate for broad changes or
+CI diagnosis. Packaging/setup/distribution changes additionally require
+`npm run verify:package` and `npm pack --dry-run`; provider changes require the
+matching real-provider lane. State which host/provider workflows ran.
 
-`check:fast` runs cached source/test typecheck and lint without compiling or
-running generators. `npm run test:prepare` prepares all artifacts consumed by
-the complete suite; focused tests prepare only their runtime and declared
-artifact dependencies. The test-only MCP catalog lives at
-`.cache/mcp-tool-catalog.json` and can be regenerated independently with
-`npm run mcp-catalog:generate`.
+Pre-commit formats and lints staged files; pre-push runs `check:fast`.
 
-Build and generation commands hold one SQLite exclusive transaction around
-their whole Turbo graph, including cache restoration. The persistent database
-in `.cache/rea-command-locks/` is a lock identity, not a stale-file marker;
-the operating system releases ownership when the command supervisor exits.
-On POSIX, that supervisor retains the transaction and process-group identity
-through cancellation, including loss of its parent runner. Windows cancellation
-waits for the command to complete. Do not remove the database while commands
-are running.
+### Generated files and command ownership
 
-`check` adds formatting, dead-code, and package-metadata freshness checks.
-Formatting uses Oxfmt and the committed `.oxfmtrc.json`; generated sources use
-the same configuration. Pre-commit formats and lints staged files; pre-push runs
-`check:fast`.
-`docs:check` builds and validates generated metadata for the current checkout.
-The product catalog (`docs/public/product-catalog.json`), portable managed
-conformance projections (`docs/verification/managed-conformance-*.json`), and
-packaged skill (`skills/`) are ignored generated outputs. `docs:generate`
-prepares documentation and managed evidence; `evidence:generate` prepares only
-the managed commitment and its runtime/skill dependencies. Edit skill
-instructions and references in `skill-src/`; the skill task adds metadata to
-the packaged copy without rewriting authored files. The generated manifest
-commits to that exact packaged skill bundle. It is a portable projection of
-the deterministic managed verifier, not a record of optional real-provider runs.
-CI validates these outputs and retains them as artifacts instead of pushing
-generated-only commits onto feature branches. Reviewed source metadata such as
-`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json` remains
-tracked and checked for freshness. Do not commit ignored generated outputs.
-The build-generated product catalog contains documented facts and their provider
-identity, rather than full runtime schema hashes. The managed skill contains
-instructions and inventory metadata; doctor compares its installed files with
-the canonical bundle. Schema-only fixes should not change these outputs or the
-skill commitment in the conformance manifest. Runtime schema identity remains
-available through doctor and `binary_session`.
-Real-provider execution remains uncached; deterministic builds use Turbo.
+`docs:generate` prepares documentation and portable managed evidence;
+`evidence:generate` prepares only the managed commitment and its runtime/skill
+dependencies. The ignored outputs are `docs/public/product-catalog.json`,
+`docs/verification/managed-conformance-*.json`, and `skills/`. Edit authored
+skill instructions in `skill-src/`. CI validates generated outputs and retains
+them as artifacts; do not commit them. Reviewed source metadata, including
+`src/generatedPackageMetadata.ts` and `docs/error-contract.schema.json`, remains
+tracked and checked for freshness.
 
-Local `npm test` runs every deterministic Vitest project without coverage or
-retries. CI runs four coverage shards and merges JUnit and timing reports.
-CI cancels superseded PR runs and skips package, Windows, and full test lanes
-for documentation-only PRs. Coverage thresholds remain in `vitest.config.ts`.
+The packaged skill contains instructions and inventory metadata, not runtime
+schema hashes. Its conformance commitment covers that exact bundle and portable
+verification; it does not attest optional real-provider runs. Schema-only changes
+should not alter that commitment. Doctor and `binary_session` expose runtime
+schema identity.
 
-Tests that need a temporary directory must use
-`createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`. The
-helper binds exact-path, awaited cleanup to the current Vitest case, including
-failure and timeout completion. Run `npm run verify:test-temp-hygiene` to build
-REA, execute the complete suite under a fresh `TMPDIR`, and reject any remaining
-REA-owned temporary path. Never add a glob cleanup for shared `/tmp/rea-*`
-content.
+Build/generation commands hold a SQLite transaction around the entire Turbo
+graph, including cache restoration. `.cache/rea-command-locks/` databases identify
+locks, not stale files; never remove them while commands run. POSIX cancellation
+retains process-group ownership until settlement; Windows waits for completion.
+Real-provider execution is uncached.
 
-Set `REA_LOG_LEVEL` to `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
-`silent` to control structured JSON diagnostics. MCP mode defaults to `info` and
-always writes logs to stderr so the stdio protocol remains intact. One-shot CLI
-logging is opt-in and writes to stdout when a level is configured, preserving
-machine-readable command output by default. Request arguments, bridge
-authentication tokens, and environment data are redacted.
+### Temporary files and diagnostics
 
-Changes that claim real Hopper behavior must also be tested against the
-source-owned, digest-bound conformance manifest. The verifier builds the
-platform-native fixtures before starting Hopper:
+Tests use `createTestTempDirectory` from `tests/fixtures/temporaryDirectory.ts`
+for exact-path, awaited cleanup, including failures and timeouts.
+`npm run verify:test-temp-hygiene` runs the suite under a fresh `TMPDIR` and
+rejects remaining REA-owned paths. Never glob-clean shared `/tmp/rea-*` content.
 
-```bash
-npm run verify:hopper
-```
+`REA_LOG_LEVEL` selects `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
+`silent`. MCP defaults to `info` on stderr; one-shot CLI logging is opt-in on
+stdout. Request arguments, bridge tokens, and environment data are redacted
+from diagnostic logs.
 
-On a self-hosted Linux runner with the setup-installed Xvfb dependencies, use:
+## Real Hopper changes
 
-```bash
-npm run verify:hopper:linux
-```
+Run `npm run verify:hopper` on a supported macOS host or
+`npm run verify:hopper:linux` on the supported Linux demo runner. These build
+native fixtures and verify the installed engine through CLI/MCP; package or
+simulated-provider checks do not establish engine behavior. See
+[real-toolchain verification](docs/testing.md#end-to-end-integration-and-golden-evidence)
+for prerequisites and scope, and [Hopper setup](docs/installation.md#hopper)
+for supported hosts and unattended startup.
 
-Set `REA_HOPPER_CONFORMANCE_MANIFEST_PATH` only to verify another source-built
-manifest. The normal commands use `build/conformance/manifest.json`; generated
-fixtures and manifests remain ignored and must not be committed.
-
-The macOS and Linux real-Hopper workflows remain separate so a successful mock or package test cannot be reported as platform-runtime proof. Pull requests changing setup, launch, bridge, or Hopper behavior must state which real workflows ran and why either workflow was unavailable.
-
-Describe the behavior change and verification performed in the pull request. Never commit binaries, Hopper documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
+Use the default `build/conformance/manifest.json` unless explicitly verifying
+another source-built manifest with `REA_HOPPER_CONFORMANCE_MANIFEST_PATH`.
+Generated fixtures and manifests remain ignored.
 
 ## Maintainer release checklist
 

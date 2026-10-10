@@ -25,7 +25,7 @@ const withClient = async (
   verify: (client: Client) => Promise<void>,
 ): Promise<void> => {
   const session = createTestBinarySession(new ArtifactProvider(process.env));
-  const server = createServer(session, session);
+  const server = createServer({ kind: "session", session });
   const client = new Client({ name: "dylib-mcp-test", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

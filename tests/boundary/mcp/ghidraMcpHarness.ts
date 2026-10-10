@@ -52,7 +52,10 @@ export const connectGhidraMcp = async (
   const session = composeBinarySession(
     new AnalysisProviderRegistry([provider]),
   );
-  const server = createServer(session, session, { logger: silentLogger });
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
   const mcp = new Client({ name, version: "1.0.0" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

@@ -95,8 +95,8 @@ const checkScenario = async (binary) => {
   });
   const greet = result.events.filter(({ symbol }) => symbol === GREET);
   const add = result.events.filter(({ symbol }) => symbol === "rea_call_add");
-  assert.equal(greet.length, 3);
-  assert.equal(add.length, 3);
+  assert.equal(greet.length, 3, JSON.stringify(result));
+  assert.equal(add.length, 3, JSON.stringify(result));
   for (const [index, event] of greet.entries()) {
     assert.equal(event.receiver_class, "ReaCallGreeter");
     assert.equal(event.selector, "greet:times:");

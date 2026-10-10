@@ -4,6 +4,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { ProcessCapture } from "./processCaptureParsing.js";
 import { processSourceTruncated } from "./processCaptureCoverage.js";
 import {
+  comparableProcessObservationPayload,
   processObservationLocationSchema,
   projectProcessObservation,
   type ProcessObservationLocation,
@@ -11,7 +12,6 @@ import {
 } from "./processObservation.js";
 import {
   canonicalTraceJson,
-  comparableTracePayload,
   processTraceCardinalityBounds,
   type ProcessTraceSpecification,
 } from "./processTraceSpecification.js";
@@ -190,7 +190,7 @@ const matchRecords = (
     ignoredFieldsBySource.set(event.source, ignoredFields);
     eventsByKey.set(
       `${event.source}\0${canonicalTraceJson(
-        comparableTracePayload(event.exact, ignoredFields),
+        comparableProcessObservationPayload(event.exact, ignoredFields),
       )}`,
       event,
     );
@@ -198,7 +198,7 @@ const matchRecords = (
   for (const record of records) {
     const match = eventsByKey.get(
       `${record.source}\0${canonicalTraceJson(
-        comparableTracePayload(
+        comparableProcessObservationPayload(
           record.payload,
           ignoredFieldsBySource.get(record.source),
         ),

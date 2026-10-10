@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import { readdir, readlink, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
@@ -18,7 +19,6 @@ import {
   bigLstat,
 } from "./ReferenceSourceReaderValidate.js";
 import {
-  type BigStats,
   type PendingDirectory,
   type ReferenceSourceEntry,
   type ReferenceSourceResult,
@@ -119,7 +119,7 @@ const readDirectoryNames = async (
 const readMetadata = async (
   path: string,
 ): Promise<
-  | { readonly ok: true; readonly value: BigStats }
+  | { readonly ok: true; readonly value: BigIntStats }
   | { readonly ok: false; readonly message: string }
 > => {
   try {
@@ -193,7 +193,7 @@ const processFileEntry = async (
   state: TraversalState,
   absolute: string,
   path: string,
-  metadata: BigStats,
+  metadata: BigIntStats,
 ): Promise<void> => {
   const result = await readStableFile({
     root: state.root,

@@ -31,6 +31,10 @@ beforeEach(async () => {
     SAND_DATA_ROOT: join(home, ".grokbot"),
     XDG_CONFIG_HOME: join(home, ".config"),
     OPENCODE_CONFIG: join(home, ".config", "opencode", "opencode.jsonc"),
+    OMP_PROFILE: undefined,
+    PI_CODING_AGENT_DIR: undefined,
+    PI_CONFIG_DIR: undefined,
+    PI_PROFILE: undefined,
   }))
     vi.stubEnv(name, value);
 });
@@ -74,6 +78,52 @@ const action = {
   backupPath: "/test/.codex/config.toml.rea.backup",
   commands: ["rea mcp"],
 };
+
+describe("OMP integration maintenance", () => {
+  it("refreshes an OMP entry that enabledServers forces on", async () => {
+    const entry = { type: "stdio", command: entryPoint, args: ["mcp"] };
+    await writeClient(
+      "omp",
+      JSON.stringify({ mcpServers: { rea: { ...entry, enabled: false } } }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: [] });
+    await writeClient(
+      "omp",
+      JSON.stringify({
+        mcpServers: { rea: { ...entry, enabled: false } },
+        enabledServers: ["rea"],
+      }),
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["omp"] });
+  });
+
+  it("preserves Grok Build disabled_mcp_servers during maintenance planning", async () => {
+    // Strict identity: a user-disabled integration must never be selected
+    // for maintenance, even with a healthy owned entry underneath.
+    const registration = `[mcp_servers.rea]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(entryPoint)}, "mcp"]\nstartup_timeout_sec = 30\n`;
+    const configPath = await writeClient(
+      "grok_build",
+      `disabled_mcp_servers = ["rea", "other"]\n${registration}`,
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: [] });
+    expect(await readFile(configPath, "utf8")).toContain(
+      'disabled_mcp_servers = ["rea", "other"]',
+    );
+    await writeFile(
+      configPath,
+      `disabled_mcp_servers = ["other"]\n${registration}`,
+    );
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["grok_build"] });
+  });
+});
 
 describe("existing REA integration maintenance", () => {
   it("selects owned registrations while preserving unconfigured, foreign, and disabled choices", async () => {
