@@ -290,13 +290,45 @@ export const collectSemanticMemberMutations = (
     mutation: t.Node,
     path: PropertyPath = [],
   ): void => markValue(node, path, new Set(), "escape", mutation);
+  const receiverEffects = new Set<string>();
   const markReceiver = (callee: t.Node, mutation: t.Node): void => {
     const expression = unwrapJavaScriptExpression(callee).node;
     if (
-      t.isMemberExpression(expression) ||
-      t.isOptionalMemberExpression(expression)
+      !t.isMemberExpression(expression) &&
+      !t.isOptionalMemberExpression(expression)
     )
-      markEscaped(expression.object, mutation);
+      return;
+    const receiver = unwrapJavaScriptExpression(expression.object).node;
+    if (t.isIdentifier(receiver)) {
+      const binding = resolveSemanticBindingState(
+        state,
+        receiver,
+        receiver.name,
+      );
+      if (binding !== undefined) {
+        const origins = semanticMutationInitializers(
+          binding,
+          mutation,
+          parents,
+        );
+        const identity = JSON.stringify([
+          binding.bindingId,
+          origins.initializers.map(({ node, projection }) => [
+            node.start,
+            node.end,
+            projection,
+          ]),
+          origins.referenceInitializers.map(({ node, projection }) => [
+            node.start,
+            node.end,
+            projection,
+          ]),
+        ]);
+        if (receiverEffects.has(identity)) return;
+        receiverEffects.add(identity);
+      }
+    }
+    markEscaped(receiver, mutation);
   };
   const markTarget = (node: t.Node, mutation: t.Node): void => {
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
