@@ -900,3 +900,25 @@ npm run evidence:check
 
 The records preserve unsupported and unverified coverage as explicit unknowns.
 Run the matching real-tool prerequisites described in this guide.
+
+### Offline WASM artifacts
+
+`npm run verify:wasm:artifact -- --require-tools` uses an absolute
+`REA_WABT_BIN_DIRECTORY` containing WABT 1.0.42, including `wat2wasm` for fixture
+generation. It installs nothing. Without configuration, the default invocation
+reports a named skip; `--require-tools` makes missing configuration fail.
+
+The verifier creates and validates real modules with custom sections, multiple
+import/export kinds, escaped names and empty modules. It compares exact WAT,
+section output and selected/tool digests through the compiled CLI and real MCP
+SDK, validates advertised schemas, checks identical CLI/MCP Evidence IDs and
+session bundle readback, retains invalid/truncated module diagnostics, preserves
+all inputs and checks workspace cleanup. Pass an installed package's
+`scripts/rea.mjs` as the first argument to run the same lane against the package.
+`npm run verify:wasm:package` packs and installs REA into an isolated temporary
+prefix with lifecycle scripts disabled and runs the same required real-tool lane.
+It requires WABT configuration and makes no host tool installation.
+
+Source-owned provider tests separately exercise cancellation, deadline propagation,
+malformed producer output and cleanup uncertainty; shared owned-command tests
+exercise actual subprocess timeout and cancellation.
