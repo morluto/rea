@@ -144,6 +144,10 @@ it("kills at once when cancelled during the finalization interval", async () => 
     exit.finalization?.signals.map(({ signal }) => signal),
     "cancellation records both attempts",
   ).toEqual(["SIGTERM", "SIGKILL"]);
+  expect(
+    fake.signals.filter((signal) => signal.startsWith("terminal:")),
+    "cancellation during finalization never uses a bare terminal kill",
+  ).toEqual([]);
 });
 
 it("records escalation attempts alongside an observed SIGKILL exit", async () => {

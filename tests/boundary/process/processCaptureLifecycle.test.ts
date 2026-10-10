@@ -744,9 +744,15 @@ itWithCaptureCapability(
   "keeps the attempts when the escalation cannot be delivered through the retained identity",
   async () => {
     const calls: string[] = [];
+    let observedAt: number | undefined;
+    let firstSignalAt: number | undefined;
     const finalizationHost: FinalizationHost = {
-      observe: async () => ({ state: "readable" as const, identity: "launch" }),
+      observe: async () => {
+        observedAt ??= performance.now();
+        return { state: "readable" as const, identity: "launch" };
+      },
       signal: async (_pid, identity, signal) => {
+        firstSignalAt ??= performance.now();
         calls.push(`${identity}:${signal}`);
         return signal === "SIGTERM" ? "signaled" : "unverified";
       },
@@ -779,6 +785,10 @@ itWithCaptureCapability(
       calls,
       "both finalization signals went through the identity-checked host",
     ).toEqual(["launch:SIGTERM", "launch:SIGKILL"]);
+    expect(
+      (firstSignalAt ?? 0) - (observedAt ?? Number.POSITIVE_INFINITY),
+      "the start identity was read at launch, well before the 500 ms deadline signalled",
+    ).toBeGreaterThanOrEqual(300);
     const partial = result.error.partialObservation;
     if (partial === undefined || !("observations" in partial))
       throw new Error("expected incomplete process observations");
