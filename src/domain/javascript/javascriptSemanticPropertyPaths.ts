@@ -37,8 +37,9 @@ export const semanticPropertyPathKeyMatches = (
 };
 
 /**
- * Report whether an effect at `covering` already reaches every slot that an
- * effect at `path` can reach: a prefix whose keys match at least as much.
+ * Report whether `covering` is a prefix of `path` whose keys match at least as
+ * much. An escape at `covering` then reaches every slot an escape at `path`
+ * can; a write does only when both paths have the same length.
  */
 export const semanticPropertyPathCovers = (
   covering: JavaScriptSemanticPropertyPath,

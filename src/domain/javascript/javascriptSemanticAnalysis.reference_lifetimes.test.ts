@@ -24,18 +24,62 @@ describe("reference lifetimes across calls and shallow copies", () => {
     expect(performance.now() - start).toBeLessThan(2000);
   }, 30000);
 
-  it("bounds a loop that reassigns one reference through many members", () => {
-    const branches = Array.from(
-      { length: 9 },
-      (_, index) => `if (flag === ${index}) node = node.m${index};`,
-    ).join(" else ");
-    const start = performance.now();
-    const value = resultValue(
-      `const seed = { mode: "initial" }; let node = seed; while (node) { ${branches} use(node); } return seed.mode;`,
-    );
-    expect(performance.now() - start).toBeLessThan(2000);
-    expect(value?.status).toBe("unknown");
-  }, 30000);
+  it.each([
+    ["use(node);", "m0.value", "unknown"],
+    ["node.value = 2;", "m0.value", "unknown"],
+    ["node.value = 2;", "mode", "literal"],
+  ])(
+    "bounds a loop that reassigns one reference through many members: %s seed.%s",
+    (effect, read, status) => {
+      const branches = Array.from(
+        { length: 9 },
+        (_, index) => `if (flag === ${index}) node = node.m${index};`,
+      ).join(" else ");
+      const start = performance.now();
+      const value = resultValue(
+        `const seed = { mode: "initial", m0: { value: 1 } }; let node = seed; while (node) { ${branches} ${effect} } return seed.${read};`,
+      );
+      expect(performance.now() - start).toBeLessThan(2000);
+      expect(value?.status).toBe(status);
+    },
+    30000,
+  );
+
+  it.each([
+    ["const alias = flag ? owner.child : owner; alias.value = 2;", "value"],
+    ["const alias = flag ? owner : owner.child; alias.value = 2;", "value"],
+    ["const alias = flag ? owner.child : owner; alias[key] = 2;", "value"],
+    [
+      "const alias = flag ? owner.child : owner; alias.child = 2;",
+      "child.value",
+    ],
+    [
+      "let alias = owner; let i = 0; while (i++ < 1) { alias = flag ? alias.child : alias; alias.value = 2; }",
+      "value",
+    ],
+  ])(
+    "keeps a write that reaches a child through a longer path: %s",
+    (body, read) => {
+      expect(
+        resultValue(
+          `const shared = { value: 1, child: { value: 1 } }; const owner = { child: shared }; ${body} return shared.${read};`,
+        )?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it.each([
+    "mutate(source.left, source.right);",
+    "const alias = flag ? source.left : source.right; mutate(alias);",
+    "const copy = flag ? [source.left] : [source.right]; mutate(copy);",
+    "const alias = flag ? source.left : source.right; alias.value = 2;",
+  ])("keeps members outside the mutated paths: %s", (body) => {
+    expect(
+      resultValue(
+        `const source = { left: { value: 1 }, right: { value: 2 }, keep: { value: 3 } }; ${body} return source.keep.value;`,
+      ),
+    ).toEqual({ status: "literal", value: 3 });
+  });
 
   it("bounds conditional shallow-copy traversal while retaining shared children", () => {
     const declarations = Array.from(

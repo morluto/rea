@@ -160,16 +160,25 @@ export const collectSemanticMemberMutations = (
             index === selectorIndex ? { ...selector, excludedKeys } : key,
           );
         }
-        // Union paths at each binding state as well. Each loop assignment can
-        // prepend its member, so carrying every ordering is factorial, while
-        // one covering path keeps every effect of the paths it covers.
-        const pathState = JSON.stringify([
-          binding.bindingId,
-          effect,
+        const site = [
           mutation?.start,
           mutation?.end,
           current.originAt?.start,
           current.originAt?.end,
+        ];
+        // Union paths at each binding state as well. Each loop assignment can
+        // prepend its member, so carrying every ordering is factorial, while
+        // one covering path keeps every effect of the paths it covers. Paths
+        // through different first members stay apart, so a union never widens
+        // which members of the binding are affected. Initializers pass on only
+        // writes at least two keys deep, so a write covers only writes of its
+        // own length.
+        const pathState = JSON.stringify([
+          binding.bindingId,
+          effect,
+          path[0],
+          effect === "write" ? path.length : null,
+          ...site,
         ]);
         const covering = coveringPaths.get(pathState);
         if (covering !== undefined) {
@@ -181,10 +190,7 @@ export const collectSemanticMemberMutations = (
           binding.bindingId,
           effect,
           path,
-          mutation?.start,
-          mutation?.end,
-          current.originAt?.start,
-          current.originAt?.end,
+          ...site,
         ]);
         if (recordedEffects.has(identity)) continue;
         const value =
