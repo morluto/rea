@@ -15,7 +15,7 @@ import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { claudeCodeSkillsDirectory, skillDestinations } from "./SetupSkill.js";
+import { skillDestinations } from "./SetupSkill.js";
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
 import {
@@ -179,7 +179,8 @@ export const systemUninstallHost = (
         : undefined;
     },
     removeClient: (client) => removeClient(client, fileSystem),
-    removeSkill: () => removeManagedSkills(home, fileSystem, environment),
+    removeSkill: () =>
+      removeManagedSkills(home, fileSystem, environment, platform),
     purgeData: async () => [
       await removeManagedPath(join(home, ".rea/cache"), "cache", fileSystem),
       await removeManagedPath(join(home, ".rea/state"), "state", fileSystem),
@@ -404,18 +405,16 @@ const removeManagedSkills = async (
   home: string,
   fileSystem: UninstallFileSystem,
   environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
 ): Promise<UninstallItem> => {
   const results = await Promise.all(
-    skillDestinations(
-      home,
-      undefined,
-      claudeCodeSkillsDirectory(home, environment),
-    ).map(({ client, path }) =>
-      removeManagedPath(
-        path,
-        client === "claude_code" ? "Claude Code skill" : "skill",
-        fileSystem,
-      ),
+    skillDestinations(home, undefined, environment, platform).map(
+      ({ client, path }) =>
+        removeManagedPath(
+          path,
+          client === "claude_code" ? "Claude Code skill" : "skill",
+          fileSystem,
+        ),
     ),
   );
   const failed = results.find(({ status }) => status === "failed");

@@ -5,7 +5,7 @@ import {
   linuxHopperInstallDisclosure,
   type LinuxPackageFamily,
 } from "./LinuxHopper.js";
-import { skillDestinations } from "./SetupSkill.js";
+import type { SkillDestination } from "./SetupSkill.js";
 import { macHopperInstallDisclosure } from "./MacHopper.js";
 import type {
   SetupAction,
@@ -188,7 +188,7 @@ export const planSetupActions = async (input: {
       installHopper: input.discovery.installHopper,
       installSkill: input.installSkill,
       skillClientIds: input.skillClientIds,
-      claudeCodeSkillsDirectory: input.host.claudeCodeSkillsDirectory,
+      skillDestinations: input.host.skillDestinations(input.skillClientIds),
       clients: clientPlans,
       providerEnvironment: input.providerEnvironment,
       ...(input.discovery.linuxPackageFamily === undefined
@@ -210,7 +210,7 @@ const setupPlan = (input: {
   readonly installHopper: boolean;
   readonly installSkill: boolean;
   readonly skillClientIds: readonly string[];
-  readonly claudeCodeSkillsDirectory: string;
+  readonly skillDestinations: readonly SkillDestination[];
   readonly clients: readonly {
     readonly client: SetupClient;
     readonly operation: "create" | "update";
@@ -268,11 +268,7 @@ const setupPlan = (input: {
       ...(backupPath === undefined ? {} : { backupPath }),
     })),
   ...(input.installSkill
-    ? skillDestinations(
-        input.homeDirectory,
-        input.skillClientIds,
-        input.claudeCodeSkillsDirectory,
-      ).map(({ client, path }): SetupAction => ({
+    ? input.skillDestinations.map(({ client, path }): SetupAction => ({
         id:
           client === "claude_code"
             ? "install_skill:claude_code"
