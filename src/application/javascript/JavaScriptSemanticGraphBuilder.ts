@@ -11,6 +11,12 @@ import {
   JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
   JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import {
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
+import type { JavaScriptSemanticResourceLimit } from "../../domain/javascript/javascriptSemanticValueTypes.js";
 import type {
   JavaScriptSemanticCallArgument,
   JavaScriptSemanticIr,
@@ -37,6 +43,7 @@ import { projectSemanticFunctionFingerprints } from "./JavaScriptSemanticGraphFi
 import {
   projectSemanticClosureCaptures,
   projectSemanticFrontiers,
+  projectFailedSemanticSource,
   projectSemanticPromises,
   projectSemanticReturnValues,
   type SemanticFlowProjectionContext,
@@ -150,11 +157,27 @@ export const createJavaScriptSemanticGraphProjection =
   (): JavaScriptSemanticGraphProjection => {
     const state = emptyState({ nodes: [] });
     const fingerprints: JavaScriptSemanticFingerprint[] = [];
+    const sourceLimits = new Set<JavaScriptSemanticResourceLimit>();
+    const sourceLimitations = new Set<string>();
+    let partialSources = false;
+    let sourceOmissions = false;
     let truncatedFiles = 0;
     const projectSourceSteps = function* (
       file: JavaScriptArtifactFile,
       ir: JavaScriptSemanticIr,
     ): Generator<void, void> {
+      const resourceLimits = semanticCoverageResourceLimits(ir.coverage);
+      for (const limit of resourceLimits) sourceLimits.add(limit);
+      if (ir.coverage.status !== "complete") {
+        partialSources = true;
+        sourceOmissions ||= ir.coverage.omittedCount === null;
+        for (const limitation of ir.limitations)
+          sourceLimitations.add(limitation);
+        for (const limit of resourceLimits)
+          sourceLimitations.add(semanticResourceLimitReason(limit));
+      }
+      if (ir.coverage.status === "failed")
+        projectFailedSemanticSource(file, ir, state);
       if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
         truncatedFiles += 1;
         return;
@@ -182,6 +205,7 @@ export const createJavaScriptSemanticGraphProjection =
       if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
       const relations = [...state.relations.values()];
       const unknowns = [...state.unknowns.values()];
+      const omitted = truncatedFiles > 0 || sourceOmissions;
       type Family = (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number];
       const retainedByFamily = new Map<Family, number>();
       const unknownIdsByFamily = new Map<Family, string[]>();
@@ -207,12 +231,14 @@ export const createJavaScriptSemanticGraphProjection =
         fingerprints: [...fingerprints],
         unknowns,
         coverage: {
-          status: truncatedFiles > 0 ? "partial" : "unknown",
-          truncated: truncatedFiles > 0,
-          omitted_nodes: truncatedFiles > 0 ? null : 0,
-          omitted_relations: truncatedFiles > 0 ? null : 0,
-          limits:
-            truncatedFiles > 0
+          status: truncatedFiles > 0 || partialSources ? "partial" : "unknown",
+          truncated:
+            truncatedFiles > 0 || (sourceOmissions && sourceLimits.size > 0),
+          omitted_nodes: omitted ? null : 0,
+          omitted_relations: omitted ? null : 0,
+          limits: [
+            ...semanticResourceLimitCoverage([...sourceLimits].sort()),
+            ...(truncatedFiles > 0
               ? [
                   {
                     name: "semantic_graph_node_ceiling",
@@ -220,16 +246,18 @@ export const createJavaScriptSemanticGraphProjection =
                     unit: "items" as const,
                   },
                 ]
-              : [],
+              : []),
+          ],
           families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
             family,
             status: semanticFamilyStatus(family),
             retained_relations: retainedByFamily.get(family) ?? 0,
-            omitted_relations: truncatedFiles > 0 ? null : 0,
+            omitted_relations: omitted ? null : 0,
             unknown_ids: unknownIdsByFamily.get(family) ?? [],
           })),
         },
         limitations: [
+          ...sourceLimitations,
           "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
           "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
           "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
