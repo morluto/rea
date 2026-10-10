@@ -351,16 +351,19 @@ it("validates finalization evidence in incomplete observations", () => {
   };
   const unavailable = { state: "unavailable", reason: "not observed" };
   const incomplete = (
-    exit: Record<string, unknown>,
+    exit: Record<string, unknown> | undefined,
     manifest: ReturnType<typeof withCommittedFinalization>["manifest"],
-  ) =>
-    partialProcessCaptureObservationSchema.safeParse({
+  ) => {
+    const result = partialProcessCaptureObservationSchema.safeParse({
       observations: {
         target_pid: unavailable,
         frames: { state: "available", value: [] },
         rendered_frames: unavailable,
         interaction_events: unavailable,
-        exit: { state: "available", value: exit },
+        exit:
+          exit === undefined
+            ? unavailable
+            : { state: "available", value: exit },
         settlement: unavailable,
         process_samples: unavailable,
         filesystem_snapshots: { before: unavailable, after: unavailable },
@@ -374,12 +377,25 @@ it("validates finalization evidence in incomplete observations", () => {
       },
       execution_failure: "capture ended after a fixture error",
     });
+    return {
+      success: result.success,
+      messages: result.success
+        ? ""
+        : result.error.issues.map(({ message }) => message).join("; "),
+    };
+  };
   const timeout = { code: null, signal: null, reason: "timeout" };
+  const normal = { code: 0, signal: null, reason: "exited" };
   const committed = withCommittedFinalization(500, timeout).manifest;
 
   expect(
     incomplete({ ...timeout, finalization }, committed).success,
     "a consistent incomplete record is accepted",
+  ).toBe(true);
+  expect(
+    incomplete(normal, withCommittedFinalization(undefined, normal).manifest)
+      .success,
+    "an incomplete capture that never committed an interval is accepted",
   ).toBe(true);
   expect(
     incomplete(
@@ -410,12 +426,33 @@ it("validates finalization evidence in incomplete observations", () => {
     ).success,
     "an incomplete forced kill needs an observed SIGKILL",
   ).toBe(false);
+
+  const scenarioOnly = withCommittedFinalization(
+    500,
+    normal,
+    "absent",
+  ).manifest;
+  const comparisonOnly = withCommittedFinalization(
+    undefined,
+    normal,
+    500,
+  ).manifest;
+  const differing = withCommittedFinalization(500, normal, 900).manifest;
+  for (const [label, manifest] of [
+    ["a scenario interval missing from the comparison contract", scenarioOnly],
+    ["a comparison interval the scenario never committed", comparisonOnly],
+    ["differing intervals", differing],
+  ] as const) {
+    const verdict = incomplete(normal, manifest);
+    expect(verdict.success, `${label} is rejected`).toBe(false);
+    expect(
+      verdict.messages,
+      `${label} is rejected for the comparison contract`,
+    ).toContain("comparison_contract");
+  }
   expect(
-    incomplete(
-      { ...timeout, finalization },
-      withCommittedFinalization(500, timeout, 900).manifest,
-    ).success,
-    "a contradictory comparison contract is rejected in incomplete observations",
+    incomplete(undefined, differing).success,
+    "an unavailable exit still cannot hide a contradictory manifest",
   ).toBe(false);
 });
 
