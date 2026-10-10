@@ -6,7 +6,7 @@ REA exposes JEB-backed project, unit, and decompilation inspection through the C
 
 Start a JEB client that serves MCP and point REA at it:
 
-- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL; credentials, query strings, and fragments are rejected rather than silently dropped).
+- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]`; redirects, remote hosts, credentials, query strings, and fragments are rejected rather than silently dropped).
 - In the JEB GUI client, start the MCP server from the _File_ menu (or via the VIBRE assistant).
 - Headless, use JEB's documented programmatic route (`JebMcpServerInstance` from the JEB API) with the JEB client on your classpath; JEB 5.48's `-c` headless mode does not accept `--mcp` directly.
 

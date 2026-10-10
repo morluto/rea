@@ -68,7 +68,9 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
       client ??= new Client({ name: "rea-jeb", version: "0.0.0" });
       if (serverTools === undefined) {
         await client.connect(
-          new StreamableHTTPClientTransport(endpoint),
+          new StreamableHTTPClientTransport(endpoint, {
+            requestInit: { redirect: "error" },
+          }),
           signal === undefined ? {} : { signal },
         );
         const listing = await client.listTools(
@@ -91,9 +93,9 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
     },
     async close() {
       const active = client;
+      if (active !== undefined) await active.close();
       client = undefined;
       serverTools = undefined;
-      if (active !== undefined) await active.close();
     },
   };
 };

@@ -1,6 +1,10 @@
+import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 
-import { decodeJebToolResult } from "./JebMcpConnection.js";
+import {
+  decodeJebToolResult,
+  createStreamableHttpJebMcpConnection,
+} from "./JebMcpConnection.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
 describe("decodeJebToolResult", () => {
@@ -51,4 +55,32 @@ describe("decodeJebToolResult", () => {
       AnalysisProtocolError,
     );
   });
+});
+
+it("refuses HTTP redirects before sending requests to another endpoint", async () => {
+  let followed = false;
+  const server = createServer((request, response) => {
+    if (request.url === "/redirected") followed = true;
+    request.resume();
+    response.writeHead(307, { Location: "/redirected" });
+    response.end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected TCP listener");
+  const connection = createStreamableHttpJebMcpConnection(
+    new URL(`http://127.0.0.1:${address.port}/mcp`),
+  );
+  try {
+    await expect(connection.connect()).rejects.toThrow();
+    expect(followed).toBe(false);
+  } finally {
+    await connection.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((cause) =>
+        cause === undefined ? resolve() : reject(cause),
+      ),
+    );
+  }
 });
