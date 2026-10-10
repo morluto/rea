@@ -188,7 +188,7 @@ export const registerCoreNativeCommands = (
     }),
     options: z.object({
       type: z.string().optional().describe("Exact database type category path"),
-      address: z.string().describe("Exact native address").optional(),
+      address: z.string().optional().describe("Exact native address"),
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
