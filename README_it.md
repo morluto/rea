@@ -20,7 +20,7 @@
 
 **[Sito web](https://rea.tools/) · [Guide](https://rea.tools/guides/) · [Showcase](https://rea.tools/showcase/)**
 
-[Quick start](#quick-start) · [Come funziona REA](#come-funziona-rea) · [Cosa puoi analizzare](#cosa-puoi-analizzare) · [Showcase](#showcases) · [FAQ](#faq) · [Documentazione](#documentazione)
+[Quick start](#quick-start) · [Come funziona REA](#come-funziona-rea) · [Cosa puoi analizzare](#cosa-puoi-analizzare) · [Showcase](#showcase) · [FAQ](#faq) · [Documentazione](#documentazione)
 
 <code>npx rea-agents setup</code>
 
@@ -210,7 +210,7 @@ Lo skill fornisce istruzioni di indagine per il tuo agente. Usa `npx rea-agents 
 <details>
 <summary><strong>Quale codice restituisce REA?</strong></summary>
 
-L'analisi nativa restituisce pseudocodice e assembly. L'analisi JavaScript/Electron recupera moduli e le loro relazioni. Il tuo agente usa questi risultati per scrivere e testare un'implementazione; gli [showcase](#showcases) offrono esempi concreti.
+L'analisi nativa restituisce pseudocodice e assembly. L'analisi JavaScript/Electron recupera moduli e le loro relazioni. Il tuo agente usa questi risultati per scrivere e testare un'implementazione; gli [showcase](#showcase) offrono esempi concreti.
 
 </details>
 
