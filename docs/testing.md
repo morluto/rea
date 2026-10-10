@@ -118,6 +118,20 @@ The local fixture exercises the real Gemini API adapter, including its
 Google API and native Windows compatibility remain unverified. The lane disables
 the client's memory-based relaunch to preserve the caller's Node heap budget.
 
+`verify:opencode-client` requires an installed OpenCode (verified with
+`opencode-ai@1.18.35`); select it with `REA_VERIFY_OPENCODE_COMMAND`.
+The optional POSIX lane configures isolated XDG roots and `OPENCODE_CONFIG_DIR`,
+checks setup plans, backups, preserved JSONC comments and idempotence, activates
+the installed skill, validates all forwarded input schemas and verifies complete
+JavaScript Evidence for a Unicode path. JSONC is the default fixture; set
+`REA_VERIFY_OPENCODE_CONFIG_FORMAT=json` for JSON. Use `-- chat` for ordinary
+chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
+The native core runs with external plugins disabled through `OPENCODE_PURE`;
+the local OpenAI-compatible fixture has a caller-declared one-million-token
+context and synthetic usage. Skills use an explicit isolated `skills.paths`
+directory, so default OS-home discovery remains unverified. Live model APIs and
+native Windows are also unverified.
+
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane

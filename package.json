@@ -181,6 +181,7 @@
     "verify:package:windows": "npm run build:cached && node scripts/verify-windows-package.mjs",
     "verify:qwen-client": "npm run build:cached && node scripts/verify-qwen-client.mjs",
     "verify:gemini-client": "npm run build:cached && node scripts/verify-gemini-client.mjs",
+    "verify:opencode-client": "npm run build:cached && node scripts/verify-opencode-client.mjs",
     "verify:pi-client": "npm run build:cached && node scripts/verify-native-agent-client.mjs pi",
     "verify:hermes-client": "npm run build:cached && node scripts/verify-native-agent-client.mjs hermes",
     "verify:deepseek-client": "npm run build:cached && node scripts/verify-deepseek-client.mjs",
