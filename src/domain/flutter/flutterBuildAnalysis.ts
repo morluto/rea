@@ -11,6 +11,23 @@ export const flutterInputSchemas = {
   identify_flutter_build: z.strictObject({
     path: localPathStringSchema.describe("Local APK file to inspect"),
   }),
+  inspect_dart_aot: z.strictObject({
+    path: localPathStringSchema.describe(
+      "Local APK file carrying a Flutter AOT payload",
+    ),
+    abi: z
+      .string()
+      .min(2)
+      .max(16)
+      .regex(
+        /^[a-z0-9_-]+$/u,
+        "ABI name as it appears under lib/, e.g. arm64-v8a",
+      )
+      .optional()
+      .describe(
+        "ABI to inspect; defaults to the first lib/<abi> that carries libapp.so",
+      ),
+  }),
 } as const;
 
 /** Supported Flutter-backed operations. */
@@ -28,6 +45,10 @@ export const flutterRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
     operation: z.literal("identify_flutter_build"),
     input: flutterInputSchemas.identify_flutter_build,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_dart_aot"),
+    input: flutterInputSchemas.inspect_dart_aot,
   }),
 ]);
 
@@ -78,6 +99,46 @@ export const flutterResultSchemas = {
         }),
       }),
     ),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  inspect_dart_aot: z.strictObject({
+    target: z.strictObject({
+      path: localPathStringSchema,
+      bytes: z.number().int().nonnegative(),
+      sha256: digestSchema,
+    }),
+    abi: z.string().min(1),
+    libapp: z.strictObject({
+      bytes: z.number().int().nonnegative(),
+      sha256: digestSchema,
+      snapshot_hash: z
+        .string()
+        .regex(/^[0-9a-f]{32}$/u)
+        .nullable(),
+      /** Snapshot symbols read from the dynamic symbol table. */
+      sections: z.array(
+        z.strictObject({
+          name: z.string().min(1),
+          offset: z.number().int().nonnegative(),
+          size: z.number().int().nonnegative(),
+          magic_valid: z.boolean(),
+          kind: z.number().int().nonnegative().nullable(),
+          header_length: z.number().int().nonnegative().nullable(),
+        }),
+      ),
+    }),
+    string_pool: z.strictObject({
+      /** Distinct package: source URIs, sorted, bounded. */
+      package_uris: z.array(z.string().min(1)),
+      package_uri_count: z.number().int().nonnegative(),
+      /** Distinct dart: SDK URIs, sorted, bounded. */
+      dart_uris: z.array(z.string().min(1)),
+      dart_uri_count: z.number().int().nonnegative(),
+      /** Identifier-like tokens, bounded; includes incidental matches. */
+      class_like_tokens: z.array(z.string().min(1)),
+      class_like_token_count: z.number().int().nonnegative(),
+      printable_run_count: z.number().int().nonnegative(),
+    }),
     coverage: z.enum(["complete", "partial"]),
   }),
 } as const;

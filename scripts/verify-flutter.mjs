@@ -84,6 +84,31 @@ if (options.apk !== null) {
         .map((abi) => abi.libflutter.build_id?.slice(0, 12))
         .join(", "),
     );
+
+    const aot = await run("inspect_dart_aot", { path: options.apk });
+    if (aot !== null) {
+      check(
+        "AOT snapshot sections located through the symbol table",
+        aot.libapp.sections.length >= 4 &&
+          aot.libapp.sections
+            .filter((section) => section.name.endsWith("Data"))
+            .every((section) => section.magic_valid),
+        `${aot.libapp.sections.length} section(s), abi=${aot.abi}`,
+      );
+      check(
+        "AOT hash agrees with the identification result",
+        aot.libapp.snapshot_hash !== null &&
+          aot.libapp.snapshot_hash ===
+            identified.abis.find((abi) => abi.libapp.present)?.libapp
+              .snapshot_hash,
+      );
+      check(
+        "string pool exposes the dependency structure",
+        aot.string_pool.package_uri_count > 100 &&
+          aot.string_pool.dart_uri_count > 50,
+        `${aot.string_pool.package_uri_count} package:, ${aot.string_pool.dart_uri_count} dart:`,
+      );
+    }
   }
 }
 

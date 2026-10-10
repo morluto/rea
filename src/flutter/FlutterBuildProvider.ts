@@ -15,6 +15,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -25,6 +26,7 @@ import {
   LabeledStringScanner,
   SnapshotHashScanner,
 } from "./FlutterPayloadScan.js";
+import { readElfSymbol, readSnapshotHeader } from "./DartElf.js";
 
 /** Stable identity for the Flutter build-identification provider. */
 export const FLUTTER_PROVIDER_IDENTITY = {
@@ -35,6 +37,9 @@ export const FLUTTER_PROVIDER_IDENTITY = {
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
+const MAX_POOL_URIS = 500;
+const MAX_POOL_TOKENS = 2_000;
+const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
 /** Stream a local file digest without retaining large APKs in memory. */
 const sha256File = async (path: string): Promise<string> => {
@@ -115,6 +120,12 @@ export class FlutterBuildProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (options?.signal?.aborted === true)
       return err(new AnalysisCancelledError(request.operation));
+    if (request.operation === "inspect_dart_aot")
+      return this.inspectDartAot(
+        request.input.path,
+        request.input.abi,
+        options?.signal,
+      );
     const { path } = request.input;
     const info = await stat(path).then(
       (value) => value,
@@ -278,4 +289,248 @@ export class FlutterBuildProvider {
       await reader.close().catch(() => undefined);
     }
   }
+
+  private async inspectDartAot(
+    path: string,
+    abi: string | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const info = await stat(path).then(
+      (value) => value,
+      () => null,
+    );
+    if (info === null || !info.isFile())
+      return err(
+        new AnalysisInputError("inspect_dart_aot", {
+          cause: new Error(`The selected APK is not a readable file: ${path}`),
+        }),
+      );
+    const sha256 = await sha256File(path);
+    const reader = new ZipArtifactReader(
+      path,
+      "apk",
+      APK_METADATA_READ_MAX_BYTES,
+    );
+    try {
+      const candidates: { entry: ArtifactEntry; abi: string }[] = [];
+      for await (const entry of reader.entries(signal)) {
+        if (entry.kind !== "file") continue;
+        const match = /^lib\/([^/]+)\/libapp\.so$/u.exec(entry.path);
+        if (match === null) continue;
+        if (
+          entry.declaredSize !== null &&
+          entry.declaredSize > LIBRARY_MAX_BYTES
+        )
+          return err(
+            new AnalysisResourceConstraintError(
+              "inspect_dart_aot",
+              "file-size",
+              `${entry.path} declares ${String(entry.declaredSize)} bytes, exceeding the ${String(LIBRARY_MAX_BYTES)}-byte read budget`,
+              { max_library_bytes: LIBRARY_MAX_BYTES, entry_path: entry.path },
+            ),
+          );
+        candidates.push({ entry, abi: match[1]! });
+      }
+      if (candidates.length === 0)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_dart_aot",
+            path,
+            "No lib/<abi>/libapp.so was found; the target carries no Dart AOT payload",
+          ),
+        );
+      const preference = ["arm64-v8a", "x86_64", "x86", "armeabi-v7a"];
+      const selected =
+        abi === undefined
+          ? [...candidates].sort(
+              (left, right) =>
+                (preference.indexOf(left.abi) + 1 || preference.length + 1) -
+                  (preference.indexOf(right.abi) + 1 ||
+                    preference.length + 1) || left.abi.localeCompare(right.abi),
+            )[0]!
+          : candidates.find((candidate) => candidate.abi === abi);
+      if (selected === undefined)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_dart_aot",
+            path,
+            `No libapp.so was found for ABI ${abi ?? "(none)"}; available: ${candidates
+              .map((candidate) => candidate.abi)
+              .join(", ")}`,
+          ),
+        );
+      const stream = await reader.open(selected.entry, signal);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of stream) {
+        const view = chunk as Buffer;
+        total += view.byteLength;
+        if (total > LIBRARY_MAX_BYTES)
+          return err(
+            new AnalysisResourceConstraintError(
+              "inspect_dart_aot",
+              "file-size",
+              `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
+              { max_library_bytes: LIBRARY_MAX_BYTES },
+            ),
+          );
+        chunks.push(view);
+      }
+      const image = Buffer.concat(chunks);
+      const imageSha256 = createHash("sha256").update(image).digest("hex");
+      const symbolNames = [
+        "_kDartVmSnapshotData",
+        "_kDartVmSnapshotInstructions",
+        "_kDartIsolateSnapshotData",
+        "_kDartIsolateSnapshotInstructions",
+      ];
+      const sections: {
+        name: string;
+        offset: number;
+        size: number;
+        magic_valid: boolean;
+        kind: number | null;
+        header_length: number | null;
+      }[] = [];
+      let isolateData: Buffer | null = null;
+      const scanner = new SnapshotHashScanner();
+      scanner.push(image);
+      const hashScan = scanner.result();
+      for (const name of symbolNames) {
+        const parsed = readElfSymbol(image, name);
+        if ("failure" in parsed) continue;
+        const header = readSnapshotHeader(image, parsed.symbol.offset);
+        sections.push({
+          name,
+          offset: parsed.symbol.offset,
+          size: parsed.symbol.size,
+          magic_valid: header.magicValid,
+          kind: header.kind,
+          header_length: header.headerLength,
+        });
+        if (name === "_kDartIsolateSnapshotData")
+          isolateData = image.subarray(
+            parsed.symbol.offset,
+            parsed.symbol.offset + parsed.symbol.size,
+          );
+      }
+      if (sections.length === 0)
+        return err(
+          new AnalysisUnsupportedTargetError(
+            "inspect_dart_aot",
+            path,
+            "No Dart snapshot symbols were found in the dynamic symbol table; the payload does not carry a recognizable AOT layout",
+          ),
+        );
+      const pool = projectStringPool(isolateData);
+      const partial =
+        sections.length < symbolNames.length ||
+        sections.some((section) => !section.magic_valid) ||
+        pool.packageUriCount > MAX_POOL_URIS ||
+        pool.dartUriCount > MAX_POOL_URIS ||
+        pool.classLikeTokenCount > MAX_POOL_TOKENS;
+      return ok(
+        createAnalysisExecution(
+          {
+            target: { path, bytes: info.size, sha256 },
+            abi: selected.abi,
+            libapp: {
+              bytes: total,
+              sha256: imageSha256,
+              snapshot_hash:
+                hashScan.candidates.length === 1
+                  ? hashScan.candidates[0]!
+                  : null,
+              sections,
+            },
+            string_pool: {
+              package_uris: pool.packageUris.slice(0, MAX_POOL_URIS),
+              package_uri_count: pool.packageUriCount,
+              dart_uris: pool.dartUris.slice(0, MAX_POOL_URIS),
+              dart_uri_count: pool.dartUriCount,
+              class_like_tokens: pool.classLikeTokens.slice(0, MAX_POOL_TOKENS),
+              class_like_token_count: pool.classLikeTokenCount,
+              printable_run_count: pool.printableRunCount,
+            },
+            coverage: partial ? "partial" : "complete",
+          },
+          FLUTTER_PROVIDER_IDENTITY,
+          {
+            limitations: [
+              "Snapshot sections are located through the ELF dynamic symbol table; a payload without exported snapshot symbols is refused rather than guessed",
+              "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
+              "class_like_tokens are identifier-shaped runs and include incidental matches",
+              ...(sections.length < symbolNames.length
+                ? [
+                    `Only ${String(sections.length)} of 4 snapshot symbols were present`,
+                  ]
+                : []),
+              ...(pool.packageUriCount > MAX_POOL_URIS
+                ? [
+                    `package_uris reports the first ${String(MAX_POOL_URIS)} of ${String(pool.packageUriCount)} distinct URIs`,
+                  ]
+                : []),
+              ...(pool.classLikeTokenCount > MAX_POOL_TOKENS
+                ? [
+                    `class_like_tokens reports the first ${String(MAX_POOL_TOKENS)} of ${String(pool.classLikeTokenCount)} distinct tokens`,
+                  ]
+                : []),
+            ],
+          },
+        ),
+      );
+    } finally {
+      await reader.close().catch(() => undefined);
+    }
+  }
 }
+
+/** Categorize printable runs from one snapshot data section. */
+const projectStringPool = (
+  section: Buffer | null,
+): {
+  packageUris: string[];
+  packageUriCount: number;
+  dartUris: string[];
+  dartUriCount: number;
+  classLikeTokens: string[];
+  classLikeTokenCount: number;
+  printableRunCount: number;
+} => {
+  const packages = new Set<string>();
+  const darts = new Set<string>();
+  const tokens = new Set<string>();
+  let runCount = 0;
+  if (section !== null) {
+    let run = "";
+    const consider = (text: string): void => {
+      if (text.length < 6) return;
+      runCount += 1;
+      if (text.startsWith("package:")) packages.add(text);
+      else if (text.startsWith("dart:")) darts.add(text);
+      else if (
+        text.length <= 128 &&
+        text.length >= 5 &&
+        IDENTIFIER_PATTERN.test(text)
+      )
+        tokens.add(text);
+    };
+    for (const byte of section) {
+      if (byte >= 0x20 && byte < 0x7f) run += String.fromCharCode(byte);
+      else {
+        consider(run);
+        run = "";
+      }
+    }
+    consider(run);
+  }
+  return {
+    packageUris: [...packages].sort(),
+    packageUriCount: packages.size,
+    dartUris: [...darts].sort(),
+    dartUriCount: darts.size,
+    classLikeTokens: [...tokens].sort(),
+    classLikeTokenCount: tokens.size,
+    printableRunCount: runCount,
+  };
+};

@@ -79,18 +79,23 @@ it("advertises an exact valid Flutter schema and records inline evidence through
 
   const { tools } = await client.listTools();
   expect(tools.map((tool) => tool.name)).toContain("identify_flutter_build");
+  expect(tools.map((tool) => tool.name)).toContain("inspect_dart_aot");
 
-  const contract = toolContract("identify_flutter_build");
-  const listed = tools.find((tool) => tool.name === "identify_flutter_build");
-  expect(listed).toBeTruthy();
-  const ajv = new Ajv2020({ strict: false, allErrors: true });
-  if (listed?.inputSchema !== undefined) {
-    const validate = ajv.compile(
-      JSON.parse(JSON.stringify(listed.inputSchema)),
-    );
-    for (const example of contract.examples)
-      expect(validate(example.input)).toBe(true);
-    expect(validate({ unknown_argument: true })).toBe(false);
+  for (const name of ["identify_flutter_build", "inspect_dart_aot"] as const) {
+    const contract = toolContract(name);
+    const listed = tools.find((tool) => tool.name === name);
+    expect(listed, name).toBeTruthy();
+    const ajv = new Ajv2020({ strict: false, allErrors: true });
+    if (listed?.inputSchema !== undefined) {
+      const validate = ajv.compile(
+        JSON.parse(JSON.stringify(listed.inputSchema)),
+      );
+      for (const example of contract.examples)
+        expect(validate(example.input), `${name} example`).toBe(true);
+      expect(validate({ unknown_argument: true }), `${name} rejects`).toBe(
+        false,
+      );
+    }
   }
 
   const identified = await client.callTool({

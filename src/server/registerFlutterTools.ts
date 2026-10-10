@@ -31,10 +31,16 @@ export const registerFlutterTools = (
       );
     };
   };
-  const contract = toolContract("identify_flutter_build");
+  const identifyContract = toolContract("identify_flutter_build");
   server.registerTool(
-    contract.name,
-    toolRegistrationOptions(contract),
-    handler(contract),
+    identifyContract.name,
+    toolRegistrationOptions(identifyContract),
+    handler(identifyContract),
+  );
+  const aotContract = toolContract("inspect_dart_aot");
+  server.registerTool(
+    aotContract.name,
+    toolRegistrationOptions(aotContract),
+    handler(aotContract),
   );
 };

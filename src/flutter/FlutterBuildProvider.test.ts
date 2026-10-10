@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -45,6 +46,16 @@ const libflutter = (): Buffer =>
     buildIdNote(),
     Buffer.from(`\x00${TOOLCHAIN_LINE}\x00`),
   ]);
+
+const galleryLibapp = (): Buffer | null => {
+  try {
+    return readFileSync(
+      "/tmp/opencode/flutter-target/extracted/lib/arm64-v8a/libapp.so",
+    );
+  } catch {
+    return null;
+  }
+};
 
 /** Build a real APK-shaped zip with the `zip` CLI. */
 const buildApk = async (
@@ -201,3 +212,78 @@ it("rejects a target that is not a readable file", async () => {
   })();
   expect(projected).toMatchObject({ code: "invalid_request" });
 });
+
+it("refuses an APK without a Dart payload", async () => {
+  const apk = await buildApk("noflutter.apk", [
+    { path: "classes.dex", bytes: Buffer.from("dex\n0123456789") },
+  ]);
+  const result = await new FlutterBuildProvider({ environment: {} }).execute({
+    operation: "inspect_dart_aot",
+    input: { path: apk },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unsupported_target",
+  });
+});
+
+it("refuses a requested ABI the payload does not carry", async () => {
+  const apk = await buildApk("oneabi.apk", [
+    {
+      path: "lib/arm64-v8a/libapp.so",
+      bytes: libapp("65817c30a78bb44c3dc3771876b6010a"),
+    },
+  ]);
+  const result = await new FlutterBuildProvider({ environment: {} }).execute({
+    operation: "inspect_dart_aot",
+    input: { path: apk, abi: "x86_64" },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "unsupported_target",
+  });
+  expect(result.error.message).toContain("arm64-v8a");
+});
+
+test.skipIf(process.platform === "win32" || galleryLibapp() === null)(
+  "inspects the real Gallery AOT snapshot end to end",
+  async () => {
+    const apk = await buildApk("realgallery.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: galleryLibapp()! },
+    ]);
+    const result = await new FlutterBuildProvider({
+      environment: {},
+    }).execute({
+      operation: "inspect_dart_aot",
+      input: { path: apk },
+    });
+    if (!result.ok) throw new Error(result.error.message);
+    const value = result.value.result as {
+      abi: string;
+      libapp: {
+        snapshot_hash: string | null;
+        sections: { name: string; magic_valid: boolean }[];
+      };
+      string_pool: { package_uri_count: number; dart_uri_count: number };
+      coverage: string;
+    };
+    expect(value.abi).toBe("arm64-v8a");
+    expect(value.libapp.snapshot_hash).toBe("65817c30a78bb44c3dc3771876b6010a");
+    expect(value.libapp.sections.map((section) => section.name)).toEqual([
+      "_kDartVmSnapshotData",
+      "_kDartVmSnapshotInstructions",
+      "_kDartIsolateSnapshotData",
+      "_kDartIsolateSnapshotInstructions",
+    ]);
+    expect(
+      value.libapp.sections
+        .filter((section) => section.name.endsWith("Data"))
+        .every((section) => section.magic_valid),
+    ).toBe(true);
+    expect(value.string_pool.package_uri_count).toBeGreaterThan(500);
+    expect(value.string_pool.dart_uri_count).toBeGreaterThan(100);
+    expect(value.coverage).toBe("partial");
+  },
+);

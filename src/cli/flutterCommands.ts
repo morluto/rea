@@ -47,4 +47,24 @@ export const registerFlutterCommands = (
         path: args.path,
       }),
   });
+  cli.command(CLI_COMMANDS.inspectDartAot, {
+    description:
+      "Inspect one ABI's Dart AOT snapshot: sections, headers, and the string pool",
+    args: z.object({
+      path: z.string().min(1).describe("Local APK carrying a Flutter payload"),
+    }),
+    options: z.object({
+      abi: z
+        .string()
+        .min(2)
+        .max(16)
+        .optional()
+        .describe("ABI under lib/ to inspect; defaults to the preferred one"),
+    }),
+    run: ({ args, options }) =>
+      execute(CLI_COMMANDS.inspectDartAot, "inspect_dart_aot", {
+        path: args.path,
+        ...(options.abi === undefined ? {} : { abi: options.abi }),
+      }),
+  });
 };

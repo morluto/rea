@@ -16,9 +16,31 @@ SDK-layout-specific snapshot parsers applicable.
 
 ```sh
 rea identify-flutter-build /targets/Example.apk
+rea inspect-dart-aot /targets/Example.apk
+rea inspect-dart-aot /targets/Example.apk --abi armeabi-v7a
 ```
 
-The equivalent MCP method is `identify_flutter_build` with the same `path`.
+The equivalent MCP methods are `identify_flutter_build` (with `path`) and
+`inspect_dart_aot` (with `path` and an optional `abi`; the default picks
+arm64-v8a, then x86_64, then the first available ABI).
+
+## What the AOT inspection returns
+
+`inspect_dart_aot` reads one ABI's `libapp.so` in full and reports:
+
+- **Snapshot sections** — the four `_kDart*Snapshot*` symbols located
+  through the ELF **dynamic symbol table** (ELF32 and ELF64, little-endian,
+  every read bounds-checked), each with file offset, size, and — for data
+  sections, which carry the `f5f5dcdc` magic — the parsed header kind and
+  length. A payload without exported snapshot symbols is refused rather
+  than guessed at.
+- **The snapshot hash**, agreeing with `identify_flutter_build`.
+- **A string-pool projection from the isolate data section**: distinct
+  `package:` source URIs (the app's own and its dependencies' Dart files —
+  a dependency inventory), `dart:` SDK URIs (which SDK libraries the app
+  uses), and identifier-shaped tokens, each bounded with counts and
+  `coverage: "partial"` when truncated. On the reference target this
+  surfaces 756 package URIs and 201 dart URIs.
 
 ## Interpret the result
 
@@ -45,9 +67,12 @@ The equivalent MCP method is `identify_flutter_build` with the same `path`.
 - REA performs **no hash-to-SDK lookup**: mapping the snapshot hash to a
   Dart SDK release requires an external dataset and is deliberately out of
   scope for this family.
-- Dart AOT snapshot _semantics_ (class and function recovery) belong to a
-  later, SDK-version-specific parser; JEB's GUI Dart unit and native
-  analysis of `libapp.so` cover some ground today.
+- The AOT string pool is a **byte-pattern projection, not deserialized
+  cluster semantics**: typed class and function recovery requires an
+  SDK-specific parser (the snapshot layout changes per release — exactly
+  why the hash is the key), and `class_like_tokens` include incidental
+  matches. JEB's GUI Dart unit and native analysis of `libapp.so` cover
+  some ground today.
 - Library reads are bounded at 256 MiB each and ZIP metadata at 8 MiB;
   exceeded budgets report `resource_constraint`.
 

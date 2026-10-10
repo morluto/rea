@@ -20,12 +20,15 @@ const serve = async (
   return { stdout, exitCode };
 };
 
-it("identify-flutter-build advertises a schema through the public CLI", async () => {
-  const result = await serve(["identify-flutter-build", "--schema", "--json"]);
-  expect(result.exitCode).toBe(0);
-  const schema = JSON.parse(result.stdout) as { args?: unknown };
-  expect(schema).toBeTruthy();
-});
+it.each(["identify-flutter-build", "inspect-dart-aot"])(
+  "%s advertises a schema through the public CLI",
+  async (command) => {
+    const result = await serve([command, "--schema", "--json"]);
+    expect(result.exitCode).toBe(0);
+    const schema = JSON.parse(result.stdout) as { args?: unknown };
+    expect(schema).toBeTruthy();
+  },
+);
 
 it("reports an unreadable target with an input refusal", async () => {
   const result = await serve([
