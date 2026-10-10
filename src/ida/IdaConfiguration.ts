@@ -6,42 +6,52 @@ import { err, ok, type Result } from "../domain/result.js";
 
 const common = {
   mode: z.enum(["attached", "headless"]).default("attached"),
+  protocol: z.literal("native").optional(),
   timeoutMs: z.number().int().positive().max(2_147_483_647).default(300_000),
   workspaceRoot: z
     .string()
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
 };
-const registrationSchema = z.union([
-  z
-    .object({
-      ...common,
-      type: z.literal("stdio").optional(),
-      command: z.string().min(1),
-      args: z.array(z.string()).default([]),
-      env: z.record(z.string(), z.string()).default({}),
-    })
-    .strict(),
-  z
-    .object({
-      ...common,
-      type: z.literal("http").optional(),
-      url: z.url().refine((value) => {
-        const url = new URL(value);
-        return (
-          ["http:", "https:"].includes(url.protocol) &&
-          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-          url.username === "" &&
-          url.password === ""
-        );
-      }, "IDA MCP must use a local HTTP endpoint without URL credentials"),
-      headers: z.record(z.string(), z.string()).default({}),
-    })
-    .strict(),
-]);
+const registrationSchema = z
+  .union([
+    z
+      .object({
+        ...common,
+        type: z.literal("stdio").optional(),
+        command: z.string().min(1),
+        args: z.array(z.string()).default([]),
+        env: z.record(z.string(), z.string()).default({}),
+      })
+      .strict(),
+    z
+      .object({
+        ...common,
+        type: z.literal("http").optional(),
+        url: z.url().refine((value) => {
+          const url = new URL(value);
+          return (
+            ["http:", "https:"].includes(url.protocol) &&
+            ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+            url.username === "" &&
+            url.password === ""
+          );
+        }, "IDA MCP must use a local HTTP endpoint without URL credentials"),
+        headers: z.record(z.string(), z.string()).default({}),
+      })
+      .strict(),
+  ])
+  .refine(
+    (config) => config.protocol !== "native" || config.mode === "attached",
+    "The native IDA Free protocol requires attached mode",
+  );
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
+
+/** Select a protocol without changing existing attached/headless registrations. */
+export const idaProtocol = (config: IdaConfiguration) =>
+  config.protocol ?? (config.mode === "attached" ? "legacy" : "modern");
 
 /** Read one explicit registration without starting or installing a provider. */
 export const readIdaConfiguration = (
