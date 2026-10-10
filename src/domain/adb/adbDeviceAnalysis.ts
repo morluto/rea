@@ -66,6 +66,234 @@ export const adbInputSchemas = {
       "Local directory for the pulled APK set; REA creates a package-named subdirectory inside it",
     ),
   }),
+  read_adb_logcat: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    count: z
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(500)
+      .describe("Number of most recent lines to read (logcat -d -t)"),
+    buffer: z
+      .enum(["main", "system", "radio", "events", "crash"])
+      .default("main")
+      .describe("Log buffer to read (logcat -b)"),
+    pid: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Restrict to one process id (logcat --pid)"),
+  }),
+  inspect_adb_package: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    package: packageNameSchema.describe("Installed package to inspect"),
+  }),
+  pull_adb_file: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    device_path: z
+      .string()
+      .min(1)
+      .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
+      .describe("Absolute device filesystem path to pull"),
+    output_directory: localPathStringSchema.describe(
+      "Local directory for the pulled file; must not already contain the file",
+    ),
+  }),
+  push_adb_file: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    local_path: localPathStringSchema.describe(
+      "Existing local regular file to push",
+    ),
+    device_path: z
+      .string()
+      .min(1)
+      .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
+      .describe("Absolute destination path on the device"),
+    overwrite: z
+      .boolean()
+      .default(false)
+      .describe("Allow replacing an existing device file; refused by default"),
+  }),
+  capture_adb_screen: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    output_directory: localPathStringSchema.describe(
+      "Local directory for the captured PNG; must not already contain it",
+    ),
+  }),
+  list_adb_processes: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+  }),
+  list_adb_directory: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    device_path: z
+      .string()
+      .min(1)
+      .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
+      .describe("Absolute device directory path to list (ls -la)"),
+  }),
+  list_adb_features: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+  }),
+  list_adb_services: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+  }),
+  inspect_adb_display: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+  }),
+  inspect_adb_window: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+  }),
+  read_adb_setting: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    namespace: z
+      .enum(["system", "secure", "global"])
+      .describe("Settings namespace to read"),
+    key: z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(
+        /^[A-Za-z0-9._-]+$/u,
+        "Setting keys are restricted to identifiers",
+      )
+      .describe("Setting key to read"),
+  }),
+  collect_adb_bugreport: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    output_directory: localPathStringSchema.describe(
+      "Local directory for the bugreport archive; REA writes exactly one new zip into it",
+    ),
+  }),
+  resolve_adb_packages: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    query: z
+      .string()
+      .min(2)
+      .max(256)
+      .describe(
+        "Case-insensitive substring matched against installed package names (e.g. whatsapp)",
+      ),
+  }),
+  install_adb_package: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    apk_path: localPathStringSchema.describe(
+      "Existing local APK file to install",
+    ),
+    replace: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Replace an existing installation and keep its data (adb install -r)",
+      ),
+  }),
+  uninstall_adb_package: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    package: packageNameSchema.describe("Installed package to uninstall"),
+  }),
+  start_adb_app: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    package: packageNameSchema.describe(
+      "Installed package whose launcher activity is started",
+    ),
+  }),
+  start_adb_activity: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    action: z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(
+        /^[A-Za-z][A-Za-z0-9._-]*$/u,
+        "Intent action must be a dotted identifier such as android.intent.action.VIEW",
+      )
+      .describe("Intent action to start"),
+    data_uri: z
+      .string()
+      .min(1)
+      .max(2048)
+      .regex(/^[^\x00\s]+$/u, "Data URI cannot contain whitespace or NUL")
+      .optional()
+      .describe("Intent data URI (-d)"),
+    component: z
+      .string()
+      .min(1)
+      .max(512)
+      .regex(
+        /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]*)?$/u,
+        "Component must be package/activity form",
+      )
+      .optional()
+      .describe("Explicit component to start (-n)"),
+    extras: z
+      .array(
+        z.strictObject({
+          key: z
+            .string()
+            .min(1)
+            .max(256)
+            .regex(/^[A-Za-z0-9._-]+$/u, "Extra keys are identifiers")
+            .describe("Extra key"),
+          type: z
+            .enum(["string", "boolean", "int", "long", "float"])
+            .describe("Extra value type"),
+          value: z
+            .string()
+            .min(1)
+            .max(2048)
+            .regex(/^[^\x00]*$/u, "Extra values cannot contain NUL")
+            .describe("Extra value as text, parsed per type"),
+        }),
+      )
+      .max(16)
+      .default([])
+      .describe("Typed intent extras (--es/--ez/--ei/--el/--ef)"),
+  }),
+  stop_adb_app: z.strictObject({
+    serial: deviceSerialSchema.describe(
+      "Device serial exactly as `adb devices` reports it",
+    ),
+    package: packageNameSchema.describe(
+      "Package whose processes are force-stopped",
+    ),
+  }),
 } as const;
 
 /** Supported ADB-backed operations. */
@@ -99,6 +327,82 @@ export const adbRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
     operation: z.literal("pull_adb_package"),
     input: adbInputSchemas.pull_adb_package,
+  }),
+  z.strictObject({
+    operation: z.literal("read_adb_logcat"),
+    input: adbInputSchemas.read_adb_logcat,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_adb_package"),
+    input: adbInputSchemas.inspect_adb_package,
+  }),
+  z.strictObject({
+    operation: z.literal("pull_adb_file"),
+    input: adbInputSchemas.pull_adb_file,
+  }),
+  z.strictObject({
+    operation: z.literal("push_adb_file"),
+    input: adbInputSchemas.push_adb_file,
+  }),
+  z.strictObject({
+    operation: z.literal("capture_adb_screen"),
+    input: adbInputSchemas.capture_adb_screen,
+  }),
+  z.strictObject({
+    operation: z.literal("list_adb_processes"),
+    input: adbInputSchemas.list_adb_processes,
+  }),
+  z.strictObject({
+    operation: z.literal("list_adb_directory"),
+    input: adbInputSchemas.list_adb_directory,
+  }),
+  z.strictObject({
+    operation: z.literal("list_adb_features"),
+    input: adbInputSchemas.list_adb_features,
+  }),
+  z.strictObject({
+    operation: z.literal("list_adb_services"),
+    input: adbInputSchemas.list_adb_services,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_adb_display"),
+    input: adbInputSchemas.inspect_adb_display,
+  }),
+  z.strictObject({
+    operation: z.literal("inspect_adb_window"),
+    input: adbInputSchemas.inspect_adb_window,
+  }),
+  z.strictObject({
+    operation: z.literal("read_adb_setting"),
+    input: adbInputSchemas.read_adb_setting,
+  }),
+  z.strictObject({
+    operation: z.literal("collect_adb_bugreport"),
+    input: adbInputSchemas.collect_adb_bugreport,
+  }),
+  z.strictObject({
+    operation: z.literal("resolve_adb_packages"),
+    input: adbInputSchemas.resolve_adb_packages,
+  }),
+  z.strictObject({
+    operation: z.literal("install_adb_package"),
+    input: adbInputSchemas.install_adb_package,
+  }),
+  z.strictObject({
+    operation: z.literal("uninstall_adb_package"),
+    input: adbInputSchemas.uninstall_adb_package,
+  }),
+  z.strictObject({
+    operation: z.literal("start_adb_app"),
+    input: adbInputSchemas.start_adb_app,
+  }),
+  z.strictObject({
+    operation: z.literal("start_adb_activity"),
+    input: adbInputSchemas.start_adb_activity,
+  }),
+  z.strictObject({
+    operation: z.literal("stop_adb_app"),
+    input: adbInputSchemas.stop_adb_app,
   }),
 ]);
 
@@ -191,5 +495,212 @@ export const adbResultSchemas = {
     artifacts: z.array(pulledArtifact),
     failures: z.array(pullFailure),
     coverage: z.enum(["complete", "partial"]),
+  }),
+  read_adb_logcat: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    count: z.number().int().positive(),
+    buffer: z.enum(["main", "system", "radio", "events", "crash"]),
+    pid: z.number().int().positive().nullable(),
+    lines: z.array(z.string()),
+    total_bytes: z.number().int().nonnegative(),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  inspect_adb_package: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    package_name: packageNameSchema,
+    version_name: z.string().nullable(),
+    version_code: z.number().int().nullable(),
+    first_install_time: z.string().nullable(),
+    last_update_time: z.string().nullable(),
+    installer_package_name: z.string().nullable(),
+    user_id: z.number().int().nullable(),
+    pkg_flags: z.string().nullable(),
+    requested_permissions_count: z.number().int().nonnegative().nullable(),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  pull_adb_file: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    device_path: z.string().min(1),
+    local_path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  }),
+  push_adb_file: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    local_path: z.string().min(1),
+    device_path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    device_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/u)
+      .nullable(),
+    overwritten: z.boolean(),
+    device_digest_source: z.enum(["device_sha256sum", "unavailable"]),
+  }),
+  capture_adb_screen: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    local_path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    width: z.number().int().positive().nullable(),
+    height: z.number().int().positive().nullable(),
+  }),
+  list_adb_processes: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    columns: z.string().nullable(),
+    processes: z.array(
+      z.strictObject({
+        user: z.string(),
+        pid: z.number().int().nonnegative(),
+        ppid: z.number().int().nullable(),
+        rss: z.number().int().nullable(),
+        state: z.string().nullable(),
+        name: z.string(),
+      }),
+    ),
+    unparsed_lines: z.array(z.string().min(1)),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  list_adb_directory: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    device_path: z.string().min(1),
+    entries: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        kind: z.enum(["directory", "file", "symlink", "other"]),
+        permissions: z.string().nullable(),
+        owner: z.string().nullable(),
+        group: z.string().nullable(),
+        bytes: z.number().int().nullable(),
+        date: z.string().nullable(),
+        link_target: z.string().nullable(),
+      }),
+    ),
+    unparsed_lines: z.array(z.string().min(1)),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  list_adb_features: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    features: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        version: z.number().int().nullable(),
+      }),
+    ),
+    unparsed_lines: z.array(z.string().min(1)),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  list_adb_services: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    services: z.array(
+      z.strictObject({
+        name: z.string().min(1),
+        interface: z.string().nullable(),
+      }),
+    ),
+    unparsed_lines: z.array(z.string().min(1)),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  inspect_adb_display: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    physical_size: z.strictObject({
+      width: z.number().int().positive(),
+      height: z.number().int().positive(),
+    }),
+    override_size: z
+      .strictObject({
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+      })
+      .nullable(),
+    physical_density: z.number().int().positive().nullable(),
+    override_density: z.number().int().positive().nullable(),
+  }),
+  inspect_adb_window: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    focused_window: z.string().nullable(),
+    focused_app: z.string().nullable(),
+    observed_lines: z.array(z.string().min(1)),
+  }),
+  read_adb_setting: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    namespace: z.enum(["system", "secure", "global"]),
+    key: z.string().min(1),
+    value: z.string().nullable(),
+    device_reported_null: z.boolean(),
+  }),
+  collect_adb_bugreport: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    local_path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    adb_reported_path: z.string().nullable(),
+  }),
+  resolve_adb_packages: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    query: z.string().min(1),
+    matches: z.array(
+      z.strictObject({
+        package_name: packageNameSchema,
+        base_apk_device_path: z.string().min(1),
+      }),
+    ),
+    exact_match: z.boolean(),
+    coverage: z.enum(["complete", "partial"]),
+  }),
+  install_adb_package: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    apk_path: z.string().min(1),
+    bytes: z.number().int().nonnegative(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    replaced: z.boolean(),
+  }),
+  uninstall_adb_package: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    package_name: packageNameSchema,
+  }),
+  start_adb_app: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    package_name: packageNameSchema,
+    component: z.string().min(1),
+    started_activity: z.string().nullable(),
+  }),
+  start_adb_activity: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    action: z.string().min(1),
+    data_uri: z.string().nullable(),
+    component: z.string().nullable(),
+    extras: z.array(
+      z.strictObject({
+        key: z.string().min(1),
+        type: z.enum(["string", "boolean", "int", "long", "float"]),
+        value: z.string(),
+      }),
+    ),
+    started_activity: z.string().nullable(),
+  }),
+  stop_adb_app: z.strictObject({
+    client,
+    serial: z.string().min(1),
+    package_name: packageNameSchema,
   }),
 } as const;

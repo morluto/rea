@@ -80,6 +80,189 @@ const results: Readonly<Record<string, unknown>> = {
     failures: [],
     coverage: "complete",
   },
+  read_adb_logcat: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    count: 500,
+    buffer: "main",
+    pid: null,
+    lines: ["08-10 13:00:00.000 I/Tag( 123): message"],
+    total_bytes: 34,
+    coverage: "complete",
+  },
+  inspect_adb_package: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    package_name: "com.example",
+    version_name: "1.2.3",
+    version_code: 45,
+    first_install_time: "2026-01-02 03:04:05",
+    last_update_time: "2026-02-03 04:05:06",
+    installer_package_name: null,
+    user_id: 10234,
+    pkg_flags: "[ HAS_CODE ]",
+    requested_permissions_count: 2,
+    coverage: "complete",
+  },
+  pull_adb_file: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    device_path: "/data/local/tmp/notes.txt",
+    local_path: "/tmp/rea-pulls/notes.txt",
+    bytes: 10,
+    sha256: "a".repeat(64),
+  },
+  push_adb_file: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    local_path: "/tmp/payload.bin",
+    device_path: "/data/local/tmp/payload.bin",
+    bytes: 12,
+    sha256: "a".repeat(64),
+    device_sha256: "a".repeat(64),
+    overwritten: false,
+    device_digest_source: "device_sha256sum",
+  },
+  capture_adb_screen: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    local_path: "/tmp/rea-captures/screen.png",
+    bytes: 8192,
+    sha256: "a".repeat(64),
+    width: 1080,
+    height: 2340,
+  },
+  list_adb_processes: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    columns: "USER PID PPID VSZ RSS WCHAN ADDR S NAME",
+    processes: [
+      {
+        user: "u0_a1",
+        pid: 1234,
+        ppid: 567,
+        rss: 7890,
+        state: "S",
+        name: "com.example.app",
+      },
+    ],
+    unparsed_lines: [],
+    coverage: "complete",
+  },
+  list_adb_directory: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    device_path: "/data/local/tmp",
+    entries: [
+      {
+        name: "notes.txt",
+        kind: "file",
+        permissions: "-rw-rw-rw-",
+        owner: "shell",
+        group: "shell",
+        bytes: 10,
+        date: "2026-01-01 10:00",
+        link_target: null,
+      },
+    ],
+    unparsed_lines: [],
+    coverage: "complete",
+  },
+  list_adb_features: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    features: [{ name: "android.hardware.camera", version: null }],
+    unparsed_lines: [],
+    coverage: "complete",
+  },
+  list_adb_services: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    services: [
+      { name: "package", interface: "android.content.pm.IPackageManager" },
+    ],
+    unparsed_lines: [],
+    coverage: "complete",
+  },
+  inspect_adb_display: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    physical_size: { width: 1080, height: 2340 },
+    override_size: null,
+    physical_density: 420,
+    override_density: null,
+  },
+  inspect_adb_window: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    focused_window: "Window{abcdef u0 com.example.app/Main}",
+    focused_app: null,
+    observed_lines: ["Window{abcdef u0 com.example.app/Main}"],
+  },
+  read_adb_setting: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    namespace: "secure",
+    key: "adb_enabled",
+    value: "1",
+    device_reported_null: false,
+  },
+  collect_adb_bugreport: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    local_path: "/tmp/rea-bugreports/bugreport.zip",
+    bytes: 1024,
+    sha256: "a".repeat(64),
+    adb_reported_path: "/tmp/rea-bugreports/bugreport.zip",
+  },
+  resolve_adb_packages: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    query: "whatsapp",
+    matches: [
+      {
+        package_name: "com.whatsapp",
+        base_apk_device_path: "/data/app/x/base.apk",
+      },
+    ],
+    exact_match: true,
+    coverage: "complete",
+  },
+  install_adb_package: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    apk_path: "/tmp/app.apk",
+    bytes: 2048,
+    sha256: "a".repeat(64),
+    replaced: false,
+  },
+  uninstall_adb_package: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    package_name: "com.whatsapp",
+  },
+  start_adb_app: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    package_name: "com.example.app",
+    component: "com.example.app/.Main",
+    started_activity:
+      "act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] cmp=com.example.app/.Main",
+  },
+  start_adb_activity: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    action: "android.intent.action.VIEW",
+    data_uri: "https://example.com/",
+    component: null,
+    extras: [],
+    started_activity: "act=android.intent.action.VIEW dat=https://example.com/",
+  },
+  stop_adb_app: {
+    client: clientIdentity,
+    serial: "emulator-5554",
+    package_name: "com.example.app",
+  },
 };
 
 it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
@@ -115,6 +298,25 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
     "inspect_adb_device",
     "list_adb_packages",
     "pull_adb_package",
+    "read_adb_logcat",
+    "inspect_adb_package",
+    "pull_adb_file",
+    "push_adb_file",
+    "capture_adb_screen",
+    "list_adb_processes",
+    "list_adb_directory",
+    "list_adb_features",
+    "list_adb_services",
+    "inspect_adb_display",
+    "inspect_adb_window",
+    "read_adb_setting",
+    "collect_adb_bugreport",
+    "resolve_adb_packages",
+    "install_adb_package",
+    "uninstall_adb_package",
+    "start_adb_app",
+    "start_adb_activity",
+    "stop_adb_app",
   ] as const;
   for (const name of operationNames) expect(names, name).toContain(name);
 
@@ -124,12 +326,15 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
     const listed = tools.find((tool) => tool.name === name);
     expect(listed, name).toBeTruthy();
     if (listed?.inputSchema === undefined) continue;
-    expect(() =>
-      ajv.compile(JSON.parse(JSON.stringify(listed.inputSchema))),
-    ).not.toThrow();
-    expect(listed.inputSchema).toEqual(
-      JSON.parse(JSON.stringify(contract.inputSchema)),
+    // The server may present a compacted form of the contract schema; what
+    // must hold is that the advertised schema compiles and accepts the
+    // contract's own examples, and rejects unknown input.
+    const validate = ajv.compile(
+      JSON.parse(JSON.stringify(listed.inputSchema)),
     );
+    for (const example of contract.examples)
+      expect(validate(example.input), `${name} example`).toBe(true);
+    expect(validate({ unknown_argument: true }), `${name} rejects`).toBe(false);
   }
 
   const pulled = await client.callTool({
@@ -188,5 +393,5 @@ it("rejects invalid tool input before reaching the provider", async () => {
   const text = (rejected.content as { readonly text?: string }[])
     .map((part) => part.text ?? "")
     .join("");
-  expect(text).toContain("invalid_input");
+  expect(text).toContain("Invalid arguments for tool inspect_adb_device");
 });

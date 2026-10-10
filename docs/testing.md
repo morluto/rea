@@ -433,23 +433,34 @@ npm run test:focused -- tests/boundary/process/jadxIntegration.test.ts tests/bou
 
 ## ADB device acquisition
 
-`npm run verify:adb` exercises the five ADB operations against a live device
-or emulator through the caller's adb binary (`REA_ADB_PATH` or PATH). No SDK
-installation, emulator management, or device mutation is involved; `--pull`
-acquires a real package and re-digests the pulled files on disk against the
-returned SHA-256 values. `--serial` selects a device when several are
-attached.
+`npm run verify:adb` exercises every ADB operation against a live device or
+emulator through the caller's adb binary (`REA_ADB_PATH` or PATH). No SDK
+installation or emulator management is involved; the device-mutating tools
+run only in the explicit lifecycle section (`--install-apk` drives a
+lane-owned install → resolve → start → observe → force-stop → uninstall
+probe). `--pull` acquires a real package and re-digests the pulled files on
+disk against the returned SHA-256 values; `--serial` selects a device when
+several are attached.
 
 Record: adb 34.0.5-debian on Linux against an Android 14 (API 34) x86_64
-emulator. The lane covered the full third-party inventory (224 packages),
-an installed two-APK split set (`base.apk` plus `split_probe.apk`, built and
-installed through `install-multiple`), role classification from file names,
-and byte-exact digest agreement for both artifacts. System-package pulls
-whose APKs keep non-`base.apk` names report the `unknown` role with the
-file-name basis, verified with `com.android.settings` (single 73.9 MB APK).
-Parser goldens for `adb devices -l`, `getprop`, `pm list packages -f`, and
-`pm path` come from the same device. See
-[ADB device analysis](adb-device-analysis.md) for boundaries and budgets.
+emulator. The lane covered the complete observation surface — 337-process
+listing, 287 binder services including AIDL `/`-suffixed names, 92 features
+including hex GL versions, display size/density, window focus (legitimately
+null on headless devices), `settings get global adb_enabled`, bounded
+logcat, directory listings — plus a real two-APK split set
+(`base.apk` plus `split_probe.apk`, built and installed through
+`install-multiple`) pulled with byte-exact digests, a push/pull roundtrip
+verified by the device's own sha256sum, a 1.3 MB screen capture with PNG
+dimensions, `dumpsys package` projection, and the full lifecycle: unique
+resolution before launch, launcher-activity start through
+`cmd package resolve-activity` with `am start -W`, the started app visible
+in the process listing, force-stop, uninstall, and zero matches after
+removal. System-package pulls whose APKs keep non-`base.apk` names report
+the `unknown` role with the file-name basis, verified with
+`com.android.settings` (single 73.9 MB APK). Parser goldens for
+`adb devices -l`, `getprop`, `pm list packages -f`, and `pm path` come from
+the same device. See [ADB device analysis](adb-device-analysis.md) for
+boundaries and budgets.
 
 ## Optional NativeAOT Ghidra analysis
 
