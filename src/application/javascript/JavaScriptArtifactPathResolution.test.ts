@@ -556,6 +556,85 @@ describe("package exports subpath encapsulation", () => {
   });
 });
 
+describe("package subpath directory ownership", () => {
+  it.each(["root", "other"])(
+    "selects metadata-less package directories only in the %s container",
+    (container) => {
+      const files = fileMap([
+        file("app/src/consumer.js", "root"),
+        file("app/src/node_modules/fixture/parser.js", container),
+        file("app/node_modules/fixture/package.json", "root", "{}"),
+        file("app/node_modules/fixture/parser.js", "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "fixture/parser",
+          sourcePath: "app/src/consumer.js",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: "fixture/parser",
+        resolution_context: "module-specifier",
+        resolution_status: "resolved",
+        resolved_path:
+          container === "root"
+            ? "app/src/node_modules/fixture/parser.js"
+            : "app/node_modules/fixture/parser.js",
+      });
+    },
+  );
+
+  it("does not mistake a package-name file or sibling prefix for a nearer directory", () => {
+    const files = fileMap([
+      file("app/src/consumer.js", "root"),
+      file("app/src/node_modules/fixture.js", "root"),
+      file("app/src/node_modules/fixture-extra/parser.js", "root"),
+      file("app/node_modules/fixture/parser.js", "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "fixture/parser",
+        sourcePath: "app/src/consumer.js",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({
+      resolved_path: "app/node_modules/fixture/parser.js",
+      resolution_status: "resolved",
+    });
+  });
+
+  it.each([
+    ["malformed", "{", "not valid package JSON"],
+    ["unavailable", null, "text is unavailable"],
+    ["cyclic", '{"main":"."}', "cycle"],
+  ])("preserves %s nested directory failures", (_name, text, reason) => {
+    const files = fileMap([
+      file("app/consumer.js", "root"),
+      file("app/node_modules/fixture/package.json", "root", "{}"),
+      file("app/node_modules/fixture/parser/package.json", "root", text),
+    ]);
+    expect(
+      resolve({
+        declaredPath: "fixture/parser",
+        sourcePath: "app/consumer.js",
+        context: "module-specifier",
+        moduleKind: "require",
+        files,
+      }),
+    ).toMatchObject({
+      declared_path: "fixture/parser",
+      resolution_context: "module-specifier",
+      resolved_path: null,
+      resolution_status: "unavailable",
+      limitations: [expect.stringContaining(reason)],
+    });
+  });
+});
+
 describe("package subpath legacy lookup and metadata failures", () => {
   it("resolves legacy subpath files and indexes without an exports field", () => {
     const files = fileMap([

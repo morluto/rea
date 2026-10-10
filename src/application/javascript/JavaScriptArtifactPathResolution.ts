@@ -76,61 +76,54 @@ type CandidateResolution =
       readonly limitations: readonly string[];
     };
 
-/** Resolve one declaration under its exact syntax/metadata context. */
+/** Resolve one declaration while preserving its original input identity. */
 export const resolveArtifactPathByContext = (
   input: ResolveArtifactPathInput,
-): ArtifactPathResolution => resolvePackagePath(input, new Set());
-
-const resolvePackagePath = (
-  input: ResolveArtifactPathInput,
-  packageChain: ReadonlySet<string>,
-  mode: "full" | "files-and-index" = "full",
-  exportsTargetUrl = false,
 ): ArtifactPathResolution => {
-  const rejected = rejectDeclaration(input);
-  if (rejected !== null) return rejected;
-  const candidate = contextualCandidate(input, exportsTargetUrl);
-  if (typeof candidate !== "string") return candidate;
-  const confined = confineCandidate(input, candidate);
-  if (typeof confined !== "string") return confined;
-  if (input.context === "html-reference")
-    return outcome(
-      input,
-      resolveFileCandidates(input, [confined]) ?? {
-        resolvedPath: null,
-        status: "not-found",
-        limitations: [
-          `The exact HTML resource ${confined} was not found among the selected application files.`,
-        ],
-      },
-    );
-  // An exports target names one exact file; Node tries no extension or index.
-  const resolved = exportsTargetUrl
-    ? (resolveFileCandidates(input, [confined]) ??
-      exactExportsTargetNotFound(confined))
-    : mode === "files-and-index"
-      ? (resolveFileCandidates(input, [
-          ...fileCandidates(confined),
-          ...indexCandidates(confined),
-        ]) ?? notFoundCandidate())
-      : resolveCandidate(input, confined, packageChain);
-  return outcome(input, resolved);
+  const resolution = resolvePath(input);
+  return resolution.status === "resolved"
+    ? {
+        declared_path: input.declaredPath,
+        resolution_context: input.context,
+        resolved_path: resolution.resolvedPath,
+        resolution_status: resolution.status,
+        limitations: resolution.limitations,
+      }
+    : {
+        declared_path: input.declaredPath,
+        resolution_context: input.context,
+        resolved_path: null,
+        resolution_status: resolution.status,
+        limitations: resolution.limitations,
+      };
 };
 
-const rejectDeclaration = (
-  input: ResolveArtifactPathInput,
-): ArtifactPathResolution | null => {
-  const declared = input.declaredPath;
+const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
+  const rejected = rejectDeclaration(input.declaredPath);
+  if (rejected !== null) return rejected;
+  const candidate = contextualCandidate(input);
+  if (typeof candidate !== "string") return candidate;
+  const confined = confineCandidate(candidate);
+  if (typeof confined !== "string") return confined;
+  if (input.context === "html-reference")
+    return (
+      resolveFileCandidates(input, [confined]) ??
+      unresolvedCandidate("not-found", [
+        `The exact HTML resource ${confined} was not found among the selected application files.`,
+      ])
+    );
+  return resolveCandidate(input, confined, new Set());
+};
+
+const rejectDeclaration = (declared: string): CandidateResolution | null => {
   if (declared.length === 0)
-    return unresolvedOutcome(input, "rejected", [
-      "The declared path is empty.",
-    ]);
+    return unresolvedCandidate("rejected", ["The declared path is empty."]);
   if (declared.includes("\0") || declared.includes("\\"))
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "NUL and backslash path syntax are not admitted for canonical artifact paths.",
     ]);
   if (!admitsCanonicalPathSyntax(declared))
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
   return null;
@@ -138,13 +131,11 @@ const rejectDeclaration = (
 
 const contextualCandidate = (
   input: ResolveArtifactPathInput,
-  exportsTargetUrl: boolean,
-): string | ArtifactPathResolution => {
+): string | CandidateResolution => {
   const { context } = input;
   let declared =
     context === "html-reference" ||
     context === "url-reference" ||
-    exportsTargetUrl ||
     (context === "module-specifier" && input.moduleKind !== "require")
       ? stripQueryAndFragment(input.declaredPath)
       : input.declaredPath;
@@ -153,147 +144,130 @@ const contextualCandidate = (
     const fileUrl = fileUrlPath(declared);
     if (fileUrl !== undefined) return fileUrl;
     if (hasScheme(declared))
-      return unresolvedOutcome(input, "external", [
+      return unresolvedCandidate("external", [
         "URL and Node builtin schemes are outside static artifact module resolution.",
       ]);
     if (!declared.startsWith(".") && !declared.startsWith("/"))
       return bareModuleCandidate(input, declared);
+    if (input.moduleKind !== "require") {
+      const decoded = decodeModuleUrlPath(declared);
+      if (typeof decoded !== "string") return decoded;
+      declared = decoded;
+    }
   } else if (looksExternal(declared))
-    return unresolvedOutcome(input, "external", [
+    return unresolvedCandidate("external", [
       "URL schemes and protocol-relative URLs are outside this local artifact path context.",
     ]);
-  // Exports targets use URL paths for both loaders; legacy main fields remain literal.
-  if (
-    exportsTargetUrl ||
-    (context === "module-specifier" && input.moduleKind !== "require")
-  ) {
-    try {
-      declared = decodeURIComponent(declared);
-    } catch (cause: unknown) {
-      void cause;
-      return unresolvedOutcome(input, "rejected", [
-        "The module URL path contains malformed percent encoding.",
-      ]);
-    }
-    if (declared.includes("\0"))
-      return unresolvedOutcome(input, "rejected", [
-        "The decoded module URL path contains NUL.",
-      ]);
-  }
-  const relative = declared.startsWith("/") ? declared.slice(1) : declared;
-  return declared.startsWith("/")
-    ? relative
-    : posix.join(posix.dirname(input.sourcePath), relative);
+  return relativeCandidate(input.sourcePath, declared);
 };
+
+const decodeModuleUrlPath = (
+  declared: string,
+): string | CandidateResolution => {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(declared);
+  } catch (cause: unknown) {
+    void cause;
+    return unresolvedCandidate("rejected", [
+      "The module URL path contains malformed percent encoding.",
+    ]);
+  }
+  return decoded.includes("\0")
+    ? unresolvedCandidate("rejected", [
+        "The decoded module URL path contains NUL.",
+      ])
+    : decoded;
+};
+
+const relativeCandidate = (sourcePath: string, declared: string): string =>
+  declared.startsWith("/")
+    ? declared.slice(1)
+    : posix.join(posix.dirname(sourcePath), declared);
 
 const bareModuleCandidate = (
   input: ResolveArtifactPathInput,
   declared: string,
-): string | ArtifactPathResolution => {
+): CandidateResolution => {
   const packageName = barePackageName(declared);
   if (packageName === null || isBuiltin(declared) || declared.startsWith("#"))
-    return unresolvedOutcome(input, "external", [
+    return unresolvedCandidate("external", [
       "The bare specifier is a Node builtin, package import map, or invalid package name.",
     ]);
   const subpath =
-    declared === packageName ? null : declared.slice(packageName.length + 1);
+    declared === packageName ? "." : `.${declared.slice(packageName.length)}`;
   const source = input.files.get(input.sourcePath);
   let directory = posix.dirname(input.sourcePath);
   while (true) {
     const candidate = posix.join(directory, "node_modules", packageName);
-    if (hasContainerCandidate(input.files, candidate, source?.container_sha256))
-      return subpath === null
-        ? candidate
-        : packageSubpathCandidate(input, candidate, subpath, source);
+    if (subpath === ".") {
+      const direct = resolveFileCandidates(input, fileCandidates(candidate));
+      if (direct !== null) return direct;
+    }
+    if (hasContainerDirectory(input.files, candidate, source?.container_sha256))
+      return resolvePackageSpecifier(input, candidate, subpath);
     if (directory === "." || directory === "") break;
     directory = posix.dirname(directory);
   }
-  return unresolvedOutcome(input, "external", [
+  return unresolvedCandidate("external", [
     "No matching bare package was inventoried in an enclosing node_modules directory.",
   ]);
 };
 
-/**
- * Resolve a bare package subpath against the selected package. A declared
- * exports map encapsulates the subpath: only its exact key can select a
- * target, and a missing or null target never falls through to a file, index,
- * or another package. Without an exports map, legacy file and directory-index
- * lookup applies, mirroring bare package names.
- */
-const packageSubpathCandidate = (
+/** Package roots and exact subpaths share metadata and exports selection. */
+const resolvePackageSpecifier = (
   input: ResolveArtifactPathInput,
-  packageDirectory: string,
+  directory: string,
   subpath: string,
-  source: JavaScriptArtifactFile | undefined,
-): string | ArtifactPathResolution => {
-  const packagePath = posix.join(packageDirectory, "package.json");
-  const packageFile = input.files.get(packagePath);
-  if (
-    packageFile === undefined ||
-    (source !== undefined &&
-      packageFile.container_sha256 !== source.container_sha256)
-  )
-    return legacySubpathCandidate(input, packageDirectory, subpath);
-  if (!packageFile.text.included)
-    return unresolvedOutcome(input, "unavailable", [
-      `Directory package metadata ${packagePath} was inventoried but its text is unavailable: ${packageFile.text.reason}.`,
-    ]);
-  const exported = packageSubpathTarget(
-    packageFile.text.value,
-    subpath,
-    input.moduleKind,
-  );
-  if (exported.status === "invalid")
-    return unresolvedOutcome(input, "unavailable", [
-      `Directory package metadata ${packagePath} is not valid package JSON.`,
-    ]);
+): CandidateResolution => {
+  const metadata = readPackageMetadata(input, directory);
+  if (metadata.kind === "unavailable")
+    return unresolvedCandidate("unavailable", [metadata.limitation]);
+  const rawExports =
+    metadata.kind === "available"
+      ? Reflect.get(metadata.value, "exports")
+      : undefined;
+  if (rawExports === undefined || rawExports === null) {
+    if (subpath === ".")
+      return resolveDirectory(input, directory, metadata, new Set());
+    const candidate = confineCandidate(posix.join(directory, subpath.slice(2)));
+    return typeof candidate === "string"
+      ? resolveCandidate(input, candidate, new Set())
+      : candidate;
+  }
+  const exported = selectPackageExport(rawExports, subpath, input.moduleKind);
+  const packagePath = posix.join(directory, "package.json");
   if (exported.status === "rejected")
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       `Package metadata ${packagePath}: ${exported.limitation}`,
     ]);
-  if (exported.status === "absent")
-    return legacySubpathCandidate(input, packageDirectory, subpath);
   if (exported.status === "unmatched")
-    return unresolvedOutcome(input, "external", [
-      `Directory package metadata ${packagePath} declares no exports target for subpath ./${subpath}; exports encapsulation permits no file or index lookup. It declares ${exported.declared.join(", ") || "a root target only"}.`,
+    return unresolvedCandidate("external", [
+      `Directory package metadata ${packagePath} declares no exports target ${subpath === "." ? "for the active conditions" : `for subpath ${subpath}`}; exports encapsulation permits no file or index lookup. It declares ${exported.declared.join(", ") || "a root target only"}.`,
     ]);
   if (exported.status === "blocked")
-    return unresolvedOutcome(input, "external", [
-      `Directory package metadata ${packagePath} blocks subpath ./${subpath} with an explicit null exports target.`,
+    return unresolvedCandidate("external", [
+      `Directory package metadata ${packagePath} blocks subpath ${subpath} with an explicit null exports target.`,
     ]);
-  // An exports target names one exact file; Node tries no extension or index.
-  return resolvePackagePath(
-    {
-      declaredPath: exported.value,
-      sourcePath: packagePath,
-      context: "package-entrypoint",
-      files: input.files,
-    },
-    new Set([packagePath]),
-    "full",
-    true,
-  );
+  return resolveExportTarget(input, packagePath, exported.value);
 };
 
-const legacySubpathCandidate = (
+/** An exports target is a URL naming one exact file for both Node loaders. */
+const resolveExportTarget = (
   input: ResolveArtifactPathInput,
-  packageDirectory: string,
-  subpath: string,
-): string | ArtifactPathResolution => {
-  const confined = confineCandidate(
-    input,
-    posix.join(packageDirectory, subpath),
+  packagePath: string,
+  target: string,
+): CandidateResolution => {
+  const rejected = rejectDeclaration(target);
+  if (rejected !== null) return rejected;
+  const decoded = decodeModuleUrlPath(stripQueryAndFragment(target));
+  if (typeof decoded !== "string") return decoded;
+  const candidate = confineCandidate(relativeCandidate(packagePath, decoded));
+  if (typeof candidate !== "string") return candidate;
+  return (
+    resolveFileCandidates(input, [candidate]) ??
+    exactExportsTargetNotFound(candidate)
   );
-  if (typeof confined !== "string") return confined;
-  const resolved = resolveFileCandidates(input, [
-    ...fileCandidates(confined),
-    ...indexCandidates(confined),
-  ]);
-  return resolved === null
-    ? unresolvedOutcome(input, "not-found", [
-        `No extension or index candidate for package subpath ${confined} exists in the inventoried artifact container.`,
-      ])
-    : outcome(input, resolved);
 };
 
 const barePackageName = (specifier: string): string | null => {
@@ -305,30 +279,43 @@ const barePackageName = (specifier: string): string | null => {
   return segments[0] === "" ? null : (segments[0] ?? null);
 };
 
-const hasContainerCandidate = (
+const hasContainerDirectory = (
   files: ReadonlyMap<string, JavaScriptArtifactFile>,
   candidate: string,
   containerSha256: string | undefined,
-): boolean =>
-  [
-    ...fileCandidates(candidate),
-    ...indexCandidates(candidate),
-    posix.join(candidate, "package.json"),
-  ].some((path) => {
-    const file = files.get(path);
-    return (
-      file !== undefined &&
+): boolean => {
+  if (
+    [...indexCandidates(candidate), posix.join(candidate, "package.json")].some(
+      (path) => {
+        const file = files.get(path);
+        return (
+          file !== undefined &&
+          (containerSha256 === undefined ||
+            file.container_sha256 === containerSha256)
+        );
+      },
+    )
+  )
+    return true;
+  // Inventory has files rather than directory entries. Any same-container
+  // descendant establishes a package directory even without package.json.
+  const prefix = `${candidate}/`;
+  for (const [path, file] of files)
+    if (
+      path.startsWith(prefix) &&
       (containerSha256 === undefined ||
         file.container_sha256 === containerSha256)
-    );
-  });
+    )
+      return true;
+  return false;
+};
 
 const htmlCandidate = (
   input: ResolveArtifactPathInput,
-): string | ArtifactPathResolution => {
+): string | CandidateResolution => {
   const declared = stripQueryAndFragment(htmlUrlText(input.declaredPath));
   if (looksExternal(declared))
-    return unresolvedOutcome(input, "external", [
+    return unresolvedCandidate("external", [
       "External HTML references are not mapped to local artifact assets.",
     ]);
   const rawBase = input.htmlBaseHref;
@@ -337,18 +324,18 @@ const htmlCandidate = (
       ? rawBase
       : stripQueryAndFragment(htmlUrlText(rawBase));
   if (base !== undefined && base !== null && looksExternal(base))
-    return unresolvedOutcome(input, "external", [
+    return unresolvedCandidate("external", [
       "The document base href is external, so its script reference is not a local artifact path.",
     ]);
   // Removing URL tabs and newlines can join an encoded dot or separator that
   // the raw declaration split, so admit the parsed URL text again.
   if (!admitsCanonicalPathSyntax(declared))
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "Encoded dot or separator bytes are rejected before artifact path resolution.",
     ]);
   const declaredPath = percentDecodeUrlPath(declared);
   if (declaredPath === null)
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "The HTML reference path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
   if (declaredPath.startsWith("/")) return declaredPath.slice(1);
@@ -360,31 +347,29 @@ const htmlCandidate = (
   // admission rules a declared path gets so it cannot smuggle traversal or
   // separator syntax past canonicalization.
   if (!admitsCanonicalPathSyntax(base))
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "The document base href uses NUL, backslash, or encoded dot and separator bytes that are not admitted for canonical artifact paths.",
     ]);
   const decodedBase = percentDecodeUrlPath(base);
   if (decodedBase === null)
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "The document base href path percent-decodes to NUL or to bytes that are not UTF-8.",
     ]);
   const basePath = decodedBase.startsWith("/")
     ? decodedBase.slice(1)
     : posix.join(posix.dirname(input.sourcePath), decodedBase);
-  if (declaredPath === "")
-    return emptyHtmlReference(input, decodedBase, basePath);
+  if (declaredPath === "") return emptyHtmlReference(decodedBase, basePath);
   return posix.join(htmlBaseDirectory(decodedBase, basePath), declaredPath);
 };
 
 const emptyHtmlReference = (
-  input: ResolveArtifactPathInput,
   base: string,
   basePath: string,
-): string | ArtifactPathResolution => {
+): string | CandidateResolution => {
   if (!htmlBaseIsDirectory(base)) return basePath;
-  const confined = confineCandidate(input, basePath);
+  const confined = confineCandidate(basePath);
   if (typeof confined !== "string") return confined;
-  return unresolvedOutcome(input, "not-found", [
+  return unresolvedCandidate("not-found", [
     `The HTML reference resolves to directory ${confined || "."}, not an exact selected application file.`,
   ]);
 };
@@ -405,126 +390,135 @@ const htmlBaseIsDirectory = (base: string): boolean =>
 const htmlBaseDirectory = (base: string, basePath: string): string =>
   htmlBaseIsDirectory(base) ? basePath : posix.dirname(basePath);
 
-const confineCandidate = (
-  input: ResolveArtifactPathInput,
-  candidate: string,
-): string | ArtifactPathResolution => {
+const confineCandidate = (candidate: string): string | CandidateResolution => {
   const normalized = posix.normalize(candidate);
   if (
     normalized === ".." ||
     normalized.startsWith("../") ||
     normalized.startsWith("/")
   )
-    return unresolvedOutcome(input, "rejected", [
+    return unresolvedCandidate("rejected", [
       "The resolved candidate escapes the canonical artifact root.",
     ]);
   return normalized === "." ? "" : normalized;
 };
 
+type PackageMetadata =
+  | {
+      readonly kind: "available";
+      readonly path: string;
+      readonly value: object;
+    }
+  | { readonly kind: "absent" }
+  | { readonly kind: "unavailable"; readonly limitation: string };
+
+const readPackageMetadata = (
+  input: ResolveArtifactPathInput,
+  directory: string,
+): PackageMetadata => {
+  const path = posix.join(directory, "package.json");
+  const file = input.files.get(path);
+  const source = input.files.get(input.sourcePath);
+  if (
+    file === undefined ||
+    (source !== undefined && file.container_sha256 !== source.container_sha256)
+  )
+    return { kind: "absent" };
+  if (!file.text.included)
+    return {
+      kind: "unavailable",
+      limitation: `Directory package metadata ${path} was inventoried but its text is unavailable: ${file.text.reason}.`,
+    };
+  let value: unknown;
+  try {
+    value = JSON.parse(file.text.value);
+  } catch (cause: unknown) {
+    void cause;
+    return {
+      kind: "unavailable",
+      limitation: `Directory package metadata ${path} is not valid package JSON.`,
+    };
+  }
+  return typeof value === "object" && value !== null
+    ? { kind: "available", path, value }
+    : {
+        kind: "unavailable",
+        limitation: `Directory package metadata ${path} is not valid package JSON.`,
+      };
+};
+
+/** File and directory lookup never interprets a nested directory's exports. */
 const resolveCandidate = (
   input: ResolveArtifactPathInput,
   candidate: string,
   packageChain: ReadonlySet<string>,
-): CandidateResolution => {
-  const direct = resolveFileCandidates(input, fileCandidates(candidate));
-  if (direct !== null) return direct;
-  const source = input.files.get(input.sourcePath);
-  const packagePath = posix.join(candidate, "package.json");
-  const packageFile = input.files.get(packagePath);
-  if (
-    packageFile === undefined ||
-    (source !== undefined &&
-      packageFile.container_sha256 !== source.container_sha256)
-  )
-    return (
-      resolveFileCandidates(input, indexCandidates(candidate)) ??
-      notFoundCandidate()
-    );
-  if (!packageFile.text.included)
-    return {
-      resolvedPath: null,
-      status: "unavailable",
-      limitations: [
-        `Directory package metadata ${packagePath} was inventoried but its text is unavailable: ${packageFile.text.reason}.`,
-      ],
-    };
-  const main = packageEntry(
-    packageFile.text.value,
-    input.moduleKind,
-    input.context === "module-specifier" &&
-      !input.declaredPath.startsWith(".") &&
-      !input.declaredPath.startsWith("/") &&
-      !hasScheme(input.declaredPath),
+): CandidateResolution =>
+  resolveFileCandidates(input, fileCandidates(candidate)) ??
+  resolveDirectory(
+    input,
+    candidate,
+    readPackageMetadata(input, candidate),
+    packageChain,
   );
-  if (main.status === "invalid")
-    return {
-      resolvedPath: null,
-      status: "unavailable",
-      limitations: [
-        `Directory package metadata ${packagePath} is not valid package JSON.`,
-      ],
-    };
-  if (main.status === "rejected")
-    return {
-      resolvedPath: null,
-      status: "rejected",
-      limitations: [`Package metadata ${packagePath}: ${main.limitation}`],
-    };
-  if (main.status === "unmatched")
-    return {
-      resolvedPath: null,
-      status: "external",
-      limitations: [
-        `Directory package metadata ${packagePath} declares no exports target for the active conditions; it declares ${main.declared.join(", ")}.`,
-      ],
-    };
-  if (packageChain.has(packagePath)) {
-    return {
-      resolvedPath: null,
-      status: "unavailable",
-      limitations: [
-        `Directory package entrypoint cycle includes ${packagePath}.`,
-      ],
-    };
-  }
-  if (main.status === "missing")
+
+const resolveDirectory = (
+  input: ResolveArtifactPathInput,
+  directory: string,
+  metadata: PackageMetadata,
+  packageChain: ReadonlySet<string>,
+): CandidateResolution => {
+  if (metadata.kind === "absent")
     return (
-      resolveFileCandidates(input, indexCandidates(candidate)) ??
+      resolveFileCandidates(input, indexCandidates(directory)) ??
       notFoundCandidate()
     );
+  if (metadata.kind === "unavailable")
+    return unresolvedCandidate("unavailable", [metadata.limitation]);
+  if (packageChain.has(metadata.path))
+    return unresolvedCandidate("unavailable", [
+      `Directory package entrypoint cycle includes ${metadata.path}.`,
+    ]);
+  const preferred = [
+    Reflect.get(metadata.value, "main"),
+    ...(input.moduleKind === undefined
+      ? [Reflect.get(metadata.value, "module")]
+      : []),
+  ];
+  const entry = preferred.find((value) => value !== undefined);
+  if (entry === undefined)
+    return (
+      resolveFileCandidates(input, indexCandidates(directory)) ??
+      notFoundCandidate()
+    );
+  if (typeof entry !== "string" || entry.length === 0)
+    return unresolvedCandidate("unavailable", [
+      `Directory package metadata ${metadata.path} is not valid package JSON.`,
+    ]);
   const entryInput: ResolveArtifactPathInput = {
-    declaredPath: main.value,
-    sourcePath: packagePath,
+    declaredPath: entry,
+    sourcePath: metadata.path,
     context: "package-entrypoint",
     files: input.files,
+    ...(input.moduleKind === undefined ? {} : { moduleKind: input.moduleKind }),
   };
-  const chain = new Set([...packageChain, packagePath]);
-  if (main.source === "legacy") {
-    const entry = resolvePackagePath(entryInput, chain, "files-and-index");
-    if (entry.resolution_status !== "not-found") return candidateOutcome(entry);
-    const index = resolveFileCandidates(input, indexCandidates(candidate));
-    if (index !== null) return index;
-  }
-  // Preserve recursive artifact package lookup only after legacy file/index fallbacks.
-  return candidateOutcome(
-    resolvePackagePath(entryInput, chain, "full", main.source === "exports"),
+  const rejected = rejectDeclaration(entryInput.declaredPath);
+  if (rejected !== null) return rejected;
+  const candidate = contextualCandidate(entryInput);
+  if (typeof candidate !== "string") return candidate;
+  const confined = confineCandidate(candidate);
+  if (typeof confined !== "string") return confined;
+  const selected =
+    resolveFileCandidates(entryInput, [
+      ...fileCandidates(confined),
+      ...indexCandidates(confined),
+    ]) ?? resolveFileCandidates(input, indexCandidates(directory));
+  if (selected !== null) return selected;
+  return resolveCandidate(
+    entryInput,
+    confined,
+    new Set([...packageChain, metadata.path]),
   );
 };
-
-const candidateOutcome = (
-  nested: ArtifactPathResolution,
-): CandidateResolution =>
-  nested.resolution_status === "resolved"
-    ? {
-        resolvedPath: nested.resolved_path,
-        status: nested.resolution_status,
-        limitations: nested.limitations,
-      }
-    : {
-        resolvedPath: null,
-        status: nested.resolution_status,
-        limitations: nested.limitations,
-      };
 
 const resolveFileCandidates = (
   input: ResolveArtifactPathInput,
@@ -551,136 +545,62 @@ const fileCandidates = (candidate: string): readonly string[] => [
 const indexCandidates = (candidate: string): readonly string[] =>
   EXTENSIONS.map((extension) => posix.join(candidate, `index${extension}`));
 
-const packageEntry = (
-  text: string,
-  moduleKind: ResolveArtifactPathInput["moduleKind"],
-  useExports: boolean,
-):
-  | {
-      readonly status: "value";
-      readonly value: string;
-      readonly source: "legacy" | "exports";
-    }
-  | { readonly status: "missing" }
-  | { readonly status: "invalid" }
-  | { readonly status: "rejected"; readonly limitation: string }
-  | { readonly status: "unmatched"; readonly declared: readonly string[] } => {
-  try {
-    const value: unknown = JSON.parse(text);
-    if (typeof value !== "object" || value === null)
-      return { status: "invalid" };
-    const rawExports = Reflect.get(value, "exports");
-    if (useExports && rawExports !== undefined && rawExports !== null) {
-      const exported = packageExport(rawExports, moduleKind);
-      return exported.status === "value"
-        ? { ...exported, source: "exports" }
-        : exported;
-    }
-    // Node imports and requires ignore the bundler-only module field. Keep
-    // that fallback for callers without an explicit module-loading kind.
-    const preferred = [
-      Reflect.get(value, "main"),
-      ...(moduleKind === undefined ? [Reflect.get(value, "module")] : []),
-    ];
-    const entry = preferred.find((candidate) => candidate !== undefined);
-    if (entry === undefined) return { status: "missing" };
-    const legacy = packagePathValue(entry);
-    return legacy.status === "value" ? { ...legacy, source: "legacy" } : legacy;
-  } catch (cause: unknown) {
-    // Reflect-based manifest reads fail closed as invalid.
-    void cause;
-    return { status: "invalid" };
-  }
-};
-
-const packageExport = (
-  value: unknown,
-  moduleKind: ResolveArtifactPathInput["moduleKind"],
-): PackageExportOutcome => {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    const mixing = mixedExportKeys(Object.keys(value));
-    if (mixing !== undefined) return { status: "rejected", limitation: mixing };
-  }
-  const root =
-    typeof value === "object" && value !== null && Object.hasOwn(value, ".")
-      ? Reflect.get(value, ".")
-      : value;
-  const flattened = exportTargets(root, packageExportConditions(moduleKind));
-  if (flattened.kind === "invalid" || flattened.kind === "invalid-config")
-    return { status: "rejected", limitation: flattened.limitation };
-  const first =
-    flattened.kind === "unmatched" ? undefined : flattened.values[0];
-  return first === undefined
-    ? {
-        status: "unmatched",
-        declared:
-          typeof root === "object" && root !== null ? Object.keys(root) : [],
-      }
-    : { status: "value", value: first };
-};
-
-const mixedExportKeys = (keys: readonly string[]): string | undefined =>
-  keys.some((key) => key.startsWith(".")) &&
-  keys.some((key) => !key.startsWith("."))
-    ? "The package exports configuration mixes subpath keys and condition keys."
-    : undefined;
-
-type PackageSubpathOutcome =
+type PackageExportOutcome =
   | { readonly status: "value"; readonly value: string }
-  | { readonly status: "absent" }
-  | { readonly status: "invalid" }
   | { readonly status: "rejected"; readonly limitation: string }
   | { readonly status: "blocked" }
   | { readonly status: "unmatched"; readonly declared: readonly string[] };
 
-/**
- * Select the exports target for one exact subpath key, or report why none was
- * selected. Only exact keys match; wildcards remain unsupported. A root-only
- * exports value (string, array, or object without subpath keys) encapsulates
- * every subpath, and an absent or null exports field leaves legacy lookup to
- * the caller.
- */
-const packageSubpathTarget = (
-  text: string,
+/** Only exact non-directory keys participate; wildcard expansion is unsupported. */
+const selectPackageExport = (
+  value: unknown,
   subpath: string,
   moduleKind: ResolveArtifactPathInput["moduleKind"],
-): PackageSubpathOutcome => {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (cause: unknown) {
-    // Reflect-based manifest reads fail closed as invalid.
-    void cause;
-    return { status: "invalid" };
-  }
-  if (typeof value !== "object" || value === null) return { status: "invalid" };
-  const rawExports = Reflect.get(value, "exports");
-  if (rawExports === undefined || rawExports === null)
-    return { status: "absent" };
-  if (typeof rawExports !== "object" || Array.isArray(rawExports))
-    return { status: "unmatched", declared: [] };
-  const keys = Object.keys(rawExports);
-  const mixing = mixedExportKeys(keys);
-  if (mixing !== undefined) return { status: "rejected", limitation: mixing };
-  const key = `./${subpath}`;
-  if (!Object.hasOwn(rawExports, key))
-    return { status: "unmatched", declared: keys };
-  const flattened = exportTargets(
-    Reflect.get(rawExports, key),
+): PackageExportOutcome => {
+  let target = value;
+  let declared: string[] = [];
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    const hasSubpaths = keys.some((key) => key.startsWith("."));
+    if (hasSubpaths && keys.some((key) => !key.startsWith(".")))
+      return {
+        status: "rejected",
+        limitation:
+          "The package exports configuration mixes subpath keys and condition keys.",
+      };
+    declared = keys;
+    if (hasSubpaths) {
+      if (
+        subpath.endsWith("/") ||
+        subpath.includes("*") ||
+        !Object.hasOwn(value, subpath)
+      )
+        return { status: "unmatched", declared };
+      target = Reflect.get(value, subpath);
+    } else if (subpath !== ".") return { status: "unmatched", declared };
+  } else if (subpath !== ".") return { status: "unmatched", declared };
+  const selected = selectExportTarget(
+    target,
     packageExportConditions(moduleKind),
   );
-  if (flattened.kind === "invalid" || flattened.kind === "invalid-config")
-    return { status: "rejected", limitation: flattened.limitation };
-  if (flattened.kind === "unmatched")
-    return { status: "unmatched", declared: keys };
-  const first = flattened.values[0];
-  return first === undefined
+  if (selected.kind === "invalid" || selected.kind === "invalid-config")
+    return { status: "rejected", limitation: selected.limitation };
+  if (selected.kind === "unmatched")
+    return {
+      status: "unmatched",
+      declared:
+        typeof target === "object" && target !== null
+          ? Object.keys(target)
+          : declared,
+    };
+  return selected.kind === "blocked"
     ? { status: "blocked" }
-    : { status: "value", value: first };
+    : { status: "value", value: selected.value };
 };
 
-type ExportTargets =
-  | { readonly kind: "targets"; readonly values: readonly string[] }
+type ExportTargetOutcome =
+  | { readonly kind: "value"; readonly value: string }
+  | { readonly kind: "blocked" }
   | { readonly kind: "unmatched" }
   | { readonly kind: "invalid"; readonly limitation: string }
   | { readonly kind: "invalid-config"; readonly limitation: string };
@@ -688,7 +608,7 @@ type ExportTargets =
 const invalidExportTarget = (
   value: unknown,
   reason: string,
-): ExportTargets => ({
+): ExportTargetOutcome => ({
   kind: "invalid",
   limitation: `The package exports target ${JSON.stringify(value) ?? String(value)} ${reason}.`,
 });
@@ -716,26 +636,26 @@ const forbiddenExportSegment = (value: string): string | undefined =>
  * An array skips unmatched and invalid entries, stops at its first string, and
  * preserves the final invalid-versus-null refusal if no string is selected.
  */
-const exportTargets = (
+const selectExportTarget = (
   value: unknown,
   conditions: ReadonlySet<string>,
-): ExportTargets => {
+): ExportTargetOutcome => {
   if (typeof value === "string") {
     if (!value.startsWith("./"))
       return invalidExportTarget(value, 'must start with "./"');
     const forbidden = forbiddenExportSegment(value);
     return forbidden === undefined
-      ? { kind: "targets", values: [value] }
+      ? { kind: "value", value }
       : invalidExportTarget(
           value,
           `contains forbidden path segment ${JSON.stringify(forbidden)} before URL normalization`,
         );
   }
-  if (value === null) return { kind: "targets", values: [] };
+  if (value === null) return { kind: "blocked" };
   if (Array.isArray(value)) {
     let invalid: string | null = null;
     for (const entry of value) {
-      const nested = exportTargets(entry, conditions);
+      const nested = selectExportTarget(entry, conditions);
       // Node's array fallback catches invalid targets, not invalid configuration.
       if (nested.kind === "invalid-config") return nested;
       if (nested.kind === "invalid") {
@@ -744,10 +664,10 @@ const exportTargets = (
       }
       if (nested.kind === "unmatched") continue;
       invalid = null;
-      if (nested.values.length > 0) return nested;
+      if (nested.kind === "value") return nested;
     }
     return invalid === null
-      ? { kind: "targets", values: [] }
+      ? { kind: "blocked" }
       : { kind: "invalid", limitation: invalid };
   }
   if (typeof value !== "object")
@@ -765,7 +685,7 @@ const exportTargets = (
   }
   for (const [condition, target] of Object.entries(value)) {
     if (!conditions.has(condition)) continue;
-    const nested = exportTargets(target, conditions);
+    const nested = selectExportTarget(target, conditions);
     if (nested.kind !== "unmatched") return nested;
   }
   return { kind: "unmatched" };
@@ -788,20 +708,6 @@ const packageExportConditions = (
     ...(moduleKind === undefined ? [] : [moduleKind]),
     "default",
   ]);
-
-type PackageExportOutcome =
-  | { readonly status: "value"; readonly value: string }
-  | { readonly status: "rejected"; readonly limitation: string }
-  | { readonly status: "unmatched"; readonly declared: readonly string[] };
-
-const packagePathValue = (
-  value: unknown,
-):
-  | { readonly status: "value"; readonly value: string }
-  | { readonly status: "invalid" } =>
-  typeof value === "string" && value.length > 0
-    ? { status: "value", value }
-    : { status: "invalid" };
 
 const notFoundCandidate = (): CandidateResolution => ({
   resolvedPath: null,
@@ -832,29 +738,7 @@ const fileUrlPath = (value: string): string | undefined => {
   }
 };
 
-const outcome = (
-  input: ResolveArtifactPathInput,
-  resolution: CandidateResolution,
-): ArtifactPathResolution =>
-  resolution.status === "resolved"
-    ? {
-        declared_path: input.declaredPath,
-        resolution_context: input.context,
-        resolved_path: resolution.resolvedPath,
-        resolution_status: resolution.status,
-        limitations: resolution.limitations,
-      }
-    : {
-        declared_path: input.declaredPath,
-        resolution_context: input.context,
-        resolved_path: null,
-        resolution_status: resolution.status,
-        limitations: resolution.limitations,
-      };
-
-const unresolvedOutcome = (
-  input: ResolveArtifactPathInput,
+const unresolvedCandidate = (
   status: UnresolvedArtifactPathStatus,
   limitations: readonly string[],
-): ArtifactPathResolution =>
-  outcome(input, { resolvedPath: null, status, limitations });
+): CandidateResolution => ({ resolvedPath: null, status, limitations });
