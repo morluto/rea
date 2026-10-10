@@ -1,10 +1,9 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { FlutterBuildAnalysisPort } from "../../../src/application/flutter/FlutterBuildAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -78,25 +77,10 @@ it("advertises an exact valid Flutter schema and records inline evidence through
   await client.connect(clientTransport);
 
   const { tools } = await client.listTools();
-  expect(tools.map((tool) => tool.name)).toContain("identify_flutter_build");
-  expect(tools.map((tool) => tool.name)).toContain("inspect_dart_aot");
-
-  for (const name of ["identify_flutter_build", "inspect_dart_aot"] as const) {
-    const contract = toolContract(name);
-    const listed = tools.find((tool) => tool.name === name);
-    expect(listed, name).toBeTruthy();
-    const ajv = new Ajv2020({ strict: false, allErrors: true });
-    if (listed?.inputSchema !== undefined) {
-      const validate = ajv.compile(
-        JSON.parse(JSON.stringify(listed.inputSchema)),
-      );
-      for (const example of contract.examples)
-        expect(validate(example.input), `${name} example`).toBe(true);
-      expect(validate({ unknown_argument: true }), `${name} rejects`).toBe(
-        false,
-      );
-    }
-  }
+  assertAdvertisedMcpContracts(
+    ["identify_flutter_build", "inspect_dart_aot"],
+    tools,
+  );
 
   const identified = await client.callTool({
     name: "identify_flutter_build",

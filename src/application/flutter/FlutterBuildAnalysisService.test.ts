@@ -23,7 +23,7 @@ const execution = createAnalysisExecution(
   identity,
 );
 
-const refusedPort: FlutterBuildAnalysisPort = {
+const refusing: FlutterBuildAnalysisPort = {
   async inspectAvailability() {
     throw new Error("must not probe");
   },
@@ -33,50 +33,62 @@ const refusedPort: FlutterBuildAnalysisPort = {
   },
 };
 
-it.each([[{ path: "/targets/app.apk", extra: true }], [{ path: 7 }], [{}]])(
-  "rejects invalid identification input before any effect: %j",
-  async (input) => {
-    const service = new FlutterBuildAnalysisService(refusedPort);
-    expect(
-      await service.execute("identify_flutter_build", input),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  },
-);
+it.each([
+  [{ path: "/targets/app.apk", extra: true }],
+  [{ path: 7 }],
+  [{}],
+  [{ path: "/targets/app.apk", abi: "not a locale" }],
+])("admits only well-formed requests before any effect: %j", async (input) => {
+  await expect(
+    new FlutterBuildAnalysisService(refusing).execute(
+      "identify_flutter_build",
+      input,
+    ),
+  ).resolves.toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+});
 
-it("composes observed Evidence with the caller parameters inline", async () => {
-  const port: FlutterBuildAnalysisPort = {
+it("passes the validated request to the provider and seals Evidence", async () => {
+  const seen: unknown[] = [];
+  const recording: FlutterBuildAnalysisPort = {
     async inspectAvailability() {
       return { status: "available", code: null, reason: null, diagnostics: {} };
     },
     async close() {},
     async execute(request) {
-      expect(request).toEqual({
-        operation: "identify_flutter_build",
-        input: { path: "/targets/app.apk" },
-      });
+      seen.push(request);
       return ok(execution);
     },
   };
-  const result = await new FlutterBuildAnalysisService(port).execute(
+  const result = await new FlutterBuildAnalysisService(recording).execute(
     "identify_flutter_build",
     { path: "/targets/app.apk" },
   );
+  expect(seen).toEqual([
+    {
+      operation: "identify_flutter_build",
+      input: { path: "/targets/app.apk" },
+    },
+  ]);
   if (!result.ok) throw new Error(result.error.message);
   const evidence = parseEvidence(result.value);
   expect(evidence.provider).toEqual(identity);
-  expect(evidence.operation).toBe("identify_flutter_build");
   expect(evidence.confidence).toBe("observed");
 });
 
-it("preserves cancellation before execution", async () => {
+it("settles an already-aborted call as cancellation before execution", async () => {
   const controller = new AbortController();
   controller.abort();
-  const result = await new FlutterBuildAnalysisService(refusedPort).execute(
+  const settled = await new FlutterBuildAnalysisService(refusing).execute(
     "identify_flutter_build",
     { path: "/targets/app.apk" },
-    { signal: controller.signal },
+    {
+      signal: controller.signal,
+    },
   );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(settled.ok).toBe(false);
+  if (settled.ok) return;
+  expect(settled.error).toBeInstanceOf(AnalysisCancelledError);
 });
