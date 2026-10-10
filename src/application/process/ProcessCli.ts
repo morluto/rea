@@ -15,6 +15,7 @@ import { processTraceSpecificationSchema } from "../../domain/process/processTra
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { compareProcessCaptures } from "../../domain/process/processComparison.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
+import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
@@ -55,11 +56,20 @@ export const captureProcessScenarioFile = async (
         input,
         { cause: parsed.error },
       );
+    const progress = createProgressReporter(
+      async (update) => {
+        process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
+      },
+      { minimumIntervalMs: 100 },
+    );
     const captured = await captureProcessScenario(
       parsed.data,
       signal,
       process.platform,
       environment,
+      undefined,
+      undefined,
+      progress,
     );
     if (!captured.ok) return cliAnalysisError(captured.error);
     return createProcessCaptureEvidence(parsed.data, captured.value);

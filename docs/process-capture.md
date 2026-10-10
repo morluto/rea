@@ -51,6 +51,32 @@ format is TOON. The file contains the complete capture Evidence record.
 Choose an output file distinct from the scenario input: shell redirection opens
 and truncates the output before REA reads the scenario.
 
+While the capture runs, REA writes live status to stderr as one JSON object per
+line. Stdout stays the final Evidence document:
+
+```json
+{
+  "rea_progress": {
+    "phase": "running",
+    "completed": 3,
+    "total": null,
+    "message": "elapsed_ms=1200 frames=1 samples=2 interactions=0",
+    "sequence": 4
+  }
+}
+```
+
+`phase` is the observed lifecycle stage: `prepare`, `running`, `settling`, or
+`cleanup`. `completed` counts collected terminal frames, process samples, and
+interaction events. `total` stays null; REA does not invent a unit total or a
+percentage. `message` reports elapsed time and those counts. The final line uses
+`phase` `cleanup`, sets `terminal` to true, and adds `disposition` (`exited`,
+`timeout`, `idle_timeout`, `cancelled`, or `failed`) plus the owned-process,
+renderer, and temporary-root cleanup states. Updates use the shared progress
+boundary and are limited to one intermediate line per 100 ms; the terminal line
+is always emitted. Progress never copies child output. Child output remains in
+the capture Evidence on stdout.
+
 For example:
 
 ```json

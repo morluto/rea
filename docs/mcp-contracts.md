@@ -94,6 +94,12 @@ if retention is unavailable or fails, the diagnostic reports that reason.
 REA accepts ordinary `tools/call` progress tokens. Updates are monotonic,
 rate-bounded to at most one intermediate update per 100 ms, and always allow a
 terminal update. Unknown totals are omitted; REA does not fabricate percentages.
+`capture_process_scenario` uses that boundary only when the client supplies a
+progress token. Notifications set `progress` to the count of collected terminal
+frames, process samples, and interaction events, omit `total`, and put the
+lifecycle phase, elapsed time, and final cleanup status in `message`. A client
+that does not send a progress token receives no progress notifications. The
+tool result is unchanged either way.
 Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
