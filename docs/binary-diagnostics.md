@@ -91,6 +91,12 @@ one-shot invocations pass portable inline Evidence JSON; an MCP session uses
 the retained `evidence_id`. Page `limit` is required and bounded by the
 measured MCP stdio budget documented on the tool contract.
 
+Over MCP, `inspect_binary_layout` with `"detail": "summary"` retains the
+complete layout Evidence in the session and returns only its summary view.
+Its `normalized_result.parent_evidence_id` names the retained layout for later
+section, symbol, mitigation or linkage views. The default `complete` detail and
+CLI output are unchanged.
+
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. The reply budget applies to the decoder
 record; the CLI/MCP Evidence envelope adds copies and encoding overhead. The
@@ -136,3 +142,48 @@ malformed limit reports remain unknown with their read failure preserved. A
 received signal alone does not establish its exact cause. Dynamic tags require
 a complete DT_NULL inside PT_DYNAMIC; interpreter names and ranges end at the
 first NUL, with any padding still represented by the original segment range.
+
+## Portable PE resources
+
+`inspect_pe_resources` / `inspect-pe-resources` inspects an explicit PE32 or
+PE32+ file without an active target, native engine, Python, or Windows SDK:
+
+```sh
+rea inspect-pe-resources ./selected.exe --json
+```
+
+```json
+{
+  "name": "inspect_pe_resources",
+  "arguments": { "path": "/artifacts/selected.exe" }
+}
+```
+
+The complete Evidence identifies the stable artifact snapshot by path, byte
+count and SHA-256. Resources retain separate type, name and language identities:
+numeric IDs are distinct from UTF-16 names, whose original bytes are also
+reported. Directory headers, entries, data entries and payloads retain original
+file offsets and lengths. Each opaque payload has its own SHA-256; code page and
+reserved data-entry fields are preserved.
+
+RT_GROUP_ICON records expose original image descriptors and RT_ICON candidates.
+A reference resolves only when an icon with the same numeric ID and language
+exists. Missing references, other-language candidates and declared-size mismatch
+remain explicit. Encoded dimensions are preserved (zero denotes 256 pixels).
+This is static reference inspection; no image decoding, language fallback,
+resource loading or selected-file execution occurs.
+
+An absent resource data directory is a complete empty inventory. Malformed
+headers, truncated tables, cycles, duplicate sibling identities, unbacked or
+ambiguous RVA mappings, nonidentical overlapping ranges and unsupported tree
+shapes fail explicitly, rather than returning partial inventories. Exact shared
+payload ranges are supported. The supported tree has three levels: type, name,
+and language. Other resource payload formats remain opaque.
+
+`max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_entries` defaults to
+4096 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
+Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Large Evidence envelopes may require a caller-configured MCP transport receive
+buffer because envelope copies add overhead. Requests honor cancellation during
+snapshot reading, directory traversal and payload hashing. The operation reads
+regular files only and rejects symbolic links.

@@ -55,6 +55,10 @@ const SOURCE_PATHS = {
   androidProvider: "dist/android/JadxRelease.js",
   apktoolContracts: "dist/contracts/apktool/apktoolToolContracts.js",
   apktoolProvider: "dist/apktool/ApktoolProvider.js",
+  jebContracts: "dist/contracts/jeb/jebToolContracts.js",
+  jebProvider: "dist/jeb/JebProvider.js",
+  adbContracts: "dist/contracts/adb/adbToolContracts.js",
+  adbProvider: "dist/adb/AdbProvider.js",
   managedWorkflowContracts:
     "dist/contracts/managed/managedWorkflowToolContracts.js",
   browserContracts: "dist/contracts/browserToolContracts.js",

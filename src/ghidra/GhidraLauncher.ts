@@ -134,6 +134,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       if (isAborted(options.signal))
         return err(new AnalysisCancelledError("open_binary"));
       const headlessArguments = ghidraHeadlessArguments({
+        platform,
         projectRoot: paths.projectRoot,
         targetPath: session.targetPath,
         bridgeScriptPath: this.options.bridgeScriptPath,
@@ -358,6 +359,7 @@ const cleanupStartedProcess = (
 
 /** Paths encoded into one bounded analyzeHeadless invocation. */
 export interface GhidraHeadlessArgumentOptions {
+  readonly platform?: NodeJS.Platform;
   readonly projectRoot: string;
   readonly targetPath: string;
   readonly bridgeScriptPath: string;
@@ -411,6 +413,12 @@ export const ghidraHeadlessArguments = (
         join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
       ]
     : []),
+  ...((options.platform ?? process.platform) === "win32"
+    ? []
+    : [
+        "-postScript",
+        join(dirname(options.bridgeScriptPath), "ReaGhidraNoReturnFix.java"),
+      ]),
   "-postScript",
   // Ghidra checks the caller's cwd before scriptPath for a basename. Select
   // the packaged source explicitly so unrelated entries cannot shadow it.

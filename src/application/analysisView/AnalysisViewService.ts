@@ -3,7 +3,9 @@ import { z } from "zod";
 import { ANALYSIS_VIEW_PROVIDER } from "../InvestigationProviders.js";
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import { resolveEvidenceInput } from "../EvidenceInputResolver.js";
+import type { EvidenceWriter } from "../investigation/InvestigationRecordPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
@@ -74,6 +76,47 @@ export const inspectAnalysisViewValidated = (
       ),
     );
   return ok(createAnalysisViewEvidence(input, parent, projected.value));
+};
+
+/** Session Evidence ownership required to deliver a view instead of a complete record. */
+export interface AnalysisViewRetention {
+  readonly evidenceById: EvidenceLookup | undefined;
+  readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+}
+
+/**
+ * Retain complete analysis Evidence in the session, then project its summary
+ * view from the retained record. Callers page or select the rest through
+ * inspect_analysis_view with the view's parent Evidence ID.
+ */
+export const summarizeRetainedAnalysis = (
+  evidence: Evidence,
+  retention: AnalysisViewRetention,
+): Result<Evidence, AnalysisError> => {
+  if (
+    retention.recordEvidence === undefined ||
+    retention.evidenceById === undefined
+  )
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        ANALYSIS_VIEW_PROVIDER.id,
+        evidence.operation,
+        "summary detail requires a server session that retains Evidence for later views",
+        {
+          userMessage:
+            "This server does not retain Evidence. Select detail complete to receive the complete analysis inline.",
+        },
+      ),
+    );
+  const recorded = retention.recordEvidence(evidence);
+  if (!recorded.ok) return recorded;
+  return inspectAnalysisViewValidated(
+    {
+      source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+      view: { kind: "summary" },
+    },
+    retention.evidenceById,
+  );
 };
 
 const resolveAnalysisViewSource = (

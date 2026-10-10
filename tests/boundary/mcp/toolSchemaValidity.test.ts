@@ -4,6 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
+import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
@@ -353,8 +354,9 @@ describe("MCP JSON Schema validity", () => {
         const tool = byName.get(contract.name);
         expect(tool?.title?.trim(), contract.name).toBeTruthy();
         expect(tool?.description?.trim(), contract.name).toBeTruthy();
+        const examples = advertisedInputExamples(contract);
         expect(tool?.inputSchema.examples, contract.name).toEqual(
-          contract.examples.map(({ input }) => input),
+          examples.length === 0 ? undefined : examples,
         );
         for (const example of contract.examples)
           expect(

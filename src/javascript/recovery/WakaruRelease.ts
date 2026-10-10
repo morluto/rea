@@ -1,11 +1,19 @@
 /** Unchanged upstream source pin; executed bytes are identified separately. */
 export const WAKARU_RELEASE = {
-  version: "1.13.0",
-  revision: "6070266d24b32951fa2fe1d2dad5b4313bd5c81b",
+  version: "1.14.0",
+  revision: "8219bf5016a063d7fb215101a8c45d5959ec733f",
   repository: "https://github.com/pionxzh/wakaru",
 } as const;
 
-/** Exact provider identity shared by executions and the generated catalog. */
+/**
+ * Releases the report parser accepts. Wakaru changes `--version`, `--json`
+ * and `provenance.json` only by addition within a major version
+ * (https://github.com/pionxzh/wakaru/blob/v1.14.0/docs/cli.md#machine-readable-output-compatibility);
+ * 1.13.0 is the first release this adapter verified.
+ */
+export const WAKARU_ACCEPTED_RANGE = "^1.13.0";
+
+/** Catalog identity for the verified Wakaru release. Evidence replaces version with the observed banner. */
 export const WAKARU_PROVIDER_IDENTITY = {
   id: "wakaru",
   name: "Wakaru",

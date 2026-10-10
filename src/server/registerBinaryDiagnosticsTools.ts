@@ -1,6 +1,8 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
+import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
@@ -13,15 +15,24 @@ export const registerBinaryDiagnosticsTools = (
   service: BinaryLayoutService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  evidenceById?: EvidenceLookup,
 ): void => {
   const contract = toolContract("inspect_binary_layout");
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input, context) => {
-      const result = await logToolExecution(logger, contract.name, () =>
-        service.inspect(input, { signal: context.mcpReq.signal }),
-      );
+    async ({ detail, ...request }, context) => {
+      const result = await logToolExecution(logger, contract.name, async () => {
+        const inspected = await service.inspect(request, {
+          signal: context.mcpReq.signal,
+        });
+        return detail === "summary" && inspected.ok
+          ? summarizeRetainedAnalysis(inspected.value, {
+              recordEvidence,
+              evidenceById,
+            })
+          : inspected;
+      });
       if (!result.ok) return server.delivery.toCallToolResult(result, contract);
       const recorded = recordEvidence?.(result.value);
       return server.delivery.toEvidenceToolResult(

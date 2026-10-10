@@ -53,6 +53,16 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
     },
     {
+      id: "jeb",
+      surface: "jeb-provider",
+      contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
+    },
+    {
+      id: "adb",
+      surface: "adb-provider",
+      contracts: sources.adbContracts.ADB_TOOL_CONTRACTS,
+    },
+    {
       id: "browser",
       surface: "browser-provider",
       contracts: [
@@ -158,7 +168,16 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
-        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name !== "inspect_pe_resources",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_RESOURCES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_resources",
+        ),
     },
     {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
@@ -196,6 +215,14 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.apktoolProvider.APKTOOL_PROVIDER_IDENTITY,
       contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.jebProvider.JEB_PROVIDER_IDENTITY,
+      contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.adbProvider.ADB_PROVIDER_IDENTITY,
+      contracts: sources.adbContracts.ADB_TOOL_CONTRACTS,
     },
     {
       identity: sources.webNetworkCaptureProvider.HAR_CAPTURE_PROVIDER_IDENTITY,

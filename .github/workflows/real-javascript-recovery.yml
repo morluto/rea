@@ -56,9 +56,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/rea-wakaru"
-          curl --fail --location --retry 3 https://github.com/pionxzh/wakaru/releases/download/v1.13.0/wakaru-linux-x64.tar.gz -o "$RUNNER_TEMP/rea-wakaru/release.tar.gz"
+          curl --fail --location --retry 3 https://github.com/pionxzh/wakaru/releases/download/v1.14.0/wakaru-linux-x64.tar.gz -o "$RUNNER_TEMP/rea-wakaru/release.tar.gz"
           tar -xzf "$RUNNER_TEMP/rea-wakaru/release.tar.gz" -C "$RUNNER_TEMP/rea-wakaru" wakaru
-          printf '%s  %s\n' e8c7ca052974604197389f6ace7464e4dd24dce64e2730971521bd6606ec9c9e "$RUNNER_TEMP/rea-wakaru/wakaru" | sha256sum --check
+          printf '%s  %s\n' 664fa06782a61eda7ed15885134b52525fd565dd77607e642062ceb6cd927c38 "$RUNNER_TEMP/rea-wakaru/wakaru" | sha256sum --check
       - name: Install isolated fixture compilers
         run: npm install --prefix "$RUNNER_TEMP/rea-fixture-compilers" --ignore-scripts --no-audit --no-fund esbuild@0.25.10 webpack@5.101.3
       - run: npm run build:cached

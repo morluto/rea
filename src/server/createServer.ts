@@ -1,4 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { createEvmInterfaceService } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -63,12 +65,20 @@ import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnaly
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
 import { registerApktoolTools } from "./registerApktoolTools.js";
+import { registerJebTools } from "./registerJebTools.js";
+import { registerAdbTools } from "./registerAdbTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
 import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
+import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import { createJebAnalysisProvider } from "../composition/jeb.js";
+import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
+import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
@@ -104,6 +114,8 @@ export interface CreateServerOptions {
   readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
   readonly apktoolAnalysis?: ApktoolResourceAnalysisPort;
+  readonly jebAnalysis?: JebAnalysisPort;
+  readonly adbDeviceAnalysis?: AdbDeviceAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
@@ -205,6 +217,9 @@ export const createServer = (
   const apktool =
     options.apktoolAnalysis ??
     createApktoolResourceAnalysisProvider(environment);
+  const jeb = options.jebAnalysis ?? createJebAnalysisProvider(environment);
+  const adbDevice =
+    options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment);
   const availability = installSessionToolAvailability(
     session,
     selectedOptions,
@@ -239,14 +254,37 @@ export const createServer = (
         "Android provider cleanup failed",
       );
     });
+    void apktool.close().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Apktool provider cleanup failed",
+      );
+    });
+    void jeb.close().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "JEB provider cleanup failed",
+      );
+    });
   };
   const closeServer = server.close.bind(server);
   server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), android.close()]);
+    const results = await Promise.allSettled([
+      closeServer(),
+      android.close(),
+      apktool.close(),
+      jeb.close(),
+    ]);
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
   };
-  registerConfiguredAnalysisTools(toolContext, android);
+  registerConfiguredAnalysisTools(toolContext, android, jeb);
+  registerAdbTools(
+    server,
+    new AdbDeviceAnalysisService(adbDevice),
+    toolLogger,
+    recordEvidence,
+  );
   registerApktoolTools(
     server,
     new ApktoolResourceAnalysisService(apktool),
@@ -303,10 +341,17 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
   }: ServerToolContext,
   android: AndroidAnalysisPort,
+  jeb: JebAnalysisPort,
 ): void => {
   registerAndroidTools(
     server,
     new AndroidAnalysisService(android),
+    toolLogger,
+    recordEvidence,
+  );
+  registerJebTools(
+    server,
+    new JebAnalysisService(jeb),
     toolLogger,
     recordEvidence,
   );
@@ -315,8 +360,15 @@ const registerConfiguredAnalysisTools = (
     options.binaryLayout ?? createBinaryLayoutService(environment),
     toolLogger,
     recordEvidence,
+    evidenceById,
   );
   registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
+  registerPeResourcesTool(
+    server,
+    createPeResourcesService(),
+    toolLogger,
+    recordEvidence,
+  );
   registerEvmTools(
     server,
     options.evmInterface ?? createEvmInterfaceService(environment),
@@ -482,6 +534,7 @@ const registerObservationTools = ({
   });
   registerElectronTools(server, {
     ...common,
+    evidenceById,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,
     observationLoadFailure:
