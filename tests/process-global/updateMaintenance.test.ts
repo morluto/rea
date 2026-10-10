@@ -148,6 +148,7 @@ describe("existing REA integration maintenance", () => {
     ).resolves.toEqual({
       clients: ["codex", "vscode"],
       skill: false,
+      skillDestinations: [],
     });
   });
 
@@ -157,6 +158,7 @@ describe("existing REA integration maintenance", () => {
     ).resolves.toEqual({
       clients: [],
       skill: false,
+      skillDestinations: [],
     });
     await writeSkill("---\nname: another-skill\n---\nUser-authored content\n");
     await expect(
@@ -164,6 +166,7 @@ describe("existing REA integration maintenance", () => {
     ).resolves.toEqual({
       clients: [],
       skill: false,
+      skillDestinations: [],
     });
   });
 
@@ -177,6 +180,12 @@ describe("existing REA integration maintenance", () => {
     ).resolves.toEqual({
       clients: [],
       skill: true,
+      skillDestinations: [
+        {
+          client: "shared",
+          path: join(home, ".agents", "skills", PRODUCT_IDENTITY.skillName),
+        },
+      ],
     });
     expect(await readFile(path, "utf8")).toBe(original);
   });
@@ -224,7 +233,7 @@ describe("existing REA integration maintenance", () => {
     ]);
     expect(result).toEqual({
       status: "planned",
-      scope: { clients: ["codex"], skill: false },
+      scope: { clients: ["codex"], skill: false, skillDestinations: [] },
       command: recorded[0]?.slice(0, -2),
       plannedActions: [action],
     });

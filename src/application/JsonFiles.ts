@@ -16,8 +16,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { parseUtf8Json } from "./Utf8JsonInput.js";
-import { readRegularFile } from "./RegularFileRead.js";
+import { readJsonInputFile } from "./JsonInputFile.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
@@ -37,12 +36,20 @@ export const readJsonFile = async (
 > => {
   const requestedPath = resolve(path);
   try {
-    const encoded = await readRegularFile(requestedPath);
-    const decoded = parseUtf8Json(encoded, "read_evidence_file", requestedPath);
+    const decoded = await readJsonInputFile(
+      requestedPath,
+      "read_evidence_file",
+    );
     if (!decoded.ok) {
+      if (decoded.error instanceof AnalysisResourceConstraintError)
+        return err(decoded.error);
       return err(
         new EvidenceFileError("read", "invalid-json", {
-          cause: decoded.cause ?? new SyntaxError(decoded.error),
+          cause:
+            decoded.error.cause ??
+            new SyntaxError(
+              decoded.error.issues[0]?.message ?? decoded.error.message,
+            ),
           path: requestedPath,
         }),
       );

@@ -14,7 +14,7 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
@@ -22,6 +22,7 @@ import { PRODUCT_IDENTITY } from "../identity.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { MCP_STARTUP_POLICY } from "../mcpStartupPolicy.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 import type {
   ClientConfigurationInspection,
   ClientConfigurationResult,
@@ -64,7 +65,7 @@ const configureClientDocument = async (
     return { status: "failed", reason: "path" };
   let original: string | undefined;
   try {
-    original = await readFile(transactionPath, "utf8");
+    original = await readRegularFileText(transactionPath);
   } catch (cause: unknown) {
     if (!isMissing(cause)) return { status: "failed", reason: "readback" };
   }
@@ -149,7 +150,7 @@ const configureClientDocument = async (
   }
   try {
     const readback = parseClientConfiguration(
-      await readFile(transactionPath, "utf8"),
+      await readRegularFileText(transactionPath),
       format,
     );
     if (!registrationCurrent(readback, desired)) {
@@ -178,7 +179,7 @@ export const clientConfigurationAligned = async (
   try {
     const files = await readClientConfigurationFiles(client);
     if (!files.ok) return false;
-    const original = await readFile(client.configPath, "utf8");
+    const original = await readRegularFileText(client.configPath);
     const parsed = parseClientConfiguration(original, client.format);
     const policy = await readClientPolicyBlock(
       client,
@@ -246,7 +247,7 @@ export const inspectClientConfiguration = async (
     };
   let original: string;
   try {
-    original = await readFile(transactionPath, "utf8");
+    original = await readRegularFileText(transactionPath);
   } catch (cause: unknown) {
     if (isMissing(cause)) return { status: "create" };
     return {

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { readCliJsonFile } from "./cliJsonFile.js";
+import { readJsonInputFile } from "./application/JsonInputFile.js";
 import { NonRegularFileReadError } from "./filesystem/RegularFile.js";
 import {
   AnalysisAccessDeniedError,
@@ -21,7 +21,7 @@ export const parseCliJsonInput = async (
   const inline = safeParseJson(value);
   if (inline.ok) return { ok: true, value: inline.value };
   try {
-    const parsed = await readCliJsonFile(value, operation);
+    const parsed = await readJsonInputFile(value, operation);
     return parsed.ok
       ? { ok: true, value: parsed.value }
       : {

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { createReadStream, constants as fsConstants } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import { access, lstat, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
@@ -24,8 +24,11 @@ import {
   AnalysisTimeoutError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { hashStableFile } from "../filesystem/StableFileHash.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -97,11 +100,18 @@ const STDERR_EXCERPT_BYTES = 512;
 const UNPARSED_LINES_REPORTED = 10;
 const STOP_GRACE_MS = 5_000;
 
-/** Stream a local file digest without retaining large files in memory. */
-const sha256File = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+const hashAdbFile = async (
+  path: string,
+  operation: string,
+  signal: AbortSignal | undefined,
+) => {
+  try {
+    return await hashStableFile(path, signal);
+  } catch (cause: unknown) {
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError(operation, { cause });
+    throw cause;
+  }
 };
 
 /** adb joins shell operands into a remote POSIX command; quote at that boundary. */
@@ -335,6 +345,48 @@ export interface AdbProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
 }
 
+interface PendingPackageDirectoryCleanup {
+  readonly path: string;
+  readonly identity: PackageDirectoryIdentity | undefined;
+  readonly primary: AnalysisError;
+  readonly remove: () => Promise<void>;
+}
+
+interface PackageDirectoryIdentity {
+  readonly dev: number;
+  readonly ino: number;
+  readonly mode: number;
+}
+
+const removeOwnedPackageDirectory = async (
+  path: string,
+  identity: PackageDirectoryIdentity | undefined,
+): Promise<void> => {
+  if (identity === undefined)
+    throw new Error(
+      `Cannot verify the created package directory identity; refusing to remove ${path}`,
+    );
+  let current: Awaited<ReturnType<typeof lstat>>;
+  try {
+    current = await lstat(path);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && Reflect.get(cause, "code") === "ENOENT")
+      return;
+    throw cause;
+  }
+  if (
+    !current.isDirectory() ||
+    current.isSymbolicLink() ||
+    current.dev !== identity.dev ||
+    current.ino !== identity.ino ||
+    current.mode !== identity.mode
+  )
+    throw new Error(
+      `The created package directory was replaced or changed; refusing to remove ${path}`,
+    );
+  await rm(path, { recursive: true, force: true });
+};
+
 /**
  * ADB device inspection and acquisition over a caller-selected adb binary.
  *
@@ -346,6 +398,12 @@ export interface AdbProviderOptions {
  */
 export class AdbProvider {
   private readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly #pendingPackageDirectoryCleanup =
+    new Set<PendingPackageDirectoryCleanup>();
+  readonly #activeOperations = new Set<Promise<void>>();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  #packageCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
     this.environment = options.environment ?? process.env;
@@ -378,10 +436,119 @@ export class AdbProvider {
     }
   }
 
-  /** The provider holds no long-lived resources; the adb server is caller-owned. */
-  async close(): Promise<void> {}
+  /** Retry removal of package directories retained after failed rollback. */
+  close(): Promise<void> {
+    this.#closing = true;
+    if (this.#closePromise !== undefined) return this.#closePromise;
+    const closing = (async () => {
+      await Promise.all(this.#activeOperations);
+      await this.#retryPackageDirectoryCleanup();
+    })().finally(() => {
+      if (this.#closePromise === closing) this.#closePromise = undefined;
+    });
+    this.#closePromise = closing;
+    return this.#closePromise;
+  }
+
+  #retryPackageDirectoryCleanup(): Promise<void> {
+    if (this.#packageCleanupPromise !== undefined)
+      return this.#packageCleanupPromise;
+    const cleanup = this.#performPackageDirectoryCleanup().finally(() => {
+      if (this.#packageCleanupPromise === cleanup)
+        this.#packageCleanupPromise = undefined;
+    });
+    this.#packageCleanupPromise = cleanup;
+    return cleanup;
+  }
+
+  async #performPackageDirectoryCleanup(): Promise<void> {
+    const failures: AnalysisError[] = [];
+    for (const owner of this.#pendingPackageDirectoryCleanup) {
+      try {
+        await owner.remove();
+        this.#pendingPackageDirectoryCleanup.delete(owner);
+      } catch (cause: unknown) {
+        const cleanup = new ProviderCleanupError(
+          ADB_PROVIDER_IDENTITY.id,
+          [owner.path],
+          {
+            reason: cause instanceof Error ? cause.message : String(cause),
+          },
+          { operation: "pull_adb_package", cause },
+        );
+        failures.push(
+          analysisErrorWithCleanupFailure(
+            owner.primary,
+            cleanup,
+            "pull_adb_package",
+          ),
+        );
+      }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new ProviderCleanupError(
+        ADB_PROVIDER_IDENTITY.id,
+        [...this.#pendingPackageDirectoryCleanup].map(({ path }) => path),
+        {
+          reason:
+            "Failed package output directories remain after cleanup retry",
+          failures: failures.map(({ message, cleanupResources }) => ({
+            message,
+            resources: [...cleanupResources],
+          })),
+        },
+        {
+          operation: "pull_adb_package",
+          cause: new AggregateError(
+            failures,
+            "Multiple ADB package rollback cleanups failed",
+          ),
+        },
+      );
+  }
 
   async execute(
+    request: AdbRequest,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#closing)
+      return err(new AnalysisCancelledError(request.operation));
+    let release!: () => void;
+    const active = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#activeOperations.add(active);
+    try {
+      if (this.#pendingPackageDirectoryCleanup.size > 0) {
+        try {
+          await this.#retryPackageDirectoryCleanup();
+        } catch (cause: unknown) {
+          return err(
+            cause instanceof AnalysisError
+              ? cause
+              : new ProviderCleanupError(
+                  ADB_PROVIDER_IDENTITY.id,
+                  [...this.#pendingPackageDirectoryCleanup].map(
+                    ({ path }) => path,
+                  ),
+                  {
+                    reason:
+                      cause instanceof Error ? cause.message : String(cause),
+                  },
+                  { operation: request.operation, cause },
+                ),
+          );
+        }
+      }
+      return await this.#executeOperation(request, options);
+    } finally {
+      this.#activeOperations.delete(active);
+      release();
+    }
+  }
+
+  async #executeOperation(
     request: AdbRequest,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -1010,9 +1177,11 @@ export class AdbProvider {
     );
     if (!directory.ok) return directory;
     const packageDirectory = join(directory.value, packageName);
+    let packageDirectoryCreated = false;
+    let packageDirectoryIdentity: PackageDirectoryIdentity | undefined;
     try {
       if (
-        await stat(packageDirectory).then(
+        await lstat(packageDirectory).then(
           () => true,
           () => false,
         )
@@ -1021,14 +1190,44 @@ export class AdbProvider {
           `The package output directory already exists: ${packageDirectory}`,
         );
       await mkdir(packageDirectory);
+      packageDirectoryCreated = true;
+      const created = await lstat(packageDirectory);
+      if (!created.isDirectory() || created.isSymbolicLink())
+        throw new Error(
+          `The created package output is not a regular directory: ${packageDirectory}`,
+        );
+      packageDirectoryIdentity = {
+        dev: created.dev,
+        ino: created.ino,
+        mode: created.mode,
+      };
     } catch (cause) {
-      return err(
-        new AnalysisOutputError(
-          operation,
-          cause instanceof Error ? cause.message : String(cause),
-          { cause },
-        ),
+      const primary = new AnalysisOutputError(
+        operation,
+        cause instanceof Error ? cause.message : String(cause),
+        { cause },
       );
+      if (!packageDirectoryCreated) return err(primary);
+      const owner: PendingPackageDirectoryCleanup = {
+        path: packageDirectory,
+        identity: packageDirectoryIdentity,
+        primary,
+        remove: () =>
+          removeOwnedPackageDirectory(
+            packageDirectory,
+            packageDirectoryIdentity,
+          ),
+      };
+      this.#pendingPackageDirectoryCleanup.add(owner);
+      const cleanup = new ProviderCleanupError(
+        ADB_PROVIDER_IDENTITY.id,
+        [packageDirectory],
+        {
+          reason: "Could not establish an owned package directory identity",
+        },
+        { operation, cause },
+      );
+      return err(analysisErrorWithCleanupFailure(primary, cleanup, operation));
     }
     const artifacts: {
       device_path: string;
@@ -1044,6 +1243,37 @@ export class AdbProvider {
       stage: "resolve_paths" | "pull" | "digest";
       message: string;
     }[] = [];
+    const cancelledPackagePull = (
+      error: AnalysisCancelledError,
+      localPath: string,
+      devicePath: string,
+      stage: "pull" | "digest",
+    ) => {
+      error.retainPartialObservation({
+        provider_id: "adb",
+        operation,
+        result: {
+          client,
+          serial,
+          package_name: packageName,
+          output_directory: directory.value,
+          artifacts,
+          failures: [
+            ...failures,
+            {
+              device_path: devicePath,
+              stage,
+              message:
+                stage === "pull"
+                  ? `Pull cancelled; any incomplete file is retained at ${localPath}. Remaining APKs were not attempted.`
+                  : `Digesting the pulled file was cancelled; the file is retained at ${localPath}. Remaining APKs were not attempted.`,
+            },
+          ],
+          coverage: "partial",
+        },
+      });
+      return err(error);
+    };
     const seenFileNames = new Set<string>();
     for (const entry of parsed.paths) {
       if (seenFileNames.has(entry.file_name)) {
@@ -1065,7 +1295,13 @@ export class AdbProvider {
         signal,
       );
       if (!pulled.ok) {
-        if (pulled.error instanceof AnalysisCancelledError) return pulled;
+        if (pulled.error instanceof AnalysisCancelledError)
+          return cancelledPackagePull(
+            pulled.error,
+            localPath,
+            entry.device_path,
+            "pull",
+          );
         failures.push({
           device_path: entry.device_path,
           stage: "pull",
@@ -1074,18 +1310,24 @@ export class AdbProvider {
         continue;
       }
       try {
-        const info = await stat(localPath);
-        const sha256 = await sha256File(localPath);
+        const digest = await hashAdbFile(localPath, operation, signal);
         artifacts.push({
           device_path: entry.device_path,
           file_name: entry.file_name,
           local_path: localPath,
-          bytes: info.size,
-          sha256,
+          bytes: digest.bytes,
+          sha256: digest.sha256,
           role: entry.role,
           role_basis: "file_name",
         });
-      } catch {
+      } catch (cause: unknown) {
+        if (cause instanceof AnalysisCancelledError)
+          return cancelledPackagePull(
+            cause,
+            localPath,
+            entry.device_path,
+            "digest",
+          );
         failures.push({
           device_path: entry.device_path,
           stage: "digest",
@@ -1094,14 +1336,36 @@ export class AdbProvider {
       }
     }
     if (artifacts.length === 0 && failures.length > 0) {
-      await rm(packageDirectory, { recursive: true, force: true }).catch(
-        () => undefined,
+      const primary = new AnalysisProtocolError(
+        `Every APK pull failed for ${packageName} on ${serial}: ${failures[0]!.message}`,
       );
-      return err(
-        new AnalysisProtocolError(
-          `Every APK pull failed for ${packageName} on ${serial}: ${failures[0]!.message}`,
-        ),
-      );
+      const owner: PendingPackageDirectoryCleanup = {
+        path: packageDirectory,
+        identity: packageDirectoryIdentity,
+        primary,
+        remove: () =>
+          removeOwnedPackageDirectory(
+            packageDirectory,
+            packageDirectoryIdentity,
+          ),
+      };
+      try {
+        await owner.remove();
+      } catch (cause: unknown) {
+        this.#pendingPackageDirectoryCleanup.add(owner);
+        const cleanup = new ProviderCleanupError(
+          ADB_PROVIDER_IDENTITY.id,
+          [packageDirectory],
+          {
+            reason: cause instanceof Error ? cause.message : String(cause),
+          },
+          { operation: operation, cause },
+        );
+        return err(
+          analysisErrorWithCleanupFailure(primary, cleanup, operation),
+        );
+      }
+      return err(primary);
     }
     return ok(
       createAnalysisExecution(
@@ -1156,8 +1420,7 @@ export class AdbProvider {
     );
     if (!pulled.ok) return pulled;
     try {
-      const info = await stat(localPath);
-      const sha256 = await sha256File(localPath);
+      const digest = await hashAdbFile(localPath, operation, signal);
       return ok(
         createAnalysisExecution(
           {
@@ -1165,8 +1428,8 @@ export class AdbProvider {
             serial: input.serial,
             device_path: input.device_path,
             local_path: localPath,
-            bytes: info.size,
-            sha256,
+            bytes: digest.bytes,
+            sha256: digest.sha256,
           },
           provider,
           {
@@ -1177,6 +1440,20 @@ export class AdbProvider {
         ),
       );
     } catch (cause) {
+      if (cause instanceof AnalysisCancelledError) {
+        cause.retainPartialObservation({
+          provider_id: "adb",
+          operation,
+          result: {
+            client,
+            serial: input.serial,
+            local_path: localPath,
+            device_path: input.device_path,
+            digest_status: "unknown",
+          },
+        });
+        return err(cause);
+      }
       return err(
         new AnalysisOutputError(
           operation,
@@ -1211,7 +1488,13 @@ export class AdbProvider {
           cause: new Error(`The local file does not exist: ${localPath}`),
         }),
       );
-    const sha256 = await sha256File(localPath);
+    let digest: Awaited<ReturnType<typeof hashAdbFile>>;
+    try {
+      digest = await hashAdbFile(localPath, operation, signal);
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisCancelledError) return err(cause);
+      throw cause;
+    }
     const existsProbe = await runAdb(
       operation,
       input.device_path,
@@ -1257,7 +1540,7 @@ export class AdbProvider {
     );
     if (deviceDigest.ok) {
       const digestMatch = /^([a-f0-9]{64})\s/u.exec(deviceDigest.value.stdout);
-      if (digestMatch !== null && digestMatch[1] !== sha256)
+      if (digestMatch !== null && digestMatch[1] !== digest.sha256)
         return err(
           new AnalysisArtifactChangedError(
             operation,
@@ -1272,8 +1555,8 @@ export class AdbProvider {
             serial: input.serial,
             local_path: localPath,
             device_path: input.device_path,
-            bytes: info.size,
-            sha256,
+            bytes: digest.bytes,
+            sha256: digest.sha256,
             device_sha256: digestMatch?.[1] ?? null,
             overwritten: deviceExists,
             device_digest_source: "device_sha256sum",
@@ -1294,8 +1577,8 @@ export class AdbProvider {
           serial: input.serial,
           local_path: localPath,
           device_path: input.device_path,
-          bytes: info.size,
-          sha256,
+          bytes: digest.bytes,
+          sha256: digest.sha256,
           device_sha256: null,
           overwritten: deviceExists,
           device_digest_source: "unavailable",
@@ -1334,7 +1617,13 @@ export class AdbProvider {
           cause: new Error(`The local APK does not exist: ${apkPath}`),
         }),
       );
-    const sha256 = await sha256File(apkPath);
+    let digest: Awaited<ReturnType<typeof hashAdbFile>>;
+    try {
+      digest = await hashAdbFile(apkPath, operation, signal);
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisCancelledError) return err(cause);
+      throw cause;
+    }
     const installed = await runAdb(
       operation,
       input.serial,
@@ -1363,8 +1652,8 @@ export class AdbProvider {
           client,
           serial: input.serial,
           apk_path: apkPath,
-          bytes: info.size,
-          sha256,
+          bytes: digest.bytes,
+          sha256: digest.sha256,
           replaced: input.replace,
         },
         provider,
@@ -1734,16 +2023,15 @@ export class AdbProvider {
         ),
       );
     try {
-      const info = await stat(reportedPath);
-      const sha256 = await sha256File(reportedPath);
+      const digest = await hashAdbFile(reportedPath, operation, signal);
       return ok(
         createAnalysisExecution(
           {
             client,
             serial: input.serial,
             local_path: reportedPath,
-            bytes: info.size,
-            sha256,
+            bytes: digest.bytes,
+            sha256: digest.sha256,
             adb_reported_path: reportedPath,
           },
           provider,
@@ -1755,6 +2043,20 @@ export class AdbProvider {
         ),
       );
     } catch (cause) {
+      if (cause instanceof AnalysisCancelledError) {
+        cause.retainPartialObservation({
+          provider_id: "adb",
+          operation,
+          result: {
+            client,
+            serial: input.serial,
+            local_path: reportedPath,
+            adb_reported_path: reportedPath,
+            digest_status: "unknown",
+          },
+        });
+        return err(cause);
+      }
       return err(
         new AnalysisOutputError(
           operation,

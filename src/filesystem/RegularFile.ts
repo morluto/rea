@@ -16,6 +16,15 @@ export class NonRegularFileReadError extends Error {
   }
 }
 
+/** A regular input no longer matches the extent or identity admitted for reading. */
+export class RegularFileChangedError extends Error {
+  readonly code = "ESTALE";
+  constructor(readonly path: string) {
+    super(`Selected input changed while being read: ${path}`);
+    this.name = "RegularFileChangedError";
+  }
+}
+
 /** One admitted file descriptor and the metadata that identified its contents. */
 export interface StableRegularFileDescriptor {
   readonly handle: FileHandle;

@@ -24,7 +24,7 @@ interface RootClassification {
 }
 
 type RootInventoryClassification = RootClassification & {
-  readonly zipSource: StableRegularFileDescriptor | undefined;
+  readonly rootSource: StableRegularFileDescriptor | undefined;
 };
 
 /** Classify and hash one file root through the same stable open descriptor. */
@@ -43,7 +43,7 @@ export const classifyAndHashRoot = async (
   try {
     return { format: result.format, digest: result.digest };
   } finally {
-    await result.zipSource?.handle.close();
+    await result.rootSource?.handle.close();
   }
 };
 
@@ -55,7 +55,7 @@ export const classifyAndHashRootForInventory = async (
   signal?: AbortSignal,
 ): Promise<RootInventoryClassification> => {
   if (directory)
-    return { format: "directory", digest: null, zipSource: undefined };
+    return { format: "directory", digest: null, rootSource: undefined };
   const handle = await openRootFile(path, signal);
   let transferHandle = false;
   try {
@@ -72,12 +72,12 @@ export const classifyAndHashRootForInventory = async (
       initial,
       signal,
     );
-    const zipSource = isZipFormat(format);
-    if (zipSource) transferHandle = true;
+    const retainSource = isZipFormat(format) || format === "mach-o-universal";
+    if (retainSource) transferHandle = true;
     return {
       format,
       digest,
-      zipSource: zipSource ? { handle, initial } : undefined,
+      rootSource: retainSource ? { handle, initial } : undefined,
     };
   } finally {
     if (!transferHandle) await handle.close();

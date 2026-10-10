@@ -1,7 +1,8 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import ignore from "ignore";
+import { readRegularFileText } from "./RegularFileRead.js";
 
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -47,14 +48,27 @@ const resolveRoot = async (
 const buildIgnored = async (
   root: string,
   excludePaths: readonly string[],
+  signal?: AbortSignal,
 ): Promise<ReturnType<typeof ignore>> => {
   const ignored = ignore();
+  const policyPath = join(root, ".gitignore");
+  let present = true;
   try {
-    ignored.add(await readFile(join(root, ".gitignore"), "utf8"));
+    await lstat(policyPath);
   } catch (cause: unknown) {
-    // Missing or unreadable ignore file does not authorize broader access.
-    void cause;
+    if (
+      !(
+        typeof cause === "object" &&
+        cause !== null &&
+        "code" in cause &&
+        cause.code === "ENOENT"
+      )
+    )
+      throw cause;
+    present = false;
   }
+  signal?.throwIfAborted();
+  if (present) ignored.add(await readRegularFileText(policyPath, { signal }));
   ignored.add([...DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS]);
   for (const path of excludePaths) {
     ignored.add(path);
@@ -71,9 +85,22 @@ export const prepareReferenceSourceImport = async (
 > => {
   const root = await resolveRoot(options.root);
   if (!root.ok) return root;
-  return ok({
-    root: root.value,
-    ignored: await buildIgnored(root.value, options.excludePaths ?? []),
-    secrets: ignore().add([...options.policy.secretPatterns]),
-  });
+  try {
+    return ok({
+      root: root.value,
+      ignored: await buildIgnored(
+        root.value,
+        options.excludePaths ?? [],
+        options.signal,
+      ),
+      secrets: ignore().add([...options.policy.secretPatterns]),
+    });
+  } catch (cause: unknown) {
+    return err(
+      failure(
+        options.signal?.aborted === true ? "cancelled" : "io",
+        `Reference source ignore policy could not be read at ${join(root.value, ".gitignore")}: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ),
+    );
+  }
 };

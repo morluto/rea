@@ -1,6 +1,7 @@
 import fs from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { readRegularFile, readRegularFileText } from "./RegularFileRead.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -29,7 +30,7 @@ export const readReferenceSourceVcs = async (
       : { kind: "unknown", head: null, dirty: null };
   }
   try {
-    const head = await resolveSourceHead(root);
+    const head = await resolveSourceHead(root, signal);
     if (isAborted(signal)) return { kind: "unknown", head: null, dirty: null };
     return { kind: "git", head, dirty: null };
   } catch (cause: unknown) {
@@ -39,13 +40,44 @@ export const readReferenceSourceVcs = async (
   }
 };
 
-const resolveSourceHead = async (root: string): Promise<string> => {
+const resolveSourceHead = async (
+  root: string,
+  signal?: AbortSignal,
+): Promise<string> => {
   // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
   const { resolveRef } = await import("isomorphic-git");
+  let failedRead: { readonly cause: unknown } | undefined;
+  const referenceFs = {
+    ...fs,
+    promises: {
+      ...fs.promises,
+      // isomorphic-git treats every read failure as absence. Preserve real
+      // failures so a readable packed ref cannot hide an unreadable loose ref.
+      readFile: async (path: string) => {
+        try {
+          return await readRegularFile(path, { signal });
+        } catch (cause: unknown) {
+          if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
+          throw cause;
+        }
+      },
+    },
+  };
+  const readRef = async (options: {
+    readonly gitdir?: string;
+    readonly ref: string;
+  }) => {
+    const head = await resolveRef({ fs: referenceFs, dir: root, ...options });
+    signal?.throwIfAborted();
+    if (failedRead !== undefined) throw failedRead.cause;
+    return head;
+  };
   const dotgit = join(root, ".git");
-  if (!(await lstat(dotgit)).isFile())
-    return resolveRef({ fs, dir: root, ref: "HEAD" });
-  const pointer = (await readFile(dotgit, "utf8")).replace(/\r?\n$/u, "");
+  if (!(await lstat(dotgit)).isFile()) return readRef({ ref: "HEAD" });
+  const pointer = (await readRegularFileText(dotgit, { signal })).replace(
+    /\r?\n$/u,
+    "",
+  );
   if (!pointer.startsWith("gitdir: ") || pointer.length === 8)
     throw new Error("Invalid Git directory pointer");
   const gitdir = resolve(root, pointer.slice(8));
@@ -53,25 +85,23 @@ const resolveSourceHead = async (root: string): Promise<string> => {
   try {
     commonDirectory = resolve(
       gitdir,
-      (await readFile(join(gitdir, "commondir"), "utf8")).replace(
-        /\r?\n$/u,
-        "",
-      ),
+      (
+        await readRegularFileText(join(gitdir, "commondir"), { signal })
+      ).replace(/\r?\n$/u, ""),
     );
   } catch (cause: unknown) {
     if (errorCode(cause) !== "ENOENT") throw cause;
-    return resolveRef({ fs, dir: root, gitdir, ref: "HEAD" });
+    return readRef({ gitdir, ref: "HEAD" });
   }
-  const head = (await readFile(join(gitdir, "HEAD"), "utf8")).trim();
-  if (!head.startsWith("ref: "))
-    return resolveRef({ fs, dir: root, gitdir, ref: "HEAD" });
+  const head = (
+    await readRegularFileText(join(gitdir, "HEAD"), { signal })
+  ).trim();
+  if (!head.startsWith("ref: ")) return readRef({ gitdir, ref: "HEAD" });
   const ref = head.slice(5);
   const privateRef = ["refs/bisect/", "refs/rewritten/", "refs/worktree/"].some(
     (prefix) => ref.startsWith(prefix),
   );
-  return resolveRef({
-    fs,
-    dir: root,
+  return readRef({
     gitdir: privateRef ? gitdir : commonDirectory,
     ref,
   });

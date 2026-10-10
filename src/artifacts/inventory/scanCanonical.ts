@@ -58,7 +58,7 @@ export const scanCanonicalArtifactInventory = async (
   const {
     format: rootFormat,
     digest: rootDigest,
-    zipSource,
+    rootSource,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
@@ -73,7 +73,7 @@ export const scanCanonicalArtifactInventory = async (
       rootFormat,
       options.environment ?? {},
       options.signal,
-      zipSource,
+      rootSource,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -102,7 +102,7 @@ export const scanCanonicalArtifactInventory = async (
         metadata,
         rootFormat,
         rootDigest,
-        zipSource,
+        rootSource,
         reader,
         signal: options.signal,
         nodes,
@@ -133,13 +133,13 @@ export const scanCanonicalArtifactInventory = async (
       );
     }
   }
-  if (zipSource !== undefined) {
+  if (rootSource !== undefined) {
     try {
-      await zipSource.handle.close();
+      await rootSource.handle.close();
     } catch (cleanupCause: unknown) {
       const cleanup = ArtifactReaderFailure.cleanupObservation(
         cleanupCause,
-        `root ZIP descriptor for ${path}`,
+        `root artifact descriptor for ${path}`,
       );
       cleanupFailure = ArtifactReaderFailure.withCleanup(
         cleanupFailure ??
@@ -161,7 +161,7 @@ interface SnapshotBuildInput {
   readonly metadata: Stats;
   readonly rootFormat: ArtifactOccurrence["artifact_format"];
   readonly rootDigest: HashResult | null;
-  readonly zipSource: StableRegularFileDescriptor | undefined;
+  readonly rootSource: StableRegularFileDescriptor | undefined;
   readonly reader: ArtifactReader | undefined;
   readonly signal: AbortSignal | undefined;
   readonly nodes: Map<string, ArtifactNode>;
@@ -173,7 +173,7 @@ interface SnapshotBuildInput {
 const buildInventorySnapshot = async (
   input: SnapshotBuildInput,
 ): Promise<ArtifactInventorySnapshot> => {
-  const { path, metadata, rootFormat, rootDigest, zipSource, reader, signal } =
+  const { path, metadata, rootFormat, rootDigest, rootSource, reader, signal } =
     input;
   materializeDirectoryNodes(input.occurrences, input.nodes);
   const rootNode = createRootNode({
@@ -218,7 +218,7 @@ const buildInventorySnapshot = async (
     ordinal,
   }));
 
-  await verifyRootDigest(path, rootDigest, zipSource, signal);
+  await verifyRootDigest(path, rootDigest, rootSource, signal);
 
   const graphSha256 = artifactGraphDigest({
     nodes: orderedNodes,
@@ -293,17 +293,17 @@ const buildIntegrityContradictions = (
 const verifyRootDigest = async (
   path: string,
   rootDigest: HashResult | null,
-  zipSource: StableRegularFileDescriptor | undefined,
+  rootSource: StableRegularFileDescriptor | undefined,
   signal: AbortSignal | undefined,
 ): Promise<void> => {
   if (rootDigest === null) return;
   const verified =
-    zipSource === undefined
+    rootSource === undefined
       ? await hashStableRootArtifact(path, signal)
       : await hashStableRootArtifactHandle(
           path,
-          zipSource.handle,
-          zipSource.initial,
+          rootSource.handle,
+          rootSource.initial,
           signal,
         );
   if (

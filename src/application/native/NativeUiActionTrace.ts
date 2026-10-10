@@ -325,8 +325,7 @@ const resolveUiAction = (
     (node) =>
       ["control", "view", "view_controller", "scene"].includes(node.kind) &&
       (node.id === query ||
-        node.attributes.interface_builder_object_id === query ||
-        node.id.endsWith(`:object:${query}`)),
+        node.attributes.interface_builder_object_id === query),
   );
   const actionIds = new Set(
     graph.edges.flatMap((edge) =>

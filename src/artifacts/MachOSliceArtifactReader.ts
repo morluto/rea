@@ -1,5 +1,5 @@
-import { createReadStream } from "node:fs";
-import { open as openFile, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import type { ArtifactCommand } from "../domain/artifactGraph.js";
@@ -19,11 +19,21 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
+import {
+  openRegularFile,
+  sameRegularFileState,
+  type StableRegularFileDescriptor,
+} from "../filesystem/RegularFile.js";
 
 /** Read-only universal Mach-O slice reader backed by native lipo metadata. */
 export class MachOSliceArtifactReader implements ArtifactReader {
   readonly format = "file" as const;
   #command: ArtifactCommand | undefined;
+  #source: StableRegularFileDescriptor | undefined;
+  #pendingSource: Promise<StableRegularFileDescriptor> | undefined;
+  readonly #ownsSource: boolean;
+  #closed = false;
+  #closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly path: string,
@@ -31,9 +41,15 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     private readonly runner: NativeCommandRunner = new XcrunCommandRunner(
       environment,
     ),
-  ) {}
+    source?: StableRegularFileDescriptor,
+  ) {
+    this.#source = source;
+    this.#ownsSource = source === undefined;
+  }
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+    const source = await this.#ensureSource();
+    await this.#verifySource(source);
     const captured = await this.runner.run(
       "lipo",
       ["-detailed_info", this.path],
@@ -53,9 +69,11 @@ export class MachOSliceArtifactReader implements ArtifactReader {
       exit_code: captured.value.exitCode,
       effects: ["read"],
     };
-    const fileSize = (await stat(this.path)).size;
+    await this.#verifySource(source);
+    const fileSize = source.initial.size;
     const architectures = parseLipoArchitectures(captured.value.stdout);
-    const structural = await readStructuralSlices(this.path, fileSize);
+    const structural = await readStructuralSlices(source.handle, fileSize);
+    await this.#verifySource(source);
     if (structural.status === "malformed")
       throw new ArtifactReaderFailure(
         "integrity",
@@ -168,22 +186,28 @@ export class MachOSliceArtifactReader implements ArtifactReader {
         "integrity",
         "Invalid Mach-O slice byte range",
       );
-    const fileSize = (await stat(this.path)).size;
-    if (!Number.isSafeInteger(offset + size) || offset + size > fileSize)
+    const source = await this.#ensureSource();
+    await this.#verifySource(source);
+    if (
+      !Number.isSafeInteger(offset + size) ||
+      offset + size > source.initial.size
+    )
       throw new ArtifactReaderFailure(
         "integrity",
         `Mach-O slice range is outside the artifact: ${entry.path}`,
       );
-    const source = createReadStream(this.path, {
+    const sourceStream = source.handle.createReadStream({
       start: offset,
       end: offset + size - 1,
+      autoClose: false,
       ...(signal === undefined ? {} : { signal }),
     });
+    const verifySource = () => this.#verifySource(source);
     return Readable.from(
       (async function* () {
         let observedBytes = 0;
         try {
-          for await (const raw of source) {
+          for await (const raw of sourceStream) {
             const chunk = streamChunkToBuffer(raw);
             observedBytes += chunk.byteLength;
             if (observedBytes > size)
@@ -212,6 +236,7 @@ export class MachOSliceArtifactReader implements ArtifactReader {
             "integrity",
             `Mach-O slice size disagrees with lipo metadata: ${entry.path}`,
           );
+        await verifySource();
       })(),
     );
   }
@@ -220,28 +245,80 @@ export class MachOSliceArtifactReader implements ArtifactReader {
     return this.#command === undefined ? [] : [structuredClone(this.#command)];
   }
 
-  close(): Promise<void> {
-    return Promise.resolve();
+  async close(): Promise<void> {
+    this.#closed = true;
+    this.#closePromise ??= this.#closeSource().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
+    return this.#closePromise;
+  }
+
+  async #ensureSource(): Promise<StableRegularFileDescriptor> {
+    if (this.#closed)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Universal Mach-O reader is closed",
+      );
+    if (this.#source !== undefined) return this.#source;
+    this.#pendingSource ??= this.#acquireSource();
+    const source = await this.#pendingSource;
+    if (this.#closed)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "Universal Mach-O reader closed during source acquisition",
+      );
+    return source;
+  }
+
+  async #acquireSource(): Promise<StableRegularFileDescriptor> {
+    const handle = await openRegularFile(this.path, { symlinks: "reject" });
+    try {
+      const initial = await handle.stat();
+      const source = { handle, initial };
+      this.#source = source;
+      return source;
+    } catch (cause: unknown) {
+      await handle.close().catch(() => undefined);
+      throw cause;
+    }
+  }
+
+  async #closeSource(): Promise<void> {
+    await this.#pendingSource?.catch(() => undefined);
+    if (!this.#ownsSource || this.#source === undefined) return;
+    const source = this.#source;
+    await source.handle.close();
+    this.#source = undefined;
+  }
+
+  async #verifySource(source: StableRegularFileDescriptor): Promise<void> {
+    const [opened, currentPath] = await Promise.all([
+      source.handle.stat(),
+      lstat(this.path),
+    ]);
+    if (
+      !sameRegularFileState(source.initial, opened) ||
+      !sameRegularFileState(source.initial, currentPath)
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Universal Mach-O source changed during inventory: ${this.path}`,
+      );
   }
 }
 
 /** Compare lipo's independent ranges with structurally parsed slice identity. */
 const readStructuralSlices = async (
-  path: string,
+  file: FileHandle,
   size: number,
 ): Promise<Awaited<ReturnType<typeof readMachoImage>>> => {
-  const file = await openFile(path, "r");
-  try {
-    const readAt: ReadAt = async (offset, length) => {
-      const bytes = Buffer.alloc(length);
-      const { bytesRead } = await file.read(bytes, 0, length, offset);
-      return bytes.subarray(0, bytesRead);
-    };
-    const facts = await readMachoImage(readAt, size);
-    return facts;
-  } finally {
-    await file.close();
-  }
+  const readAt: ReadAt = async (offset, length) => {
+    const bytes = Buffer.alloc(length);
+    const { bytesRead } = await file.read(bytes, 0, length, offset);
+    return bytes.subarray(0, bytesRead);
+  };
+  return readMachoImage(readAt, size);
 };
 
 const lipoMatchesSlice = (

@@ -14,7 +14,7 @@ import type { Result } from "../../domain/result.js";
 export interface AdbDeviceAnalysisPort {
   /** Probe the selected adb binary without contacting devices. */
   inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability>;
-  /** The provider holds no long-lived resources; safe to call always. */
+  /** Terminally stop admission, drain work, and retry retained package rollback. */
   close(): Promise<void>;
   execute(
     request: AdbRequest,

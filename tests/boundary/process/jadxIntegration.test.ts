@@ -4,10 +4,8 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
-import {
-  hashAndroidFile,
-  snapshotAndroidEngine,
-} from "../../../src/android/AndroidTargetSnapshot.js";
+import { snapshotAndroidEngine } from "../../../src/android/AndroidTargetSnapshot.js";
+import { hashStableFile } from "../../../src/filesystem/StableFileHash.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   createJadxProtocolFixture as setup,
@@ -43,7 +41,7 @@ it("cancels Android admission while hashing the selected APK", async () => {
 
 it("rejects a copied JAR that differs from its admitted session identity", async () => {
   const { jar } = await setup();
-  const admitted = await hashAndroidFile(jar);
+  const admitted = (await hashStableFile(jar)).sha256;
   await writeFile(jar, "engine changed between hashing and copying");
   const root = await PrivateRuntimeRoot.create({
     prefix: "rea-jadx-admission-",
