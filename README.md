@@ -170,7 +170,7 @@ using your user permissions; each runtime guide describes its effects.
 
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/installation.md#hopper), the
-[IDA guide](docs/ida-provider.md), and
+[IDA guide](docs/ida-provider.md) (including an optional native IDA Free bridge), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
 For large binaries, raise its startup deadline with

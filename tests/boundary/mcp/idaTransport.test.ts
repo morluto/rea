@@ -19,7 +19,7 @@ const requestSchema = z.object({
     .passthrough()
     .optional(),
 });
-const fixture = async (redirectUrl?: string, cycle = false) => {
+const fixture = async (redirectUrl?: string, cycle = false, native = false) => {
   const methods: string[] = [];
   const headers: (string | undefined)[] = [];
   const server = createServer(async (request, response) => {
@@ -47,7 +47,7 @@ const fixture = async (redirectUrl?: string, cycle = false) => {
       input.method === "initialize"
         ? {
             protocolVersion: input.params?.protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, ...(native ? { resources: {} } : {}) },
             serverInfo: {
               name: "ida-transport-fixture",
               version: "observed-server-version",
@@ -72,7 +72,32 @@ const fixture = async (redirectUrl?: string, cycle = false) => {
                     }
                   : {}),
             }
-          : { content: [], structuredContent: { observed: true } };
+          : input.method === "resources/read"
+            ? {
+                contents: [
+                  {
+                    uri: "ida://idb/metadata",
+                    mimeType: "application/json",
+                    text: JSON.stringify({
+                      path: "/fixture/input.i64",
+                      sha256: "a".repeat(64),
+                      base: "0x1000",
+                      module: "input",
+                    }),
+                  },
+                ],
+              }
+            : native
+              ? {
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify([{ observed: true }]),
+                    },
+                  ],
+                  structuredContent: { result: [], _output_truncated: true },
+                }
+              : { content: [], structuredContent: { observed: true } };
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ jsonrpc: "2.0", id: input.id, result }));
   });
@@ -93,7 +118,8 @@ const fixture = async (redirectUrl?: string, cycle = false) => {
     {
       url: `http://127.0.0.1:${address.port}/mcp`,
       headers: { Authorization: "Bearer transport-fixture-secret" },
-      mode: "headless",
+      mode: native ? "attached" : "headless",
+      ...(native ? { protocol: "native" as const } : {}),
       timeoutMs: 2000,
     },
     {},
@@ -137,4 +163,16 @@ it("rejects nonterminating SDK pagination instead of returning a partial tool ca
   expect(
     methods.filter((method) => method === "tools/list").length,
   ).toBeGreaterThan(2);
+});
+
+it("reads native metadata resources and complete JSON text through the real SDK transport", async () => {
+  const { connection, methods } = await fixture(undefined, false, true);
+  expect(await connection.connect()).toEqual(["first", "second"]);
+  expect(await connection.call("first", {})).toEqual([{ observed: true }]);
+  expect(await connection.readResource?.("ida://idb/metadata")).toMatchObject({
+    path: "/fixture/input.i64",
+    sha256: "a".repeat(64),
+  });
+  await expect(connection.readResource?.("ida://other")).rejects.toThrow();
+  expect(methods).toContain("resources/read");
 });

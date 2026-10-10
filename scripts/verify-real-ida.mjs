@@ -16,6 +16,7 @@ const { values } = parseArgs({
   options: {
     target: { type: "string" },
     procedure: { type: "string", default: "rea_fixture_add" },
+    "second-procedure": { type: "string" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -57,6 +58,8 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
+  protocol:
+    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
   checks: [],
   observations: [],
 };
@@ -156,7 +159,7 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached"
+      ...(config.mode === "attached" && config.protocol !== "native"
         ? [["procedure_callers", { procedure: dossier.procedure.address }]]
         : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
@@ -167,6 +170,30 @@ const mcp = async (cliDossier) => {
     ]) {
       const result = await call(name, args);
       observe(result);
+    }
+    if (values["second-procedure"] !== undefined) {
+      const secondAddress = observe(
+        await call("procedure_address", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.notEqual(secondAddress, dossier.procedure.address);
+      const secondCode = observe(
+        await call("procedure_pseudo_code", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.equal(typeof secondCode, "string");
+      assert.ok(secondCode.length > 0);
+      const restored = observe(
+        await call("procedure_pseudo_code", {
+          procedure: dossier.procedure.address,
+        }),
+      );
+      assert.equal(restored, dossier.pseudocode);
+      report.checks.push(
+        "different-function pseudocode and return to the original function",
+      );
     }
     const invalid = await client.callTool({
       name: "xrefs",
@@ -195,7 +222,10 @@ const cleanup = async () => {
   try {
     await upstream.connect();
     if (config.mode === "attached") {
-      const metadata = await upstream.call("get_metadata", {});
+      const metadata =
+        config.protocol === "native"
+          ? await upstream.readResource("ida://idb/metadata")
+          : await upstream.call("get_metadata", {});
       assert.equal(metadata.sha256.toLowerCase(), await digest());
       report.checks.push(
         "existing GUI target remains open with the original input identity",
