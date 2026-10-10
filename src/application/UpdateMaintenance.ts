@@ -130,7 +130,9 @@ export const planIntegrationMaintenance = async (
       };
     if (plan.data.plannedActions.length === 0)
       return { status: "current", plannedActions: [] };
-    const allowedIds = new Set(scope.clients.map((client) => `configure_client:${client}`));
+    const allowedIds = new Set(
+      scope.clients.map((client) => `configure_client:${client}`),
+    );
     const skillTargets = new Set(skillDestinations.map(({ path }) => path));
     if (
       plan.data.plannedActions.some((action) =>

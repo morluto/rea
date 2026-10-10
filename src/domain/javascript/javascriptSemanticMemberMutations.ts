@@ -47,6 +47,7 @@ export function* collectSemanticMemberMutationsSteps(
   });
   const normalizePath = observableMutationPaths(state);
   const returnedReferences = createSemanticReturnedReferences(state);
+  const getterReferences = createSemanticReturnedReferences(state, "get");
   const recordedEffects = new Set<string>();
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
@@ -394,6 +395,19 @@ export function* collectSemanticMemberMutationsSteps(
           originAt: source.mutation,
           iterationOnly: source.kind === "iteration",
         });
+      if (
+        (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+        !(
+          t.isAssignmentExpression(parent, { operator: "=" }) &&
+          parent.left === node
+        ) &&
+        !(
+          t.isUnaryExpression(parent, { operator: "delete" }) &&
+          parent.argument === node
+        )
+      )
+        for (const source of getterReferences(node))
+          markEscaped(source.node, node, source.projection);
       if (t.isAssignmentExpression(node)) markTarget(node.left, node);
       else if (t.isUpdateExpression(node)) markTarget(node.argument, node);
       else if (t.isUnaryExpression(node, { operator: "delete" }))

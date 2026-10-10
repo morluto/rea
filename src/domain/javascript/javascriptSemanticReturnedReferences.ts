@@ -28,6 +28,7 @@ interface Candidate {
   readonly node: t.Node;
   readonly path: readonly (string | number | null)[];
   readonly bindings: ReadonlySet<string>;
+  readonly instance?: boolean;
 }
 
 interface ObjectTargetIndex {
@@ -46,9 +47,10 @@ interface ObjectTargetUnknown {
   readonly previous: ObjectTargetUnknown | undefined;
 }
 
-/** Resolve local result references conservatively, without claiming call execution. */
+/** Resolve local call or getter result references without claiming execution. */
 export const createSemanticReturnedReferences = (
   state: JavaScriptSemanticAnalysisState,
+  kind: "call" | "get" = "call",
 ): ((callee: t.Node) => readonly SemanticReturnedReference[]) => {
   const callableById = new Map(
     state.callables.map((callable) => [callable.callableId, callable]),
@@ -56,20 +58,52 @@ export const createSemanticReturnedReferences = (
   const bindingCache = new Map<string, LocalCallableResolution>();
   const results = new WeakMap<t.Node, readonly SemanticReturnedReference[]>();
   const objectTargets = new WeakMap<t.ObjectExpression, ObjectTargetIndex>();
+  // Ordinary member reads cannot invoke a local getter whose key differs.
+  // Filter at the resolver boundary before flattening a receiver path: doing
+  // that for every prefix of a deep member chain makes the scan quadratic.
+  const getterKeys = new Set<string>();
+  let dynamicGetter = false;
+  if (kind === "get")
+    for (const node of state.callableNodesById.values()) {
+      if (
+        !(t.isObjectMethod(node) || t.isClassMethod(node)) ||
+        node.kind !== "get"
+      )
+        continue;
+      const key = semanticStaticPropertyKey(node.key, node.computed);
+      if (key === null) dynamicGetter = true;
+      else getterKeys.add(key);
+    }
   return (callee) => {
+    if (kind === "get" && !dynamicGetter) {
+      if (getterKeys.size === 0) return [];
+      const expression = unwrapJavaScriptExpression(callee).node;
+      if (
+        t.isMemberExpression(expression) ||
+        t.isOptionalMemberExpression(expression)
+      ) {
+        const key = semanticStaticPropertyKey(
+          expression.property,
+          expression.computed,
+        );
+        if (key !== null && !getterKeys.has(key)) return [];
+      }
+    }
     const existing = results.get(callee);
     if (existing !== undefined) return existing;
     const functions = new Set<t.Node>();
-    const resolution = resolveLocalCallables({
-      node: callee,
-      state,
-      callableById,
-      bindingCache,
-      seenBindings: new Set(),
-    });
-    for (const id of resolution.callableIds) {
-      const node = state.callableNodesById.get(id);
-      if (node !== undefined) functions.add(node);
+    if (kind === "call") {
+      const resolution = resolveLocalCallables({
+        node: callee,
+        state,
+        callableById,
+        bindingCache,
+        seenBindings: new Set(),
+      });
+      for (const id of resolution.callableIds) {
+        const node = state.callableNodesById.get(id);
+        if (node !== undefined) functions.add(node);
+      }
     }
     const pending: Candidate[] = [
       { node: callee, path: [], bindings: new Set() },
@@ -91,6 +125,7 @@ export const createSemanticReturnedReferences = (
             node: initializer.node,
             path: [...initializer.projection, ...item.path],
             bindings,
+            ...(item.instance === undefined ? {} : { instance: item.instance }),
           });
       } else if (
         t.isMemberExpression(node) ||
@@ -129,10 +164,16 @@ export const createSemanticReturnedReferences = (
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
         if (last !== undefined) pending.push({ ...item, node: last });
-      } else if (t.isFunction(node) && item.path.length === 0)
+      } else if (
+        t.isFunction(node) &&
+        item.path.length === 0 &&
+        (kind === "call" ||
+          ((t.isObjectMethod(node) || t.isClassMethod(node)) &&
+            node.kind === "get"))
+      )
         functions.add(node);
       else if (t.isObjectExpression(node))
-        selectObjectTargets(node, item, pending, objectTargets);
+        selectObjectTargets(node, item, pending, objectTargets, kind);
       else if (t.isArrayExpression(node)) {
         const [key, ...path] = item.path;
         const index =
@@ -151,10 +192,16 @@ export const createSemanticReturnedReferences = (
             pending.push({ ...item, node: element, path });
         });
       } else if (t.isNewExpression(node))
-        pending.push({ ...item, node: node.callee });
+        pending.push({ ...item, node: node.callee, instance: true });
       else if (t.isClass(node)) {
         const [key, ...path] = item.path;
         for (const member of node.body.body) {
+          if (
+            kind === "get" &&
+            (t.isClassMethod(member) || t.isClassProperty(member)) &&
+            member.static === (item.instance === true)
+          )
+            continue;
           if (t.isClassMethod(member)) {
             if (
               (item.path.length === 0 && member.kind === "constructor") ||
@@ -205,10 +252,11 @@ const selectObjectTargets = (
   item: Candidate,
   pending: Candidate[],
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
+  kind: "call" | "get",
 ): void => {
   const [key, ...path] = item.path;
   if (key !== null && key !== undefined) {
-    const index = objectTargetIndex(node, indexes);
+    const index = objectTargetIndex(node, indexes, kind);
     const property = index.propertyByName.get(String(key));
     if (property !== undefined) {
       const unknowns: ObjectTargetUnknown[] = [];
@@ -262,6 +310,7 @@ const selectObjectTargets = (
 const objectTargetIndex = (
   node: t.ObjectExpression,
   indexes: WeakMap<t.ObjectExpression, ObjectTargetIndex>,
+  kind: "call" | "get",
 ): ObjectTargetIndex => {
   const existing = indexes.get(node);
   if (existing !== undefined) return existing;
@@ -271,6 +320,7 @@ const objectTargetIndex = (
     ObjectTargetUnknown
   >();
   let trailingUnknown: ObjectTargetUnknown | undefined;
+  const accessorBoundaries = new Set<string>();
   for (const property of [...node.properties].reverse()) {
     if (t.isSpreadElement(property)) {
       trailingUnknown = { node: property, previous: trailingUnknown };
@@ -281,7 +331,27 @@ const objectTargetIndex = (
       trailingUnknown = { node: property, previous: trailingUnknown };
       continue;
     }
-    if (propertyByName.has(name)) continue;
+    const previous = propertyByName.get(name);
+    if (previous !== undefined) {
+      // A setter paired with a getter retains its read accessor. A data
+      // property or method between them replaces the earlier descriptor.
+      if (
+        kind === "get" &&
+        !accessorBoundaries.has(name) &&
+        t.isObjectMethod(previous) &&
+        previous.kind === "set" &&
+        t.isObjectMethod(property) &&
+        property.kind === "get"
+      ) {
+        propertyByName.set(name, property);
+        const unknown = trailingUnknownsByProperty.get(previous);
+        if (unknown !== undefined)
+          trailingUnknownsByProperty.set(property, unknown);
+      }
+      if (!t.isObjectMethod(property) || property.kind === "method")
+        accessorBoundaries.add(name);
+      continue;
+    }
     propertyByName.set(name, property);
     if (trailingUnknown !== undefined)
       trailingUnknownsByProperty.set(property, trailingUnknown);

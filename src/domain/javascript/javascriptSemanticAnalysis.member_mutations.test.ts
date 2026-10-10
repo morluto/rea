@@ -29,6 +29,38 @@ const mutations = [
   'const options = { mode: "initial" }; const key = getKey(); options[key] = "updated"; return options.mode;',
 ];
 
+describe("references returned by getters (#1494)", () => {
+  it.each([
+    "const box = { get v() { return shared; } }; box.v.x = 2;",
+    "class Box { get v() { return shared; } } new Box().v.x = 2;",
+    "class Box { get v() { return shared; } } const box = new Box(); box.v.x = 2;",
+    "class Box { static get v() { return shared; } } Box.v.x = 2;",
+    "const box = { get v() { return shared; } }; const copy = box.v; copy.x = 2;",
+    "const box = { get v() { return shared; }, set v(value) {} }; box.v.x = 2;",
+    "const box = { get v() { return shared; } }; const copy = box?.v; copy.x = 2;",
+    "const box = { get [key]() { return shared; } }; box.v.x = 2;",
+    "const box = { get v() { return shared; } }; box[key].x = 2;",
+  ])("invalidates a shared getter result after %s", (effect) => {
+    expect(
+      resultValue(`const shared = { x: 1 }; ${effect} return shared.x;`)
+        ?.status,
+    ).toBe("unknown");
+  });
+
+  it.each([
+    "const box = { v() { return shared; } }; const method = box.v;",
+    "const box = { get v() { return shared; }, v: {} }; box.v.x = 2;",
+    "const box = { get v() { return shared; } }; box.v = {};",
+    "class Box { get v() { return shared; } } const value = Box.v;",
+    "class Box { static get v() { return shared; } } const value = new Box().v;",
+    "const box = { get v() { return shared; }, v: {}, set v(value) {} }; const value = box.v;",
+  ])("does not invoke a getter through %s", (effect) => {
+    expect(
+      resultValue(`const shared = { x: 1 }; ${effect} return shared.x;`),
+    ).toEqual({ status: "literal", value: 1 });
+  });
+});
+
 describe("JavaScript semantic values after explicit property mutations", () => {
   it.each(mutations)("keeps the mutated value unknown: %s", (body) => {
     expect(resultValue(body)?.status).toBe("unknown");
@@ -592,6 +624,32 @@ describe("property mutations through TypeScript satisfies aliases", () => {
 });
 
 describe("property mutation collection on minified bundles", () => {
+  it("indexes getter reads across a wide object without escaping method results", () => {
+    const getters = Array.from(
+      { length: 2000 },
+      (_, index) => `get p${index}() { return shared; }`,
+    ).join(",");
+    const reads = Array.from(
+      { length: 2000 },
+      (_, index) => `box.p${index}.x = ${index};`,
+    ).join(" ");
+    expect(
+      resultValue(`
+        const shared = { x: 1 };
+        const kept = { x: 7 };
+        const box = { ${getters}, method() { return kept; } };
+        ${reads}
+        return [shared.x, kept.x];
+      `),
+    ).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "unknown" } },
+        { value: { status: "literal", value: 7 } },
+      ],
+    });
+  }, 30000);
+
   it("records each write to one object without replaying earlier writes", () => {
     const writes = Array.from(
       { length: 2000 },
