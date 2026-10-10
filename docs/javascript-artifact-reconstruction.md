@@ -129,6 +129,16 @@ documents. Their runtime string-limit failures report a resource constraint
 with the selected path, observed bytes and UTF-16 limit, rather than malformed
 JSON.
 
+`analyze_javascript_application` returns the complete analysis Evidence by
+default. Select `"detail": "summary"` to retain that complete Evidence in the
+current session and receive only its `inspect_analysis_view` summary: artifact
+identity, statistics, Electron surface counts, application and semantic
+coverage, limitations, and `normalized_result.parent_evidence_id`. Pass that ID
+to `inspect_analysis_view` for module pages or items, or to the application
+workflows as a retained reference. The summary does not repeat or truncate the
+analysis; a server without session retention refuses summary detail with
+`capability_unavailable`. CLI output is unchanged and always complete.
+
 MCP prepares the complete repeated response incrementally against the pinned
 SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
 transport constraint and the exact same-session Evidence reference. Use

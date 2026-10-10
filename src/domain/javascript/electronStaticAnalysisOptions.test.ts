@@ -24,6 +24,20 @@ describe("Electron option evidence", () => {
     });
   });
 
+  it("does not read an audio or video preload attribute as a preload script", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      jsx("audio", { controls: true, preload: "metadata", src });
+      (0, React.createElement)(\`video\`, { preload: "auto" });
+      jsx("webview", { preload: "./guest.js" });
+      const options = { preload: "./preload.js" };
+    `);
+
+    expect(analysis.role_paths.map(({ path }) => path)).toEqual([
+      "./guest.js",
+      "./preload.js",
+    ]);
+  });
+
   it("keeps values unknown when a later computed key can override them", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       new BrowserWindow({ webPreferences: { preload: "./maybe.js" }, [key]: null });

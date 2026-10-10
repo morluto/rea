@@ -18,6 +18,13 @@ import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComp
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
+const integrityMessage = (unpacked: boolean): string =>
+  `${
+    unpacked
+      ? "Declared ASAR integrity for unpacked entry main.js contradicts its companion file; packaging tools commonly sign or strip unpacked native binaries after writing the archive."
+      : "Artifact bytes contradict declared integrity."
+  } If expected, rerun inspect_artifact with integrity_policy=record-and-continue (CLI: --integrity-policy record-and-continue) to retain observed bytes as untrusted; otherwise get a fresh copy.`;
+
 it.each([
   { unpacked: false, label: "embedded" },
   { unpacked: true, label: "unpacked" },
@@ -69,8 +76,7 @@ it.each([
         error: {
           code: "artifact_integrity_mismatch",
           category: "integrity_mismatch",
-          message:
-            "Artifact is invalid or has changed. Get a fresh copy and try again.",
+          message: integrityMessage(unpacked),
           details: {
             logical_path: "main.js",
             declared_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
@@ -78,10 +84,7 @@ it.each([
             unpacked,
           },
           retryable: false,
-          remediation: {
-            action:
-              "Artifact is invalid or has changed. Get a fresh copy and try again.",
-          },
+          remediation: { action: integrityMessage(unpacked) },
         },
       });
     } finally {

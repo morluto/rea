@@ -177,15 +177,24 @@ export const captureDom = (
       const parent = Math.trunc(parents[index] ?? -1);
       const nodeIndex = nodes.length;
       const nodeName = indexedString(strings, nodeNames[index]);
+      const rawAttributeNames = attributeIndexes
+        .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
+        .map((value) => indexedString(strings, value));
+      const seenAttributeNames = new Set<string>();
+      const attributeNames: string[] = [];
+      for (const name of rawAttributeNames) {
+        if (!seenAttributeNames.has(name)) {
+          seenAttributeNames.add(name);
+          attributeNames.push(name);
+        }
+      }
       nodes.push({
         index: nodeIndex,
         parent_index: parent < 0 ? -1 : baseIndex + parent,
         node_type: Math.max(0, Math.trunc(nodeTypes[index] ?? 0)),
         node_name: nodeName,
         node_value_length: indexedString(strings, nodeValues[index]).length,
-        attribute_names: attributeIndexes
-          .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
-          .map((value) => indexedString(strings, value)),
+        attribute_names: attributeNames,
       });
       const metadata = domMetadata({
         strings,
@@ -385,7 +394,8 @@ const domMetadata = (
   } = options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
-    const name = indexedString(strings, attributes[index]).toLowerCase();
+    // Chrome already folds HTML names; SVG/XML names remain case-sensitive.
+    const name = indexedString(strings, attributes[index]);
     const value = indexedString(strings, attributes[index + 1]);
     // HTML keeps the first declaration. A later repeat must not move dom_urls.
     if (!pairs.has(name)) pairs.set(name, value);

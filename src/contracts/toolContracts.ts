@@ -7,6 +7,7 @@ import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
 import { JEB_TOOL_CONTRACTS } from "./jeb/jebToolContracts.js";
+import { ADB_TOOL_CONTRACTS } from "./adb/adbToolContracts.js";
 import { MANAGED_WORKFLOW_TOOL_CONTRACTS } from "./managed/managedWorkflowToolContracts.js";
 import { BROWSER_PROVIDER_TOOL_CONTRACTS } from "./browserProviderToolContracts.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
@@ -32,6 +33,7 @@ export const TOOL_CONTRACTS = [
   ...MANAGED_TOOL_CONTRACTS,
   ...ANDROID_TOOL_CONTRACTS,
   ...JEB_TOOL_CONTRACTS,
+  ...ADB_TOOL_CONTRACTS,
   ...FIRMWARE_TOOL_CONTRACTS,
   ...MANAGED_WORKFLOW_TOOL_CONTRACTS,
   ...BROWSER_PROVIDER_TOOL_CONTRACTS,

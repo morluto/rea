@@ -15,7 +15,11 @@ when both Evidence sets already exist.
 
 The request supplies a literal-port loopback endpoint and, for inspection, a
 target ID. REA accepts local hostless `file://` URLs that resolve to regular
-files; remote hosts, encoded path separators, and nonexistent paths are
+files, including pages a packaged application serves from inside `app.asar`.
+For those, the first `.asar` path component that is a regular file is the
+archive, the remainder must name a regular file in its header, and the reported
+path is the canonical archive path joined with that member. Remote hosts,
+encoded path separators, ASAR directories or links, and nonexistent paths are
 rejected. The endpoint exposes every eligible target and its local path
 metadata.
 
@@ -120,3 +124,5 @@ projection is intentionally target-only and partial: it binds the selected
 application path and capture outcome to the static graph, while frames, scripts,
 workers, and execution claims remain unavailable until a separate passive runtime
 capture provides them.
+
+ASAR observation reads the header through one open file handle, validates its declared lengths against the archive size, and limits encoded JSON headers to 16 MiB before parsing. The header cache also retains at most 16 MiB of encoded headers across eight archives. Oversized headers produce a scope refusal.

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
+import { advertisedInputExamples } from "./advertisedInputExamples.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
@@ -63,9 +64,10 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         ...options,
         libraryOptions: { reused: "ref", ...options.libraryOptions },
       });
+      const examples = advertisedInputExamples(contract);
       return {
         ...presentInputJsonSchema(shared, fallbackPropertyDescription),
-        examples: contract.examples.map(({ input }) => input),
+        ...(examples.length === 0 ? {} : { examples }),
       };
     },
   );

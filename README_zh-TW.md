@@ -142,6 +142,7 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                              | HAR；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](docs/web-network-captures.md)                             |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                    | 靜態檢查；[托管程式碼指南](docs/managed-code-analysis.md)                                                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                              | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                           |
+| Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸         | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](docs/adb-device-analysis.md)                                          |
 | JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                 | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](docs/jeb-analysis.md)                      |
 | 韌體                  | 區域、提取結果和轉交原生分析的內容                              | Linux 上的 Binwalk / Unblob；[韌體指南](docs/firmware-analysis.md)                                                     |
 | 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源            | [製品與 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 應用](docs/apple-application-analysis.md) |

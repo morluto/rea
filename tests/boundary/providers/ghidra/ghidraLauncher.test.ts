@@ -134,6 +134,7 @@ describe("Ghidra headless launcher", () => {
   });
   it("builds a read-only ephemeral import with its bridge descriptor", () => {
     const arguments_ = ghidraHeadlessArguments({
+      platform: "darwin",
       projectRoot: "/tmp/project",
       targetPath: "/tmp/target",
       bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
@@ -147,13 +148,31 @@ describe("Ghidra headless launcher", () => {
       ["-log", "/tmp/ghidra.log"],
       ["-scriptlog", "/tmp/script.log"],
       ["-scriptPath", "/package/bridge"],
-      ["-postScript", "/package/bridge/ReaGhidraBridge.java"],
+      ["-postScript", "/package/bridge/ReaGhidraNoReturnFix.java"],
     ]);
-    expect(arguments_[arguments_.indexOf("-postScript") + 2]).toBe(
-      "/tmp/session.json",
-    );
+    // The no-return repair must finish before the bridge starts serving.
+    const fix = arguments_.indexOf("/package/bridge/ReaGhidraNoReturnFix.java");
+    const bridge = arguments_.indexOf("/package/bridge/ReaGhidraBridge.java");
+    expect(fix).toBeLessThan(bridge);
+    expect(arguments_[bridge + 1]).toBe("/tmp/session.json");
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+  });
+});
+
+describe("Ghidra Windows launcher", () => {
+  it("keeps analysis repair outside Windows P0 authority", () => {
+    const args = ghidraHeadlessArguments({
+      platform: "win32",
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+    });
+    expect(args).not.toContain("/package/bridge/ReaGhidraNoReturnFix.java");
+    expect(args).toContain("/package/bridge/ReaGhidraBridge.java");
   });
 
   it("wraps the Windows batch launcher without enabling a Node shell", () => {

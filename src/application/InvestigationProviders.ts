@@ -37,6 +37,13 @@ export const MANAGED_STATIC_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free PE resource decoding. */
+export const PE_RESOURCES_PROVIDER = Object.freeze({
+  id: "rea-pe-resources",
+  name: "REA PE resource parser",
+  version: "1",
+} as const);
+
 /** Provider identity for deterministic managed-code comparison workflows. */
 export const MANAGED_WORKFLOW_PROVIDER = {
   id: "rea-dotnet-workflows",
