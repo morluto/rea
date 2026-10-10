@@ -1,6 +1,6 @@
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
   type JavaScriptSemanticGraph,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type {
@@ -130,6 +130,11 @@ export interface JavaScriptSemanticGraphProjection {
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
   ) => void;
+  /** Project one file in steps between its projection passes. */
+  readonly projectFileSteps: (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+  ) => Generator<void, void>;
   readonly finish: (
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
@@ -146,10 +151,10 @@ export const createJavaScriptSemanticGraphProjection =
     const state = emptyState({ nodes: [] });
     const fingerprints: JavaScriptSemanticFingerprint[] = [];
     let truncatedFiles = 0;
-    const projectSource = (
+    const projectSourceSteps = function* (
       file: JavaScriptArtifactFile,
       ir: JavaScriptSemanticIr,
-    ): void => {
+    ): Generator<void, void> {
       if (state.nodes.size >= SEMANTIC_GRAPH_NODE_CEILING) {
         truncatedFiles += 1;
         return;
@@ -161,7 +166,7 @@ export const createJavaScriptSemanticGraphProjection =
         remainingTreeBudget,
       );
       state.fileNodesDropped = false;
-      fingerprints.push(...projectFile(file, ir, state));
+      fingerprints.push(...(yield* projectFileSteps(file, ir, state)));
       // Nodes were dropped only if the budget actually blocked creation. A file
       // that exactly fills its share ends with a zero budget without dropping
       // anything, so the remaining budget alone cannot decide truncation.
@@ -198,7 +203,8 @@ export const createJavaScriptSemanticGraphProjection =
         evidence_contexts: state.evidenceContexts.contexts,
         nodes: [...state.nodes.values()],
         relations,
-        fingerprints,
+        // The input is transferred to the factory; `fingerprints` is cleared below.
+        fingerprints: [...fingerprints],
         unknowns,
         coverage: {
           status: truncatedFiles > 0 ? "partial" : "unknown",
@@ -246,7 +252,11 @@ export const createJavaScriptSemanticGraphProjection =
       return graph;
     };
     return {
-      projectFile: projectSource,
+      projectFile: (file, ir) => {
+        const steps = projectSourceSteps(file, ir);
+        while (steps.next().done !== true);
+      },
+      projectFileSteps: projectSourceSteps,
       finish: (rootArtifactSha256, applicationGraph) =>
         finishWith(
           createJavaScriptSemanticGraph,
@@ -255,18 +265,19 @@ export const createJavaScriptSemanticGraphProjection =
         ),
       finishImmutableSteps: (rootArtifactSha256, applicationGraph) =>
         finishWith(
-          createImmutableJavaScriptSemanticGraphSteps,
+          sealTransferredJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
         ),
     };
   };
 
-const projectFile = (
+function* projectFileSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,
-): JavaScriptSemanticFingerprint[] => {
+): Generator<void, JavaScriptSemanticFingerprint[]> {
+  yield;
   const moduleNode = retainNode(state, file, {
     kind: "module",
     roleKey: "module",
@@ -328,6 +339,7 @@ const projectFile = (
     callableOwnerAt,
     callSiteAt: createSemanticCallSiteLookup(ir, callSiteNodes),
   };
+  yield;
   projectDefinitionsAndReferences(definitions);
   const context: FileContext = {
     ...definitions,
@@ -335,26 +347,20 @@ const projectFile = (
       definitions.referenceNodes,
     ),
   };
-  projectSemanticValues(context);
-  projectSemanticObjects(context);
-  projectCalls(context);
-  projectSemanticPromises(context);
-  projectSemanticEvents(context);
-  projectSemanticTimers(context);
-  projectSemanticChildProcesses(context);
-  projectSemanticConfiguration(context);
-  projectSemanticRequests(context);
-  projectSemanticBoundaries(context);
-  projectSemanticResources(context);
-  projectSemanticClosureCaptures(context);
-  projectSemanticFrontiers(context);
+  // Each pass completes before the next starts, so yielding between passes
+  // keeps projection order and results unchanged.
+  for (const project of FILE_PROJECTION_PASSES) {
+    yield;
+    project(context);
+  }
+  yield;
   return projectSemanticFunctionFingerprints(
     file,
     ir,
     callableNodes,
     state.evidenceContexts,
   );
-};
+}
 
 const createReturnSiteNodes = (
   file: JavaScriptArtifactFile,
@@ -543,3 +549,20 @@ const createArgumentNode = (
       : `argument ${String(argument.index)}`,
     functionNodeId: callNode.function_node_id,
   });
+
+/** Per-file projection passes, run in this order with a yield between each. */
+const FILE_PROJECTION_PASSES: readonly ((context: FileContext) => void)[] = [
+  projectSemanticValues,
+  projectSemanticObjects,
+  projectCalls,
+  projectSemanticPromises,
+  projectSemanticEvents,
+  projectSemanticTimers,
+  projectSemanticChildProcesses,
+  projectSemanticConfiguration,
+  projectSemanticRequests,
+  projectSemanticBoundaries,
+  projectSemanticResources,
+  projectSemanticClosureCaptures,
+  projectSemanticFrontiers,
+];
