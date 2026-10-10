@@ -5,7 +5,7 @@ files and packages through the caller's `adb` binary. Emulators, USB
 devices, and network devices participate alike: REA neither starts nor
 manages them and never installs platform tools. Every operation composes a
 fixed adb argument vector — caller values occupy positional arguments only
-and never reach a shell.
+and are quoted when adb forwards them to the device shell.
 
 The adb client may start its local server on first device query; that is adb
 client behavior, recorded in the tool result when observed.
