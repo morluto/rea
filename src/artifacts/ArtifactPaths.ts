@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 
+import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 
@@ -31,7 +32,7 @@ export const normalizeArtifactPath = (input: string): string => {
       "path",
       `Artifact path is absolute or unsafe: ${JSON.stringify(input)}`,
     );
-  const normalized = input.normalize("NFC").replace(/\/+$/u, "");
+  const normalized = logicalPathNfc(input).replace(/\/+$/u, "");
   const parts = normalized.split("/");
   if (
     normalized.length === 0 ||

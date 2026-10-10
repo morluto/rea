@@ -4,6 +4,8 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
+  anatomyNameIs,
+  anatomyTailMatches,
   appleBundleSchema,
   appleComponentSchema,
   applicationRoots,
@@ -14,6 +16,10 @@ import {
   platformsOf,
   type AppleInventoryEntry,
 } from "./appleBundleAnatomy.js";
+import {
+  isSwiftRuntimeLibrary,
+  nativeRuntimeConvention,
+} from "../nativeConvention.js";
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
@@ -239,19 +245,20 @@ const classifyComponents = (
 ) => {
   const withinApp = (path: string): boolean =>
     roots.some((root) => isWithin(path, root));
-  const anatomy = (pattern: RegExp): Component[] =>
+  const matching = (predicate: (path: string) => boolean): Component[] =>
     entries.flatMap(({ path, kind, component }) =>
       kind === "file" &&
       component !== undefined &&
       !isSidecar(path) &&
       withinApp(path) &&
-      pattern.test(path)
+      predicate(path)
         ? [component]
         : [],
     );
+  const lastSegment = (path: string): string => path.split("/").at(-1) ?? "";
   return {
     bundle_metadata: all.filter(({ path }) =>
-      /(?:^|\/)Info\.plist$/u.test(path),
+      anatomyNameIs(lastSegment(path), "Info.plist"),
     ),
     executables: all.filter(
       ({ path, format }) => withinApp(path) && isMachOFormat(format),
@@ -259,23 +266,41 @@ const classifyComponents = (
     frameworks: all.filter(({ path }) => /\.framework\//u.test(path)),
     native_libraries: all.filter(({ path }) => /\.(?:dylib|so)$/iu.test(path)),
     javascript: all.filter(({ format }) => format === "javascript-bundle"),
-    signing: all.filter(({ path }) =>
-      /(?:^|\/)(?:embedded\.(?:mobileprovision|provisionprofile)|_CodeSignature\/CodeResources)$/u.test(
-        path,
-      ),
+    signing: all.filter(
+      ({ path }) =>
+        anatomyTailMatches(path, ["_CodeSignature", "CodeResources"]) ||
+        anatomyNameIs(lastSegment(path), "embedded.mobileprovision") ||
+        anatomyNameIs(lastSegment(path), "embedded.provisionprofile"),
     ),
-    privileged_helpers: anatomy(
-      /(?:^|\/)Contents\/Library\/LaunchServices\/[^/]+$/u,
+    privileged_helpers: matching((path) =>
+      anatomyTailMatches(path, ["Contents", "Library", "LaunchServices", "*"]),
     ),
-    launchd_plists: anatomy(
-      /(?:^|\/)Contents\/Library\/Launch(?:Agents|Daemons)\/[^/]+\.plist$/u,
+    launchd_plists: matching(
+      (path) =>
+        path.endsWith(".plist") &&
+        (anatomyTailMatches(path, [
+          "Contents",
+          "Library",
+          "LaunchAgents",
+          "*",
+        ]) ||
+          anatomyTailMatches(path, [
+            "Contents",
+            "Library",
+            "LaunchDaemons",
+            "*",
+          ])),
     ).map((component) => ({
       ...component,
-      domain: component.path.includes("/LaunchDaemons/")
+      domain: component.path
+        .split("/")
+        .some((segment) => anatomyNameIs(segment, "LaunchDaemons"))
         ? ("daemon" as const)
         : ("agent" as const),
     })),
-    helpers: anatomy(/(?:^|\/)Contents\/Helpers\/[^/]+$/u),
+    helpers: matching((path) =>
+      anatomyTailMatches(path, ["Contents", "Helpers", "*"]),
+    ),
   };
 };
 
@@ -285,7 +310,6 @@ const deduplicateComponents = (values: readonly Component[]): Component[] =>
   );
 
 const identifyRuntimeFamilies = (all: readonly Component[]) => {
-  const paths = all.map(({ path }) => path.toLowerCase());
   const families = new Set<
     z.infer<
       typeof appleApplicationProjectionResultSchema
@@ -293,28 +317,14 @@ const identifyRuntimeFamilies = (all: readonly Component[]) => {
   >();
   if (all.some(({ format }) => ["mach-o", "mach-o-universal"].includes(format)))
     families.add("native");
-  if (paths.some((path) => /\.(?:dylib|framework\/[^/]+)$/u.test(path)))
+  if (all.some(({ path }) => isSwiftRuntimeLibrary(path)))
     families.add("swift-objective-c");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
-  if (
-    paths.some(
-      (path) =>
-        path.includes("reactnative") ||
-        path.includes("react.framework") ||
-        path.includes("hermes"),
-    )
-  )
-    families.add("react-native");
-  if (
-    paths.some(
-      (path) =>
-        path.includes("flutter.framework") || path.includes("app.framework"),
-    )
-  )
-    families.add("flutter");
-  if (paths.some((path) => path.includes("unityframework.framework")))
-    families.add("unity");
+  for (const { path } of all) {
+    const convention = nativeRuntimeConvention(path);
+    if (convention !== null) families.add(convention);
+  }
   return [...families].sort(compare);
 };
 
@@ -361,11 +371,10 @@ const bridgeBasis = (
   | "react-native-convention"
   | "flutter-convention"
   | "unity-convention" => {
-  const lower = path.toLowerCase();
-  if (lower.includes("react")) return "react-native-convention";
-  if (lower.includes("flutter") || lower.includes("app.framework"))
-    return "flutter-convention";
-  if (lower.includes("unity")) return "unity-convention";
+  const convention = nativeRuntimeConvention(path);
+  if (convention === "react-native") return "react-native-convention";
+  if (convention === "flutter") return "flutter-convention";
+  if (convention === "unity") return "unity-convention";
   return "javascript-and-native-content";
 };
 
@@ -422,7 +431,9 @@ const projectionLimitations = (facts: {
     : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",
   "Bundle identifiers and signing claims require dedicated plist and CMS parsing; this projection reports only exact paths and hashes.",
+  "Runtime families are inferred from inventory formats and paths.",
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
+  "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];
 
 const compare = (left: string, right: string): number =>

@@ -90,7 +90,8 @@ export const selectMachoSlice = (
   const headerEnd = 8 + count * stride;
   if (count > 128 || headerEnd > bytes.length)
     throw malformed("Malformed FAT architecture table");
-  const cpu = architecture === "arm64" ? 0x0100000c : 0x01000007;
+  const cpu = MACHO_CPU_TYPE[architecture];
+  if (cpu === undefined) throw invalid("Requested FAT architecture is absent");
   const declarations = readFatSliceDeclarations(bytes.subarray(8, headerEnd), {
     count,
     wide: fat64,
@@ -115,8 +116,25 @@ export const selectMachoSlice = (
   }
   if (selected === undefined)
     throw invalid("Requested FAT architecture is absent");
+  if (selected.slice + 4 > bytes.length)
+    throw malformed("Truncated Mach-O header");
+  const sliceMagic = bytes.readUInt32LE(selected.slice);
+  if (sliceMagic === MH_MAGIC || sliceMagic === MH_CIGAM)
+    throw invalid(
+      `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
+    );
   return selected;
 };
+
+/** CPU types admitted by `machArchitecture` in the domain binary target parser. */
+const MACHO_CPU_TYPE: Readonly<Record<string, number>> = {
+  x86: 7,
+  x86_64: 0x01000007,
+  arm: 12,
+  arm64: 0x0100000c,
+};
+const MH_MAGIC = 0xfeedface;
+const MH_CIGAM = 0xcefaedfe;
 
 /** Parse segments/sections for a little-endian 64-bit Mach-O architecture slice. */
 export const parseMachoLayout = (
@@ -151,6 +169,7 @@ export const parseMachoLayout = (
     sections: [],
     dylibs: [],
     binds: [],
+    rebases: [],
     chained: null,
     baseAddress: undefined,
   };
@@ -168,7 +187,7 @@ export const parseMachoLayout = (
     else collectFixupCommand(bytes, command, state);
     cursor += command.size;
   }
-  const { segments, sections, chained, binds, dylibs } = state;
+  const { segments, sections, chained, binds, rebases, dylibs } = state;
   const offset = (address: bigint, size = 1): number => {
     const matches = segments.filter(
       (segment) =>
@@ -187,7 +206,7 @@ export const parseMachoLayout = (
     segments,
     sections,
     offset,
-    fixups: { chained, binds, dylibs },
+    fixups: { chained, binds, rebases, dylibs },
     baseAddress: state.baseAddress ?? 0n,
   };
 };
@@ -200,6 +219,7 @@ interface LayoutState {
   readonly sections: Section[];
   readonly dylibs: string[];
   readonly binds: FixupCommands["binds"][number][];
+  readonly rebases: FixupCommands["rebases"][number][];
   chained: FixupCommands["chained"];
   baseAddress: bigint | undefined;
 }
@@ -273,6 +293,8 @@ const collectFixupCommand = (
     state.chained = range(cursor + 8);
   } else if (kind === LC_DYLD_INFO || kind === LC_DYLD_INFO_ONLY) {
     if (size < 48) throw new RangeError("Truncated dyld-info command");
+    const rebase = range(cursor + 8);
+    if (rebase.size > 0) state.rebases.push(rebase);
     for (const [at, stream] of [
       [cursor + 16, "bind"],
       [cursor + 24, "weak"],
