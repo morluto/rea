@@ -97,7 +97,7 @@ fi
 printf 'REA install plan\n'
 printf '  Version: %s\n' "$version"
 printf '  Runtime: Node.js %s\n' "$node_version"
-printf '  Command: npm install --global %s@%s\n' "$PACKAGE" "$version"
+printf '  Command: npm install --global%s %s@%s\n' "${prefix_args[*]+ ${prefix_args[*]}}" "$PACKAGE" "$version"
 printf '  Binary:  %s\n' "$install_bin"
 printf '  Setup:   %s\n' "$([[ "$start_setup" == true ]] && printf 'start when a terminal is available' || printf 'skipped')"
 

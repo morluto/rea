@@ -172,6 +172,21 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
   });
 });
 
+describe("Linux user-prefix installer", { timeout: 20_000 }, () => {
+  it("plans the same npm command that it runs", async () => {
+    const fixture = await createFixture();
+    const plan = await runInstaller(fixture, [
+      "--version",
+      "0.3.0",
+      "--dry-run",
+    ]);
+    const command = `install --global --prefix ${join(fixture.home, ".local")} rea-agents@0.3.0`;
+    expect(plan.stdout).toContain(`  Command: npm ${command}\n`);
+    await runInstaller(fixture, ["--version", "0.3.0"]);
+    expect(await readFile(fixture.npmLog, "utf8")).toBe(`${command}\n`);
+  });
+});
+
 describe("native macOS installer", { timeout: 20_000 }, () => {
   it("installs on Darwin with an empty prefix argument array", async () => {
     const fixture = await createFixture();
@@ -179,6 +194,9 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
       FAKE_PLATFORM: "Darwin",
       FAKE_NPM_PREFIX: join(fixture.home, "npm global prefix"),
     });
+    expect(result.stdout).toContain(
+      "  Command: npm install --global rea-agents@0.3.0\n",
+    );
     expect(result.stdout).toContain("REA 0.3.0 is installed");
     expect(await readFile(fixture.npmLog, "utf8")).toBe(
       "prefix --global\ninstall --global rea-agents@0.3.0\n",
