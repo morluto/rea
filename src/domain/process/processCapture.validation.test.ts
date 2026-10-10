@@ -89,8 +89,13 @@ it("rejects finalization evidence that no deadline could have produced", () => {
   const capture = emptyCapture();
   const finalization = {
     requested_ms: 500,
-    signal: "SIGTERM" as const,
-    outcome: "target_exited" as const,
+    signals: [
+      {
+        signal: "SIGTERM" as const,
+        sent_at_ms: 0,
+        delivery: "signaled" as const,
+      },
+    ],
     elapsed_ms: 10,
   };
   expect(
@@ -100,23 +105,6 @@ it("rejects finalization evidence that no deadline could have produced", () => {
         exit: { code: 0, signal: null, reason: "exited", finalization },
       }),
     "an exit without a deadline cannot carry a finalization record",
-  ).toThrow("finalization");
-  expect(
-    () =>
-      parseProcessCapture({
-        ...capture,
-        exit: {
-          code: null,
-          signal: null,
-          reason: "timeout",
-          finalization: {
-            ...finalization,
-            outcome: "forced_kill",
-            elapsed_ms: 499,
-          },
-        },
-      }),
-    "a forced kill cannot precede the requested interval",
   ).toThrow("finalization");
 });
 
@@ -156,8 +144,13 @@ const withCommittedFinalization = (
 it("binds finalization evidence to the committed finalization interval", () => {
   const finalization = {
     requested_ms: 500,
-    signal: "SIGTERM",
-    outcome: "target_exited",
+    signals: [
+      {
+        signal: "SIGTERM" as const,
+        sent_at_ms: 0,
+        delivery: "signaled" as const,
+      },
+    ],
     elapsed_ms: 10,
   };
   const exit = { code: null, signal: null, reason: "timeout", finalization };
@@ -174,93 +167,125 @@ it("binds finalization evidence to the committed finalization interval", () => {
     () => parseProcessCapture(withCommittedFinalization(undefined, exit)),
     "a scenario that committed no interval cannot have finalized",
   ).toThrow("finalization");
+  expect(
+    () =>
+      parseProcessCapture(
+        withCommittedFinalization(500, {
+          ...exit,
+          finalization: { ...finalization, elapsed_ms: null },
+        }),
+      ),
+    "a complete capture requires an observed finalization exit time",
+  ).toThrow("finalization");
 });
 
-it("allows an early forced kill only for a cancelled exit", () => {
-  const forced = {
+it("validates finalization signal observations", () => {
+  const finalization = {
     requested_ms: 500,
-    signal: "SIGTERM" as const,
-    outcome: "forced_kill" as const,
-    elapsed_ms: 1,
+    signals: [
+      {
+        signal: "SIGTERM" as const,
+        sent_at_ms: 0,
+        delivery: "signaled" as const,
+      },
+    ],
+    elapsed_ms: 10,
   };
-
-  expect(
-    finalizationConsistencyIssue({
-      reason: "cancelled",
-      signal: 9,
-      finalization: forced,
-    }),
-    "cancellation ends the interval early",
-  ).toBeUndefined();
-  expect(
-    finalizationConsistencyIssue({
-      reason: "timeout",
-      signal: 9,
-      finalization: forced,
-    }),
-    "a deadline escalation waits for the whole interval",
-  ).toContain("requested interval");
   expect(
     finalizationConsistencyIssue({
       reason: "exited",
-      signal: 9,
-      finalization: forced,
+      finalization,
     }),
-    "partial exits need a deadline reason too",
-  ).toContain("deadline exit reason");
-  expect(
-    finalizationConsistencyIssue(
-      { reason: "cancelled", signal: 9, finalization: forced },
-      { finalization_ms: 900 },
-    ),
-    "the committed interval must match when the manifest is known",
-  ).toContain("committed");
-});
-
-it("ties finalization evidence to the observed exit and to a committed interval", () => {
-  const finalization = {
-    requested_ms: 500,
-    signal: "SIGTERM" as const,
-    outcome: "forced_kill" as const,
-    elapsed_ms: 500,
-  };
-
+    "an exited reason cannot carry finalization",
+  ).toContain("finalization");
   expect(
     finalizationConsistencyIssue({
       reason: "timeout",
-      signal: 15,
-      finalization,
+      finalization: {
+        ...finalization,
+        signals: [{ signal: "SIGKILL", sent_at_ms: 500 }],
+      },
     }),
-    "a forced kill must show SIGKILL in the observed exit",
-  ).toContain("SIGKILL");
+    "the first attempt is SIGTERM",
+  ).toContain("SIGTERM");
   expect(
     finalizationConsistencyIssue({
       reason: "timeout",
-      signal: 9,
-      finalization,
+      finalization: {
+        ...finalization,
+        signals: [
+          { signal: "SIGTERM", sent_at_ms: 0 },
+          { signal: "SIGKILL", sent_at_ms: 500 },
+          { signal: "SIGKILL", sent_at_ms: 600 },
+        ],
+      },
     }),
-    "a forced kill that ended on SIGKILL is consistent",
+    "only one SIGKILL is allowed",
+  ).toContain("one final SIGKILL");
+  expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      finalization: {
+        ...finalization,
+        signals: [
+          { signal: "SIGTERM", sent_at_ms: 10 },
+          { signal: "SIGKILL", sent_at_ms: 5 },
+        ],
+      },
+    }),
+    "attempt times stay ordered",
+  ).toContain("must not decrease");
+  expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      finalization: {
+        ...finalization,
+        signals: [
+          { signal: "SIGTERM", sent_at_ms: 0 },
+          { signal: "SIGKILL", sent_at_ms: 499 },
+        ],
+      },
+    }),
+    "a non-cancelled early SIGKILL is rejected",
+  ).toContain("requested interval");
+  expect(
+    finalizationConsistencyIssue({
+      reason: "cancelled",
+      finalization: {
+        ...finalization,
+        signals: [
+          { signal: "SIGTERM", sent_at_ms: 0 },
+          { signal: "SIGKILL", sent_at_ms: 1 },
+        ],
+      },
+    }),
+    "a cancelled early SIGKILL is accepted",
   ).toBeUndefined();
   expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      finalization: {
+        ...finalization,
+        signals: [{ signal: "SIGTERM", sent_at_ms: 1 }],
+        elapsed_ms: 0,
+      },
+    }),
+    "the observed exit cannot precede the first attempt",
+  ).toContain("elapsed_ms");
+  expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      finalization: { ...finalization, elapsed_ms: null },
+    }),
+    "an observed exit requires elapsed time",
+  ).toContain("elapsed_ms");
+  expect(
     finalizationConsistencyIssue(
-      { reason: "timeout", signal: 9 },
+      { reason: "timeout" },
       { finalization_ms: 500 },
     ),
     "a deadline exit with a committed interval must carry the record",
   ).toContain("finalization evidence");
-  expect(
-    finalizationConsistencyIssue(
-      { reason: "cancelled", signal: 9 },
-      {
-        finalization_ms: 500,
-      },
-    ),
-    "cancellation before the deadline has no finalization record",
-  ).toBeUndefined();
-  expect(
-    finalizationConsistencyIssue({ reason: "timeout", signal: 9 }, {}),
-    "a scenario without an interval needs no record",
-  ).toBeUndefined();
 });
 
 it("validates finalization evidence in partial captures and rejects malformed records", () => {
@@ -277,8 +302,13 @@ it("validates finalization evidence in partial captures and rejects malformed re
     });
   const finalization = {
     requested_ms: 500,
-    signal: "SIGTERM",
-    outcome: "target_exited",
+    signals: [
+      {
+        signal: "SIGTERM" as const,
+        sent_at_ms: 0,
+        delivery: "signaled" as const,
+      },
+    ],
     elapsed_ms: 10,
   };
 
@@ -300,13 +330,27 @@ it("validates finalization evidence in partial captures and rejects malformed re
     "a partial record must match the committed interval",
   ).toBe(false);
   expect(
+    partial({
+      code: null,
+      signal: null,
+      reason: "timeout",
+      finalization: { ...finalization, elapsed_ms: null },
+    }).success,
+    "a capture variant requires an observed finalization exit time",
+  ).toBe(false);
+  expect(
     () =>
       parseProcessCapture(
         withCommittedFinalization(500, {
           code: null,
           signal: null,
           reason: "timeout",
-          finalization: { ...finalization, signal: "SIGINT" },
+          finalization: {
+            ...finalization,
+            signals: [
+              { signal: "SIGINT", sent_at_ms: 0, delivery: "signaled" },
+            ],
+          },
         }),
       ),
     "only SIGTERM can start finalization",
@@ -345,14 +389,20 @@ it("binds the comparison contract to the committed finalization interval", () =>
 it("validates finalization evidence in incomplete observations", () => {
   const finalization = {
     requested_ms: 500,
-    signal: "SIGTERM",
-    outcome: "target_exited",
+    signals: [
+      {
+        signal: "SIGTERM" as const,
+        sent_at_ms: 0,
+        delivery: "signaled" as const,
+      },
+    ],
     elapsed_ms: 10,
   };
   const unavailable = { state: "unavailable", reason: "not observed" };
   const incomplete = (
     exit: Record<string, unknown> | undefined,
     manifest: ReturnType<typeof withCommittedFinalization>["manifest"],
+    incompleteFinalization: Record<string, unknown> | undefined = undefined,
   ) => {
     const result = partialProcessCaptureObservationSchema.safeParse({
       observations: {
@@ -364,6 +414,10 @@ it("validates finalization evidence in incomplete observations", () => {
           exit === undefined
             ? unavailable
             : { state: "available", value: exit },
+        finalization:
+          incompleteFinalization === undefined
+            ? unavailable
+            : { state: "available", value: incompleteFinalization },
         settlement: unavailable,
         process_samples: unavailable,
         filesystem_snapshots: { before: unavailable, after: unavailable },
@@ -393,6 +447,18 @@ it("validates finalization evidence in incomplete observations", () => {
     "a consistent incomplete record is accepted",
   ).toBe(true);
   expect(
+    incomplete(undefined, committed, { ...finalization, elapsed_ms: null })
+      .success,
+    "a finalization observed without an exit permits null elapsed time",
+  ).toBe(true);
+  expect(
+    incomplete(undefined, committed, {
+      ...finalization,
+      signals: [{ signal: "SIGKILL", sent_at_ms: 0, delivery: "signaled" }],
+    }).success,
+    "an incomplete finalization still starts with SIGTERM",
+  ).toBe(false);
+  expect(
     incomplete(normal, withCommittedFinalization(undefined, normal).manifest)
       .success,
     "an incomplete capture that never committed an interval is accepted",
@@ -411,22 +477,6 @@ it("validates finalization evidence in incomplete observations", () => {
     ).success,
     "an incomplete record must match the committed interval",
   ).toBe(false);
-  expect(
-    incomplete(
-      {
-        ...timeout,
-        signal: 15,
-        finalization: {
-          ...finalization,
-          outcome: "forced_kill",
-          elapsed_ms: 500,
-        },
-      },
-      committed,
-    ).success,
-    "an incomplete forced kill needs an observed SIGKILL",
-  ).toBe(false);
-
   const scenarioOnly = withCommittedFinalization(
     500,
     normal,

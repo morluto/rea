@@ -132,6 +132,7 @@ export interface ProcessCaptureObservationBuffer {
     UnverifiedProcessCapture["interaction_events"]
   >;
   exit: IncompleteProcessCaptureObservations["exit"];
+  finalization: IncompleteProcessCaptureObservations["finalization"];
   settlement: IncompleteProcessCaptureObservations["settlement"];
   process_samples: PartialProcessObservationField<readonly ProcessSample[]>;
   filesystem_snapshots: {
@@ -166,6 +167,10 @@ export const createProcessCaptureObservationBuffer = (options: {
   exit: {
     state: "unavailable",
     reason: "Terminal exit was not observed before the run failed.",
+  },
+  finalization: {
+    state: "unavailable",
+    reason: "Finalization was not observed before capture completion finished.",
   },
   settlement: {
     state: "unavailable",
@@ -680,10 +685,20 @@ export const awaitTerminalExit = async ({
     // cannot shorten it or produce a negative elapsed time.
     let finalizationStartedAt: number | undefined;
     let escalationSent = false;
+    const finalizationSignals: {
+      signal: "SIGTERM" | "SIGKILL";
+      sent_at_ms: number;
+      delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+    }[] = [];
     const forceKill = (): void => {
       if (finalizationStartedAt !== undefined) {
         if (escalationSent) return;
         escalationSent = true;
+        finalizationSignals.push({
+          signal: "SIGKILL",
+          sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
+          delivery: "signaled",
+        });
       }
       terminal.kill("SIGKILL");
     };
@@ -693,6 +708,11 @@ export const awaitTerminalExit = async ({
         return;
       }
       finalizationStartedAt = performance.now();
+      finalizationSignals.push({
+        signal: "SIGTERM",
+        sent_at_ms: 0,
+        delivery: "signaled",
+      });
       terminal.kill("SIGTERM");
     };
     terminal.onExit((exit) => {
@@ -733,13 +753,7 @@ export const awaitTerminalExit = async ({
           : {
               finalization: {
                 requested_ms: scenario.finalization_ms,
-                signal: "SIGTERM" as const,
-                // A kill is only attributed when the harness sent SIGKILL and
-                // the observed exit shows its effect.
-                outcome:
-                  escalationSent && exit.signal === 9
-                    ? ("forced_kill" as const)
-                    : ("target_exited" as const),
+                signals: finalizationSignals,
                 elapsed_ms: finalizationElapsedMs,
               },
             }),

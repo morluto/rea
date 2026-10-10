@@ -528,8 +528,7 @@ itWithCaptureCapability(
     expect(capture.exit.finalization, "finalization is recorded").toMatchObject(
       {
         requested_ms: 1_500,
-        signal: "SIGTERM",
-        outcome: "target_exited",
+        signals: [{ signal: "SIGTERM", delivery: "signaled" }],
       },
     );
     expect(
@@ -582,7 +581,10 @@ itWithCaptureCapability(
     expect(
       capture.exit.finalization,
       "idle finalization is recorded",
-    ).toMatchObject({ requested_ms: 1_200, outcome: "target_exited" });
+    ).toMatchObject({
+      requested_ms: 1_200,
+      signals: [{ signal: "SIGTERM", delivery: "signaled" }],
+    });
     expect(
       observedFile(capture, "final.json")?.sha256,
       "final report is retained with a digest",
@@ -603,10 +605,15 @@ itWithCaptureCapability(
     expect(capture.exit.reason, "initiating deadline stays the reason").toBe(
       "timeout",
     );
-    expect(capture.exit.finalization, "forced kill is recorded").toMatchObject({
+    expect(
+      capture.exit.finalization,
+      "finalization attempts are recorded",
+    ).toMatchObject({
       requested_ms: 1_500,
-      signal: "SIGTERM",
-      outcome: "forced_kill",
+      signals: [
+        { signal: "SIGTERM", delivery: "signaled" },
+        { signal: "SIGKILL", delivery: "signaled" },
+      ],
     });
     expect(
       capture.exit.signal,
@@ -706,12 +713,18 @@ itWithCaptureCapability(
       throw new Error("expected cancelled process observations");
     expect(
       partial.observations.exit,
-      "cancellation is the exit reason and the forced kill is recorded",
+      "cancellation is the exit reason and signal attempts are recorded",
     ).toMatchObject({
       state: "available",
       value: {
         reason: "cancelled",
-        finalization: { requested_ms: 20_000, outcome: "forced_kill" },
+        finalization: {
+          requested_ms: 20_000,
+          signals: [
+            { signal: "SIGTERM", delivery: "signaled" },
+            { signal: "SIGKILL", delivery: "signaled" },
+          ],
+        },
       },
     });
     if (result.error.cleanupIncomplete) {

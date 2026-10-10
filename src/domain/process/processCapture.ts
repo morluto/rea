@@ -46,12 +46,15 @@ export interface InteractionEvent {
   readonly outcome: "dispatched" | "target_exited" | "failed";
 }
 
-/** Outcome of the SIGTERM-then-SIGKILL interval granted after a deadline fired. */
+/** Observed finalization attempts after a deadline fired. */
 export interface ProcessCaptureFinalization {
   readonly requested_ms: number;
-  readonly signal: "SIGTERM";
-  readonly outcome: "target_exited" | "forced_kill";
-  readonly elapsed_ms: number;
+  readonly elapsed_ms: number | null;
+  readonly signals: readonly {
+    readonly signal: "SIGTERM" | "SIGKILL";
+    readonly sent_at_ms: number;
+    readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+  }[];
 }
 
 /** One filesystem state used for before/after comparison. */
@@ -305,6 +308,9 @@ export interface IncompleteProcessCaptureObservations {
     readonly reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
     readonly finalization?: ProcessCaptureFinalization | undefined;
   }>;
+  readonly finalization?:
+    | PartialProcessObservationField<ProcessCaptureFinalization>
+    | undefined;
   readonly settlement: PartialProcessObservationField<{
     readonly state: "quiesced" | "alive_at_deadline" | "unverifiable";
     readonly elapsed_ms: number;
@@ -401,9 +407,21 @@ const unverifiedCleanupProcessesSchema = z.array(
 
 const processCaptureFinalizationSchema = z.strictObject({
   requested_ms: z.number().int().safe().positive(),
-  signal: z.literal("SIGTERM"),
-  outcome: z.enum(["target_exited", "forced_kill"]),
-  elapsed_ms: z.number().int().nonnegative(),
+  elapsed_ms: z.number().int().nonnegative().nullable(),
+  signals: z
+    .array(
+      z.strictObject({
+        signal: z.enum(["SIGTERM", "SIGKILL"]),
+        sent_at_ms: z.number().int().nonnegative(),
+        delivery: z.enum([
+          "signaled",
+          "gone",
+          "identity-changed",
+          "unverified",
+        ]),
+      }),
+    )
+    .min(1),
 });
 
 const processCaptureShapeSchema = z.strictObject({
@@ -568,6 +586,9 @@ const incompleteProcessCaptureObservationsSchema = z.strictObject({
       finalization: processCaptureFinalizationSchema.optional(),
     }),
   ),
+  finalization: partialObservationFieldSchema(
+    processCaptureFinalizationSchema,
+  ).optional(),
   settlement: partialObservationFieldSchema(
     z.strictObject({
       state: z.enum(["quiesced", "alive_at_deadline", "unverifiable"]),
@@ -635,17 +656,23 @@ export const partialProcessCaptureObservationSchema = z
         : partial.observations.exit.state === "available"
           ? partial.observations.exit.value
           : undefined;
+    const observedFinalization =
+      "observations" in partial &&
+      partial.observations.finalization?.state === "available"
+        ? partial.observations.finalization.value
+        : undefined;
     const committedManifest =
       "capture" in partial
         ? partial.capture.manifest
         : partial.observations.manifest.state === "available"
           ? partial.observations.manifest.value
           : undefined;
-    const finalizationIssue =
-      finalizationManifestIssue(
-        committedManifest?.scenario,
-        committedManifest?.comparison_contract,
-      ) ??
+    const manifestFinalizationIssue = finalizationManifestIssue(
+      committedManifest?.scenario,
+      committedManifest?.comparison_contract,
+    );
+    const exitFinalizationIssue =
+      manifestFinalizationIssue ??
       (observedExit === undefined
         ? undefined
         : finalizationConsistencyIssue(
@@ -653,11 +680,27 @@ export const partialProcessCaptureObservationSchema = z
             committedManifest?.scenario,
             committedManifest?.comparison_contract,
           ));
-    if (finalizationIssue !== undefined)
+    const incompleteFinalizationIssue =
+      manifestFinalizationIssue ??
+      (observedFinalization === undefined
+        ? undefined
+        : finalizationConsistencyIssue(
+            undefined,
+            committedManifest?.scenario,
+            committedManifest?.comparison_contract,
+            { finalization: observedFinalization, allowNullElapsedMs: true },
+          ));
+    if (exitFinalizationIssue !== undefined)
       context.addIssue({
         code: "custom",
         path: ["exit"],
-        message: finalizationIssue,
+        message: exitFinalizationIssue,
+      });
+    if (incompleteFinalizationIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message: incompleteFinalizationIssue,
       });
 
     if ("observations" in partial) {

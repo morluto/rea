@@ -1,7 +1,10 @@
 import { digestProcessCommitment } from "./processScenario.js";
 import { hasCaptureTruncation } from "./processCaptureCoverage.js";
 
-import type { UnverifiedProcessCapture } from "./processCapture.js";
+import type {
+  ProcessCaptureFinalization,
+  UnverifiedProcessCapture,
+} from "./processCapture.js";
 /** One pure semantic validation failure in a shaped process capture. */
 export interface ProcessCaptureValidationIssue {
   readonly path: string;
@@ -122,52 +125,86 @@ export const finalizationManifestIssue = (
     ? "comparison_contract finalization_ms must match the committed scenario"
     : undefined;
 
+type FinalizationAttempts = Pick<
+  ProcessCaptureFinalization,
+  "requested_ms" | "elapsed_ms"
+> & {
+  readonly signals: readonly Pick<
+    ProcessCaptureFinalization["signals"][number],
+    "signal" | "sent_at_ms"
+  >[];
+};
+
 /**
  * Cross-field rule for `exit.finalization`, shared by complete and partial
  * captures. Returns the violated rule, or undefined when the record is
- * consistent. Only a cancelled exit may end the interval early.
+ * consistent.
  */
 export const finalizationConsistencyIssue = (
-  exit: {
-    readonly reason: string;
-    readonly signal?: number | null | undefined;
-    readonly finalization?:
-      | {
-          readonly requested_ms: number;
-          readonly outcome: "target_exited" | "forced_kill";
-          readonly elapsed_ms: number;
-        }
-      | undefined;
-  },
+  exit:
+    | {
+        readonly reason: string;
+        readonly finalization?: FinalizationAttempts | undefined;
+      }
+    | undefined,
   committedScenario?: Readonly<Record<string, unknown>>,
   committedComparison?: Readonly<Record<string, unknown>>,
+  options?: {
+    readonly finalization?: FinalizationAttempts;
+    readonly allowNullElapsedMs?: boolean;
+  },
 ): string | undefined => {
   const manifestIssue = finalizationManifestIssue(
     committedScenario,
     committedComparison,
   );
   if (manifestIssue !== undefined) return manifestIssue;
-  const { finalization } = exit;
+  const finalization = exit?.finalization ?? options?.finalization;
   if (finalization === undefined) {
     // A deadline that fired under a committed interval must have attempted
     // finalization; cancellation before the deadline legitimately has none.
     const committed = committedScenario?.["finalization_ms"];
-    return (exit.reason === "timeout" || exit.reason === "idle_timeout") &&
+    return (exit?.reason === "timeout" || exit?.reason === "idle_timeout") &&
       typeof committed === "number" &&
       committed > 0
       ? "a deadline exit under a committed finalization_ms requires finalization evidence"
       : undefined;
   }
-  if (exit.reason === "exited")
+  if (exit?.reason === "exited")
     return "finalization requires a deadline exit reason";
+  const first = finalization.signals[0];
+  if (first?.signal !== "SIGTERM")
+    return "finalization signals must start with SIGTERM";
+  const killIndexes = finalization.signals.flatMap(({ signal }, index) =>
+    signal === "SIGKILL" ? [index] : [],
+  );
   if (
-    finalization.outcome === "forced_kill" &&
-    exit.reason !== "cancelled" &&
-    finalization.elapsed_ms < finalization.requested_ms
+    killIndexes.length > 1 ||
+    (killIndexes[0] !== undefined &&
+      killIndexes[0] !== finalization.signals.length - 1)
   )
-    return "forced finalization cannot precede the requested interval";
-  if (finalization.outcome === "forced_kill" && exit.signal !== 9)
-    return "forced finalization requires an observed SIGKILL exit";
+    return "finalization may contain at most one final SIGKILL";
+  if (
+    !finalization.signals.every(({ sent_at_ms }, index) => {
+      const previous = finalization.signals[index - 1];
+      return previous === undefined || sent_at_ms >= previous.sent_at_ms;
+    })
+  )
+    return "finalization signal attempt times must not decrease";
+  const kill = finalization.signals.find(({ signal }) => signal === "SIGKILL");
+  if (
+    kill !== undefined &&
+    kill.sent_at_ms < finalization.requested_ms &&
+    exit?.reason !== "cancelled"
+  )
+    return "finalization SIGKILL cannot precede the requested interval";
+  if (finalization.elapsed_ms === null && options?.allowNullElapsedMs !== true)
+    return "finalization requires an observed elapsed_ms";
+  if (
+    finalization.elapsed_ms !== null &&
+    finalization.elapsed_ms < first.sent_at_ms
+  )
+    return "finalization elapsed_ms cannot precede the first signal attempt";
   if (
     committedScenario !== undefined &&
     committedScenario["finalization_ms"] !== finalization.requested_ms

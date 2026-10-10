@@ -180,17 +180,13 @@ target finish first: when `timeout_ms` or `idle_timeout_ms` fires, REA sends
 `SIGTERM`, keeps capturing output and selected files, and sends `SIGKILL` only
 if the target is still running after `finalization_ms`. `exit.reason` keeps the
 initiating deadline, so a target that exits during finalization is still
-reported as `timeout` or `idle_timeout`. `exit.finalization` then records
-`requested_ms`, `signal`, `outcome` (`target_exited` or `forced_kill`) and
-`elapsed_ms`; it is absent when no finalization was attempted. As for every
-deadline exit, `exit.code` stays `null`. `forced_kill` means REA sent `SIGKILL`
-after the interval and the observed exit shows it; `target_exited` means the
-exit was observed without that `SIGKILL` taking effect. A `SIGKILL` from a
-scenario event that lands next to the escalation can be read as `forced_kill`,
-because the PTY layer reports only the final signal. `elapsed_ms` is timing
-data, measured on a monotonic clock from the `SIGTERM` to the moment REA
-observes the exit, which the PTY layer can deliver slightly after the operating
-system ends the process. The nominal lifecycle budget is
+reported as `timeout` or `idle_timeout`. `exit.finalization` then records the
+committed `requested_ms`, `signals` in attempt order (each with its monotonic
+attempt time and delivery result), and `elapsed_ms`, the observed exit time
+relative to finalization start or `null` when no exit was observed. It is absent
+when no finalization was attempted. As for every deadline exit, `exit.code`
+stays `null`. Signal attempts and the observed `exit.signal` are separate facts:
+the record does not attribute an exit to a particular signal. The nominal lifecycle budget is
 `timeout_ms + finalization_ms + settle_ms`; polling, snapshotting and cleanup
 lie outside it. Scenario `events` keep being dispatched during finalization and
 are recorded as usual. Cancellation is not delayed: it sends `SIGKILL`

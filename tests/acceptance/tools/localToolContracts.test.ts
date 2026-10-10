@@ -387,8 +387,7 @@ captureTest(
       "the cooperative SIGTERM finalization is recorded",
     ).toMatchObject({
       requested_ms: 1_500,
-      signal: "SIGTERM",
-      outcome: "target_exited",
+      signals: [{ signal: "SIGTERM", delivery: "signaled" }],
     });
     expect(
       capture.normalized_result.manifest.scenario.finalization_ms,

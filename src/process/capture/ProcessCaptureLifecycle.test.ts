@@ -59,7 +59,7 @@ const start = (
     recordEvent: () => undefined,
   });
 
-it("reports a self-exit as target_exited when its notification arrives after the escalation", async () => {
+it("records attempts when a self-exit notification arrives after escalation", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
   await waitFor(() => fake.signals.includes("SIGKILL"));
@@ -68,8 +68,12 @@ it("reports a self-exit as target_exited when its notification arrives after the
 
   const exit = await pending;
 
-  expect(exit.finalization?.outcome, "the observed exit was not a kill").toBe(
-    "target_exited",
+  expect(
+    exit.finalization?.signals.map(({ signal }) => signal),
+    "both attempts are observed in order",
+  ).toEqual(["SIGTERM", "SIGKILL"]);
+  expect(exit.signal, "the observed exit remains independent of attempts").toBe(
+    0,
   );
   expect(
     fake.signals.filter((signal) => signal === "SIGKILL"),
@@ -103,9 +107,13 @@ it("kills at once when cancelled during the finalization interval", async () => 
     fake.signals.filter((signal) => signal === "SIGKILL"),
     "the abort branch itself sent one SIGKILL, long before the interval ended",
   ).toHaveLength(1);
+  expect(
+    exit.finalization?.signals.map(({ signal }) => signal),
+    "cancellation records both attempts",
+  ).toEqual(["SIGTERM", "SIGKILL"]);
 });
 
-it("reports forced_kill when the observed exit is the escalation's SIGKILL", async () => {
+it("records escalation attempts alongside an observed SIGKILL exit", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
   await waitFor(() => fake.signals.includes("SIGKILL"));
@@ -113,17 +121,23 @@ it("reports forced_kill when the observed exit is the escalation's SIGKILL", asy
 
   const exit = await pending;
 
-  expect(exit.finalization, "forced kill is recorded").toMatchObject({
-    requested_ms: 100,
-    outcome: "forced_kill",
-  });
+  expect(
+    exit.finalization?.signals,
+    "both finalization attempts are recorded",
+  ).toMatchObject([
+    { signal: "SIGTERM", delivery: "signaled" },
+    { signal: "SIGKILL", delivery: "signaled" },
+  ]);
+  expect(exit.signal, "the observed exit signal is retained separately").toBe(
+    9,
+  );
   expect(
     exit.finalization?.elapsed_ms,
     "the escalation waited for the whole interval",
   ).toBeGreaterThanOrEqual(100);
 });
 
-it("does not call a scripted SIGKILL during the interval a forced kill", async () => {
+it("records a scripted SIGKILL exit without inferring its cause", async () => {
   const fake = fakeTerminal();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
   await waitFor(() => fake.signals.includes("SIGTERM"));
@@ -136,7 +150,8 @@ it("does not call a scripted SIGKILL during the interval a forced kill", async (
     "the harness itself never escalated inside the interval",
   ).not.toContain("SIGKILL");
   expect(
-    exit.finalization?.outcome,
-    "an exit the harness did not cause is not a forced kill",
-  ).toBe("target_exited");
+    exit.finalization?.signals,
+    "only the SIGTERM attempt was made",
+  ).toMatchObject([{ signal: "SIGTERM", delivery: "signaled" }]);
+  expect(exit.signal, "the observed SIGKILL remains an exit fact").toBe(9);
 });
