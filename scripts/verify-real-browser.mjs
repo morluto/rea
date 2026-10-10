@@ -45,6 +45,7 @@ import { verifyBrowserDomDestinations } from "./lib/browser-dom-destinations-e2e
 import { verifyBrowserCaptureMetadataBudget } from "./lib/browser-capture-metadata-budget-e2e.mjs";
 import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
 import { verifyScenarioEnvironment } from "./lib/browser-scenario-environment-e2e.mjs";
+import { verifyScenarioAccessibilityRedaction } from "./lib/browser-scenario-accessibility-redaction-e2e.mjs";
 
 const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
@@ -280,6 +281,8 @@ try {
     target,
     site.origin,
   );
+  const scenarioAccessibilityRedaction =
+    await verifyScenarioAccessibilityRedaction(endpoint, target, site.origin);
   const launchedScenario = await createBrowserScenarioProvider(
     process.env,
   ).captureScenario(
@@ -373,6 +376,7 @@ try {
     browserScenarioLaunchCleanup: "terminated-owned-process",
     scenarioFailure,
     scenarioEnvironment,
+    scenarioAccessibilityRedaction,
     verified: true,
   };
 } finally {

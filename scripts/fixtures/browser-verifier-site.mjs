@@ -12,6 +12,23 @@ export async function startBrowserVerifierSite() {
       return;
     }
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/scenario-accessibility-redaction") {
+      const buttons = ["yaml", "normalized", "json"].map((name) => {
+        const label = (requestUrl.searchParams.get(name) ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+        return `<button aria-label="${label}">Secret action</button>`;
+      });
+      response.setHeader("content-type", "text/html; charset=utf-8");
+      response.end(`<!doctype html><html><body>
+        ${buttons.join("\n")}
+        <p>Ordinary retained text é</p>
+        <a href="/ordinary?value=ordinary-query">Ordinary destination</a>
+      </body></html>`);
+      return;
+    }
     if (requestUrl.pathname === "/scenario-environment") {
       const requestedRun = requestUrl.searchParams.get("run");
       const run = ["A", "B", "C"].includes(requestedRun)

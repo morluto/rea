@@ -129,7 +129,7 @@ export function browserScenario(browser, origin) {
 }
 
 /** Run scenario capture through the public one-shot CLI. */
-export async function runScenarioCli(scenario) {
+export async function runScenarioCli(scenario, environment = process.env) {
   const { stdout } = await execute(
     process.execPath,
     [
@@ -140,7 +140,7 @@ export async function runScenarioCli(scenario) {
     ],
     {
       cwd: process.cwd(),
-      env: process.env,
+      env: environment,
       maxBuffer: 64 * 1_024 * 1_024,
     },
   );

@@ -10,6 +10,7 @@ import {
   type SanitizedBrowserUrl,
 } from "../domain/browserObservation.js";
 import type { BrowserStorageValueFingerprint } from "../domain/browserScenarioCaptureValues.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 
 const REDACTION_PREFIX = "[REDACTED:";
 
@@ -19,6 +20,32 @@ const encodedSecretValues = (secret: string): ReadonlySet<string> =>
     encodeURIComponent(secret),
     new URLSearchParams([["value", secret]]).toString().slice("value=".length),
   ]);
+
+const yamlSecretValue = (secret: string): string =>
+  secret.replace(/[\\"\x00-\x1f\x7f-\x9f]/gu, (character) => {
+    const json = JSON.stringify(character).slice(1, -1);
+    return json.startsWith("\\u") || character.charCodeAt(0) >= 0x7f
+      ? `\\x${character.charCodeAt(0).toString(16).padStart(2, "0")}`
+      : json;
+  });
+
+const accessibilitySecretValues = (secret: string): readonly string[] => {
+  if (secret === "") return [];
+  const normalized = secret
+    .replace(/[\u200b\u00ad]/gu, "")
+    .trim()
+    .replace(/\s+/gu, " ");
+  return [...new Set([secret, normalized])].flatMap((value) => {
+    const json = JSON.stringify(value).slice(1, -1);
+    return [
+      value,
+      json,
+      value.replaceAll("'", "''"),
+      json.replaceAll("'", "''"),
+      yamlSecretValue(value),
+    ];
+  });
+};
 
 /** Resolved secret values kept only for one in-memory scenario session. */
 export class BrowserScenarioSecrets {
@@ -67,6 +94,14 @@ export class BrowserScenarioSecrets {
       if (secret !== "")
         output = output.replaceAll(secret, `${REDACTION_PREFIX}${id}]`);
     return output;
+  }
+
+  /** Redact declared values as normalized and quoted by Playwright snapshots. */
+  redactAccessibilityText(value: string): string {
+    return redactExplicitText(
+      value,
+      [...this.values.values()].flatMap(accessibilitySecretValues),
+    );
   }
 
   /** Replace declared UTF-8, URI/form, and JSON-escaped secrets without decoding binary data. */

@@ -86,7 +86,7 @@ const captureAccessibility = async (input: {
   const { page, secrets } = input;
   try {
     const text = await page.locator("html").ariaSnapshot();
-    return textArtifact(secrets.redact(text));
+    return textArtifact(secrets.redactAccessibilityText(text));
   } catch (cause: unknown) {
     void cause;
     return missing("accessibility capture failed");
