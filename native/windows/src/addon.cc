@@ -1,5 +1,7 @@
 #include "authority.hpp"
 
+#include <delayimp.h>
+
 namespace rea {
 
 static const napi_type_tag RESOURCE_TAG = {0x45fcbf0b49e84fe3ULL, 0x9e3e5074130de843ULL};
@@ -121,3 +123,13 @@ static napi_value initialize(napi_env env, napi_value exports) {
 } // namespace rea
 
 NAPI_MODULE(NODE_GYP_MODULE_NAME, rea::initialize)
+
+// Node-API symbols are delay-imported from "node.exe". Resolve them against the
+// host executable so Node.js, Bun, and other Node-API hosts load the addon
+// regardless of their executable file name.
+static FARPROC WINAPI reaHostHook(unsigned event, PDelayLoadInfo info) {
+  if (event != dliNotePreLoadLibrary || _stricmp(info->szDll, "node.exe") != 0) return nullptr;
+  return reinterpret_cast<FARPROC>(GetModuleHandleW(nullptr));
+}
+
+decltype(__pfnDliNotifyHook2) __pfnDliNotifyHook2 = reaHostHook;
