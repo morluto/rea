@@ -1283,7 +1283,7 @@ async function inspect(
     evidence.provider.version,
     "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2",
   );
-  assert.deepEqual(evidence.normalized_result, evidence.raw_result);
+  assert.equal(evidence.raw_result, null);
   assert.equal(evidence.normalized_result.diagnostics.truncated, false);
   return evidence.normalized_result;
 }

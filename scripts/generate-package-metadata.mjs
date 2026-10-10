@@ -17,7 +17,7 @@ const lock = JSON.parse(
   await readFile(join(root, "package-lock.json"), "utf8"),
 );
 const skill = await readFile(
-  join(root, "skill-src/reverse-engineer-anything/SKILL.md"),
+  join(root, ".agents/skills/reverse-engineer-anything/SKILL.md"),
   "utf8",
 );
 const skillVersion = /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(skill)?.[1];

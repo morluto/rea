@@ -17,6 +17,7 @@ import { verifyPackageMcp } from "./verify-package-mcp.mjs";
 import { verifyPackagePack } from "./verify-package-pack.mjs";
 import { verifyPackagePlatform } from "./verify-package-platform.mjs";
 import { verifyPackageSetup } from "./verify-package-setup.mjs";
+import { verifyRepositorySkill } from "./verify-repository-skill.mjs";
 import { verifyManaged } from "./verify-package-managed.mjs";
 import { verifyUnknownProvider } from "./verify-package-unknown-provider.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
@@ -34,9 +35,11 @@ let tarball;
 let mcpStartup;
 let mcpModuleLoading;
 let update;
+let repositorySkill;
 let report;
 
 try {
+  repositorySkill = await verifyRepositorySkill({ root, workspace });
   ({ tarball } = await verifyPackagePack({ root, workspace }));
   const environmentData = await verifyPackageEnvironment({
     root,
@@ -156,6 +159,7 @@ try {
     configSymlinkLifecycle: supportedSetupHost,
     skill: supportedSetupHost,
     skillReferences: supportedSetupHost,
+    repositorySkill,
     mcpTools: TOOL_CONTRACTS.length,
     mcpPrompts: prompts.names.length,
     promptCompletion: true,

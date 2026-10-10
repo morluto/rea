@@ -62,21 +62,21 @@ if (
   );
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const architecture = process.argv[2] === "--x86" ? "x86" : "x86_64";
+const architecture = process.argv.includes("--x86") ? "x86" : "x86_64";
+const dllFixture = process.argv.includes("--dll");
+const role = dllFixture ? "shared-library" : "application";
 const targetPath = resolve(
   root,
   "build",
   "fixtures",
-  architecture === "x86"
-    ? "rea-ghidra-windows-x86.exe"
-    : "rea-ghidra-windows.exe",
+  `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${dllFixture ? "dll" : "exe"}`,
 );
 const target = await parseBinaryTarget(targetPath);
 if (
   !target.ok ||
   target.value.format !== "pe" ||
   target.value.architecture !== architecture ||
-  target.value.executableRole !== "application" ||
+  target.value.executableRole !== role ||
   target.value.managed !== false
 )
   throw new Error(
@@ -89,6 +89,8 @@ const profile = await resolveGhidraAnalysisProfile(
 );
 if (!profile.ok || profile.value.profile === null)
   throw new Error("Windows Ghidra profile could not be committed");
+if (profile.value.profile.parameters.executable_role !== role)
+  throw new Error("Windows Ghidra profile lost the observed PE role");
 
 const client = new GhidraClient({
   platform: installation.platform,
@@ -162,6 +164,19 @@ try {
     throw new Error(
       "Windows fixture decompilation lost its known return value",
     );
+  if (dllFixture) {
+    const callerAddress = architecture === "x86" ? "0x401000" : "0x140001000";
+    const callees = await functionOperation("procedure_callees", {
+      procedure: callerAddress,
+    });
+    if (!callees.includes(callee.address))
+      throw new Error("DLL export caller lost its controlled call reference");
+    const callerCode = await functionOperation("procedure_pseudo_code", {
+      procedure: callerAddress,
+    });
+    if (typeof callerCode !== "string" || !/\+\s*1\b/u.test(callerCode))
+      throw new Error("DLL export caller lost its addition of one");
+  }
 
   await inventory("inspect_native_load_image", {});
   const memory = await inventory("read_bytes", {
@@ -254,7 +269,7 @@ try {
     limitations: [
       "approved-non-sensitive-fixtures-only",
       "windows-x64-local-ntfs-only",
-      "native-x86-and-x86-64-pe-applications-only",
+      "native-x86-and-x86-64-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
   };

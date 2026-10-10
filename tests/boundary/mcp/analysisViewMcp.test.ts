@@ -6,7 +6,9 @@ import { z } from "zod";
 
 import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { ok } from "../../../src/domain/result.js";
 import {
   createJavaScriptApplicationGraph,
@@ -109,6 +111,68 @@ it("advertises exact schemas and projects one layout section from retained Evide
   );
 });
 
+it("delivers a bounded native dossier view over MCP without a Ghidra provider or lost connection", async () => {
+  const { client, session } = await connect();
+  const original = functionDossierSchema.parse(ghidraFunctionDossier());
+  const parent = createEvidence(
+    {
+      path: "/fixtures/oversized-native.exe",
+      format: "pe",
+      sha256: "b".repeat(64),
+    },
+    { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+    {
+      operation: "analyze_function",
+      parameters: { address: "0x401000" },
+      result: { ...original, pseudocode: "X".repeat(11 * 1024 * 1024) },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  const advertised = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_analysis_view",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("missing view schemas");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const inputSchema: Record<string, unknown> = advertised.inputSchema;
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const arguments_ = {
+    source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    view: { kind: "native", facet: "pseudocode", offset: 0, limit: 500 },
+  };
+  expect(ajv.validateSchema(inputSchema)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  expect(
+    ajv.validate(inputSchema, arguments_),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: arguments_,
+  });
+  expect(response.isError).not.toBe(true);
+  expect(
+    ajv.validate(outputSchema, response.structuredContent),
+    JSON.stringify(ajv.errors),
+  ).toBe(true);
+  const parsed = toolContract("inspect_analysis_view").outputSchema.parse(
+    response.structuredContent,
+  );
+  expect(parsed.normalized_result).toMatchObject({
+    kind: "native",
+    parent_evidence_id: parent.evidence_id,
+    procedure_address: "0x401000",
+    coverage: { examined: 500, next_offset: 500, total: 11 * 1024 * 1024 },
+  });
+  expect(parsed.evidence_links).toEqual([parent.evidence_id]);
+  expect(parsed.locations).toEqual([
+    { kind: "artifact-path", path: "/fixtures/oversized-native.exe" },
+    { kind: "address", address: "0x401000" },
+  ]);
+  expect(JSON.stringify(response.structuredContent).length).toBeLessThan(12000);
+  await client.ping();
+});
+
 it("retains an oversized selected observation and keeps subsequent views usable", async () => {
   const { client, session } = await connect();
   const analysis = analysisViewJavaScriptAnalysisWithSource();
@@ -183,6 +247,71 @@ it("retains an oversized selected observation and keeps subsequent views usable"
     },
   });
   expect(summary.isError).not.toBe(true);
+});
+
+it("retains an oversized native assembly row and permits a subsequent smaller view", async () => {
+  const { client, session } = await connect();
+  const row = "\0".repeat(1_000_000);
+  const parent = createEvidence(
+    { path: "/fixtures/large-row.exe", format: "pe", sha256: "c".repeat(64) },
+    { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+    {
+      operation: "analyze_function",
+      parameters: {},
+      result: {
+        ...functionDossierSchema.parse(ghidraFunctionDossier()),
+        assembly: [row],
+      },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  const source = { kind: "retained-evidence", evidence_id: parent.evidence_id };
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source,
+      view: { kind: "native", facet: "assembly", offset: 0, limit: 1 },
+    },
+  });
+  expect(response.isError).toBe(true);
+  const error = z
+    .object({
+      error: z.object({
+        details: z.object({
+          reported_limits: z.object({
+            evidence_reference: z.object({
+              kind: z.literal("retained-evidence"),
+              evidence_id: z.string(),
+            }),
+          }),
+        }),
+      }),
+    })
+    .parse(parseMcpToolError(response));
+  const retained = session.evidenceById(
+    error.error.details.reported_limits.evidence_reference.evidence_id,
+  );
+  expect(retained?.normalized_result).toMatchObject({
+    item: [row],
+    parent_evidence_id: parent.evidence_id,
+  });
+  const next = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source,
+      view: { kind: "native", facet: "pseudocode", offset: 0, limit: 12 },
+    },
+  });
+  expect(next.isError).not.toBe(true);
+  expect(
+    toolContract("inspect_analysis_view").outputSchema.parse(
+      next.structuredContent,
+    ).normalized_result,
+  ).toMatchObject({
+    item: { text: "int fixture_" },
+    parent_evidence_id: parent.evidence_id,
+  });
+  await client.ping();
 });
 
 it("returns a JavaScript summary without graph payloads from a retained reference", async () => {

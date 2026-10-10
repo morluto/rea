@@ -1,14 +1,11 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { afterEach, expect, it } from "vitest";
 
+import { runCliJson as runCli } from "../../fixtures/cliJsonProcess.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
 
-const execute = promisify(execFile);
 const browsers: FakeCdpBrowser[] = [];
 
 afterEach(async () => {
@@ -78,30 +75,6 @@ it("reports missing JSON shapes only when body shapes are selected", async () =>
     unavailable_sections: expect.not.arrayContaining(["json_body_shapes"]),
   });
 });
-
-const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
-  try {
-    const { stdout } = await execute(
-      process.execPath,
-      ["scripts/rea.mjs", ...arguments_],
-      {
-        cwd: process.cwd(),
-        env: process.env,
-        maxBuffer: 16 * 1_024 * 1_024,
-      },
-    );
-    return JSON.parse(stdout);
-  } catch (cause: unknown) {
-    if (
-      typeof cause === "object" &&
-      cause !== null &&
-      "stdout" in cause &&
-      typeof cause.stdout === "string"
-    )
-      return JSON.parse(cause.stdout);
-    throw cause;
-  }
-};
 
 const normalizedResult = (value: unknown): Record<string, unknown> => {
   if (!isRecord(value) || !isRecord(value.normalized_result))

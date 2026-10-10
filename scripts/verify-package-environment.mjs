@@ -85,6 +85,7 @@ export async function verifyPackageEnvironment({
     PI_CODING_AGENT_DIR: undefined,
     PI_CONFIG_DIR: undefined,
     PI_PROFILE: undefined,
+    QWEN_HOME: undefined,
     OPENCODE_CONFIG: undefined,
     XDG_CONFIG_HOME: join(home, ".config"),
     PATH: `${fakeBin}:${process.env.PATH ?? ""}`,

@@ -24,6 +24,7 @@ it("labels an envelope containing debugger-derived maps as derived", async () =>
   const evidence = parseEvidence(result.value);
   expect(evidence.confidence).toBe("derived");
   expect(evidence.normalized_result).toEqual(fixture);
+  expect(evidence.raw_result).toBeNull();
 });
 
 it.each([

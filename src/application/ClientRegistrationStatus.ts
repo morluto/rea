@@ -94,6 +94,7 @@ export const readClientRegistrationStatuses = async (
           PI_CODING_AGENT_DIR: options.environment.PI_CODING_AGENT_DIR,
           PI_CONFIG_DIR: options.environment.PI_CONFIG_DIR,
           PI_PROFILE: options.environment.PI_PROFILE,
+          QWEN_HOME: options.environment.QWEN_HOME,
           SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
           XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
         },

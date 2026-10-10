@@ -14,7 +14,10 @@ import {
   immutableSemanticBindings,
   immutableSemanticScopes,
 } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticObjectPatternKeys,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -29,6 +32,7 @@ import {
   semanticVariableScope,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { collectSemanticMemberMutations } from "./javascriptSemanticMemberMutations.js";
 import {
   collectSemanticReturns,
@@ -280,6 +284,92 @@ const resolveGlobalAliasFact = (
   )
     return undefined;
   return openGlobalFact(name);
+};
+
+const ELECTRON_MODULE = /^electron(?:\/(?:common|main|renderer|utility))?$/u;
+
+/**
+ * Electron export paths for call and construction roots bound to Electron
+ * under another name, such as esbuild's `import { ipcMain as ipcMain2 }`.
+ * Keys are root identifier offsets; roots spelled as their export are omitted.
+ */
+export const classifyParsedJavaScriptElectronBindings = (
+  file: ParsedJavaScriptSource,
+): ReadonlyMap<number, string> => {
+  const facts = new Map<number, string>();
+  const state = createState(file.program);
+  collectDefinitions(file.program, state);
+  const exportsByBinding = new Map<string, string | null>();
+  traverseJavaScriptAst(file.program, {
+    enter: (node) => {
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node)
+      )
+        return;
+      const root = calleeRoot(node.callee);
+      if (root === undefined) return;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === undefined) return;
+      let exported = exportsByBinding.get(binding.bindingId);
+      if (exported === undefined) {
+        exported = electronExport(binding, state);
+        exportsByBinding.set(binding.bindingId, exported);
+      }
+      if (exported !== null && exported !== root.name)
+        facts.set(root.start ?? -1, exported);
+    },
+  });
+  return facts;
+};
+
+const calleeRoot = (node: t.Node): t.Identifier | undefined => {
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    if (!t.isNode(node.object)) return undefined;
+    node = node.object;
+  }
+  return t.isIdentifier(node) ? node : undefined;
+};
+
+// Read import and require origins directly; general value evaluation is
+// unnecessary here and costly across large vendor bundles.
+const electronExport = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): string | null => {
+  const origin = bindingOrigin(binding, state);
+  return origin !== undefined &&
+    ELECTRON_MODULE.test(origin.specifier) &&
+    origin.importedPath.length > 0
+    ? origin.importedPath.join(".")
+    : null;
+};
+
+const bindingOrigin = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptModuleOrigin | undefined => {
+  if (binding.directOrigins.length > 0)
+    return binding.directOrigins.length === 1
+      ? binding.directOrigins[0]
+      : undefined;
+  const [initializer] = binding.initializers;
+  // A var/let declaration permits writes without proving one occurred.
+  // Require one unconditional initializer and no actual binding writes.
+  if (
+    initializer === undefined ||
+    binding.initializers.length !== 1 ||
+    binding.definitions.some(({ kind }) => kind === "assignment") ||
+    state.conditionalInitializers.has(initializer.node)
+  )
+    return undefined;
+  const origin = semanticRequireOrigin(initializer.node, state);
+  const projection = initializer.projection;
+  return origin === undefined ||
+    !projection.every((key): key is string => typeof key === "string")
+    ? undefined
+    : { ...origin, importedPath: [...origin.importedPath, ...projection] };
 };
 
 const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {
@@ -565,9 +655,21 @@ const bindAssignment = (
   else if (t.isForOfStatement(node) || t.isForInStatement(node))
     for (const pattern of t.isVariableDeclaration(node.left)
       ? node.left.declarations.map(({ id }) => id)
-      : [node.left])
+      : [node.left]) {
       for (const identifier of assignedPatternIdentifiers(pattern))
         addAssignment(identifier, node, scope, state);
+      if (t.isForOfStatement(node))
+        // Keep the loop value unknown, but preserve references yielded into
+        // each bound slot so writes/escapes can reach their iterable origins.
+        bindPattern({
+          pattern,
+          initializer: node,
+          scope,
+          state,
+          mutable: true,
+          referenceOnly: true,
+        });
+    }
 };
 
 const assignedPatternIdentifiers = (
@@ -780,7 +882,11 @@ const bindPattern = (input: BindPatternInput): void => {
   }
   if (t.isIdentifier(pattern)) {
     if (referenceOnly) {
-      const binding = scope.bindings.get(pattern.name);
+      const binding = resolveSemanticBindingFromScope(
+        scope,
+        pattern.name,
+        state,
+      );
       if (binding !== undefined && initializer !== null)
         binding.referenceInitializers.push({
           node: initializer,
@@ -864,14 +970,7 @@ const bindPattern = (input: BindPatternInput): void => {
           referenceOnly: true,
           copyKind: "object-rest",
           copyProjectionOffset: projection.length,
-          copyExcludedKeys: pattern.properties.flatMap((property) => {
-            if (t.isRestElement(property)) return [];
-            const key = semanticStaticPropertyKey(
-              property.key,
-              property.computed,
-            );
-            return key === null ? [] : [key];
-          }),
+          copyExcludedKeys: semanticObjectPatternKeys(pattern),
         });
       } else {
         const name = semanticStaticPropertyKey(property.key, property.computed);

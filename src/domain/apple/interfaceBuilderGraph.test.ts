@@ -509,3 +509,46 @@ describe("AppKit keyed archive connectors", () => {
     expect(to).toEqual(expect.arrayContaining(["objc_selector", "unknown"]));
   });
 });
+
+it("names the archive once per evidence record", () => {
+  const relativePath = "Views/Main.storyboardc/scene.nib/objects.nib";
+  const result = buildInterfaceBuilderAnalysis({
+    targetSha256: hash,
+    toolVersion: "test",
+    documents: [
+      {
+        relativePath,
+        archiveSha256: hash,
+        documentKind: "storyboard_scene",
+        raw: {
+          "com.apple.ibtool.document.objects": {
+            controller: { customClass: "StoreViewController" },
+            next: { customClass: "BuildViewController" },
+          },
+          "com.apple.ibtool.document.connections": {
+            controller: [
+              { type: "segue", identifier: "showBuild", destinationId: "next" },
+            ],
+          },
+        },
+      },
+    ],
+    limits: interfaceBuilderLimitsSchema.parse({}),
+  });
+  const evidence = [...result.graph.nodes, ...result.graph.edges].flatMap(
+    (item) => item.evidence,
+  );
+  expect(new Set(evidence.map(({ artifact_path }) => artifact_path))).toEqual(
+    new Set([relativePath]),
+  );
+  expect(evidence.map(({ description }) => description)).toEqual(
+    expect.arrayContaining([
+      "compiled document",
+      "object controller",
+      "segue showBuild",
+    ]),
+  );
+  expect(
+    evidence.filter(({ description }) => description.includes(relativePath)),
+  ).toEqual([]);
+});

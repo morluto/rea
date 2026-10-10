@@ -4,6 +4,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   realpath,
   rm,
   type FileHandle,
@@ -14,6 +15,7 @@ import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import {
   ArtifactPathRegistry,
+  destinationCaseCollisionMessage,
   normalizeArtifactPath,
 } from "./ArtifactPaths.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -134,7 +136,8 @@ export class SafeOutputTree {
         constants.O_WRONLY |
         constants.O_NOFOLLOW,
       0o600,
-    ).catch((cause: unknown) => {
+    ).catch(async (cause: unknown) => {
+      await throwIfDestinationCaseCollision(dirname(destination), path, cause);
       throw new ArtifactReaderFailure(
         "path",
         `Could not exclusively create extraction path: ${path}`,
@@ -245,17 +248,28 @@ export class SafeOutputTree {
     if (fileName === undefined)
       throw new ArtifactReaderFailure("path", "Invalid extraction path");
     let current = this.#outputRoot;
+    let logicalParent = "";
     for (const part of parts) {
+      const parentDirectory = current;
+      const logicalPath =
+        logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
+      let created = true;
       await mkdir(current, { mode: 0o700 }).catch((cause: unknown) => {
         if (!isAlreadyExists(cause)) throw cause;
+        created = false;
       });
+      if (!created)
+        await throwIfDestinationCaseCollision(parentDirectory, logicalPath);
       const metadata = await lstat(current);
-      if (!metadata.isDirectory() || metadata.isSymbolicLink())
+      if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+        await throwIfDestinationCaseCollision(parentDirectory, logicalPath);
         throw new ArtifactReaderFailure(
           "path",
           `Unsafe extraction parent: ${relativePath}`,
         );
+      }
+      logicalParent = logicalPath;
     }
     return join(current, fileName);
   }
@@ -329,6 +343,23 @@ const isNotFound = (cause: unknown): boolean =>
 
 const isAlreadyExists = (cause: unknown): boolean =>
   cause instanceof Error && "code" in cause && cause.code === "EEXIST";
+
+/** Fail when this directory already holds another spelling of the requested segment. */
+const throwIfDestinationCaseCollision = async (
+  parentDirectory: string,
+  logicalPath: string,
+  cause?: unknown,
+): Promise<void> => {
+  const names = await readdir(parentDirectory).catch(() => undefined);
+  if (names === undefined) return;
+  const message = destinationCaseCollisionMessage(logicalPath, names);
+  if (message === undefined) return;
+  throw new ArtifactReaderFailure(
+    "path",
+    message,
+    cause === undefined ? undefined : { cause },
+  );
+};
 
 const abortIfNeeded = (signal?: AbortSignal): void => {
   if (signal?.aborted === true)

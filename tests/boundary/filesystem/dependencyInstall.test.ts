@@ -169,7 +169,7 @@ const createBuildCacheFixture = async (): Promise<string> => {
     "scripts/clean-build-output.mjs",
     "scripts/generate-package-metadata.mjs",
     "scripts/lib/generated-file.mjs",
-    "skill-src/reverse-engineer-anything/SKILL.md",
+    ".agents/skills/reverse-engineer-anything/SKILL.md",
     "src/generatedPackageMetadata.ts",
   ];
   await Promise.all(

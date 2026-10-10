@@ -7,6 +7,7 @@ import type {
 } from "./electronStaticAnalysisTypes.js";
 import {
   boundedExpression,
+  electronCalleeName,
   electronStaticValue,
   handlerKind,
 } from "./electronStaticAnalysisValues.js";
@@ -36,7 +37,7 @@ const inspectIpcCall = (
   node: t.CallExpression,
   context: JavaScriptFindingContext,
 ): void => {
-  const name = calleeName(node.callee);
+  const name = electronCalleeName(node.callee, context);
   const descriptor = ipcDescriptor(name);
   if (descriptor === undefined) return;
   const channelNode = argumentNode(node.arguments[0]);
