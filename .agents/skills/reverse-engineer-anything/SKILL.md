@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "35"
+  version: "36"
 ---
 
 # REA
@@ -121,6 +121,9 @@ explicit path or endpoint and do not need it.
   Historical PIDs do not select live processes. Request `include_debugger_context`
   only when core-only mapping candidates help; see the
   [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md).
+- PE resource type/name/language trees and static icon group references:
+  `inspect_pe_resources` with an explicit path. This portable operation requires
+  no active target or engine; opaque payloads retain file ranges and SHA-256.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
   inventory context is useful and available from the selected provider.

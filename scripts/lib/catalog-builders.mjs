@@ -153,7 +153,16 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
-        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name !== "inspect_pe_resources",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_RESOURCES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_resources",
+        ),
     },
     {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,

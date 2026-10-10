@@ -1,4 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { createPeResourcesService } from "../composition/binaryDiagnostics.js";
+import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import { createEvmInterfaceService } from "../composition/evm.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -280,6 +282,12 @@ const registerConfiguredAnalysisTools = (
     recordEvidence,
   );
   registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
+  registerPeResourcesTool(
+    server,
+    createPeResourcesService(),
+    toolLogger,
+    recordEvidence,
+  );
   registerEvmTools(
     server,
     options.evmInterface ?? createEvmInterfaceService(environment),

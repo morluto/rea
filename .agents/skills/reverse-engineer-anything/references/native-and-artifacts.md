@@ -152,3 +152,15 @@ context. PSP/stack/device state remains unmodeled. See [DOS guide](https://githu
 ### Function annotations in Ghidra
 
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations.
+
+## Offline PE resource inventory
+
+Use `inspect_pe_resources` with an absolute `path`, or
+`rea inspect-pe-resources ./selected.exe --json`, for portable PE32/PE32+
+resource inspection without opening a native target. Preserve returned Evidence:
+type/name/language IDs and UTF-16 names, original directory/data/payload ranges,
+code pages, payload hashes and static icon-group references. Same-language icon
+resolution is explicit; missing references and size mismatch remain visible.
+Other payloads are opaque, and this operation does not decode images or simulate
+Windows resource loading. Consult the budgets and supported tree profile in
+[offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).

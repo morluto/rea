@@ -9,9 +9,28 @@ import {
 import type { ToolContract } from "../toolContractTypes.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
+import {
+  inspectPeResourcesInputSchema,
+  peResourcesSchema,
+} from "../../domain/native/peResources.js";
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
+  {
+    name: "inspect_pe_resources",
+    ...toolContractMetadata("inspect_pe_resources"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local PE32/PE32+ image's complete bounded type/name/language resource tree without executing it or opening a disassembler. Returns numeric IDs versus original UTF-16 names, directory/data-entry file locations, payload RVA/file ranges, complete SHA-256 hashes and static RT_GROUP_ICON image-resource candidates. Language fallback, image decoding and actual shell/window loading remain unobserved. Reads a stable regular file; malformed or ambiguous mappings, non-identical overlapping ranges and exhausted budgets return no partial success. Portable on supported Node hosts; no Windows SDK or engine installation required.",
+    inputSchema: inspectPeResourcesInputSchema,
+    outputSchema: evidenceResultOf(peResourcesSchema),
+    examples: [
+      {
+        title: "Inspect PE resource identities and icon relationships",
+        input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
   {
     name: "inspect_binary_layout",
     ...toolContractMetadata("inspect_binary_layout"),
