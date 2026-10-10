@@ -105,6 +105,19 @@ home; this does not prove their default home-directory discovery.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
 
+`verify:gemini-client` requires an installed Gemini CLI (verified with
+`@google/gemini-cli@0.63.0`); select it with `REA_VERIFY_GEMINI_COMMAND`.
+The optional POSIX lane uses native `GEMINI_CLI_HOME` discovery in an isolated
+Git project, checks setup plans, backups and idempotence, activates the installed
+personal skill, validates all forwarded input JSON Schemas against their declared
+dialect, forwards the complete REA catalog and checks full JavaScript
+Evidence for a Unicode path. Use `-- chat` for ordinary chat with REA enabled,
+or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed REA package.
+The local fixture exercises the real Gemini API adapter, including its
+`untrusted_context` tool-result envelope. Token counts are synthetic; live
+Google API and native Windows compatibility remain unverified. The lane disables
+the client's memory-based relaunch to preserve the caller's Node heap budget.
+
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
