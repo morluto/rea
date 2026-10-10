@@ -409,3 +409,56 @@ describe("historical source graph validation", () => {
     ).toThrow(/identifier does not match/u);
   });
 });
+
+describe("historical source graph symlink path identity", () => {
+  it("joins internal symlink targets with the inventory NFC normalizer", () => {
+    // "café" spelled NFC, as the inventory produces it, and the same
+    // name spelled NFD, as a macOS readlink can report it.
+    const nfcPath = "src/café.ts";
+    const nfdTarget = "cafe\u0301.ts";
+    expect(nfcPath).not.toBe(nfdTarget);
+
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries[1] = fileEntry({ path: nfcPath });
+    input.entries[2] = symlinkEntry({
+      path: "src/link.js",
+      target: nfdTarget,
+      target_state: "internal",
+    });
+    input.relationships = [];
+    const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries[2]).toMatchObject({
+      kind: "symlink",
+      target: nfdTarget,
+      target_state: "internal",
+    });
+  });
+
+  it("preserves an exact NFD inventory spelling when resolving its symlink", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries[1] = fileEntry({ path: "src/cafe\u0301.ts" });
+    input.entries[2] = symlinkEntry({
+      path: "src/link.js",
+      target: "cafe\u0301.ts",
+      target_state: "internal",
+    });
+    input.relationships = [];
+    expect(createHistoricalSourceGraph(input).entries[1]?.path).toBe(
+      "src/cafe\u0301.ts",
+    );
+  });
+
+  it("still rejects an internal symlink target that no inventory holds", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries[2] = symlinkEntry({
+      path: "src/link.js",
+      // The NFD spelling normalizes to "src/café.ts", which the
+      // inventory does not contain, so the join must still miss.
+      target: "cafe\u0301.ts",
+      target_state: "internal",
+    });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /must resolve to an inventoried entry/u,
+    );
+  });
+});

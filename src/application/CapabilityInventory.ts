@@ -40,6 +40,7 @@ export type AvailabilityPolicy = {
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisAvailability?: ProviderAvailability;
+  readonly jebAnalysisAvailability?: ProviderAvailability;
   readonly javascriptRecoveryEnabled?: boolean;
   readonly webModuleResolutionEnabled?: boolean;
   readonly browserObservationEnabled?: boolean;
@@ -303,7 +304,7 @@ const workflowAvailabilityFor = ({
       : {
           reason: "provider_missing",
           remediation:
-            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru 1.13.0 and util-linux prlimit. No binary target is required.",
+            "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru ^1.13.0 (verified with 1.14.0) and util-linux prlimit; see docs/javascript-recovery.md#install-wakaru. No binary target is required.",
         };
   if (name === "inspect_binary_layout")
     return policy.binaryLayoutEnabled === true
@@ -313,6 +314,8 @@ const workflowAvailabilityFor = ({
           remediation:
             "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
         };
+  if (name === "inspect_pe_resources")
+    return { reason: "available", remediation: null };
   if (name === "inspect_evm_interface")
     return policy.evmInterfaceEnabled === true
       ? { reason: "available", remediation: null }
@@ -353,6 +356,15 @@ const workflowAvailabilityFor = ({
           remediation:
             policy.androidAnalysisAvailability?.reason ??
             "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+        };
+  if (kind === "jeb-provider")
+    return policy.jebAnalysisAvailability?.status === "available"
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            policy.jebAnalysisAvailability?.reason ??
+            "Start a JEB client serving MCP (GUI client, or headless via its programmatic launcher) and point REA_JEB_MCP_URL at it (default http://127.0.0.1:8425/mcp). REA does not install or launch JEB.",
         };
   const browser = browserProviderAvailability(name, kind, policy);
   if (browser !== null) return browser;

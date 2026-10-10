@@ -15,10 +15,10 @@ import { buildRecoveryFixtures } from "../../fixtures/javascript-recovery/build.
 import { mcpTextValue } from "../../lib/mcp-verifier-results.mjs";
 
 const OFFICIAL_BINARY_SHA256 =
-  "e8c7ca052974604197389f6ace7464e4dd24dce64e2730971521bd6606ec9c9e";
+  "664fa06782a61eda7ed15885134b52525fd565dd77607e642062ceb6cd927c38";
 if (!process.env.REA_WAKARU_COMMAND)
   throw new Error(
-    "Provide REA_WAKARU_COMMAND for the official Wakaru 1.13.0 Linux x64 binary",
+    "Provide REA_WAKARU_COMMAND for the official Wakaru 1.14.0 Linux x64 binary",
   );
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("../../rea.mjs", import.meta.url));
@@ -130,7 +130,7 @@ try {
     }
   }
   finalReport = {
-    engine: "wakaru 1.13.0",
+    engine: "wakaru 1.14.0",
     toolchains: fixtures.toolchains,
     results: counts,
     verified: true,

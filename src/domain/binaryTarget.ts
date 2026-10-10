@@ -1,18 +1,33 @@
-import type { BinaryArchitecture } from "./binaryTargetTypes.js";
+import type {
+  BinaryArchitecture,
+  MipsElfMetadata,
+} from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
 
 /** Format and architecture facts recovered from an executable header. */
 export type ExecutableMetadata =
   | {
+      readonly format: "elf";
+      readonly architecture: "mips";
+      readonly availableArchitectures: readonly "mips"[];
+      readonly mips: MipsElfMetadata;
+    }
+  | {
       readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
-      readonly architecture: BinaryArchitecture;
-      readonly availableArchitectures: readonly BinaryArchitecture[];
+      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly availableArchitectures: readonly Exclude<
+        BinaryArchitecture,
+        "mips"
+      >[];
     }
   | {
       readonly format: "pe";
-      readonly architecture: BinaryArchitecture;
-      readonly availableArchitectures: readonly BinaryArchitecture[];
+      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly availableArchitectures: readonly Exclude<
+        BinaryArchitecture,
+        "mips"
+      >[];
       readonly executableRole:
         | "application"
         | "shared-library"
@@ -88,7 +103,7 @@ const parseFatMachO = (
   const entrySize = is64 ? 32 : 20;
   if (count === 0 || count > 128 || bytes.length < 8 + count * entrySize)
     return err("truncated or invalid FAT architecture table");
-  const architectures: BinaryArchitecture[] = [];
+  const architectures: Exclude<BinaryArchitecture, "mips">[] = [];
   const sliceEnds = new Map<BinaryArchitecture, bigint>();
   for (let index = 0; index < count; index += 1) {
     const entry = 8 + index * entrySize;
@@ -148,6 +163,20 @@ const parseElf = (
   const machine = little ? bytes.readUInt16LE(18) : bytes.readUInt16BE(18);
   const architecture = elfArchitecture(machine);
   if (architecture === undefined) return err("unsupported ELF architecture");
+  if (architecture === "mips")
+    return ok({
+      format: "elf",
+      architecture,
+      availableArchitectures: [architecture],
+      mips: {
+        elfClass: bytes[4] === 1 ? 32 : 64,
+        byteOrder: little ? "little" : "big",
+        type: little ? bytes.readUInt16LE(16) : bytes.readUInt16BE(16),
+        flags: little
+          ? bytes.readUInt32LE(bytes[4] === 1 ? 36 : 48)
+          : bytes.readUInt32BE(bytes[4] === 1 ? 36 : 48),
+      },
+    });
   return ok({
     format: "elf",
     architecture,
@@ -239,7 +268,9 @@ const peManagedStatus = (
   );
 };
 
-const machArchitecture = (cpu: number): BinaryArchitecture | undefined => {
+const machArchitecture = (
+  cpu: number,
+): Exclude<BinaryArchitecture, "mips"> | undefined => {
   switch (cpu) {
     case 7:
       return "x86";
@@ -259,6 +290,8 @@ const elfArchitecture = (machine: number): BinaryArchitecture | undefined => {
       return "x86";
     case 62:
       return "x86_64";
+    case 8: // EM_MIPS: ISA, ABI and byte order remain separate ELF facts.
+      return "mips";
     case 40:
       return "arm";
     case 183:
@@ -267,7 +300,9 @@ const elfArchitecture = (machine: number): BinaryArchitecture | undefined => {
   return undefined;
 };
 
-const peArchitecture = (machine: number): BinaryArchitecture | undefined => {
+const peArchitecture = (
+  machine: number,
+): Exclude<BinaryArchitecture, "mips"> | undefined => {
   switch (machine) {
     case 0x14c:
       return "x86";

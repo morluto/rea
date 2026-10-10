@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { artifactOutputSchemas } from "./toolOutputSchemaGroups.js";
+import { artifactIntegrityPolicySchema } from "../domain/artifactIntegrityPolicy.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
@@ -10,16 +11,19 @@ import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
-  integrity_policy: z.enum(["fail", "record-and-continue"]).default("fail"),
+  integrity_policy: artifactIntegrityPolicySchema,
 });
 
 /** Extraction needs no selector: it materializes every regular child file. */
-export const artifactExtractionInputSchema = z.strictObject({});
+export const artifactExtractionInputSchema = z.strictObject({
+  integrity_policy: artifactIntegrityPolicySchema,
+});
 
 /** Provider input containing the destination chosen by the local adapter. */
-export const artifactExtractionExecutionSchema = z.strictObject({
-  output_root: z.string().min(1),
-});
+export const artifactExtractionExecutionSchema =
+  artifactExtractionInputSchema.extend({
+    output_root: z.string().min(1),
+  });
 
 const exampleInputSchema = z.record(z.string(), jsonValueSchema);
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
@@ -68,7 +72,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   ),
   artifact(
     "extract_artifact",
-    "Extract all regular files from the active archive or application package into a fresh temporary directory chosen by REA. The result includes its location. Rejects traversal and symlink escapes, never overwrites, enforces archive integrity checks, and verifies cleanup.",
+    "Extract all regular files from the active archive or application package into a fresh temporary directory chosen by REA. The result includes its location. Rejects traversal and symlink escapes, never overwrites, and verifies cleanup. Integrity mismatches fail by default; record-and-continue extracts the observed bytes and returns each mismatch as an explicitly untrusted integrity contradiction.",
     artifactExtractionInputSchema,
   ),
   artifact(

@@ -7,7 +7,11 @@ import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
-import type { BinaryTarget } from "./binaryTargetTypes.js";
+import {
+  BINARY_ARCHITECTURES,
+  type BinaryArchitecture,
+  type BinaryTarget,
+} from "./binaryTargetTypes.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -57,7 +61,7 @@ const subjectSchema = z.object({
     "javascript-bundle",
     "entitlements",
   ]),
-  architecture: z.enum(["x86", "x86_64", "arm", "arm64"]).nullable(),
+  architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
   local_path: z.string(),
 });
 /** Source location attached to an evidence observation. */
@@ -171,7 +175,7 @@ export interface EvidenceSubjectTarget {
   readonly path: string;
   readonly sha256: string;
   readonly format: z.infer<typeof subjectSchema>["format"];
-  readonly architecture?: "x86" | "x86_64" | "arm" | "arm64";
+  readonly architecture?: BinaryArchitecture;
 }
 type EvidenceAuthority = z.infer<typeof evidenceAuthoritySchema>;
 type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;

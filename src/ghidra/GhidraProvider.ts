@@ -30,6 +30,7 @@ import {
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
 import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
+import { ghidraMipsUnsupportedReason } from "./GhidraMipsProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
@@ -47,7 +48,13 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-const SUPPORTED_ARCHITECTURES = new Set(["x86", "x86_64", "arm", "arm64"]);
+const SUPPORTED_ARCHITECTURES = new Set([
+  "x86",
+  "x86_64",
+  "arm",
+  "arm64",
+  "mips",
+]);
 
 /** Ghidra candidate backed by an isolated ephemeral headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -135,6 +142,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       };
     if (hostPlatform === "win32")
       return inspectWindowsP0TargetSupport(target, diagnostics);
+    const mipsReason = ghidraMipsUnsupportedReason(target);
+    if (mipsReason !== null)
+      return {
+        status: "unsupported",
+        code: "architecture_unsupported",
+        reason: mipsReason,
+        diagnostics,
+      };
     if (target.format === "mach-o" && target.availableArchitectures.length > 1)
       return {
         status: "unsupported",
@@ -148,7 +163,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 requires a concrete x86, x86_64, arm, or arm64 target architecture.",
+          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, or MIPS target profile.",
         diagnostics,
       };
     return {

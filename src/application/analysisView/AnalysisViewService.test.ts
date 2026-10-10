@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence, parseEvidence } from "../../domain/evidence.js";
@@ -9,7 +9,13 @@ import {
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
 } from "../../../tests/fixtures/analysisView.js";
-import { inspectAnalysisView } from "./AnalysisViewService.js";
+import {
+  inspectAnalysisView,
+  summarizeRetainedAnalysis,
+} from "./AnalysisViewService.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
+import { err, ok } from "../../domain/result.js";
 
 it.each(["/fixtures/unknown.exe", ""])(
   "preserves recorded empty native identity fields: path=%j",
@@ -264,5 +270,49 @@ it("rejects contradictory subject and analysis artifact digests", () => {
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "EvidenceIntegrityError" },
+  });
+});
+
+describe("summarizeRetainedAnalysis", () => {
+  const parent = analysisViewJavaScriptEvidence(
+    analysisViewJavaScriptAnalysisWithSource(),
+  );
+
+  it("retains the complete Evidence before projecting its summary", () => {
+    const retained = new Map<string, Evidence>();
+    const summary = summarizeRetainedAnalysis(parent, {
+      recordEvidence: (evidence) => {
+        retained.set(evidence.evidence_id, evidence);
+        return ok("added");
+      },
+      evidenceById: (evidenceId) => retained.get(evidenceId),
+    });
+    if (!summary.ok) throw summary.error;
+    expect(retained.get(parent.evidence_id)).toBe(parent);
+    expect(summary.value.evidence_links).toEqual([parent.evidence_id]);
+    expect(summary.value.normalized_result).toMatchObject({
+      kind: "summary",
+      parent_evidence_id: parent.evidence_id,
+      parent_operation: "analyze_javascript_application",
+    });
+  });
+
+  it("refuses a summary whose complete Evidence cannot be retained", () => {
+    const unavailable = summarizeRetainedAnalysis(parent, {
+      recordEvidence: undefined,
+      evidenceById: undefined,
+    });
+    expect(unavailable.ok).toBe(false);
+    if (unavailable.ok) return;
+    expect(unavailable.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(unavailable.error.userMessage).toContain("detail complete");
+
+    const conflict = new EvidenceIntegrityError("ledger conflict");
+    expect(
+      summarizeRetainedAnalysis(parent, {
+        recordEvidence: () => err(conflict),
+        evidenceById: () => parent,
+      }),
+    ).toEqual(err(conflict));
   });
 });

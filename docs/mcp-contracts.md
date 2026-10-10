@@ -318,6 +318,15 @@ Ordinary responses keep their existing complete result contract.
 
 ## Retained application Evidence inputs
 
+`analyze_javascript_application` and `inspect_binary_layout` accept `detail`:
+`complete` (default) returns the complete analysis Evidence; `summary` records
+that complete Evidence in the session and returns the derived
+`inspect_analysis_view` summary Evidence instead. Its
+`normalized_result.parent_evidence_id` and `evidence_links` name the retained
+analysis, so later views and application workflows read it without repeating
+analysis or moving the complete record through the response. A server without
+session retention refuses summary detail with `capability_unavailable`.
+
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
 Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
@@ -440,3 +449,15 @@ and reconstruction cannot treat it as unchanged.
 canonical `integrity_contradictions` records and marks application graph
 coverage partial when any mismatch is continued. Contradicted nested ASARs
 remain opaque.
+
+`extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
+on `rea extract-artifact`. With `record-and-continue` it writes the observed
+bytes and returns the `integrity_contradictions` records for the extracted
+files. An active ASAR unpacked entry whose companion file is absent cannot be
+materialized; extraction fails as `unavailable` with that logical path.
+
+Packaging tools commonly sign or strip `.asar.unpacked` native binaries after
+writing the archive header, so their declared hashes no longer match. Electron
+does not check unpacked companions against those hashes at runtime. Integrity
+failures for such entries name this cause and the operation to rerun with
+`record-and-continue`; REA does not exempt unpacked entries silently.

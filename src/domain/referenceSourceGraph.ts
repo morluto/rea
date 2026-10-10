@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { normalizeJoinedLogicalPath } from "./artifactIdentity.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
@@ -313,6 +314,14 @@ const checkSymlinks = (
   paths: ReadonlySet<string>,
   context: z.RefinementCtx,
 ): void => {
+  const normalizedPathCounts = new Map<string, number>();
+  for (const path of paths) {
+    const identity = normalizeJoinedLogicalPath(path);
+    normalizedPathCounts.set(
+      identity,
+      (normalizedPathCounts.get(identity) ?? 0) + 1,
+    );
+  }
   for (const [index, entry] of graph.entries.entries()) {
     if (entry.kind !== "symlink") continue;
     if (entry.target === null) continue;
@@ -330,7 +339,12 @@ const checkSymlinks = (
     const resolved = posix.normalize(
       posix.join(posix.dirname(entry.path), entry.target),
     );
-    if (resolved.startsWith("../") || resolved === ".." || !paths.has(resolved))
+    const normalized = normalizeJoinedLogicalPath(resolved);
+    if (
+      resolved.startsWith("../") ||
+      resolved === ".." ||
+      (!paths.has(resolved) && normalizedPathCounts.get(normalized) !== 1)
+    )
       context.addIssue({
         code: "custom",
         message: "Internal symlink target must resolve to an inventoried entry",
