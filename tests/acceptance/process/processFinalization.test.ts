@@ -53,11 +53,20 @@ const captureViaCli = async (
     "--format",
     "json",
   ]);
-  if (typeof document === "object" && document !== null && "code" in document)
+  if (
+    typeof document === "object" &&
+    document !== null &&
+    "code" in document &&
+    document.code === "cleanup_incomplete"
+  )
     return {
       kind: "partial",
       partial: expectSerializedUnverifiedHostCleanup({ error: document }),
     };
+  if (typeof document === "object" && document !== null && "code" in document)
+    throw new Error(
+      `CLI capture returned an unexpected error: ${JSON.stringify(document).slice(0, 1_000)}`,
+    );
   return {
     kind: "capture",
     capture: parseProcessCapture(parseEvidence(document).normalized_result),
@@ -69,13 +78,17 @@ const captureViaMcp = async (
 ): Promise<CaptureOutcome> => {
   const { call } = await connectLocalToolsMcp();
   const response = await call("capture_process_scenario", scenario);
-  if (response.isError === true)
-    return {
-      kind: "partial",
-      partial: expectSerializedUnverifiedHostCleanup(
-        parseMcpToolError(response),
-      ),
-    };
+  if (response.isError === true) {
+    const parsed = parseMcpToolError(response);
+    if (parsed.error.code === "cleanup_incomplete")
+      return {
+        kind: "partial",
+        partial: expectSerializedUnverifiedHostCleanup(parsed),
+      };
+    throw new Error(
+      `MCP capture returned an unexpected error: ${JSON.stringify(parsed).slice(0, 1_000)}`,
+    );
+  }
   return {
     kind: "capture",
     capture: parseProcessCapture(
