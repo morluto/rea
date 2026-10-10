@@ -444,6 +444,7 @@ function* collectDefinitionsSteps(
   }[] = [];
   yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
+      if (parent !== null) state.parentsByNode.set(node, parent);
       let parentScope = currentSemanticScope(stack);
       if (
         parent !== null &&
@@ -493,7 +494,10 @@ function* collectDefinitionsSteps(
           });
       }
       const scope = currentSemanticScope(stack);
-      state.scopeByNode.set(node, scope);
+      // Other nodes inherit the nearest boundary through their AST parents.
+      // Avoid a second full-tree index for the same lexical relationship.
+      if (parent === null || openedScopes.has(node))
+        state.scopeByNode.set(node, scope);
       collectSemanticCallable({
         node,
         parent,

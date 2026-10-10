@@ -40,11 +40,6 @@ export function* collectSemanticMemberMutationsSteps(
   state: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   const parents = state.parentsByNode;
-  yield* traverseJavaScriptAstSteps(program, {
-    enter: (node, parent) => {
-      if (parent !== null) parents.set(node, parent);
-    },
-  });
   const normalizePath = observableMutationPaths(state);
   const returnedReferences = createSemanticReturnedReferences(state);
   const recordedEffects = new Set<string>();
@@ -670,10 +665,10 @@ type MutationObservableOrigin =
   | "opaque";
 
 interface MutationObserverNode {
-  readonly origins: Set<MutationObservableOrigin>;
-  readonly sources: Set<MutationObserverNode>;
-  readonly dependents: Set<MutationObserverNode>;
-  readonly projections: Map<string, MutationObserverNode>;
+  origins?: Set<MutationObservableOrigin>;
+  sources?: Set<MutationObserverNode>;
+  dependents?: Set<MutationObserverNode>;
+  projections?: Map<string, MutationObserverNode>;
   readonly read?: {
     readonly source: MutationObserverNode;
     readonly key: PropertyPath[number];
@@ -700,22 +695,17 @@ const observableMutationPaths = (
     queued.add(node);
     pending.push(node);
   };
-  const create = (
-    read?: MutationObserverNode["read"],
-  ): MutationObserverNode => ({
-    origins: new Set(),
-    sources: new Set(),
-    dependents: new Set(),
-    projections: new Map(),
-    ...(read === undefined ? {} : { read }),
-  });
+  const create = (read?: MutationObserverNode["read"]): MutationObserverNode =>
+    // Most bindings have no object origin or property projection. Materialize
+    // each collection only when it contains a fact or relationship.
+    read === undefined ? {} : { read };
   const link = (
     source: MutationObserverNode,
     target: MutationObserverNode,
   ): void => {
-    if (target.sources.has(source)) return;
-    target.sources.add(source);
-    source.dependents.add(target);
+    if (target.sources?.has(source) === true) return;
+    (target.sources ??= new Set()).add(source);
+    (source.dependents ??= new Set()).add(target);
     schedule(target);
   };
   const expressionNode = (node: t.Node): MutationObserverNode => {
@@ -736,11 +726,11 @@ const observableMutationPaths = (
       const identity = JSON.stringify(
         key === null || typeof key === "object" ? key : String(key),
       );
-      let selected = observer.projections.get(identity);
+      let selected = observer.projections?.get(identity);
       if (selected === undefined) {
         selected = create({ source: observer, key });
-        observer.projections.set(identity, selected);
-        observer.dependents.add(selected);
+        (observer.projections ??= new Map()).set(identity, selected);
+        (observer.dependents ??= new Set()).add(selected);
         schedule(selected);
       }
       observer = selected;
@@ -760,7 +750,7 @@ const observableMutationPaths = (
     // Preserve exact paths where copies, defaults or iteration need their
     // reference-specific projections; an opaque origin prevents pruning.
     if (binding.referenceInitializers.length > 0)
-      observer.origins.add("opaque");
+      (observer.origins ??= new Set()).add("opaque");
     for (const initializer of binding.referenceInitializers) {
       for (const source of [
         initializer,
@@ -777,7 +767,7 @@ const observableMutationPaths = (
         if (selected === undefined) break;
         const { expression, observer } = selected;
         if (t.isObjectExpression(expression) || t.isArrayExpression(expression))
-          observer.origins.add(expression);
+          (observer.origins ??= new Set()).add(expression);
         else if (t.isIdentifier(expression)) {
           const binding = resolveSemanticBindingState(
             state,
@@ -787,11 +777,12 @@ const observableMutationPaths = (
           if (binding !== undefined) {
             const origin = bindingNodes.get(binding.bindingId);
             if (origin !== undefined) link(origin, observer);
-          } else if (expression.name === "Array") observer.origins.add("array");
+          } else if (expression.name === "Array")
+            (observer.origins ??= new Set()).add("array");
           else if (
             ["globalThis", "global", "window", "self"].includes(expression.name)
           )
-            observer.origins.add("ambient");
+            (observer.origins ??= new Set()).add("ambient");
         } else if (
           t.isMemberExpression(expression) ||
           t.isOptionalMemberExpression(expression)
@@ -818,21 +809,21 @@ const observableMutationPaths = (
       queued.delete(observer);
       let changed = false;
       const add = (origin: MutationObservableOrigin): void => {
-        if (observer.origins.has(origin)) return;
-        observer.origins.add(origin);
+        if (observer.origins?.has(origin) === true) return;
+        (observer.origins ??= new Set()).add(origin);
         changed = true;
       };
-      for (const source of observer.sources)
-        for (const origin of source.origins) add(origin);
+      for (const source of observer.sources ?? [])
+        for (const origin of source.origins ?? []) add(origin);
       if (observer.read !== undefined) {
         const { source, key } = observer.read;
         if (key === null || typeof key === "object") {
           // Dynamic keys and copied-slot masks retain their original paths.
           // Enumerating their exclusion combinations would recreate the growth
           // that the mutation collector's selection union already prevents.
-          if (source.origins.size > 0) add("opaque");
+          if ((source.origins?.size ?? 0) > 0) add("opaque");
         } else
-          for (const origin of source.origins) {
+          for (const origin of source.origins ?? []) {
             if (typeof origin === "string") {
               if (origin === "array-prototype" || origin === "opaque")
                 add(origin);
@@ -869,7 +860,7 @@ const observableMutationPaths = (
           }
       }
       if (changed)
-        for (const dependent of observer.dependents) schedule(dependent);
+        for (const dependent of observer.dependents ?? []) schedule(dependent);
     }
   };
   settle();
@@ -881,15 +872,16 @@ const observableMutationPaths = (
     if (effect === "escape") {
       observer = project(observer, path);
       settle();
-      return observer.origins.size === 0 ? null : path;
+      return (observer.origins?.size ?? 0) === 0 ? null : path;
     }
-    if (observer.origins.size === 0) return path.length === 0 ? path : [null];
+    if ((observer.origins?.size ?? 0) === 0)
+      return path.length === 0 ? path : [null];
     for (let offset = 0; offset < path.length; offset++) {
       const key = path[offset];
       if (key === undefined) break;
       observer = project(observer, [key]);
       settle();
-      if (observer.origins.size === 0 && offset + 1 < path.length)
+      if ((observer.origins?.size ?? 0) === 0 && offset + 1 < path.length)
         return [...path.slice(0, offset + 1), null];
     }
     return path;
