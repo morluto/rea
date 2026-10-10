@@ -54,7 +54,6 @@ const registerOverviewCommands = (
     options: overviewOptions.extend({
       integrityPolicy: javascriptApplicationOptions.shape.integrityPolicy,
     }),
-    alias: { integrityPolicy: "integrity-policy" },
     run: async ({ args, options }) => {
       // Route JavaScript targets exactly like analyze-javascript-application,
       // including typed cancellation; cancellation wraps logging so its exit
@@ -274,9 +273,6 @@ const registerTraceCommand = (
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
-    alias: {
-      caseSensitive: "case-sensitive",
-    },
     run: ({ args, options }) =>
       logCliCommand(logger, "trace", () =>
         runDirectAnalysis(
@@ -455,7 +451,6 @@ const registerSearchCommand = (
       "target-format": formatSelectionOption,
       provider: providerSelectionOption,
     }),
-    alias: { caseSensitive: "case-sensitive" },
     run: ({ args, options }) =>
       logCliCommand(logger, "search", () =>
         runDirectAnalysis(

@@ -148,7 +148,6 @@ const registerMaintenanceCommands = (
         .default(false)
         .describe("Also remove REA caches and state"),
     }),
-    alias: { purgeData: "purge-data" },
     run: ({ options }) =>
       logCliCommand(
         logger,
