@@ -147,11 +147,13 @@ describe("Ghidra headless launcher", () => {
       ["-log", "/tmp/ghidra.log"],
       ["-scriptlog", "/tmp/script.log"],
       ["-scriptPath", "/package/bridge"],
-      ["-postScript", "/package/bridge/ReaGhidraBridge.java"],
+      ["-postScript", "/package/bridge/ReaGhidraNoReturnFix.java"],
     ]);
-    expect(arguments_[arguments_.indexOf("-postScript") + 2]).toBe(
-      "/tmp/session.json",
-    );
+    // The no-return repair must finish before the bridge starts serving.
+    const fix = arguments_.indexOf("/package/bridge/ReaGhidraNoReturnFix.java");
+    const bridge = arguments_.indexOf("/package/bridge/ReaGhidraBridge.java");
+    expect(fix).toBeLessThan(bridge);
+    expect(arguments_[bridge + 1]).toBe("/tmp/session.json");
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
   });

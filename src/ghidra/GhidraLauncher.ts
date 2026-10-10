@@ -412,6 +412,8 @@ export const ghidraHeadlessArguments = (
       ]
     : []),
   "-postScript",
+  join(dirname(options.bridgeScriptPath), "ReaGhidraNoReturnFix.java"),
+  "-postScript",
   // Ghidra checks the caller's cwd before scriptPath for a basename. Select
   // the packaged source explicitly so unrelated entries cannot shadow it.
   options.bridgeScriptPath,
