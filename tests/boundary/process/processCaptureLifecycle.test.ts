@@ -638,6 +638,10 @@ itWithCaptureCapability(
 
     expect(capture.exit.reason, "deadline reason is unchanged").toBe("timeout");
     expect(
+      capture.exit.signal,
+      "the default deadline still ends on SIGKILL",
+    ).toBe(9);
+    expect(
       capture.exit,
       "default captures carry no finalization record",
     ).not.toHaveProperty("finalization");
