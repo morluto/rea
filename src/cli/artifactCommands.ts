@@ -201,9 +201,6 @@ const registerExtractionCommand = (
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
     }),
-    alias: {
-      integrityPolicy: "integrity-policy",
-    },
     run: ({ args, options }) =>
       logCliCommand(logger, "extract-artifact", () =>
         runProviderAnalysis(
