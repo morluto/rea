@@ -98,6 +98,12 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  identify_flutter_build: effects({
+    mutatesSession: true,
+  }),
+  inspect_dart_aot: effects({
+    mutatesSession: true,
+  }),
   inspect_apktool_client: effects({
     mutatesSession: true,
     launchesProcess: true,

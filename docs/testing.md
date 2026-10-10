@@ -602,6 +602,25 @@ with the reported target identity, apktool.yml metadata projection
 [Apktool resource analysis](apktool-resource-analysis.md) for boundaries and
 budgets.
 
+## Flutter build identification
+
+`npm run verify:flutter -- --apk PATH [--plain-apk PATH]` runs both pure
+static operations against a real Flutter APK, plus an optional non-Flutter
+APK for the negative check. No engine or external tool is involved. Record:
+Flutter Gallery 2.9.2 (112 MB, arm64-v8a / armeabi-v7a / x86_64) — every
+ABI reports the same agreeing snapshot hash
+(`65817c30a78bb44c3dc3771876b6010a`, two sections each) read 20 bytes after
+the Dart snapshot magic, per-ABI engine GNU build-ids, no labeled Dart
+version string (expected for a release engine build), and the Android
+clang/LLVM toolchain line; the AOT inspection locates all four snapshot
+symbols through the dynamic symbol table on both ELF64 and ELF32 images,
+validates the data-section headers, agrees with the identification hash,
+and projects a string pool of 756 `package:` and 201 `dart:` URIs from the
+isolate data section; a plain aapt2-built APK reports not-detected with
+complete coverage. Scanner and ELF goldens come from the same libraries.
+See [Flutter build identification](flutter-analysis.md) for boundaries and
+budgets.
+
 ## ADB device acquisition
 
 `npm run verify:adb` exercises every ADB operation against a live device or

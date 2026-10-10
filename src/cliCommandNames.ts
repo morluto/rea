@@ -46,6 +46,8 @@ export const CLI_COMMANDS = Object.freeze({
   inspectFirmwareRegions: "inspect-firmware-regions",
   extractFirmware: "extract-firmware",
   inspectAndroidPackage: "inspect-android-package",
+  identifyFlutterBuild: "identify-flutter-build",
+  inspectDartAot: "inspect-dart-aot",
   inspectApktoolClient: "inspect-apktool-client",
   decodeAndroidResources: "decode-android-resources",
   inspectAdbClient: "inspect-adb-client",
