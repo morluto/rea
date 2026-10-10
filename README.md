@@ -75,6 +75,18 @@ Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build, Pi, and
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.
 
+To set up Pi only, run:
+
+```bash
+npx rea-agents setup --client pi
+```
+
+Approve the proposed changes, then restart Pi or run `/reload`. Run `pi mcp list`
+to check that `rea` connects. Setup uses Pi's default `codemode` exposure, so
+REA's tools are available through discovery without declaring the whole catalog
+on every request. The installation guide covers Pi's configuration paths and
+existing exposure settings.
+
 ### Ask your agent
 
 ```text

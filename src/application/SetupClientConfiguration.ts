@@ -6,15 +6,16 @@ import {
   legacyClientServerPath,
   OMP_DISABLED_SERVERS_KEY,
   parseClientConfiguration,
+  piExposureSchema,
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
-  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
+import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -70,7 +71,7 @@ const configureClientDocument = async (
     client,
     environment,
     command,
-    parsed.dialect,
+    parsed,
   );
   if (registrationCurrent(parsed, desired)) return { status: "unchanged" };
   const backupPath =
@@ -159,12 +160,7 @@ export const clientConfigurationAligned = async (
     const parsed = parseClientConfiguration(original, client.format);
     return registrationCurrent(
       parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed.dialect,
-      ),
+      clientConfigurationDesired(client, providerEnvironment, command, parsed),
     );
   } catch (cause: unknown) {
     // Unreadable configuration is treated as not aligned so setup repairs it.
@@ -206,7 +202,7 @@ export const inspectClientConfiguration = async (
       client,
       providerEnvironment,
       command,
-      parsed.dialect,
+      parsed,
     );
     if (registrationCurrent(parsed, desired))
       return { status: "already_current" };
@@ -264,11 +260,25 @@ const registrationCurrent = (
   !Object.hasOwn(parsed.legacyServers, PRODUCT_IDENTITY.mcpServerKey) &&
   !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey);
 
+/** Retain Pi exposure choices without carrying unrelated entry fields forward. */
+const piExposurePreferences = (existing: unknown): Record<string, unknown> => {
+  const entry = z.record(z.string(), z.unknown()).safeParse(existing);
+  if (!entry.success) return {};
+  const exposure = piExposureSchema.safeParse(entry.data.exposure);
+  const toolExposure = z
+    .record(z.string(), piExposureSchema)
+    .safeParse(entry.data.toolExposure);
+  return {
+    ...(exposure.success ? { exposure: exposure.data } : {}),
+    ...(toolExposure.success ? { toolExposure: toolExposure.data } : {}),
+  };
+};
+
 const clientConfigurationDesired = (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-  format: ClientRegistrationDialect | undefined,
+  parsed: ClientConfigurationDocument,
 ) => {
   const environment = Object.fromEntries(
     Object.entries(providerEnvironment).sort(([left], [right]) =>
@@ -276,12 +286,15 @@ const clientConfigurationDesired = (
     ),
   );
   const registration = clientRegistrationEntry(
-    format ?? "json",
+    parsed.dialect,
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command,
     environment,
   );
   return {
     ...registration,
+    ...(parsed.dialect === "pi"
+      ? piExposurePreferences(parsed.servers[PRODUCT_IDENTITY.mcpServerKey])
+      : {}),
     ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,

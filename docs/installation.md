@@ -149,25 +149,6 @@ registration. Doctor treats an `enabled: false` entry as active when
 `enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
 it. Run setup under each profile that should load REA.
 
-For Pi (the `pi` CLI from `@earendil-works/pi-coding-agent`), setup writes a
-`type: "stdio"` entry with `exposure: "direct"` to the user-level
-`~/.pi/agent/mcp.json`. An absolute `PI_CODING_AGENT_DIR`, including a
-leading `~/`, selects that agent directory. A relative value is left unused
-because Pi resolves it against each process's working directory. OMP also
-reads an absolute `PI_CODING_AGENT_DIR` when no named profile is selected, so
-that override can make both clients name the same `mcp.json`. Setup does
-not write the project file `.pi/mcp.json`. Pi reads that file only after the
-project is trusted, and a project entry replaces a user entry of the same
-name.
-
-Pi loads project instructions from `AGENTS.md` and `CLAUDE.md`. It discovers
-`SKILL.md` directories under `~/.pi/agent/skills` and, in a trusted project,
-`.pi/skills`. The shared skill setup installs at `~/.agents/skills` is already
-on that path. Session transcripts are JSONL files under
-`~/.pi/agent/sessions`; `PI_CODING_AGENT_SESSION_DIR` overrides that
-directory. `exposure: "direct"` declares REA's tools to the model. Pi's
-default `codemode` exposure would leave them undeclared.
-
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
@@ -196,6 +177,37 @@ npx -y rea-agents@<version> mcp
 
 Do not put credentials in that command or its arguments. `rea doctor --client grok_bot`
 reports this manual step. `rea uninstall` does not remove the account connector.
+
+### Pi
+
+For the `pi` CLI from `@earendil-works/pi-coding-agent`, run:
+
+```bash
+npx rea-agents setup --client pi
+```
+
+Setup writes a stdio server entry to `~/.pi/agent/mcp.json` and installs the
+workflow skill under `~/.agents/skills`, which Pi already discovers. Approve
+the proposed changes, then restart Pi or run `/reload`. Run `pi mcp list` to
+verify that `rea` connects. This checks the connection, not whether a native
+analysis provider is installed.
+
+New registrations use Pi's default `codemode` exposure. The model can discover
+and call REA tools without receiving the entire catalog in every request.
+`deferred` and `direct` are also valid. Setup preserves existing exposure and
+per-tool exposure settings. Doctor reports disabled or hidden registrations as
+stale. Use Pi's `/mcp` menu to inspect their enabled state and exposure.
+
+`PI_CODING_AGENT_DIR` overrides the user directory. Setup expands a leading `~/`
+and resolves relative values against its working directory. Run setup and Pi
+from the same directory when using a relative override, or use an absolute
+path. OMP also reads an absolute `PI_CODING_AGENT_DIR` without a named profile,
+so that override can point both clients at the same file.
+
+Pi requires strict JSON in `mcp.json`. Comments and trailing commas block setup
+rather than producing a file Pi cannot load. Setup leaves `.pi/mcp.json`
+untouched. In a trusted project, that file can override the user-level entry;
+check it if REA remains disabled after setup.
 
 ## Review setup changes
 

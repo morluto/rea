@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { lstatSync } from "node:fs";
 
 /** One supported client configuration location. */
@@ -24,6 +24,7 @@ type ClientPath = readonly string[] | ((paths: ClientPathContext) => string);
 
 interface ClientPathContext {
   readonly home: string;
+  readonly cwd: string;
   readonly platform: NodeJS.Platform;
   readonly env: {
     readonly APPDATA?: string | undefined;
@@ -149,8 +150,7 @@ const ompAgentDirectory = (context: ClientPathContext): string => {
 /**
  * Pi's user agent directory. The default is `~/.pi/agent`. Pi expands a
  * leading `~` in `PI_CODING_AGENT_DIR` and otherwise uses that value as given.
- * A relative override is resolved against each process's working directory, so
- * only an absolute path names one file.
+ * Relative overrides resolve against the caller's working directory.
  */
 const expandPiHomePath = (
   path: string,
@@ -165,15 +165,14 @@ const expandPiHomePath = (
 
 const piAgentDirectory = ({
   home,
+  cwd,
   platform,
   env,
 }: ClientPathContext): string => {
   const override = env.PI_CODING_AGENT_DIR;
-  if (override !== undefined && override !== "") {
-    const expanded = expandPiHomePath(override, home, platform);
-    if (isAbsolute(expanded)) return expanded;
-  }
-  return join(home, ".pi", "agent");
+  return override !== undefined && override !== ""
+    ? resolve(cwd, expandPiHomePath(override, home, platform))
+    : join(home, ".pi", "agent");
 };
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
@@ -268,8 +267,8 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "devin",
     displayName: "Devin",
-    configPath: ({ home, platform, env }: ClientPathContext) =>
-      join(devinDirectory({ home, platform, env }), "mcp_config.json"),
+    configPath: (context: ClientPathContext) =>
+      join(devinDirectory(context), "mcp_config.json"),
     markerPath: devinDirectory,
     format: "json",
   },
@@ -365,8 +364,9 @@ export const supportedClients = (
     SAND_DATA_ROOT: process.env.SAND_DATA_ROOT,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   },
+  cwd: string = process.cwd(),
 ): readonly SetupClient[] => {
-  const context = { home, platform, env };
+  const context = { home, cwd, platform, env };
   return SUPPORTED_CLIENT_DEFINITIONS.map((definition) => ({
     name: definition.name,
     displayName: definition.displayName,

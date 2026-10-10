@@ -80,19 +80,13 @@ describe("additional client configuration dialects", () => {
         command,
         enabled: true,
       });
-    if (name === "vscode" || name === "omp")
+    if (name === "vscode" || name === "omp" || name === "pi")
       expect(registration).toMatchObject({
         type: "stdio",
         command: "npx",
         args: command.slice(1),
       });
-    if (name === "pi")
-      expect(registration).toMatchObject({
-        type: "stdio",
-        command: "npx",
-        args: command.slice(1),
-        exposure: "direct",
-      });
+    if (name === "pi") expect(registration).not.toHaveProperty("exposure");
     if (name === "copilot_cli")
       expect(registration).toMatchObject({ type: "stdio", tools: ["*"] });
     if (name === "commandcode")

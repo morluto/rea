@@ -3,6 +3,7 @@ import {
   clientServerListedDisabled,
   effectiveClientServer,
   parseClientConfiguration,
+  piExposureSchema,
 } from "./ClientConfigurationDocument.js";
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -189,10 +190,13 @@ const registrationAligned = (
     registration.type !== "stdio"
   )
     return false;
-  // Pi infers stdio from a command, but only direct exposure declares tools.
+  // Pi infers stdio from a command and defaults to callable codemode exposure.
   if (
     client.format === "pi" &&
-    (registration.type !== "stdio" || registration.exposure !== "direct")
+    ((registration.type !== undefined && registration.type !== "stdio") ||
+      registration.exposure === "hidden" ||
+      (registration.exposure !== undefined &&
+        !piExposureSchema.safeParse(registration.exposure).success))
   )
     return false;
   if (

@@ -42,6 +42,15 @@ export interface ClientConfigurationDocument {
 
 const objectSchema = z.record(z.string(), z.unknown());
 
+/** Pi's supported server and per-tool exposure choices, including its legacy alias. */
+export const piExposureSchema = z.enum([
+  "codemode",
+  "codemode-deferred",
+  "deferred",
+  "direct",
+  "hidden",
+]);
+
 /** Compare parsed configuration values without depending on parser prototypes. */
 export const clientConfigurationValuesEqual = (
   left: unknown,
@@ -91,6 +100,7 @@ const parseDocument = (
   text: string,
   format: ClientConfigurationFormat,
 ): Record<string, unknown> => {
+  if (format === "pi") return objectSchema.parse(JSON.parse(text));
   if (format === "toml" || format === "grok")
     return objectSchema.parse(parseToml(text));
   // An empty file, which some clients create before any server is added,
@@ -1331,20 +1341,11 @@ export const clientRegistrationEntry = (
       };
     case "vscode":
     case "omp":
-      return {
-        type: "stdio",
-        command: executable,
-        args,
-        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
-      };
     case "pi":
-      // Pi's default codemode exposure leaves server tools undeclared. Direct
-      // exposure registers them with the model, as other clients do.
       return {
         type: "stdio",
         command: executable,
         args,
-        exposure: "direct",
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
       };
     case "copilot_cli":
