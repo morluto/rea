@@ -5,6 +5,10 @@ import {
   analyzeParsedJavaScriptSemanticsSteps,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 
 const source = `
 import { readFile } from "node:fs";
@@ -31,4 +35,27 @@ it("yields between semantic phases and returns the synchronous result (#1462)", 
   const reparsed = parseJavaScriptSource(source, "main.js");
   if (reparsed === null) throw new Error("Expected parsed source");
   expect(step.value).toEqual(analyzeParsedJavaScriptSemantics(reparsed));
+});
+
+it("traverses a large tree in steps with the synchronous visit order (#1462)", () => {
+  const parsed = parseJavaScriptSource(
+    Array.from(
+      { length: 400 },
+      (_, index) => `const v${index} = [${index}];`,
+    ).join("\n"),
+    "large.js",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const visits = (record: string[]) => ({
+    enter: (node: { readonly type: string }) => record.push(`+${node.type}`),
+    exit: (node: { readonly type: string }) => record.push(`-${node.type}`),
+  });
+  const synchronous: string[] = [];
+  traverseJavaScriptAst(parsed.program, visits(synchronous));
+  const stepped: string[] = [];
+  const steps = traverseJavaScriptAstSteps(parsed.program, visits(stepped));
+  let yields = 0;
+  while (steps.next().done !== true) yields += 1;
+  expect(yields).toBeGreaterThan(0);
+  expect(stepped).toEqual(synchronous);
 });

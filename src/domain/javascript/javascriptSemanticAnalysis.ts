@@ -33,7 +33,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { collectSemanticMemberMutations } from "./javascriptSemanticMemberMutations.js";
+import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
@@ -126,8 +126,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   const state = createState(file.program);
   collectDefinitions(file.program, state);
   yield;
-  collectSemanticMemberMutations(file.program, state);
-  yield;
+  yield* collectSemanticMemberMutationsSteps(file.program, state);
   traverseJavaScriptAst(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state),
   });

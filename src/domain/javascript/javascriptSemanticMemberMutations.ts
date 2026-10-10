@@ -25,7 +25,7 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -34,13 +34,13 @@ import {
 type PropertyPath = JavaScriptSemanticPropertyPath;
 type ValueEffect = "write" | "escape";
 
-/** Preserve uncertainty from property writes and references exposed to calls. */
-export const collectSemanticMemberMutations = (
+/** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
+export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-): void => {
+): Generator<void, void> {
   const parents = state.parentsByNode;
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       if (parent !== null) parents.set(node, parent);
     },
@@ -382,7 +382,7 @@ export const collectSemanticMemberMutations = (
         );
     }
   };
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       for (const source of semanticIterationSources(node, parent))
         deferIterable({
@@ -435,7 +435,8 @@ export const collectSemanticMemberMutations = (
     const effectsBefore = recordedEffects.size;
     const iterablesBefore = iterableReferences.length;
     const iterationBefore: boolean = arrayIterationUnknown;
-    for (const reference of pendingReferences.splice(0)) {
+    for (const [index, reference] of pendingReferences.splice(0).entries()) {
+      if (index % 64 === 0) yield;
       const { initializer } = reference;
       if (referenceSourcesInactive(initializer, state))
         pendingReferences.push(reference);
@@ -480,7 +481,8 @@ export const collectSemanticMemberMutations = (
           reference.originAt,
         );
     }
-    for (const reference of [...iterableReferences]) {
+    for (const [index, reference] of [...iterableReferences].entries()) {
+      if (index % 64 === 0) yield;
       if (referenceSourcesInactive(reference, state)) continue;
       if (reference.iterationOnly) {
         const expanded = expandedIterationReferences(reference, state);
@@ -518,7 +520,7 @@ export const collectSemanticMemberMutations = (
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticPrimitiveBindingValues(state);
-};
+}
 
 interface ReferencedValue {
   readonly node: t.Node;
