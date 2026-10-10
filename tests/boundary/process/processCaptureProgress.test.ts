@@ -84,7 +84,6 @@ interface CliCapture {
   readonly exitCode: number | null;
   readonly lines: readonly {
     readonly update: ParsedProgress;
-    readonly at: number;
   }[];
 }
 
@@ -110,7 +109,7 @@ const runCaptureCli = async (
   let stdout = "";
   let stderr = "";
   let pending = "";
-  const lines: Array<{ readonly line: string; readonly at: number }> = [];
+  const lines: string[] = [];
   let sawRunning: (() => void) | undefined;
   const running = options.stopOnRunning
     ? new Promise<void>((resolve) => {
@@ -126,7 +125,7 @@ const runCaptureCli = async (
     pending = parts.pop() ?? "";
     for (const line of parts) {
       if (line.length === 0) continue;
-      lines.push({ line, at: Date.now() });
+      lines.push(line);
       if (line.includes('"phase":"running"')) sawRunning?.();
     }
   });
@@ -135,32 +134,34 @@ const runCaptureCli = async (
     child.once("close", (code) => resolve({ code }));
   });
   if (running !== undefined) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const appeared = await Promise.race([
       running.then(() => true),
       new Promise<boolean>((resolve) => {
-        setTimeout(() => resolve(false), 8_000);
+        timer = setTimeout(() => resolve(false), 8_000);
       }),
-    ]);
+    ]).finally(() => {
+      clearTimeout(timer);
+    });
     if (!appeared) {
       child.kill("SIGKILL");
       await closed;
       throw new Error(
-        `capture produced no running progress on stderr:\n${lines.map(({ line }) => line).join("\n")}`,
+        `capture produced no running progress on stderr:\n${lines.join("\n")}`,
       );
     }
     child.kill("SIGINT");
   }
   const result = await closed;
-  if (pending.length > 0) lines.push({ line: pending, at: Date.now() });
-  stderr = lines.map(({ line }) => line).join("\n");
+  if (pending.length > 0) lines.push(pending);
+  stderr = lines.join("\n");
   return {
     stdout,
     stderr,
     exitCode: result.code,
-    lines: lines.map(({ line, at }) => {
+    lines: lines.map((line) => {
       const update = progressLineSchema.parse(JSON.parse(line)).rea_progress;
       return {
-        at,
         update: { ...update, details: parseProgressMessage(update.message) },
       };
     }),
@@ -178,10 +179,16 @@ const assertMonotonic = (updates: readonly ParsedProgress[]): void => {
   }
 };
 
-const assertRateBound = (times: readonly number[]): void => {
-  const gaps = times.slice(1).map((time, index) => time - (times[index] ?? 0));
-  expect(gaps.length).toBeGreaterThan(0);
-  expect(Math.min(...gaps)).toBeGreaterThanOrEqual(PROGRESS_INTERVAL_MS);
+const assertRateBound = (
+  intermediateCount: number,
+  elapsedMs: number,
+): void => {
+  // Pipe/transport buffering can deliver correctly spaced sends together.
+  // Exact send spacing belongs to the reporter's controlled-clock test.
+  expect(intermediateCount).toBeGreaterThan(1);
+  expect(intermediateCount).toBeLessThanOrEqual(
+    Math.floor(elapsedMs / PROGRESS_INTERVAL_MS) + 1,
+  );
 };
 
 const childScript = (source: string) => ["-e", source];
@@ -295,7 +302,10 @@ itWithCaptureCapability(
     const nonTerminal = capture.lines.filter(
       ({ update }) => update.terminal !== true,
     );
-    assertRateBound(nonTerminal.map(({ at }) => at));
+    assertRateBound(
+      nonTerminal.length,
+      updates.at(-1)?.details.elapsed_ms ?? 0,
+    );
     expect(
       Math.max(...updates.map(({ details }) => details.frames)),
     ).toBeGreaterThanOrEqual(10);
@@ -393,7 +403,6 @@ itWithCaptureCapability(
       readonly progress: number;
       readonly total: number | undefined;
       readonly message: string | undefined;
-      readonly at: number;
     }> = [];
     const captured = await tokenClient.callTool(
       {
@@ -413,7 +422,6 @@ itWithCaptureCapability(
             progress: update.progress,
             total: update.total,
             message: update.message,
-            at: Date.now(),
           });
         },
       },
@@ -436,7 +444,11 @@ itWithCaptureCapability(
     expect(messages.at(-1)).toContain("owned_process_group=cleaned");
     expect(messages.at(-1)).toContain("disposition=exited");
     const nonTerminal = progress.slice(0, -1);
-    assertRateBound(nonTerminal.map(({ at }) => at));
+    assertRateBound(
+      nonTerminal.length,
+      parseProgressMessage((messages.at(-1) ?? "").slice("cleanup: ".length))
+        .elapsed_ms,
+    );
     const tokenEvidence = toolContract(
       "capture_process_scenario",
     ).outputSchema.parse(captured.structuredContent);

@@ -66,10 +66,28 @@ export const createProcessCaptureProgressTracker = (
   const started = now();
   let completed = 0;
   let live = true;
-  let pending = Promise.resolve();
+  let next: Parameters<ProcessCaptureProgress["report"]>[0] | undefined;
+  let pending: Promise<void> | undefined;
+  const flush = async (): Promise<void> => {
+    try {
+      while (next !== undefined) {
+        const update = next;
+        next = undefined;
+        try {
+          await progress?.report(update);
+        } catch {
+          // Progress delivery is observational; capture and cleanup still finish.
+          continue;
+        }
+      }
+    } finally {
+      pending = undefined;
+    }
+  };
   return {
     closeLive(): void {
       live = false;
+      if (next?.terminal !== true) next = undefined;
     },
     report(update: ProcessCaptureProgressReport): Promise<void> {
       if (progress === undefined) return Promise.resolve();
@@ -79,7 +97,8 @@ export const createProcessCaptureProgressTracker = (
         update.counts.samples +
         update.counts.interactions;
       if (units > completed) completed = units;
-      const payload = {
+      // A slow observer needs the latest observation, not a queue of old states.
+      next = {
         phase: update.phase,
         completed,
         total: null as null,
@@ -91,16 +110,8 @@ export const createProcessCaptureProgressTracker = (
         ),
         ...(update.terminal === true ? { terminal: true as const } : {}),
       };
-      const send = () => progress.report(payload);
-      const scheduled = pending.then(send, send);
-      pending = scheduled.then(
-        () => undefined,
-        () => undefined,
-      );
-      return scheduled.then(
-        () => undefined,
-        () => undefined,
-      );
+      pending ??= Promise.resolve().then(flush);
+      return pending;
     },
   };
 };

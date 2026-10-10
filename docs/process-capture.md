@@ -74,8 +74,10 @@ percentage. `message` reports elapsed time and those counts. The final line uses
 `timeout`, `idle_timeout`, `cancelled`, or `failed`) plus the owned-process,
 renderer, and temporary-root cleanup states. Updates use the shared progress
 boundary and are limited to one intermediate line per 100 ms; the terminal line
-is always emitted. Progress never copies child output. Child output remains in
-the capture Evidence on stdout.
+is always emitted. If a receiver is slow, intermediate observations are merged
+into the latest status, and stale live observations are discarded before final
+cleanup status. Progress never copies child output. Child output remains in the
+capture Evidence on stdout.
 
 For example:
 
