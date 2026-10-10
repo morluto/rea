@@ -1,14 +1,18 @@
 import * as t from "@babel/types";
 
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
-import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+import {
+  semanticArrayIndex,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 
 interface IterationSourceValue {
   readonly node: t.Node;
-  readonly projection: readonly (string | number | null)[];
+  readonly projection: JavaScriptSemanticPropertyPath;
 }
 
-/** An iterator receiver or yielded reference store, with default guards. */
+/** An iterator receiver or property reference store, with default guards. */
 export interface SemanticIterationSource extends IterationSourceValue {
   readonly kind: "iteration" | "reference-store";
   readonly mutation: t.Node;
@@ -69,11 +73,25 @@ const visit = (
   guards: SourceGuards = {},
 ): void => {
   const { sources, mutation } = context;
-  if (t.isForOfStatement(mutation) && t.isMemberExpression(pattern)) {
-    // Storing a yielded reference in a property has no lexical loop binding.
-    // Preserve its escape rather than assuming later writes cannot reach it.
+  if (t.isMemberExpression(pattern)) {
+    // Property stores have no lexical alias binding. Preserve the selected
+    // reference's escape rather than claiming later writes cannot reach it.
     if (source !== undefined)
-      add(sources, source, mutation, guards, "reference-store");
+      add(
+        sources,
+        source.restStartIndex === undefined
+          ? source
+          : {
+              node: source.node,
+              projection: [
+                ...source.projection,
+                { excludedKeys: [], startIndex: source.restStartIndex },
+              ],
+            },
+        mutation,
+        guards,
+        "reference-store",
+      );
     return;
   }
   if (t.isTSParameterProperty(pattern)) {
@@ -104,8 +122,38 @@ const visit = (
   }
   if (t.isObjectPattern(pattern)) {
     for (const property of pattern.properties) {
-      // Object rest creates a fresh object and has no iterable binding pattern.
-      if (t.isRestElement(property)) continue;
+      if (t.isRestElement(property)) {
+        // A rest copy owns its scalar slots; only selected child references
+        // escape when that fresh copy is stored through a member target.
+        visit(
+          context,
+          property.argument,
+          source === undefined
+            ? undefined
+            : {
+                node: source.node,
+                projection: [
+                  ...source.projection,
+                  {
+                    excludedKeys: [
+                      ...new Set(
+                        pattern.properties.flatMap((property) => {
+                          if (t.isRestElement(property)) return [];
+                          const key = semanticStaticPropertyKey(
+                            property.key,
+                            property.computed,
+                          );
+                          return key === null ? [] : [key];
+                        }),
+                      ),
+                    ].sort(compareUnicodeCodePoints),
+                  },
+                ],
+              },
+          guards,
+        );
+        continue;
+      }
       visit(
         context,
         property.value,
@@ -144,7 +192,7 @@ const visit = (
     visit(context, pattern.argument, undefined, guards);
 };
 
-/** Describe implicit iteration sources without deciding their runtime values. */
+/** Describe iterator receivers and property reference stores without evaluation. */
 export const semanticIterationSources = (
   node: t.Node,
   parent: t.Node | null,
@@ -153,7 +201,10 @@ export const semanticIterationSources = (
   const context = { sources, mutation: node };
   if (t.isVariableDeclarator(node) && node.init != null)
     visit(context, node.id, { node: node.init, projection: [] });
-  else if (t.isAssignmentExpression(node) && node.operator === "=")
+  else if (
+    t.isAssignmentExpression(node) &&
+    ["=", "||=", "&&=", "??="].includes(node.operator)
+  )
     visit(context, node.left, { node: node.right, projection: [] });
   else if (t.isForOfStatement(node)) {
     add(sources, { node: node.right, projection: [] }, node, {});
