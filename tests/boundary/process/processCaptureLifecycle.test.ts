@@ -8,7 +8,10 @@ import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
 
-import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
+import {
+  captureProcessScenario,
+  type FinalizationHost,
+} from "../../../src/process/capture/ProcessHarness.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
@@ -733,6 +736,70 @@ itWithCaptureCapability(
       Date.now() - started,
       "cancellation does not wait for the finalization interval",
     ).toBeLessThan(8_000);
+  },
+  15_000,
+);
+
+itWithCaptureCapability(
+  "keeps the attempts when the escalation cannot be delivered through the retained identity",
+  async () => {
+    const calls: string[] = [];
+    const finalizationHost: FinalizationHost = {
+      observe: async () => ({ state: "readable" as const, identity: "launch" }),
+      signal: async (_pid, identity, signal) => {
+        calls.push(`${identity}:${signal}`);
+        return signal === "SIGTERM" ? "signaled" : "unverified";
+      },
+    };
+    const root = await createTestTempDirectory("rea-finalization-host-");
+    const result = await captureProcessScenario(
+      parseProcessScenario({
+        executable: process.execPath,
+        arguments: [finalizationFixture, "ignoring", root],
+        working_directory: root,
+        filesystem_observation_paths: [root],
+        idle_timeout_ms: 10_000,
+        timeout_ms: 500,
+        finalization_ms: 500,
+      }),
+      undefined,
+      process.platform,
+      process.env,
+      undefined,
+      undefined,
+      undefined,
+      finalizationHost,
+    );
+
+    if (result.ok) throw new Error("expected an unobserved exit");
+    if (!(result.error instanceof ProcessCaptureError)) throw result.error;
+    if (result.error.cleanupIncomplete)
+      expectUnverifiedHostCleanup(result.error);
+    expect(
+      calls,
+      "both finalization signals went through the identity-checked host",
+    ).toEqual(["launch:SIGTERM", "launch:SIGKILL"]);
+    const partial = result.error.partialObservation;
+    if (partial === undefined || !("observations" in partial))
+      throw new Error("expected incomplete process observations");
+    expect(
+      partial.observations.finalization,
+      "the attempts and their delivery results are published for a failed capture",
+    ).toMatchObject({
+      state: "available",
+      value: {
+        requested_ms: 500,
+        elapsed_ms: null,
+        signals: [
+          { signal: "SIGTERM", delivery: "signaled" },
+          { signal: "SIGKILL", delivery: "unverified" },
+        ],
+      },
+    });
+    expect(
+      partial.observations.exit.state,
+      "no exit is invented when the escalation was not delivered",
+    ).toBe("unavailable");
   },
   15_000,
 );

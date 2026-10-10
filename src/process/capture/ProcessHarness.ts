@@ -84,14 +84,17 @@ interface StartedCaptureRuntime {
   }>;
 }
 
+/** Identity observation and signalling used for finalization signals; injectable for tests. */
+export interface FinalizationHost {
+  readonly observe: typeof observeProcessStartIdentity;
+  readonly signal: typeof signalProcessWithStartIdentity;
+}
+
 /** Retain the root's start identity right after spawn, only when finalization can need it. */
 export const retainRootSignaller = (
   pid: number,
   finalizationMs: number,
-  host: {
-    readonly observe: typeof observeProcessStartIdentity;
-    readonly signal: typeof signalProcessWithStartIdentity;
-  } = {
+  host: FinalizationHost = {
     observe: observeProcessStartIdentity,
     signal: signalProcessWithStartIdentity,
   },
@@ -231,6 +234,7 @@ interface StartCaptureRuntimeOptions {
   readonly dispatchedEventIndexes: Set<number>;
   readonly recordEvent: RecordProcessCaptureEvent;
   readonly signal?: AbortSignal;
+  readonly finalizationHost?: FinalizationHost;
 }
 
 const startCaptureRuntime = async (
@@ -300,7 +304,11 @@ const startCaptureRuntime = async (
       lastOutput: () => lastOutput,
       rawTerminalRetention,
       stopSampler,
-      signalRoot: retainRootSignaller(terminal.pid, scenario.finalization_ms),
+      signalRoot: retainRootSignaller(
+        terminal.pid,
+        scenario.finalization_ms,
+        options.finalizationHost,
+      ),
     };
   } catch (cause: unknown) {
     return cleanupFailedStartup({
@@ -582,6 +590,7 @@ const runProcessScenario = async (
   captureSnapshot: typeof snapshotRoots = snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
+  finalizationHost?: FinalizationHost,
 ): Promise<ProcessCapture> => {
   const progressTracker = createProcessCaptureProgressTracker(progress);
   const frames: TerminalFrame[] = [];
@@ -657,6 +666,7 @@ const runProcessScenario = async (
       dispatchedEventIndexes,
       recordEvent,
       ...(signal === undefined ? {} : { signal }),
+      ...(finalizationHost === undefined ? {} : { finalizationHost }),
     });
     stopSampler = runtime.stopSampler;
     const exit = await awaitTerminalExit({
@@ -778,6 +788,7 @@ export const captureProcessScenario = async (
   captureSnapshot?: typeof snapshotRoots,
   cleanupHost?: ProcessCaptureCleanupHost,
   progress?: ProcessCaptureProgress,
+  finalizationHost?: FinalizationHost,
 ): Promise<Result<ProcessCapture, ProcessCaptureError | AnalysisError>> => {
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
@@ -804,6 +815,7 @@ export const captureProcessScenario = async (
         captureSnapshot ?? snapshotRoots,
         cleanupHost,
         progress,
+        finalizationHost,
       ),
     );
   } catch (cause: unknown) {
