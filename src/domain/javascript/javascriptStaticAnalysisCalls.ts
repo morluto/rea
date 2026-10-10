@@ -294,6 +294,7 @@ export const addSourceMapDirectives = (
   comments: readonly t.Comment[],
   accumulator: AnalysisAccumulator,
 ): void => {
+  const directivePrefix = /^(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*/u;
   // Read real comment tokens only; quoted text can contain identical markers.
   // Keep both current/legacy line annotations and minifier block annotations.
   for (const comment of comments) {
@@ -306,13 +307,19 @@ export const addSourceMapDirectives = (
       end === null
     )
       continue;
-    const match = /^(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*([^\s*]+)/u.exec(
-      source.slice(start, end),
-    );
+    const commentSource = source.slice(start, end);
+    const match = directivePrefix.exec(commentSource);
     if (match === null) continue;
-    const declared = match[1];
-    if (declared === undefined || declared.length === 0) continue;
-    const location = rangeForOffsets(source, start, start + match[0].length);
+    let declaredEnd = match[0].length;
+    while (declaredEnd < commentSource.length) {
+      const character = commentSource[declaredEnd];
+      if (character === undefined || character === "*" || /\s/u.test(character))
+        break;
+      declaredEnd += 1;
+    }
+    const declared = commentSource.slice(match[0].length, declaredEnd);
+    if (declared.length === 0) continue;
+    const location = rangeForOffsets(source, start, start + declaredEnd);
     addFindingOnce(accumulator, `source-map\0${declared}`, () =>
       accumulator.sourceMaps.push({ declared_url: declared, location }),
     );

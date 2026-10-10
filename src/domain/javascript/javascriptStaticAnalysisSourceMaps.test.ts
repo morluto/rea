@@ -33,6 +33,18 @@ describe("source map directives", () => {
   it("reports nothing when no directive is present", () => {
     expect(sourceMapUrls("const value = 1;")).toEqual([]);
   });
+
+  it("handles a very large two-byte source-map URL without overflowing RegExp", () => {
+    const declaredUrl = "data:application/json;base64," + "A".repeat(8_500_000);
+    const result = analyzeJavaScriptStaticSource(
+      `const label = "ğ";\n//# sourceMappingURL=${declaredUrl}`,
+    );
+
+    expect(result.parse_status).toBe("complete");
+    expect(result.source_map_urls).toEqual([
+      expect.objectContaining({ declared_url: declaredUrl }),
+    ]);
+  });
 });
 
 const quotedDirectiveSources = [
