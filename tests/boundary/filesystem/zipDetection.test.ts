@@ -1,10 +1,18 @@
-import { lstat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  TextReader,
+  Uint8ArrayReader,
+  Uint8ArrayWriter,
+  ZipWriter,
+} from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
+import { inventoryArtifact } from "../../../src/artifacts/inventory/ArtifactInventory.js";
 import { classifyAndHashRoot } from "../../../src/artifacts/inventory/classify.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
+import { artifactOccurrenceAt } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("ZIP signature detection", () => {
@@ -117,6 +125,75 @@ describe("ZIP signature detection", () => {
         (await classifyAndHashRoot(path, false, await lstat(path))).format,
       ).toBe("file");
       expect((await parseBinaryTarget(path)).ok).toBe(false);
+    },
+  );
+});
+
+describe("nested container family", () => {
+  const plainZip = async (): Promise<Uint8Array> => {
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("readme.txt", new TextReader("hello\n"));
+    return writer.close();
+  };
+
+  it("takes ZIP families from member bytes, not member suffixes", async () => {
+    const root = await createTestTempDirectory("rea-nested-zip-family-");
+    const path = join(root, "outer.zip");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("inner-text.apk", new TextReader("just some text\n"));
+    await writer.add("inner-real.apk", new Uint8ArrayReader(await plainZip()));
+    await writer.add("renamed.bin", new Uint8ArrayReader(await plainZip()));
+    await writer.add("locked.ipa", new TextReader("encrypted bytes"), {
+      password: "fixture-only",
+    });
+    await writeFile(path, await writer.close());
+    const observed = await inventoryArtifact(path);
+    expect(artifactOccurrenceAt(observed, "inner-text.apk")).toMatchObject({
+      artifact_kind: "resource",
+      artifact_format: "file",
+      limitations: [],
+    });
+    expect(artifactOccurrenceAt(observed, "inner-real.apk")).toMatchObject({
+      artifact_kind: "container",
+      artifact_format: "apk",
+    });
+    expect(artifactOccurrenceAt(observed, "renamed.bin")).toMatchObject({
+      artifact_kind: "container",
+      artifact_format: "zip",
+    });
+    expect(artifactOccurrenceAt(observed, "locked.ipa")).toMatchObject({
+      artifact_kind: "unknown",
+      artifact_format: "unknown",
+      hash_status: "unavailable",
+      limitations: [
+        "The path suffix suggests IPA, but these bytes were not read, so the container family is unknown.",
+      ],
+    });
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "does not name a container family for a symlink it did not follow",
+    async () => {
+      const root = await createTestTempDirectory("rea-nested-symlink-family-");
+      const directory = join(root, "application");
+      await mkdir(directory);
+      await writeFile(join(directory, "real.apk"), await plainZip());
+      await symlink("real.apk", join(directory, "link.apk"));
+      const observed = await inventoryArtifact(directory);
+      expect(artifactOccurrenceAt(observed, "link.apk")).toMatchObject({
+        entry_kind: "symlink",
+        artifact_kind: "unknown",
+        artifact_format: "unknown",
+        hash_status: "not-hashed",
+        limitations: [
+          "Symlink target was not followed or disclosed.",
+          "The path suffix suggests APK, but these bytes were not read, so the container family is unknown.",
+        ],
+      });
+      expect(artifactOccurrenceAt(observed, "real.apk")).toMatchObject({
+        artifact_kind: "container",
+        artifact_format: "apk",
+      });
     },
   );
 });

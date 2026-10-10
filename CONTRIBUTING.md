@@ -124,9 +124,10 @@ for exact-path, awaited cleanup, including failures and timeouts.
 rejects remaining REA-owned paths. Never glob-clean shared `/tmp/rea-*` content.
 
 `REA_LOG_LEVEL` selects `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or
-`silent`. MCP defaults to `info` on stderr; one-shot CLI logging is opt-in on
-stdout. Request arguments, bridge tokens, and environment data are redacted
-from diagnostic logs.
+`silent`. Logs go to stderr: MCP defaults to `info`, and one-shot CLI logging
+is opt-in, so stdout carries only protocol messages and command results.
+Request arguments, bridge tokens, and environment data are redacted from
+diagnostic logs.
 
 ## Real Hopper changes
 

@@ -7,6 +7,10 @@ const foldSegment = (segment: string): string =>
 
 const REACT_NATIVE_SEGMENTS = new Set([
   "react.framework",
+  "reactnative.framework",
+  "libreactnative.so",
+  "libreactnativejni.so",
+  "libhermes_executor.so",
   "libhermes.so",
   "hermes.framework",
 ]);
@@ -15,16 +19,14 @@ const UNITY_SEGMENTS = new Set(["libunity.so", "unityframework.framework"]);
 
 /**
  * A runtime family named by one filename or directory segment.
- * `reactnative` may occur inside a segment (`libreactnativejni.so`).
- * The other names match the whole segment.
+ * Only recognized complete library and framework names establish a convention.
  */
 export const nativeRuntimeConvention = (
   path: string,
 ): NativeRuntimeConvention | null => {
   for (const segment of path.split("/")) {
     const folded = foldSegment(segment);
-    if (folded.includes("reactnative") || REACT_NATIVE_SEGMENTS.has(folded))
-      return "react-native";
+    if (REACT_NATIVE_SEGMENTS.has(folded)) return "react-native";
     if (FLUTTER_SEGMENTS.has(folded)) return "flutter";
     if (UNITY_SEGMENTS.has(folded)) return "unity";
   }

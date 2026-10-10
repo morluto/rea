@@ -15,7 +15,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 import {
   evaluateSemanticBinding,
   evaluateSemanticProvenance,
@@ -104,11 +107,19 @@ export const collectSemanticReferences = (
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
   name?: string,
-): JavaScriptSemanticReference[] => {
+): JavaScriptSemanticReference[] =>
+  completeSemanticSteps(collectSemanticReferencesSteps(program, state, name));
+
+/** Collect lexical references in steps while preserving resolution and visit order. */
+export function* collectSemanticReferencesSteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+  name?: string,
+): Generator<void, JavaScriptSemanticReference[]> {
   const output: JavaScriptSemanticReference[] = [];
   const seen = new Set<string>();
   const patterns: t.Node[] = [];
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
       if (isPatternNode(node)) patterns.push(node);
       if (
@@ -154,7 +165,7 @@ export const collectSemanticReferences = (
     },
   });
   return output;
-};
+}
 
 /** Freeze collected scopes into deterministic IR order. */
 export const immutableSemanticScopes = (

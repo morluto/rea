@@ -119,7 +119,14 @@ describe("Android application projection", () => {
       projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),
     ).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({
+            message: expect.stringContaining("root format is zip"),
+          }),
+        ],
+      },
     });
   });
 
@@ -165,6 +172,36 @@ describe("Android application projection", () => {
     expect(projection.limitations).toContain(
       "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",
     );
+  });
+});
+
+describe("APK family without a root manifest", () => {
+  const missingManifest =
+    "No root AndroidManifest.xml occurrence was observed. The APK family comes from the .apk suffix of a ZIP archive, so these bytes may not be an APK.";
+  const projectApk = async (entries: Record<string, string>) => {
+    const root = await createTestTempDirectory("rea-android-manifest-");
+    const path = join(root, "Plain.apk");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const [entry, text] of Object.entries(entries))
+      await writer.add(entry, new TextReader(text));
+    await writeFile(path, await writer.close());
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    return androidApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(
+        projectAndroidApplicationEvidence({ inventory_evidence: [inventory] }),
+      ).normalized_result,
+    );
+  };
+
+  it("says when the APK family rests only on the ZIP filename suffix", async () => {
+    expect((await projectApk({ "readme.txt": "hello" })).limitations).toContain(
+      missingManifest,
+    );
+    expect(
+      (await projectApk({ "AndroidManifest.xml": "manifest" })).limitations,
+    ).not.toContain(missingManifest);
   });
 });
 
