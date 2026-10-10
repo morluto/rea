@@ -261,6 +261,10 @@ itWithCaptureCapability(
     if (partial === undefined || !("observations" in partial))
       throw new Error("expected incomplete process observations");
     const observations = partial.observations;
+    expect(
+      Object.keys(observations),
+      "a default scenario keeps the base observation keys through the run path",
+    ).not.toContain("finalization");
     expect(observations.frames.state).toBe("available");
     if (observations.frames.state !== "available")
       throw new Error("expected terminal output observations");

@@ -118,6 +118,13 @@ it("keeps prelaunch snapshot evidence and the ownership failure when root cleanu
   } catch (cause: unknown) {
     if (!(cause instanceof ProcessCaptureError)) throw cause;
     expect(cause.cause).toBe(ownershipFailure);
+    const incomplete = cause.partialObservation;
+    if (incomplete === undefined || !("observations" in incomplete))
+      throw new Error("expected incomplete preparation observations");
+    expect(
+      Object.keys(incomplete.observations),
+      "a default scenario keeps the base observation keys through the preparation path",
+    ).not.toContain("finalization");
     expect(
       analysisErrorProjectionSchema.parse(projectAnalysisError(cause)),
     ).toMatchObject({
