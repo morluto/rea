@@ -144,6 +144,8 @@ describe("production stdio runtime", () => {
       expect(evidence.operation).toBe("current_document");
       expect(evidence.provider.id).toBe("hopper");
       expect(evidence.normalized_result).toBe(observation.normalized_result);
+      // Hopper's reply is the result; it is not repeated as raw_result.
+      expect(evidence.raw_result).toBeNull();
       expect(records).toContainEqual(
         expect.objectContaining({
           application: "rea",
