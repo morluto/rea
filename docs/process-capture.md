@@ -240,9 +240,10 @@ records what was observed and is absent when no finalization was attempted:
 - `elapsed_ms` is when REA observed the exit, relative to the start of
   finalization, or `null` when no exit was observed. The PTY layer can deliver the
   exit slightly after the operating system ended the process.
-- The observed exit stays in `exit.code` and `exit.signal`. The record does not
-  attribute an exit to a particular signal, and a `SIGKILL` from a scenario event
-  next to the escalation cannot be told apart from it.
+- The observed signal stays in `exit.signal`; `exit.code` is `null` for every
+  deadline exit. The record does not attribute an exit to a particular signal,
+  and a `SIGKILL` from a scenario event next to the escalation cannot be told
+  apart from it.
 - If the `SIGKILL` cannot be delivered, REA stops waiting for an exit, keeps every
   observation collected so far with the delivery results, and releases the run
   through owned-process cleanup.
