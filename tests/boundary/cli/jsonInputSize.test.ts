@@ -8,23 +8,18 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 cliTest(
-  "rejects malformed oversized CLI input and preserves Evidence decoder resource failures",
+  "rejects malformed oversized input through CLI and Evidence readers",
   async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-limit-");
     const input = join(root, "oversized.json");
     const file = await open(input, "wx");
     try {
-      // Sparse zero bytes are valid UTF-8. The Evidence reader reaches the
-      // decoded-length limit; the streamed CLI rejects their invalid JSON syntax.
+      // Sparse zero bytes are valid UTF-8. Both streaming readers reject
+      // their invalid JSON syntax without assembling a whole-document string.
       await file.truncate(constants.MAX_STRING_LENGTH + 1);
     } finally {
       await file.close();
     }
-    const limits = {
-      input_path: input,
-      input_bytes: constants.MAX_STRING_LENGTH + 1,
-      max_string_code_units: constants.MAX_STRING_LENGTH,
-    };
     // Run readers sequentially in owned child processes, releasing each large
     // read buffer when its process exits instead of retaining it in Vitest.
     const result = await cli.run({
@@ -48,11 +43,11 @@ cliTest(
       input,
     ]);
     expect(JSON.parse(evidence.stdout)).toMatchObject({
-      code: "resource_constraint",
+      code: "evidence_integrity_mismatch",
       details: {
-        operation: "read_evidence_file",
-        resource: "memory",
-        reported_limits: limits,
+        operation: "read",
+        reason: "invalid-json",
+        path: input,
       },
     });
     expect(evidence.stderr).toBe("");
@@ -123,7 +118,7 @@ cliTest(
 
 cliTest(
   "returns a typed string assembly constraint under a bounded heap",
-  async ({ cli }) => {
+  async ({ cli, processes }) => {
     const root = await createTestTempDirectory("rea-json-string-headroom-");
     const input = join(root, "long-string.json");
     const file = await open(input, "wx");
@@ -155,5 +150,21 @@ cliTest(
         action: expect.stringContaining("re-analyze a smaller selection"),
       },
     });
+    const evidence = await processes.run(process.execPath, [
+      "--max-old-space-size=768",
+      "--input-type=module",
+      "-e",
+      `import { readJsonFile } from "./dist/application/JsonFiles.js";
+       import { projectAnalysisError } from "./dist/domain/analysisErrorProjection.js";
+       const result = await readJsonFile(process.argv[1]);
+       console.log(JSON.stringify(result.ok ? result : projectAnalysisError(result.error)));`,
+      input,
+    ]);
+    expect(JSON.parse(evidence.stdout)).toMatchObject({
+      code: "resource_constraint",
+      details: { operation: "read_evidence_file", resource: "memory" },
+    });
+    expect(evidence.stderr).toBe("");
+    expect(evidence.exitCode).toBe(0);
   },
 );
