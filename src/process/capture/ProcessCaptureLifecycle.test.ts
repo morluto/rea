@@ -447,3 +447,33 @@ it("keeps a non-empty reason when a signal delivery throws without a message", a
     "a thrown error without a message still leaves a named reason",
   ).toBeGreaterThan(0);
 });
+
+it("never publishes an unverified attempt without a reason, also while it is in flight", async () => {
+  const fake = fakeTerminal();
+  let calls = 0;
+  const custom = {
+    ...fake,
+    signalTarget: (signal: "SIGTERM" | "SIGKILL") => {
+      calls += 1;
+      fake.signals.push(signal);
+      return calls === 1
+        ? new Promise<never>(() => undefined)
+        : Promise.resolve({ delivery: "identity-changed" as const });
+    },
+  };
+  const pending = start(custom, { timeout_ms: 50, finalization_ms: 20 });
+
+  const result = await pending;
+
+  expect(result.unobserved, "the undeliverable escalation ends the wait").toBe(
+    true,
+  );
+  expect(
+    result.finalization?.signals[0],
+    "the still-undelivered SIGTERM carries a reason, as the capture schema requires",
+  ).toMatchObject({ signal: "SIGTERM", delivery: "unverified" });
+  expect(
+    result.finalization?.signals[0]?.reason?.length,
+    "the in-flight attempt is never published without a reason",
+  ).toBeGreaterThan(0);
+});
