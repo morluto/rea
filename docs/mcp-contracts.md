@@ -236,10 +236,27 @@ the current client, so it is not a fresh-start recovery. On the same connection:
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. It is not a Windows/macOS coverage claim. REA cleans only resources it
-owns and never switches to another provider automatically. A provider timeout,
-installation failure, or host permission denial needs its own reported recovery;
-increasing a client deadline alone does not fix those failures.
+analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
+22.19.0 exercised the same connection and caller-selected native PE: the default
+60-second client request timed out, close succeeded, and reopening before a
+240-second request completed the cold overview in about 163 seconds. The next
+overview took about 19 ms. The cold and warm overviews reported two procedures
+and two segments; the input digest was unchanged and no owned runtime root or
+observed process-family member remained after final close. This was a small
+1,024-byte fixture, so the longer request setting remains an example, not a
+guarantee for larger targets. No macOS cold-start recovery was exercised.
+
+With a supplied progress token, the Windows run received an operation-start
+notification before timeout and start/completion notifications for the
+successful retry. It received no intermediate import or auto-analysis progress.
+These operation markers do not measure analysis work completed or extend the
+client's deadline. Each new provider session still imports the target into a
+fresh temporary project.
+
+REA cleans only resources it owns and never switches to another provider
+automatically. A provider timeout, installation failure, or host permission
+denial needs its own reported recovery; increasing a client deadline alone does
+not fix those failures.
 
 ## Tool results
 
@@ -288,8 +305,9 @@ Ordinary responses keep their existing complete result contract.
 
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
-Evidence. Native views select procedure, pseudocode, assembly, callers/callees,
-references, and high-pcode facets without starting a provider. Native offset
+Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
+comments, callers/callees, references, unresolved calls, referenced strings and
+names, the native API record, and high-pcode facets without starting a provider. Native offset
 and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is

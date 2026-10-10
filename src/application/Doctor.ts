@@ -16,7 +16,6 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import {
-  claudeCodeSkillsDirectory,
   readInstalledSkillIdentity,
   type InstalledSkillIdentity,
 } from "./SetupSkill.js";
@@ -441,7 +440,8 @@ export const systemDoctorHost = (
       readInstalledSkillIdentity(
         homeDirectory,
         clientIds,
-        claudeCodeSkillsDirectory(homeDirectory, environment),
+        environment,
+        platform,
       ),
     clientRegistrations: () =>
       readClientRegistrationStatuses(homeDirectory, undefined, {

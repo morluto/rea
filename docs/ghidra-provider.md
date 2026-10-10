@@ -62,11 +62,14 @@ Mach-O target coverage. It requires `clang`, LLD, and `lld-link`; set
 these tools before compilation. Keeping this matrix separate lets Linux
 host/provider acceptance run with only the host compiler.
 
-`npm run verify:ghidra:windows` and its `-- --x86` variant check the source-owned native x86 and x86-64 PE
-fixture, all 25 read-only operations, target/snapshot/import SHA-256 linkage,
+`npm run verify:ghidra:windows` checks source-owned native x86-64 PE applications;
+`-- --x86` selects x86 and `-- --dll` selects DLLs, and the flags can be combined.
+These lanes check all 25 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated
 prefix, then checks ordinary-user CLI/MCP operations against canonical contracts.
+It accepts the same architecture and DLL flags and verifies the selected PE role
+in the analysis profile.
 All lanes require matching native controls; package startup alone establishes
 only package compatibility.

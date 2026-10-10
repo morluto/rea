@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   createJavaScriptApplicationEdge,
   createJavaScriptApplicationGraph,
-  createJavaScriptApplicationNode,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
 import {
   artifactEvidence,
   completeCoverage,
+  fixtureNode,
 } from "./javascriptApplicationGraph.fixture.js";
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 
@@ -22,26 +22,22 @@ const buildGraph = (
   changed: number,
 ): JavaScriptApplicationGraph => {
   const nodes = ["a", "b", "c", "d"].map((name, index) =>
-    createJavaScriptApplicationNode({
-      kind: "javascript-module",
-      identity: {
+    fixtureNode(
+      "javascript-module",
+      {
         strategy: "canonical-path",
         stability: "artifact-version",
         artifact_sha256: artifactSha,
         path: `${name}.js`,
       },
-      observations: [
-        {
-          label: `${name}.js`,
-          properties: {
-            structural_fingerprint_sha256: digest(index + 1),
-            structural_fingerprint_algorithm: "fixture",
-            source_sha256: digest(index === 1 || index === 3 ? changed : 0),
-          },
-          evidence: artifactEvidence(artifactSha, `${name}.js`),
-        },
-      ],
-    }),
+      `${name}.js`,
+      {
+        structural_fingerprint_sha256: digest(index + 1),
+        structural_fingerprint_algorithm: "fixture",
+        source_sha256: digest(index === 1 || index === 3 ? changed : 0),
+      },
+      artifactEvidence(artifactSha, `${name}.js`),
+    ),
   );
   const [a, b] = nodes;
   if (a === undefined || b === undefined)

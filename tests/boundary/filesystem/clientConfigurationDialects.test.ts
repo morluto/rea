@@ -32,6 +32,7 @@ const getClients = (home: string) =>
       "vscode",
       "devin",
       "omp",
+      "pi",
     ].includes(name),
   );
 
@@ -44,6 +45,7 @@ describe("additional client configuration dialects", () => {
     "vscode",
     "devin",
     "omp",
+    "pi",
   ] as const)("registers, reads back, and uninstalls %s", async (name) => {
     const home = await createTestTempDirectory("rea-client-dialect-");
     const client = getClients(home).find(
@@ -78,7 +80,7 @@ describe("additional client configuration dialects", () => {
         command,
         enabled: true,
       });
-    if (name === "vscode" || name === "omp")
+    if (name === "vscode" || name === "omp" || name === "pi")
       expect(registration).toMatchObject({
         type: "stdio",
         command: "npx",

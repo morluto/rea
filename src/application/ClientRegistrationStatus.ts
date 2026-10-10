@@ -78,23 +78,18 @@ export const readClientRegistrationStatuses = async (
   for (const client of supportedClients(
     home,
     options.platform,
-    options.environment === undefined
-      ? undefined
-      : {
-          APPDATA: options.environment.APPDATA,
-          CLAUDE_CONFIG_DIR: options.environment.CLAUDE_CONFIG_DIR,
-          CODEX_HOME: options.environment.CODEX_HOME,
-          COPILOT_HOME: options.environment.COPILOT_HOME,
-          GROK_HOME: options.environment.GROK_HOME,
-          OMP_PROFILE: options.environment.OMP_PROFILE,
-          OPENCODE_CONFIG: options.environment.OPENCODE_CONFIG,
-          PI_CODING_AGENT_DIR: options.environment.PI_CODING_AGENT_DIR,
-          PI_CONFIG_DIR: options.environment.PI_CONFIG_DIR,
-          PI_PROFILE: options.environment.PI_PROFILE,
-          SAND_DATA_ROOT: options.environment.SAND_DATA_ROOT,
-          XDG_CONFIG_HOME: options.environment.XDG_CONFIG_HOME,
-        },
+    options.environment,
   )) {
+    if (client.configPathError !== undefined) {
+      statuses.push({
+        client: client.name,
+        config_path: client.configPath,
+        command: [],
+        state: "invalid",
+        remediation: client.configPathError,
+      });
+      continue;
+    }
     if (
       !(await exists(client.markerPath)) &&
       !(await exists(client.configPath))
@@ -181,9 +176,9 @@ const registrationAligned = (
   )
     return false;
   if (client.format === "vscode" && registration.type !== "stdio") return false;
-  // OMP infers stdio for a command entry without an explicit type.
+  // OMP and Pi infer stdio for a command entry without an explicit type.
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )
@@ -245,7 +240,7 @@ const parseRegistration = (
   if (client.format === "commandcode" && registration.transport !== "stdio")
     throw new TypeError("Expected an stdio registration");
   if (
-    client.format === "omp" &&
+    (client.format === "omp" || client.format === "pi") &&
     registration.type !== undefined &&
     registration.type !== "stdio"
   )

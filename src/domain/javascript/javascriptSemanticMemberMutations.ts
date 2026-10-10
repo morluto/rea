@@ -15,6 +15,8 @@ import {
   semanticSlotAtPath,
 } from "./javascriptSemanticSlots.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticArrayIndex,
@@ -44,6 +46,7 @@ export const collectSemanticMemberMutations = (
     },
   });
   const normalizePath = observableMutationPaths(state);
+  const returnedReferences = createSemanticReturnedReferences(state);
   const recordedEffects = new Set<string>();
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
@@ -194,8 +197,11 @@ export const collectSemanticMemberMutations = (
           current.originAt?.end,
         ]);
         if (recordedEffects.has(identity)) continue;
+        // A recorded write invalidates the binding to a non-primitive value, so
+        // only its first write can target a primitive. Re-evaluating it would
+        // replay every earlier write and make repeated writes superlinear.
         const value =
-          effect === "write"
+          effect === "write" && binding.mutatedPaths.length === 0
             ? evaluateSemanticBinding(binding, state)
             : undefined;
         const primitiveWrite =
@@ -337,6 +343,8 @@ export const collectSemanticMemberMutations = (
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       ) {
+        for (const source of returnedReferences(node.callee))
+          markEscaped(source.node, node, source.projection);
         for (const argument of node.arguments)
           if (t.isSpreadElement(argument))
             deferIterable({
@@ -552,6 +560,11 @@ const referencedValues = (
   path: PropertyPath,
   effect: ValueEffect,
 ): readonly ReferencedValue[] => {
+  if (effect === "escape" && t.isFunction(node))
+    return semanticCallableResultExpressions(node).flatMap(
+      ({ node, delegated }) =>
+        node === null ? [] : [{ node, path: delegated ? [null] : [] }],
+    );
   // An initializer owns its slots; only deeper writes can affect shared children.
   if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
     if (effect === "write" && path.length < 2) return [];
@@ -852,11 +865,11 @@ const objectReferencedValues = (
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name !== null && overwritten.has(name)) continue;
-    if (
-      t.isObjectProperty(property) &&
-      (name === null || semanticPropertyPathKeyMatches(key ?? null, name))
-    )
-      references.push({ node: property.value, path: remaining });
+    if (name === null || semanticPropertyPathKeyMatches(key ?? null, name))
+      references.push({
+        node: t.isObjectProperty(property) ? property.value : property,
+        path: remaining,
+      });
     // A prototype setter does not replace an own property from a spread.
     if (
       name !== null &&

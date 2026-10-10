@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import { digestCanonicalValue } from "../canonicalDigest.js";
 import type { ApplicationGraphEvidence } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   JAVASCRIPT_SEMANTIC_NODE_KINDS,
@@ -615,3 +616,42 @@ it.each(invalidGraphCases)(
     expect(issues(() => complete(steps))).toEqual(expected);
   },
 );
+
+it("interns each distinct evidence context once under its content digest", () => {
+  const registry = new JavaScriptSemanticEvidenceContextRegistry();
+  const elsewhere: ApplicationGraphEvidence = {
+    ...evidence(),
+    location: {
+      available: true,
+      value: {
+        kind: "source-range",
+        source: "other.js",
+        start: { line: 7, column: 2 },
+        end: { line: 7, column: 9 },
+      },
+    },
+  };
+  const first = registry.intern(evidence());
+  const repeated = registry.intern(elsewhere);
+  const reordered = registry.intern({
+    ...evidence("inferred"),
+    limitations: [
+      "Static reachability does not prove runtime execution.",
+      "Static reachability does not prove runtime execution.",
+    ],
+  });
+  const inferred = registry.intern(evidence("inferred"));
+  const { location: _location, ...context } = evidence();
+
+  expect(repeated.context_id).toBe(first.context_id);
+  expect(repeated.location).toEqual(elsewhere.location);
+  expect(reordered.context_id).toBe(inferred.context_id);
+  expect(inferred.context_id).not.toBe(first.context_id);
+  expect(first.context_id).toBe(
+    `jsrg_evidence_${digestCanonicalValue(context, "test")}`,
+  );
+  expect(registry.contexts.map(({ context_id }) => context_id)).toEqual(
+    [first.context_id, inferred.context_id].toSorted(),
+  );
+  expect(registry.resolve(repeated)).toEqual(elsewhere);
+});

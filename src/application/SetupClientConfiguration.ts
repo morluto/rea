@@ -33,6 +33,8 @@ export const configureClientConfiguration = (
   environment: SetupProviderEnvironment = {},
   command: readonly string[] = npxRegistrationCommand(),
 ): Promise<ClientConfigurationResult> => {
+  if (client.configPathError !== undefined)
+    return Promise.resolve({ status: "failed", reason: "path" });
   if (client.format === undefined || client.format === "unsupported")
     return Promise.resolve({ status: "failed", reason: "readback" });
   return configureClientDocument(client, environment, command, client.format);
@@ -154,6 +156,7 @@ export const clientConfigurationAligned = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<boolean> => {
+  if (client.configPathError !== undefined) return false;
   try {
     const original = await readFile(client.configPath, "utf8");
     const parsed = parseClientConfiguration(original, client.format);
@@ -179,6 +182,8 @@ export const inspectClientConfiguration = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
 ): Promise<ClientConfigurationInspection> => {
+  if (client.configPathError !== undefined)
+    return { status: "invalid", remediation: client.configPathError };
   if (client.format === "unsupported") return { status: "already_current" };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,

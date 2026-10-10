@@ -183,8 +183,13 @@ Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
 keys, and parser recovery remain partial or unknown.
-Objects and arrays passed to calls, constructors, or tagged templates, or used
-as method receivers, are not assumed unchanged after the invocation. Aliases
+Objects and arrays passed to calls, constructors, or tagged templates, used
+as method receivers, or stored through property targets are not assumed
+unchanged afterward. Property stores conservatively retain reference escape
+uncertainty rather than pretending to execute later writes. References
+handed back by local functions, methods, constructors, async functions, and
+generators also retain escape uncertainty, including when the call is read-only;
+this does not establish that a mutation occurred. Aliases
 and shared children in spread and rest copies retain that uncertainty; copied
 primitive slots and unrelated containing properties remain known. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known

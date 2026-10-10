@@ -16,7 +16,7 @@ import {
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 import {
-  claudeCodeSkillsDirectory as resolveClaudeCodeSkillsDirectory,
+  skillDestinations,
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
 } from "./SetupSkill.js";
@@ -90,14 +90,11 @@ export const systemSetupHost = (
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
   const { homeDirectory } = doctorHost;
-  const claudeSkillsDirectory = resolveClaudeCodeSkillsDirectory(
-    homeDirectory,
-    environment,
-  );
   return {
     platform,
     homeDirectory,
-    claudeCodeSkillsDirectory: claudeSkillsDirectory,
+    skillDestinations: (clientIds) =>
+      skillDestinations(homeDirectory, clientIds, environment, platform),
     registrationCommand: setupRegistrationCommand(
       platform,
       environment.npm_command === "exec",
@@ -153,10 +150,11 @@ export const systemSetupHost = (
       canonicalSkillNeedsInstall(
         homeDirectory,
         clientIds,
-        claudeSkillsDirectory,
+        environment,
+        platform,
       ),
     installSkill: (clientIds) =>
-      installCanonicalSkill(homeDirectory, clientIds, claudeSkillsDirectory),
+      installCanonicalSkill(homeDirectory, clientIds, environment, platform),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
   };
 };
@@ -169,6 +167,7 @@ export const detectClients = async (
 ): Promise<readonly SetupClient[]> => {
   const detected: SetupClient[] = [];
   for (const candidate of supportedClients(home, platform, environment)) {
+    if (candidate.configPathError !== undefined) continue;
     const [hasConfig, hasMarker] = await Promise.all([
       exists(candidate.configPath),
       candidate.markerPath === undefined ? false : exists(candidate.markerPath),

@@ -39,7 +39,7 @@
         "package-lock.json",
         "scripts/generate-package-metadata.mjs",
         "scripts/lib/generated-file.mjs",
-        "skill-src/reverse-engineer-anything/SKILL.md",
+        ".agents/skills/reverse-engineer-anything/SKILL.md",
         "src/generatedPackageMetadata.ts"
       ]
     },
@@ -138,7 +138,7 @@
         "docs/**",
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",
-        "skill-src/**",
+        ".agents/skills/reverse-engineer-anything/**",
         "README.md",
         {
           "mode": "dependencyOutputs",
@@ -170,7 +170,7 @@
         "package-lock.json",
         "scripts/generate-skill-metadata.mjs",
         "scripts/lib/generated-file.mjs",
-        "skill-src/**"
+        ".agents/skills/reverse-engineer-anything/**"
       ],
       "outputs": ["skills/**"]
     },
