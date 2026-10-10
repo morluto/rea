@@ -247,12 +247,15 @@ const inspectWindowsP0TargetSupport = (
       reason: "Windows Ghidra P0 accepts x86 and x86-64 PE targets only.",
       diagnostics,
     };
-  if (target.executableRole !== "application")
+  if (
+    target.executableRole !== "application" &&
+    target.executableRole !== "shared-library"
+  )
     return {
       status: "unsupported",
       code: "target_role_unsupported",
       reason:
-        "Windows Ghidra P0 accepts PE applications, not DLL or non-executable images.",
+        "Windows Ghidra P0 accepts PE applications and DLLs, not non-executable or unclassified images.",
       diagnostics,
     };
   if (target.managed !== false)
@@ -260,7 +263,7 @@ const inspectWindowsP0TargetSupport = (
       status: "unsupported",
       code: "managed_target_unsupported",
       reason:
-        "Windows Ghidra P0 accepts native PE applications; managed or unclassified PE targets are unsupported.",
+        "Windows Ghidra P0 accepts native PE applications and DLLs; managed or unclassified PE targets are unsupported.",
       diagnostics,
     };
   return {

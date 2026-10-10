@@ -4,15 +4,26 @@ import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 
 type JsonOutputFormat = "json" | "jsonl";
 
-/** Write ordinary JSON without constructing a document-sized string. */
+/**
+ * Write ordinary JSON without constructing a document-sized string.
+ *
+ * `json` is indented for a terminal reader. Piped or redirected output, which
+ * agents and scripts consume, is compact: indentation adds no information and
+ * measured 16-45% more model tokens on real results. The value is identical.
+ */
 export const writeJsonOutput = async (
   value: unknown,
   destination: Writable,
   format: JsonOutputFormat = "json",
 ): Promise<void> => {
-  for (const part of bufferedJsonParts(jsonOutputParts(value, format)))
+  for (const part of bufferedJsonParts(
+    jsonOutputParts(value, format, isTerminal(destination)),
+  ))
     await writePart(destination, part);
 };
+
+const isTerminal = (destination: Writable): boolean =>
+  "isTTY" in destination && destination.isTTY === true;
 
 const writePart = (destination: Writable, part: string): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -39,6 +50,7 @@ const writePart = (destination: Writable, part: string): Promise<void> =>
 export function* jsonOutputParts(
   value: unknown,
   format: JsonOutputFormat,
+  pretty = true,
 ): Generator<string> {
   if (format === "jsonl" && Array.isArray(value)) {
     for (const item of value) {
@@ -47,6 +59,6 @@ export function* jsonOutputParts(
     }
     return;
   }
-  yield* jsonParts(value, format === "json");
+  yield* jsonParts(value, pretty && format === "json");
   yield "\n";
 }

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
   addresses: "Ordered provider-normalized procedure addresses to analyze.",
@@ -69,19 +70,94 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
     },
   );
 
-/** Share repeated output definitions without changing canonical validation. */
+/** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
 ): Contract["outputSchema"] =>
   withAdvertisedJsonSchema(
     contract.outputSchema,
     "output",
-    (project) => (options) =>
-      project({
+    (project) => (options) => {
+      const shared = project({
         ...options,
         libraryOptions: { reused: "ref", ...options.libraryOptions },
-      }),
+      });
+      // An explicit ID owns the reference base. Relative external references
+      // also depend on that base, so leave those projections unchanged.
+      if ("$id" in shared || hasRelativeSchemaReference(shared)) return shared;
+      return {
+        ...shared,
+        $id: `urn:rea:tool-output:sha256:${digestCanonicalValue(
+          { target: options.target, schema: shared },
+          "Tool output schema",
+        )}`,
+      };
+    },
   );
+
+/**
+ * Apply a wire-presentation transform to one schema's advertised input
+ * projection. The wrapper preserves the schema's own parser and standard
+ * metadata, so both Zod registrations and plain standard schemas keep their
+ * canonical validation while only the advertised JSON changes.
+ */
+export const transformAdvertisedInputJsonSchema = <Schema>(
+  schema: Schema,
+  transform: (projected: Record<string, unknown>) => Record<string, unknown>,
+): Schema => {
+  const standard = Reflect.get(schema as object, "~standard");
+  if (!isSchemaRecord(standard)) return schema;
+  const jsonSchema = Reflect.get(standard, "jsonSchema");
+  if (!isSchemaRecord(jsonSchema)) return schema;
+  const project = Reflect.get(jsonSchema, "input");
+  if (typeof project !== "function") return schema;
+  const byTarget = new Map<string, Record<string, unknown>>();
+  const transformedInput = (options: unknown): unknown => {
+    const target = Reflect.get(options as object, "target");
+    if (typeof target === "string") {
+      const cached = byTarget.get(target);
+      if (cached !== undefined) return cached;
+    }
+    const projected = (project as (options: unknown) => unknown)(options);
+    const transformed = isSchemaRecord(projected)
+      ? transform(projected)
+      : projected;
+    if (typeof target === "string" && isSchemaRecord(transformed))
+      byTarget.set(target, transformed);
+    return transformed;
+  };
+  return {
+    ...(schema as object),
+    "~standard": {
+      ...standard,
+      jsonSchema: { ...jsonSchema, input: transformedInput },
+    },
+  } as Schema;
+};
+
+const hasRelativeSchemaReference = (
+  schema: Record<string, unknown>,
+): boolean => {
+  const pending: unknown[] = [schema];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === null || typeof current !== "object" || visited.has(current))
+      continue;
+    visited.add(current);
+    for (const [key, value] of Object.entries(current)) {
+      if (
+        ["$id", "$ref", "$dynamicRef", "$recursiveRef"].includes(key) &&
+        typeof value === "string" &&
+        !value.startsWith("#") &&
+        !URL.canParse(value)
+      )
+        return true;
+      if (value !== null && typeof value === "object") pending.push(value);
+    }
+  }
+  return false;
+};
 
 const withAdvertisedJsonSchema = <Schema extends z.ZodType>(
   canonical: Schema,
@@ -128,7 +204,10 @@ const memoizeByTarget = (
   };
 };
 
-const fallbackPropertyDescription = (property: string): string => {
+const isSchemaRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const fallbackPropertyDescription = (property: string): string | undefined => {
   const explicit = Object.hasOwn(PROPERTY_DESCRIPTIONS, property)
     ? PROPERTY_DESCRIPTIONS[property]
     : undefined;
@@ -156,5 +235,6 @@ const fallbackPropertyDescription = (property: string): string => {
     return `Local filesystem ${words} selected for this operation.`;
   if (property.startsWith("is_") || property.startsWith("has_"))
     return `Whether ${words}.`;
-  return `Value for ${words}.`;
+  // A generic sentence would only restate the property name in every schema.
+  return undefined;
 };

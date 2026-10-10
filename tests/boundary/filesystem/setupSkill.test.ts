@@ -13,7 +13,6 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
   canonicalSkillNeedsInstall,
-  claudeCodeSkillsDirectory,
   installCanonicalSkill,
 } from "../../../src/application/SetupSkill.js";
 import {
@@ -56,9 +55,7 @@ describe("canonical skill transaction", () => {
   it("installs only the selected Claude Code personal skill", async () => {
     const home = await createTestTempDirectory("rea-claude-skill-");
     const configDirectory = join(home, "claude-config");
-    const skillsDirectory = claudeCodeSkillsDirectory(home, {
-      CLAUDE_CONFIG_DIR: configDirectory,
-    });
+    const skillsDirectory = join(configDirectory, "skills");
     const claudeSkill = join(
       skillsDirectory,
       "reverse-engineer-anything/SKILL.md",
@@ -84,13 +81,19 @@ describe("canonical skill transaction", () => {
     });
 
     expect(
-      await canonicalSkillNeedsInstall(home, ["claude_code"], skillsDirectory),
+      await canonicalSkillNeedsInstall(home, ["claude_code"], {
+        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+      }),
     ).toBe(true);
     expect(
-      await installCanonicalSkill(home, ["claude_code"], skillsDirectory),
+      await installCanonicalSkill(home, ["claude_code"], {
+        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+      }),
     ).toBe("installed");
     expect(
-      await canonicalSkillNeedsInstall(home, ["claude_code"], skillsDirectory),
+      await canonicalSkillNeedsInstall(home, ["claude_code"], {
+        CLAUDE_CONFIG_DIR: dirname(skillsDirectory),
+      }),
     ).toBe(false);
     await expect(access(claudeSkill)).resolves.toBeUndefined();
     await expect(
@@ -112,7 +115,7 @@ describe("canonical skill transaction", () => {
       home,
       ".agents/skills/reverse-engineer-anything/SKILL.md",
     );
-    const claudeSkills = claudeCodeSkillsDirectory(home);
+    const claudeSkills = join(home, ".claude", "skills");
     const claudeSkill = join(
       claudeSkills,
       "reverse-engineer-anything/SKILL.md",

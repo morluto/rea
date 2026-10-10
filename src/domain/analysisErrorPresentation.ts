@@ -191,7 +191,7 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   const standardMessage = standardErrorMessage(error._tag);
   if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError)
-    return artifactMessage(error.operation, error.reason);
+    return artifactMessage(error.operation, error.reason, error.detail);
   if (error instanceof EvidenceReferenceError)
     return error.reason === "missing"
       ? `Evidence ${error.evidenceId} is not retained in this session. Supply complete inline Evidence, re-run its producer, or import its bundle before using this reference.`
@@ -329,13 +329,13 @@ const START_FAILURE_TAGS: ReadonlySet<AnalysisErrorTag> = new Set([
 const artifactMessage = (
   operation: ArtifactOperationError["operation"],
   reason: ArtifactOperationError["reason"],
+  detail?: string,
 ): string => {
   if (reason === "cancelled")
     return "Artifact operation was cancelled. Start it again when ready.";
   if (reason === "limit")
     return "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.";
-  if (reason === "path")
-    return "Artifact contains an unsafe or conflicting internal path. Inspect the reported path and correct the artifact before retrying.";
+  if (reason === "path") return artifactPathMessage(detail);
   if (reason === "unavailable")
     return "Artifact processing is unavailable for the current target or host. Check artifact support and required tools.";
   if (reason === "integrity" && operation === "analyze_javascript_application")
@@ -343,6 +343,23 @@ const artifactMessage = (
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
+};
+
+const artifactPathMessage = (detail: string | undefined): string => {
+  // Kept in step with DESTINATION_CASE_COLLISION_PREFIX. Domain does not import
+  // the artifact adapter that produces the detail.
+  if (
+    detail !== undefined &&
+    detail.startsWith("Destination filesystem cannot store both ")
+  )
+    return detail;
+  if (
+    detail !== undefined &&
+    (detail.startsWith("Artifact path is absolute or unsafe:") ||
+      detail.startsWith("Artifact path is not normalized:"))
+  )
+    return "Artifact contains an unsafe internal path. Inspect the reported path and correct the artifact before retrying.";
+  return "Artifact contains a conflicting internal path. Inspect the reported path before retrying.";
 };
 
 const evidenceFileMessage = ({

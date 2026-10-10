@@ -233,7 +233,6 @@ class NativeMacOSClient implements AnalysisClient {
       return observation.ok
         ? ok(
             createAnalysisExecution(observation.value.result, IDENTITY, {
-              rawResult: { provenance: observation.value.provenance },
               limitations: observation.value.limitations,
               locations: observation.value.locations,
             }),
@@ -317,7 +316,6 @@ class NativeMacOSClient implements AnalysisClient {
     });
     return ok({
       result: jsonValueSchema.parse(result),
-      provenance,
       limitations: [],
       locations: architectureLocations(result.architectures.items),
     });
@@ -351,7 +349,6 @@ class NativeMacOSClient implements AnalysisClient {
     });
     return ok({
       result: jsonValueSchema.parse(result),
-      provenance,
       limitations: [],
       locations: [],
     });
@@ -448,7 +445,6 @@ class NativeMacOSClient implements AnalysisClient {
     });
     return ok({
       result: jsonValueSchema.parse(result),
-      provenance,
       limitations: result.limitations,
       locations: [],
     });
@@ -611,7 +607,6 @@ class NativeMacOSClient implements AnalysisClient {
     });
     return ok({
       result: jsonValueSchema.parse(result),
-      provenance,
       limitations: parsed.value.limitations,
       locations: [{ kind: "artifact-path", path: plist.value }],
     });
@@ -659,7 +654,6 @@ class NativeMacOSClient implements AnalysisClient {
 
 interface NativeObservation {
   readonly result: JsonValue;
-  readonly provenance: readonly NativeCommandInvocation[];
   readonly limitations: readonly string[];
   readonly locations: readonly EvidenceLocation[];
 }

@@ -65,6 +65,8 @@ describe("artifact extraction", () => {
       ]),
       extraction_manifest: { output_root_alias: "$OUTPUT_ROOT" },
     });
+    // artifacts names every extracted path; the Evidence does not repeat them.
+    expect(result.value.locations).toEqual([]);
     expect(await readFile(join(output, "assets", "selected.js"), "utf8")).toBe(
       "selected();\n",
     );

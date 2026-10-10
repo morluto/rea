@@ -34,8 +34,13 @@ export const normalizeProcessText = (
     normalized = normalizePortTokens(normalized);
   if (scenario.normalization.pids)
     normalized = normalizePidTokens(normalized, [pid]);
+  // A callback keeps replacement text literal while preserving replaceAll's
+  // empty-pattern boundaries, which the process scenario contract permits.
   for (const pattern of scenario.normalization.patterns)
-    normalized = normalized.replaceAll(pattern.pattern, pattern.replacement);
+    normalized = normalized.replaceAll(
+      pattern.pattern,
+      () => pattern.replacement,
+    );
   return normalized;
 };
 

@@ -5,14 +5,22 @@ import {
   isJSONRPCNotification,
   isJSONRPCResultResponse,
   type Implementation,
+  type Icon,
   type JSONRPCMessage,
   type McpServerOptions,
+  type RegisteredTool,
   type RequestId,
+  type ScopeChallengeHandler,
+  type StandardSchemaWithJSON,
+  type ToolAnnotations,
+  type ToolCallback,
   type Transport,
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { compactAdvertisedInputSchema } from "../contracts/compactInputSchema.js";
+import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -20,6 +28,24 @@ import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { ToolResultDelivery } from "./toolResult.js";
 import { encodeToolResult } from "./toolResultEncoding.js";
+
+/** Compact advertised input schemas within this per-schema byte budget. */
+export interface CompactInputSchemaPresentation {
+  readonly budgetBytes: number;
+}
+
+/** A Zod schema whose standard interface exposes a JSON Schema projection. */
+const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
+  if (typeof value !== "object" || value === null) return false;
+  const standard = Reflect.get(value, "~standard");
+  if (typeof standard !== "object" || standard === null) return false;
+  const jsonSchema = Reflect.get(standard, "jsonSchema");
+  return (
+    typeof jsonSchema === "object" &&
+    jsonSchema !== null &&
+    Reflect.get(jsonSchema, "input") !== undefined
+  );
+};
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServer extends McpServer {
@@ -30,8 +56,58 @@ export class EvidenceMcpServer extends McpServer {
       | EvidenceWriter["recordEvidence"]
       | undefined,
     readonly delivery: ToolResultDelivery,
+    private readonly compactPresentation:
+      | CompactInputSchemaPresentation
+      | undefined = undefined,
   ) {
     super(info, options);
+  }
+
+  /**
+   * Compact the advertised input schema of every registered tool when the
+   * compact profile is active. The registered canonical schema, its parser,
+   * and output schemas are untouched; only the advertised JSON Schema
+   * projection is rendered within the provider's per-schema size budget.
+   * The signatures mirror the SDK's registrations so call sites keep their
+   * inferred handler argument types.
+   */
+  override registerTool<
+    OutputArgs extends StandardSchemaWithJSON,
+    InputArgs extends StandardSchemaWithJSON | undefined = undefined,
+  >(
+    name: string,
+    config: {
+      title?: string;
+      description?: string;
+      inputSchema?: InputArgs;
+      outputSchema?: OutputArgs;
+      annotations?: ToolAnnotations;
+      icons?: Icon[];
+      scopeChallenge?: ScopeChallengeHandler;
+      _meta?: Record<string, unknown>;
+    },
+    callback: ToolCallback<InputArgs>,
+  ): RegisteredTool {
+    const budget = this.compactPresentation?.budgetBytes;
+    const inputSchema =
+      budget !== undefined &&
+      config !== undefined &&
+      hasAdvertisedInputJsonSchema(config.inputSchema)
+        ? transformAdvertisedInputJsonSchema(
+            config.inputSchema as Parameters<
+              typeof transformAdvertisedInputJsonSchema
+            >[0],
+            (projected) =>
+              compactAdvertisedInputSchema(projected, budget).schema,
+          )
+        : undefined;
+    return super.registerTool(
+      name,
+      (inputSchema === undefined
+        ? config
+        : { ...config, inputSchema }) as never,
+      callback as never,
+    );
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */

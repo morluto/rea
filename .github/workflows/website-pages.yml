@@ -59,10 +59,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libcairo2 fonts-dejavu-core
           python3 -m pip install -r website/requirements.txt
-      - name: Prepare website assets
-        run: python3 scripts/prepare-website.py
-      - name: Check website links, metadata and publishing configuration
-        run: python3 scripts/verify-website.py
+      - name: Check shared HTML, links, assets and contributor workflows
+        run: python3 scripts/website.py check
       - name: Record the published commit
         run: |
           python3 - <<'PY'

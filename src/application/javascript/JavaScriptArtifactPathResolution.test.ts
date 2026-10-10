@@ -67,6 +67,36 @@ describe("artifact-local graph identity", () => {
   });
 });
 
+describe("logical path identity", () => {
+  it("resolves an NFD relative import to the NFC inventory path and rejects a root escape", () => {
+    const nfc = "caf\u00e9".normalize("NFC");
+    const nfd = nfc.normalize("NFD");
+    const files = fileMap([
+      file("dir/index.js", "root"),
+      file(`dir/${nfc}.js`, "root"),
+    ]);
+    expect(
+      resolve({
+        declaredPath: `./${nfd}.js`,
+        sourcePath: "dir/index.js",
+        context: "module-specifier",
+        files,
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: `dir/${nfc}.js`,
+    });
+    expect(
+      resolve({
+        declaredPath: "../escape.js",
+        sourcePath: "index.js",
+        context: "module-specifier",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+  });
+});
+
 describe("contextual JavaScript artifact path resolution", () => {
   it.each([
     ["main.js", "app/main.js"],

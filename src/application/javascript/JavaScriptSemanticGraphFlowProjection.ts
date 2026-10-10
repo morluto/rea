@@ -240,10 +240,11 @@ export const projectSemanticClosureCaptures = (
 };
 
 /** Retain bounded unresolved dynamic-call, dynamic-property and dynamic-scope frontiers. */
-export const projectSemanticFrontiers = (
+export function* projectSemanticFrontiers(
   context: SemanticFlowProjectionContext,
-): void => {
-  for (const frontier of context.ir.frontiers) {
+): Generator<void, void> {
+  for (const [index, frontier] of context.ir.frontiers.entries()) {
+    if (index % 64 === 0) yield;
     // Dynamic environments leave identifier reads and writes unresolved.
     const family =
       frontier.kind === "dynamic-call"
@@ -275,4 +276,4 @@ export const projectSemanticFrontiers = (
     );
     addSemanticGraphUnknown(context.state, unknown);
   }
-};
+}

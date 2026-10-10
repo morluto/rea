@@ -72,7 +72,9 @@ export const buildInterfaceBuilderAnalysis = (input: {
     const evidenceFor = (description: string) => [
       {
         kind: "interface_builder_resource" as const,
-        description: `${document.relativePath}: ${description}`,
+        // artifact_path names the archive; repeating it here cost a path per
+        // node and edge.
+        description,
         location: { address: null, file_offset: null },
         artifact_path: document.relativePath,
         artifact_sha256: document.archiveSha256,

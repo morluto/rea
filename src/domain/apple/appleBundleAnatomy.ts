@@ -68,6 +68,50 @@ export const isWithin = (path: string, root: string): boolean =>
   root === "." || path === root || path.startsWith(`${root}/`);
 
 /**
+ * English (en-US) case fold used only for Apple's fixed anatomy vocabulary.
+ * Reported paths keep the archive spelling. Inventory identity stays case-sensitive.
+ */
+export const anatomyNameIs = (actual: string, expected: string): boolean =>
+  actual.toLocaleLowerCase("en-US") === expected.toLocaleLowerCase("en-US");
+
+/** Directory entry that folds to one vocabulary word. The exact spelling wins. */
+export const anatomyChild = (
+  names: ReadonlySet<string> | undefined,
+  expected: string,
+): string | null => {
+  if (names === undefined) return null;
+  let exact: string | undefined;
+  let folded: string | undefined;
+  for (const name of names) {
+    if (name === expected) exact = name;
+    else if (
+      anatomyNameIs(name, expected) &&
+      (folded === undefined || compare(name, folded) < 0)
+    )
+      folded = name;
+  }
+  return exact ?? folded ?? null;
+};
+
+/**
+ * Whether `path`'s tail matches anatomy vocabulary. `*` matches one segment
+ * that is not itself a vocabulary comparison.
+ */
+export const anatomyTailMatches = (
+  path: string,
+  expected: readonly string[],
+): boolean => {
+  const actual = path.split("/");
+  if (actual.length < expected.length) return false;
+  const tail = actual.slice(-expected.length);
+  return expected.every((name, index) => {
+    const segment = tail[index];
+    if (segment === undefined || segment.length === 0) return false;
+    return name === "*" || anatomyNameIs(segment, name);
+  });
+};
+
+/**
  * Outermost iOS (`Payload/X.app`) and macOS (`X.app/Contents/…`) applications.
  * An inventoried `.app` directory is its own root, `.`.
  */
@@ -82,15 +126,20 @@ export const applicationRoots = (
   const found = new Set<string>();
   for (const { path } of entries) {
     if (isSidecar(path)) continue;
-    const ios = /^(Payload\/[^/]+\.app)(?:\/|$)/u.exec(path);
-    if (ios?.[1] !== undefined) {
-      found.add(ios[1]);
+    const segments = path.split("/");
+    const app = segments[1];
+    if (
+      anatomyNameIs(segments[0] ?? "", "Payload") &&
+      app !== undefined &&
+      /\.app$/iu.test(app)
+    ) {
+      found.add(`${segments[0]}/${app}`);
       continue;
     }
-    const segments = path.split("/");
     const index = segments.findIndex(
       (segment, position) =>
-        /\.app$/iu.test(segment) && segments[position + 1] === "Contents",
+        /\.app$/iu.test(segment) &&
+        anatomyNameIs(segments[position + 1] ?? "", "Contents"),
     );
     if (index >= 0) found.add(segments.slice(0, index + 1).join("/"));
   }
@@ -186,8 +235,8 @@ const enclosingBundle = (
 
 const bundleLayout = (bundle: string, tree: Tree): Bundle["layout"] => {
   const names = tree.children.get(directoryOf(bundle));
-  if (names?.has("Contents") === true) return "macos-deep";
-  if (names?.has("Versions") === true) return "versioned-framework";
+  if (anatomyChild(names, "Contents") !== null) return "macos-deep";
+  if (anatomyChild(names, "Versions") !== null) return "versioned-framework";
   return "shallow";
 };
 
@@ -201,13 +250,18 @@ const bundleRole = (bundle: string): Bundle["role"] => {
   if (name.endsWith(".systemextension")) return "system-extension";
   if (name.endsWith(".dext")) return "driver-extension";
   if (name.endsWith(".bundle")) {
-    if (container === "PlugIns") return "plug-in";
-    return container === "Resources" ? "resource-bundle" : "bundle";
+    if (anatomyNameIs(container ?? "", "PlugIns")) return "plug-in";
+    return anatomyNameIs(container ?? "", "Resources")
+      ? "resource-bundle"
+      : "bundle";
   }
   if (!name.endsWith(".app")) return "plug-in";
-  if (container === "LoginItems" && segments.at(-3) === "Library")
+  if (
+    anatomyNameIs(container ?? "", "LoginItems") &&
+    anatomyNameIs(segments.at(-3) ?? "", "Library")
+  )
     return "login-item";
-  if (container === "Helpers") return "helper-application";
+  if (anatomyNameIs(container ?? "", "Helpers")) return "helper-application";
   return "nested-application";
 };
 
@@ -225,16 +279,30 @@ const contentDirectories = (
   tree: Tree,
 ): string[] => {
   const directory = directoryOf(bundle);
-  if (layout === "macos-deep") return [joinPath(directory, "Contents")];
+  if (layout === "macos-deep") {
+    const contents = namedChild(tree, directory, "Contents");
+    return contents === null ? [] : [contents];
+  }
   if (layout === "shallow") return [directory];
-  const versions = joinPath(directory, "Versions");
+  const versions = namedChild(tree, directory, "Versions");
+  if (versions === null) return [];
   // Only real version directories count: Current is a symlink, and files
   // such as .DS_Store are not versions.
   return [...(tree.children.get(versions) ?? [])]
-    .filter((version) => version !== "Current")
+    .filter((version) => !anatomyNameIs(version, "Current"))
     .map((version) => joinPath(versions, version))
     .filter((version) => tree.directories.has(version))
     .sort(compare);
+};
+
+/** Child path using the archive's spelling of one anatomy name. */
+const namedChild = (
+  tree: Tree,
+  directory: string,
+  expected: string,
+): string | null => {
+  const name = anatomyChild(tree.children.get(directory), expected);
+  return name === null ? null : joinPath(directory, name);
 };
 
 const infoPlistPath = (
@@ -246,17 +314,15 @@ const infoPlistPath = (
   // With several real versions, Versions/Current (a symlink outside the
   // inventory) decides which plist applies, so the plist stays unknown.
   if (directories.length !== 1) return null;
-  const candidates = directories
-    .map((directory) =>
-      joinPath(
-        directory,
-        layout === "versioned-framework"
-          ? "Resources/Info.plist"
-          : "Info.plist",
-      ),
-    )
-    .filter((path) => tree.files.has(path));
-  return candidates.length === 1 ? (candidates[0] ?? null) : null;
+  const directory = directories[0];
+  if (directory === undefined) return null;
+  const parent =
+    layout === "versioned-framework"
+      ? namedChild(tree, directory, "Resources")
+      : directory;
+  if (parent === null) return null;
+  const info = namedChild(tree, parent, "Info.plist");
+  return info !== null && tree.files.has(info) ? info : null;
 };
 
 const executableCandidates = (
@@ -265,12 +331,15 @@ const executableCandidates = (
   tree: Tree,
 ): string[] =>
   contentDirectories(bundle, layout, tree)
-    .flatMap((directory) =>
-      directFiles(
-        layout === "macos-deep" ? joinPath(directory, "MacOS") : directory,
-        tree,
-      ),
-    )
+    .flatMap((directory) => {
+      const executableDirectory =
+        layout === "macos-deep"
+          ? namedChild(tree, directory, "MacOS")
+          : directory;
+      return executableDirectory === null
+        ? []
+        : directFiles(executableDirectory, tree);
+    })
     .filter((path) =>
       MACH_O_FORMATS.includes(tree.files.get(path)?.format ?? ""),
     );
@@ -281,12 +350,17 @@ const signingPaths = (
   tree: Tree,
 ): string[] =>
   contentDirectories(bundle, layout, tree)
-    .flatMap((directory) => [
-      joinPath(directory, "_CodeSignature/CodeResources"),
-      joinPath(directory, "embedded.provisionprofile"),
-      joinPath(directory, "embedded.mobileprovision"),
-    ])
-    .filter((path) => tree.files.has(path))
+    .flatMap((directory) => {
+      const signature = namedChild(tree, directory, "_CodeSignature");
+      return [
+        signature === null
+          ? null
+          : namedChild(tree, signature, "CodeResources"),
+        namedChild(tree, directory, "embedded.provisionprofile"),
+        namedChild(tree, directory, "embedded.mobileprovision"),
+      ];
+    })
+    .filter((path): path is string => path !== null && tree.files.has(path))
     .sort(compare);
 
 /** Platforms of application roots whose layout was observed, not assumed. */

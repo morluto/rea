@@ -137,7 +137,11 @@ const addRequestNode = (
     kind: operation.kind === "request" ? "request" : "response",
     roleKey: operation.requestId,
     location: operation.location,
-    label: operation.endpoint ?? operation.method,
+    label:
+      operation.endpoint !== null &&
+      operation.endpoint.length <= operation.method.length
+        ? operation.endpoint
+        : operation.method,
     functionNodeId:
       operation.ownerCallableId === null
         ? null

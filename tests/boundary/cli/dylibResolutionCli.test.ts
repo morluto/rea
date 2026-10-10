@@ -120,6 +120,9 @@ describe("trace-dylib-resolution CLI", () => {
       "Contents/Helpers/tool",
       "Contents/MacOS/App",
     ]);
+    // The normalized result is the provider's only representation; Evidence
+    // must not carry it a second time as raw_result.
+    expect(result.json).toMatchObject({ raw_result: null });
     expect(
       trace.edges.map(({ loader, install_name: name, resolution }) => [
         loader,

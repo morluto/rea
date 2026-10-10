@@ -13,6 +13,7 @@ import {
 } from "./artifactInventoryEvidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { ZIP_NON_ENTRY_TAIL_LIMITATION } from "./zipPackageFormat.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const comparisonStatusSchema = z.enum([
@@ -122,6 +123,11 @@ export const compareArtifacts = (
     ],
     leftCovered && rightCovered,
   );
+  const rootChange = rootHashChange(left.inventory, right.inventory, changes, [
+    ...left.evidence.map(({ evidence_id: id }) => id),
+    ...right.evidence.map(({ evidence_id: id }) => id),
+  ]);
+  if (rootChange !== null) changes.push(rootChange);
   const summary = summarize(
     left.inventory,
     right.inventory,
@@ -350,19 +356,20 @@ const relationsByPath = (
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
   );
   for (const edge of inventory.edges) {
-    const path = edge.logical_path ?? ".";
-    const values = output.get(path);
     const occurrence = occurrences.get(edge.occurrence_id);
+    // An incomplete inventory can omit the occurrence that names the child.
+    if (occurrence?.artifact_id === null || occurrence === undefined) continue;
+    const path = occurrence.logical_path;
+    const values = output.get(path);
     const projection: RelationProjection = {
       parent_logical_path:
-        occurrence?.parent_occurrence_id === null ||
-        occurrence?.parent_occurrence_id === undefined
+        occurrence.parent_occurrence_id === null
           ? null
           : (occurrences.get(occurrence.parent_occurrence_id)?.logical_path ??
             null),
-      child_artifact_id: edge.child_artifact_id,
+      child_artifact_id: occurrence.artifact_id,
       relation: edge.relation,
-      logical_path: edge.logical_path,
+      logical_path: occurrence.logical_path,
       producer: edge.producer,
     };
     if (values === undefined) output.set(path, [projection]);
@@ -430,5 +437,38 @@ const summarize = (
 const hasCoverageLimitation = (limitations: readonly string[]): boolean =>
   limitations.some(
     (limitation) =>
+      limitation !== ZIP_NON_ENTRY_TAIL_LIMITATION &&
       !/integrity contradiction\(s\) were recorded/u.test(limitation),
   );
+
+const rootHashChange = (
+  left: InventorySet,
+  right: InventorySet,
+  changes: readonly ArtifactChange[],
+  evidenceLinks: readonly string[],
+): ArtifactChange | null => {
+  if (left.manifest.root_sha256 === right.manifest.root_sha256) return null;
+  if (
+    changes.some(
+      (change) =>
+        change.logical_path === "." && change.dimensions.includes("content"),
+    )
+  )
+    return null;
+  const leftRoot = left.occurrences.find(
+    (occurrence) => occurrence.logical_path === ".",
+  );
+  const rightRoot = right.occurrences.find(
+    (occurrence) => occurrence.logical_path === ".",
+  );
+  return {
+    classification: "changed",
+    logical_path: ".",
+    dimensions: ["content"],
+    left_occurrence_id: leftRoot?.occurrence_id ?? null,
+    right_occurrence_id: rightRoot?.occurrence_id ?? null,
+    left_artifact_id: leftRoot?.artifact_id ?? null,
+    right_artifact_id: rightRoot?.artifact_id ?? null,
+    evidence_links: [...evidenceLinks],
+  };
+};

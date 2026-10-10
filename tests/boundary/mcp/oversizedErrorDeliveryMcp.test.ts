@@ -43,12 +43,14 @@ const exerciseDeliveryFailure = async (
     recordEvidence,
     delivery,
   );
-  server.registerTool("large_failure", { inputSchema: {} }, async () =>
-    oversizedFailure(),
+  server.registerTool(
+    "large_failure",
+    { inputSchema: z.object({}) },
+    async () => oversizedFailure(),
   );
   server.registerTool(
     "healthy",
-    { inputSchema: {} },
+    { inputSchema: z.object({}) },
     async (): Promise<CallToolResult> => ({
       content: [{ type: "text", text: "still connected" }],
     }),
@@ -161,7 +163,7 @@ it("delivers an error whose text fits although structured and text copies would 
     },
     delivery,
   );
-  server.registerTool("mid_failure", { inputSchema: {} }, async () =>
+  server.registerTool("mid_failure", { inputSchema: z.object({}) }, async () =>
     failureWithName(nameBytes),
   );
   const client = new Client({ name: "mid-sized-error-client", version: "1" });
