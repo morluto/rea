@@ -69,6 +69,8 @@ export const closeCdpTargetSession = async (
         }
       }
     }
+    // Cancellation skips optional domain shutdown but still releases the
+    // attached session using its independent, bounded cleanup signal.
     if (!cleanup.signal.aborted && sessionId !== undefined)
       try {
         await connection.send(

@@ -18,6 +18,7 @@ import {
 } from "./ProcessCaptureError.js";
 import {
   releaseProcessResources,
+  ProcessCaptureResourceScope,
   createProcessCaptureObservationBuffer,
   prepareProcessCapture,
   resolveProcessResult,
@@ -291,26 +292,31 @@ it("keeps empty cleanup exception messages actionable in the report", async () =
 });
 
 it.each(["termination", "verification"] as const)(
-  "retains observations and the temporary root when process %s throws",
+  "retains observations and retries the temporary root when process %s throws",
   async (stage) => {
     const cleanupFailure = new Error(`${stage} inspection failed`);
     const removeTemporaryRoot = vi.fn(async () => undefined);
+    let failing = true;
+    const scope = new ProcessCaptureResourceScope();
     const host: ProcessCaptureCleanupHost = {
       platform: "linux",
       cleanupProcessGroup: async () => {
-        if (stage === "termination") throw cleanupFailure;
+        if (failing && stage === "termination") throw cleanupFailure;
         return {
           cleaned: true,
           signaled: true,
-          unverified: [{ pid: 900, diagnostic: "environment unavailable" }],
+          unverified: failing
+            ? [{ pid: 900, diagnostic: "environment unavailable" }]
+            : [],
         };
       },
       verifyTokenOwnedProcesses: async () => {
-        throw cleanupFailure;
+        if (failing) throw cleanupFailure;
+        return { cleaned: true, signaled: false };
       },
       removeTemporaryRoot,
     };
-    const cleanup = await releaseProcessResources({
+    const cleanup = await scope.release({
       timers: new Set(),
       terminal: { pid: 321 },
       renderer: undefined,
@@ -360,6 +366,13 @@ it.each(["termination", "verification"] as const)(
         },
       });
     }
+    failing = false;
+    await scope.retryCleanup();
+    expect(removeTemporaryRoot).toHaveBeenCalledExactlyOnceWith(
+      "/fixture/root",
+    );
+    await scope.close();
+    expect(removeTemporaryRoot).toHaveBeenCalledTimes(1);
   },
 );
 

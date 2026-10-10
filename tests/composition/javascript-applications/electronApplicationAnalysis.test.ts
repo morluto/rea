@@ -72,13 +72,8 @@ describe("static Electron application analysis", () => {
 
     const result = await reconstructJavaScriptArtifact({ input_path: root });
     const graph = parseJavaScriptApplicationGraph(result.graph);
-    const requestedMembers = graph.nodes.flatMap((node) =>
-      node.kind === "native-export"
-        ? node.observations.flatMap(({ properties }) => {
-            const members = properties.requested_members;
-            return Array.isArray(members) ? members : [];
-          })
-        : [],
+    const nativeBindings = graph.nodes.filter(
+      (node) => node.kind === "native-export",
     );
 
     expect(result.electron_summary).toMatchObject({
@@ -86,7 +81,20 @@ describe("static Electron application analysis", () => {
       native_addon_bindings: 1,
       resolved_native_addon_bindings: 1,
     });
-    expect(requestedMembers).toEqual(["*"]);
+    expect(nativeBindings).toMatchObject([
+      {
+        observations: [
+          {
+            properties: {
+              requested_members: [],
+              namespace_access: false,
+              dynamic_member_access: true,
+              native_export_verification: "not-performed",
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("maps Electron boundaries through bundler-renamed bindings", async () => {

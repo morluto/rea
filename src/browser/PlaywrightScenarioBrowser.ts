@@ -42,7 +42,6 @@ export class PlaywrightScenarioBrowserCleanupOwner {
   #profileRemoved: boolean;
   #closePromise: Promise<void> | undefined;
   #eventFinalizationPromise: Promise<void> | undefined;
-  #eventFinalizationFailureReported = false;
 
   /** Keep the narrow provider actions needed to release one opened browser. */
   constructor(private readonly resources: PlaywrightScenarioCleanupResources) {
@@ -98,10 +97,10 @@ export class PlaywrightScenarioBrowserCleanupOwner {
     try {
       await eventFinalization;
     } catch (cause: unknown) {
-      if (!this.#eventFinalizationFailureReported) {
-        failures.push(cause);
-        this.#eventFinalizationFailureReported = true;
-      }
+      // A failed finalization stays failed: the memoized attempt rejects on
+      // every retry so cleanup can never report success for unfinalized
+      // events.
+      failures.push(cause);
     }
     if (!this.#browserClosed) {
       try {

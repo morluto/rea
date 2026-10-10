@@ -169,14 +169,15 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     await writeFile(join(root, "z.txt"), "unchanged");
     const scenario = {
       executable: process.execPath,
+      // Delete the known file and overflow the remaining directory capacity.
+      // Incomplete enumeration still cannot prove its absence, regardless of
+      // which new entry the filesystem returns first.
       arguments: [
         "-e",
-        "const fs=require('node:fs');fs.mkdirSync('added');fs.writeFileSync('added/a.txt','added')",
+        "const fs=require('node:fs');fs.unlinkSync('z.txt');fs.writeFileSync('a.txt','added');fs.writeFileSync('b.txt','added');",
       ],
       working_directory: root,
-      // Before capture the first root is absent. After capture it consumes
-      // both entries, so the unchanged second root is certainly unexamined.
-      filesystem_observation_paths: [join(root, "added"), join(root, "z.txt")],
+      filesystem_observation_paths: [root],
       limits: { files: 2 },
     };
     const evidence = await (adapter === "cli" ? captureViaCli : captureViaMcp)(
@@ -184,15 +185,17 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
     );
     const capture = parseProcessCapture(evidence.normalized_result);
     expect(capture.truncated).toBe(true);
-    expect(await readFile(join(root, "z.txt"), "utf8")).toBe("unchanged");
+    await expect(readFile(join(root, "z.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
     expect(
-      capture.filesystem_effects.find(({ path }) => path === "root_1:.")
+      capture.filesystem_effects.find(({ path }) => path === "root_0:z.txt")
         ?.status,
     ).toBe("unknown");
     expect(
       capture.filesystem_checkpoints
         .find(({ name }) => name === "after_settlement")
-        ?.effects.find(({ path }) => path === "root_1:.")?.status,
+        ?.effects.find(({ path }) => path === "root_0:z.txt")?.status,
     ).toBe("unknown");
   },
   20_000,

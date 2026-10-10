@@ -16,35 +16,41 @@ import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 it.each(["after", "before"] as const)(
   "keeps absence unknown when the %s snapshot omits an existing file",
   async (partialSide) => {
+    // Enumeration order is filesystem-dependent. Choose a genuinely omitted
+    // entry by comparing a complete snapshot with a capacity-limited one.
     const root = await createTestTempDirectory("rea-fs-partial-absence-");
-    const names = ["a.txt", "z.txt"];
-    for (const name of names) await writeFile(join(root, name), "unchanged");
+    await writeFile(join(root, "a1.txt"), "first");
+    await writeFile(join(root, "a2.txt"), "second");
+    await writeFile(join(root, "z.txt"), "target");
     const scenario = parseProcessScenario({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
       limits: { files: 2 },
     });
+    const complete = await snapshotRoots({
+      ...scenario,
+      limits: { ...scenario.limits, files: 4 },
+    });
     const partial = await snapshotRoots(scenario);
-    const omitted = names.find(
-      (name) => !partial.files.some(({ path }) => path === `root_0:${name}`),
+    expect(complete.completeRoots).toEqual(["root_0"]);
+    expect(partial.truncated).toBe(true);
+    const omitted = complete.files.find(
+      (file) => !partial.files.some(({ path }) => path === file.path),
     );
-    if (omitted === undefined)
-      throw new Error("Expected an omitted fixture file");
-    for (const name of names) if (name !== omitted) await rm(join(root, name));
-    const complete = await snapshotRoots(scenario);
+    if (omitted === undefined) throw new Error("Expected an omitted entry");
     const before = partialSide === "before" ? partial : complete;
     const after = partialSide === "after" ? partial : complete;
-    expect(await readFile(join(root, omitted), "utf8")).toBe("unchanged");
     const effect = classifyFilesystemEffects(before, after).find(
-      ({ path }) => path === `root_0:${omitted}`,
+      ({ path }) => path === omitted.path,
     );
     expect(effect?.status).toBe("unknown");
-    expect(effect).toMatchObject(
-      partialSide === "after"
-        ? { before: { path: `root_0:${omitted}` }, after: null }
-        : { before: null, after: { path: `root_0:${omitted}` } },
-    );
+    expect(effect).toMatchObject({
+      ...(partialSide === "after"
+        ? { before: omitted, after: null }
+        : { before: null, after: omitted }),
+      reason: expect.stringContaining("did not exhaust path enumeration"),
+    });
   },
 );
 
