@@ -25,6 +25,8 @@ import {
   snapshotGhidraExtensions,
   type GhidraExtension,
 } from "./extensions/GhidraExtensions.js";
+import type { AnalysisProjectSelection } from "../domain/binaryTargetTypes.js";
+import { copyAnalysisProject } from "../application/AnalysisProjectTarget.js";
 
 /** Private paths and identity material for one headless Ghidra import. */
 export interface GhidraLaunchSession {
@@ -86,6 +88,8 @@ export interface GhidraHeadlessLauncherOptions {
   readonly dosMz?: true;
   readonly dosCom?: true;
   readonly analysisExtensions?: readonly GhidraExtension[];
+  /** Existing analyzed project copied into the private runtime before launch. */
+  readonly existingProject?: AnalysisProjectSelection;
   /** Spawn seam for provider-boundary lifecycle tests. */
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
 }
@@ -111,6 +115,15 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     let started: SpawnedOwnedProviderProcess | undefined;
     try {
       await createGhidraRuntimeDirectories(paths, platform);
+      const existingProject =
+        this.options.existingProject === undefined
+          ? undefined
+          : await copyAnalysisProject(
+              this.options.existingProject,
+              paths.projectRoot,
+              session.targetSha256,
+              options.signal,
+            );
       const extensions = await snapshotGhidraExtensions(
         this.options.analysisExtensions ?? [],
         session.runtimeRoot,
@@ -128,6 +141,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
           ...(extensions.length === 0
             ? {}
             : { analysis_extensions: extensions }),
+          ...(existingProject === undefined
+            ? {}
+            : { program_path: existingProject.documentPath }),
         })}\n`,
         platform,
       );
@@ -146,6 +162,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.dosMz === undefined
           ? {}
           : { dosMz: this.options.dosMz }),
+        ...(existingProject === undefined ? {} : { existingProject }),
       });
       const scriptCommand = ghidraHeadlessCommand({
         environment: this.options.environment,
@@ -366,57 +383,72 @@ export interface GhidraHeadlessArgumentOptions {
   readonly scriptLogPath: string;
   readonly dosMz?: true;
   readonly dosCom?: true;
+  readonly existingProject?: AnalysisProjectSelection;
 }
 
 /** Build the complete read-only headless invocation in deterministic order. */
 export const ghidraHeadlessArguments = (
   options: GhidraHeadlessArgumentOptions,
-): readonly string[] => [
-  options.projectRoot,
-  "rea-project",
-  "-import",
-  options.targetPath,
-  ...(options.dosMz === true
-    ? [
-        "-loader",
-        "MzLoader",
-        "-processor",
-        "x86:LE:16:Real Mode",
-        "-cspec",
-        "default",
-      ]
-    : options.dosCom === true
+): readonly string[] => {
+  const documentSegments = options.existingProject?.documentPath
+    .split("/")
+    .filter((segment) => segment.length > 0);
+  const documentName = documentSegments?.at(-1);
+  const projectCoordinate =
+    options.existingProject === undefined
+      ? "rea-project"
+      : [
+          options.existingProject.projectName,
+          ...(documentSegments?.slice(0, -1) ?? []),
+        ].join("/");
+  return [
+    options.projectRoot,
+    projectCoordinate,
+    ...(options.existingProject === undefined
+      ? ["-import", options.targetPath]
+      : ["-process", documentName!, "-noanalysis"]),
+    ...(options.dosMz === true
       ? [
           "-loader",
-          "BinaryLoader",
-          "-loader-baseAddr",
-          "1000:0100",
+          "MzLoader",
           "-processor",
           "x86:LE:16:Real Mode",
           "-cspec",
           "default",
         ]
+      : options.dosCom === true
+        ? [
+            "-loader",
+            "BinaryLoader",
+            "-loader-baseAddr",
+            "1000:0100",
+            "-processor",
+            "x86:LE:16:Real Mode",
+            "-cspec",
+            "default",
+          ]
+        : []),
+    "-readOnly",
+    ...(options.existingProject === undefined ? ["-deleteProject"] : []),
+    "-log",
+    options.ghidraLogPath,
+    "-scriptlog",
+    options.scriptLogPath,
+    "-scriptPath",
+    dirname(options.bridgeScriptPath),
+    ...(options.dosCom === true
+      ? [
+          "-preScript",
+          join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
+        ]
       : []),
-  "-readOnly",
-  "-deleteProject",
-  "-log",
-  options.ghidraLogPath,
-  "-scriptlog",
-  options.scriptLogPath,
-  "-scriptPath",
-  dirname(options.bridgeScriptPath),
-  ...(options.dosCom === true
-    ? [
-        "-preScript",
-        join(dirname(options.bridgeScriptPath), "ReaGhidraPrepareCom.java"),
-      ]
-    : []),
-  "-postScript",
-  // Ghidra checks the caller's cwd before scriptPath for a basename. Select
-  // the packaged source explicitly so unrelated entries cannot shadow it.
-  options.bridgeScriptPath,
-  options.descriptorPath,
-];
+    "-postScript",
+    // Ghidra checks the caller's cwd before scriptPath for a basename. Select
+    // the packaged source explicitly so unrelated entries cannot shadow it.
+    options.bridgeScriptPath,
+    options.descriptorPath,
+  ];
+};
 
 const ghidraRuntimePaths = (runtimeRoot: string) => ({
   projectRoot: join(runtimeRoot, "project"),

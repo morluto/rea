@@ -118,12 +118,17 @@ export const createGhidraProviderClient = (input: {
     );
   let extensionFailure: AnalysisError | undefined;
   const targetLimitations =
-    target.format === "dos-mz"
+    target.kind === "database" && target.analysisProject !== undefined
       ? [
-          "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
-          "Static DOS analysis does not emulate BIOS, DOS interrupts, device ports, or self-modifying unpacking code. Packed targets require a separately identified unpacked artifact for original-program analysis; appended overlays are not the initialized load module.",
+          "The existing Ghidra project is opened only from a digest-verified private copy; the original .gpr/.rep is not opened by Ghidra.",
+          "Ghidra auto-analysis is disabled so results reflect the selected existing Program. Decompiled C remains an analysis aid, not instruction-semantic ground truth.",
         ]
-      : [];
+      : target.format === "dos-mz"
+        ? [
+            "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
+            "Static DOS analysis does not emulate BIOS, DOS interrupts, device ports, or self-modifying unpacking code. Packed targets require a separately identified unpacked artifact for original-program analysis; appended overlays are not the initialized load module.",
+          ]
+        : [];
   const providerLimitations =
     installation.platform === "win32"
       ? windowsP0Limitations
@@ -146,12 +151,21 @@ export const createGhidraProviderClient = (input: {
       ...(target.format === "dos-com" ? { dosCom: true } : {}),
       platform: installation.platform,
       ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
+      ...(target.kind === "database" && target.analysisProject !== undefined
+        ? { existingProject: target.analysisProject }
+        : {}),
     }),
     targetPath:
       installation.platform === "win32"
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
+    ...(target.kind === "database" && target.analysisProject !== undefined
+      ? {
+          existingProject: target.analysisProject,
+          expectedDomainFile: target.analysisProject.documentPath,
+        }
+      : {}),
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"
@@ -310,7 +324,10 @@ const ghidraClientPrerequisites = (
   profile: AnalysisProfileCommitment | undefined,
   installation: GhidraInstallationInspection,
 ): Result<GhidraClientCoordinates, AnalysisError> => {
-  if (target.kind !== "executable")
+  if (
+    target.kind !== "executable" &&
+    !(target.kind === "database" && target.analysisProject !== undefined)
+  )
     return err(
       new AnalysisCapabilityUnavailableError(
         "ghidra",

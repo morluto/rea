@@ -126,6 +126,18 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       executable_role: target.executableRole ?? null,
       managed: target.managed ?? null,
     };
+    if (target.kind === "database" && target.analysisProject !== undefined)
+      return {
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: {
+          ...diagnostics,
+          import_mode: "existing-project-copy-on-open",
+          project_name: target.analysisProject.projectName,
+          program: target.analysisProject.documentPath,
+        },
+      };
     if (target.kind !== "executable")
       return {
         status: "unsupported",

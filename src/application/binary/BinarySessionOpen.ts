@@ -8,6 +8,10 @@ import {
 } from "../../domain/analysisSnapshot.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
+import {
+  parseAnalysisProjectTarget,
+  type AnalysisProjectTargetInput,
+} from "../AnalysisProjectTarget.js";
 import { type BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   EvidenceIntegrityError,
@@ -24,6 +28,10 @@ export interface BinarySessionOpenOptions {
   readonly formatHint?: ExecutableFormatHint;
   readonly snapshot?: AnalysisSnapshot;
   readonly providerId?: AnalysisProviderSelector;
+  readonly analysisProject?: Omit<
+    AnalysisProjectTargetInput,
+    "markerPath" | "signal"
+  >;
 }
 
 interface CurrentOpenBinding {
@@ -65,15 +73,22 @@ export const resolveSessionOpen = async (
   input: ResolveSessionOpenInput,
 ): Promise<Result<ResolvedSessionOpen, AnalysisError>> => {
   const { path, options } = input;
-  const parsed = await parseBinaryTarget(path, {
-    ...(options.targetKind === undefined
-      ? {}
-      : { targetKind: options.targetKind }),
-    ...(options.formatHint === undefined
-      ? {}
-      : { formatHint: options.formatHint }),
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
+  const parsed =
+    options.analysisProject === undefined
+      ? await parseBinaryTarget(path, {
+          ...(options.targetKind === undefined
+            ? {}
+            : { targetKind: options.targetKind }),
+          ...(options.formatHint === undefined
+            ? {}
+            : { formatHint: options.formatHint }),
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        })
+      : await parseAnalysisProjectTarget({
+          markerPath: path,
+          ...options.analysisProject,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
   if (!parsed.ok) return parsed;
   return resolveSessionTarget({ ...input, target: parsed.value });
 };

@@ -177,7 +177,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         sessionDefaultAddressSpace =
             currentProgram.getAddressFactory().getDefaultAddressSpace();
-        if (currentProgram.getExecutableFormat().equals("Raw Binary") &&
+        if (descriptor.programPath == null &&
+            currentProgram.getExecutableFormat().equals("Raw Binary") &&
             !currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
                 .getBoolean("REA DOS COM prepared", false)) {
             throw new IllegalStateException("REA DOS COM entry/context preparation failed");
@@ -186,13 +187,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalStateException("Ghidra provider version does not match the session");
         }
         String importedSha256 = currentProgram.getExecutableSHA256();
-        if (importedSha256 == null ||
-            !constantTimeEquals(
-                importedSha256.toLowerCase(Locale.ROOT),
-                descriptor.targetSha256
-            )) {
+        if (descriptor.programPath == null) {
+            if (importedSha256 == null ||
+                !constantTimeEquals(
+                    importedSha256.toLowerCase(Locale.ROOT),
+                    descriptor.targetSha256
+                )) {
+                throw new IllegalStateException(
+                    "Ghidra imported-byte digest does not match the admitted target"
+                );
+            }
+        }
+        else if (!descriptor.programPath.equals(currentProgram.getDomainFile().getPathname())) {
             throw new IllegalStateException(
-                "Ghidra imported-byte digest does not match the admitted target"
+                "Ghidra existing Program path does not match the admitted project selection"
             );
         }
         // GhidraScript wraps run() in a transaction. End it before serving so
@@ -405,6 +413,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             currentProgram.getAddressFactory().getDefaultAddressSpace().getName()
         );
         target.addProperty("sha256", descriptor.targetSha256);
+        target.addProperty("domain_file", currentProgram.getDomainFile().getPathname());
+        if (currentProgram.getExecutableSHA256() == null) target.add("executable_sha256", JsonNull.INSTANCE);
+        else target.addProperty("executable_sha256", currentProgram.getExecutableSHA256().toLowerCase(Locale.ROOT));
 
         JsonObject result = new JsonObject();
         result.addProperty("name", "REA Ghidra bridge");
@@ -634,7 +645,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         decompiler.toggleSyntaxTree(true);
         decompiler.toggleJumpLoads(true);
         if (!decompiler.openProgram(currentProgram)) {
-            throw new IllegalStateException("Ghidra decompiler could not open the imported Program");
+            throw new IllegalStateException("Ghidra decompiler could not open the active Program");
         }
     }
 
@@ -2949,16 +2960,22 @@ public final class ReaGhidraBridge extends HeadlessScript {
             AddressRange range = iterator.next();
             Address start = range.getMinAddress();
             Address end = range.getMaxAddress();
-            if (start.getAddressSpace().getAddressableUnitSize() != 1) {
-                throw new IllegalStateException("Function body byte coverage requires a byte-addressed space");
-            }
             JsonObject value = new JsonObject();
             value.addProperty("start", canonicalAddress(start));
-            value.addProperty("end", canonicalAddress(end));
-            ranges.add(value);
             BigInteger begin = new BigInteger(Long.toUnsignedString(start.getOffset()));
             BigInteger finish = new BigInteger(Long.toUnsignedString(end.getOffset()));
-            total = total.add(finish.subtract(begin).add(BigInteger.ONE));
+            BigInteger addressableUnit = BigInteger.valueOf(
+                start.getAddressSpace().getAddressableUnitSize()
+            );
+            // Provider-neutral body ranges use inclusive byte coordinates.
+            // Ghidra's range maximum identifies the start of the final
+            // addressable unit, which can be wider than one byte.
+            value.addProperty(
+                "end",
+                canonicalOffset(start.getAddressSpace(), finish.add(addressableUnit).subtract(BigInteger.ONE))
+            );
+            ranges.add(value);
+            total = total.add(finish.subtract(begin).add(addressableUnit));
             if (first == null) {
                 first = start;
                 space = start.getAddressSpace();
@@ -2978,7 +2995,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             BigInteger span = first == null ? BigInteger.ZERO :
                 new BigInteger(Long.toUnsignedString(last.getOffset()))
                     .subtract(new BigInteger(Long.toUnsignedString(first.getOffset())))
-                    .add(BigInteger.ONE);
+                    .add(BigInteger.valueOf(space.getAddressableUnitSize()));
             result.addProperty("span_bytes", safeBodyByteCount(span));
         }
         result.addProperty("non_contiguous", ranges.size() > 1);
@@ -3087,8 +3104,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 ? currentProgram.getAddressFactory().getDefaultAddressSpace()
                 : currentProgram.getAddressFactory().getAddressSpace(spaceName);
             if (space == null) return null;
-            Address address = space.getAddress(offset);
             BigInteger requestedOffset = new BigInteger(offset, 16);
+            if (requestedOffset.bitLength() > 64) return null;
+            // REA's provider-neutral address contract uses byte offsets. The
+            // String overload parses addressable-word offsets for spaces such
+            // as PIC24 ROM and therefore cannot round-trip canonicalAddress().
+            Address address = space.getAddress(requestedOffset.longValue(), false);
             BigInteger parsedOffset = new BigInteger(Long.toUnsignedString(address.getOffset()));
             if (!requestedOffset.equals(parsedOffset))
                 throw new RequestFailure("invalid_request",
@@ -3213,6 +3234,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Set<String> keys = new HashSet<>(DESCRIPTOR_KEYS);
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("analysis_extensions"))
             keys.add("analysis_extensions");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("program_path"))
+            keys.add("program_path");
         JsonObject object = requireObject(parsed, keys);
         return new SessionDescriptor(
             requireString(object, "transport"),
@@ -3222,7 +3245,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireSha256(object, "target_sha256"),
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
-            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray()
+            object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
+            object.has("program_path") ? requireString(object, "program_path") : null
         );
     }
 
@@ -3416,7 +3440,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String targetSha256,
         String providerVersion,
         String profileDigest,
-        JsonArray analysisExtensions
+        JsonArray analysisExtensions,
+        String programPath
     ) {}
     private record Request(int id, String method, JsonObject params) {}
 

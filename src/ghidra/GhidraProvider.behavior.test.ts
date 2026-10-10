@@ -168,6 +168,42 @@ describe("Ghidra provider", () => {
       code: "target_kind_unsupported",
     });
   });
+
+  it("admits an existing project without imposing an executable architecture", async () => {
+    const target: BinaryTarget = {
+      path: "/projects/Firmware.gpr",
+      sha256: "a".repeat(64),
+      kind: "database",
+      format: "analysis-database",
+      analysisProject: {
+        markerPath: "/projects/Firmware.gpr",
+        storagePath: "/projects/Firmware.rep",
+        projectName: "Firmware",
+        documentPath: "/nested/program.bin",
+      },
+    };
+    const ghidra = provider();
+    expect(ghidra.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+      diagnostics: {
+        import_mode: "existing-project-copy-on-open",
+        project_name: "Firmware",
+        program: "/nested/program.bin",
+      },
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    expect(resolved.ok && resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          import_mode: "existing-project-copy-on-open",
+          project_name: "Firmware",
+          program: "/nested/program.bin",
+          language_id: "from-existing-program",
+          isolation: "full-gpr-rep-copy-v1",
+        },
+      },
+    });
+  });
 });
 
 describe("Ghidra Mach-O slice support", () => {

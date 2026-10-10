@@ -113,6 +113,31 @@ describe("Ghidra COM loader", () => {
   });
 });
 
+describe("Ghidra existing-project launcher", () => {
+  it("processes one exact existing Program from an isolated project copy", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/source/Firmware.gpr",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      existingProject: {
+        markerPath: "/source/Firmware.gpr",
+        storagePath: "/source/Firmware.rep",
+        projectName: "Firmware",
+        documentPath: "/folder/program.bin",
+      },
+    });
+    expect(arguments_.slice(0, 2)).toEqual(["/tmp/project", "Firmware/folder"]);
+    expectOptions(arguments_, [["-process", "program.bin"]]);
+    expect(arguments_).toContain("-readOnly");
+    expect(arguments_).toContain("-noanalysis");
+    expect(arguments_).not.toContain("-import");
+    expect(arguments_).not.toContain("-deleteProject");
+  });
+});
+
 describe("Ghidra headless launcher", () => {
   it("forces the admitted real-mode language and loader for DOS MZ", () => {
     const arguments_ = ghidraHeadlessArguments({

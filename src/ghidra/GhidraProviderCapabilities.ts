@@ -24,14 +24,14 @@ export const GHIDRA_OPERATIONS = Object.freeze([
 
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
-  "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
-  "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
+  "The session serves operations only after Ghidra reports launch preparation complete; imported targets use default auto-analysis, while existing-project mode disables auto-analysis and exposes the stored Program analysis.",
+  "The active Program lives only in a private temporary project deleted on close. Imported targets use an immutable source snapshot; existing projects use a digest-verified copy of the complete project. Original executable and project bytes are never written.",
+  "Cancelling an active Ghidra request terminates its private database and discards session annotations. The selected target remains open; the next provider query recreates the isolated import or project copy.",
 ]);
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
-  "Windows Ghidra P0 accepts approved native x86 and x86-64 PE applications only; DLL, managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "Windows Ghidra imports admit approved native x86 and x86-64 PE applications. Existing-project mode instead uses the processor, language, memory model, and Program already stored in a digest-verified isolated Ghidra project copy.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
   "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
@@ -68,7 +68,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
     case "list_documents":
       return [
         ...common,
-        "A headless Ghidra session contains exactly one imported Program, unlike Hopper's multi-document GUI session.",
+        "A headless Ghidra session contains exactly one imported or explicitly selected Program, unlike Hopper's multi-document GUI session.",
       ];
     case "list_names":
       return [

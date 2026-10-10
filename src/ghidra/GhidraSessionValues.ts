@@ -40,6 +40,12 @@ const sessionInfoSchema = z
         image_base: z.string().regex(/^0x[0-9a-f]+$/u),
         default_address_space: z.string().min(1),
         sha256: z.string().regex(/^[a-f0-9]{64}$/u),
+        domain_file: z.string().min(1).optional(),
+        executable_sha256: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/u)
+          .nullable()
+          .optional(),
       })
       .strict(),
   })
@@ -59,6 +65,7 @@ export const parseGhidraSessionInfo = (
     readonly expectedReadOnly?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
+    readonly expectedDomainFile?: string;
   },
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
@@ -79,6 +86,8 @@ export const parseGhidraSessionInfo = (
     (expected.expectedCompilerSpecId !== undefined &&
       parsed.data.target.compiler_spec_id !==
         expected.expectedCompilerSpecId) ||
+    (expected.expectedDomainFile !== undefined &&
+      parsed.data.target.domain_file !== expected.expectedDomainFile) ||
     new Set(parsed.data.capabilities).size !== expectedCapabilities.length ||
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),

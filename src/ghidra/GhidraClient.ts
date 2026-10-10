@@ -384,14 +384,22 @@ export class GhidraClient {
       return this.#startupFailure(failure);
     }
     try {
-      const snapshot = await createGhidraTargetSnapshot(
-        this.#options.targetPath,
-        this.#runtimeRoot.path,
-        this.#options.targetSha256,
-        { signal: deadline.signal, platform: this.#options.platform },
-      );
-      this.#snapshotPath = snapshot.path;
-      this.#targetAdmission = snapshot.admission;
+      if (this.#options.existingProject === undefined) {
+        const snapshot = await createGhidraTargetSnapshot(
+          this.#options.targetPath,
+          this.#runtimeRoot.path,
+          this.#options.targetSha256,
+          { signal: deadline.signal, platform: this.#options.platform },
+        );
+        this.#snapshotPath = snapshot.path;
+        this.#targetAdmission = snapshot.admission;
+      } else {
+        this.#snapshotPath = this.#options.targetPath;
+        this.#targetAdmission = {
+          source: this.#options.existingProject.markerPath,
+          mode: "isolated-project-copy",
+        };
+      }
     } catch (cause: unknown) {
       if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
       const failure = this.#failure(
@@ -508,6 +516,9 @@ export class GhidraClient {
       ...(this.#options.expectedCompilerSpecId === undefined
         ? {}
         : { expectedCompilerSpecId: this.#options.expectedCompilerSpecId }),
+      ...(this.#options.expectedDomainFile === undefined
+        ? {}
+        : { expectedDomainFile: this.#options.expectedDomainFile }),
     });
     if (parsed.ok) return parsed;
     return err(

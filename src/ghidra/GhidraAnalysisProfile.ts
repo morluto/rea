@@ -19,6 +19,30 @@ export const resolveGhidraAnalysisProfile = (
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
     return Promise.resolve(err(new AnalysisCancelledError("open_binary")));
+  if (target.kind === "database" && target.analysisProject !== undefined) {
+    if (installation.status === "unavailable")
+      return Promise.resolve(
+        err(new ProviderAdapterError(identity.id, "resolve_analysis_profile")),
+      );
+    return Promise.resolve(
+      ok({
+        profile: createAnalysisProfile(
+          { ...identity, version: installation.providerVersion },
+          {
+            target_kind: target.kind,
+            target_format: target.format,
+            import_mode: "existing-project-copy-on-open",
+            project_name: target.analysisProject.projectName,
+            program: target.analysisProject.documentPath,
+            analyzer_preset: "existing-program-noanalysis",
+            language_id: "from-existing-program",
+            compiler_spec_id: "from-existing-program",
+            isolation: "full-gpr-rep-copy-v1",
+          },
+        ),
+      }),
+    );
+  }
   if (target.kind !== "executable")
     return Promise.resolve(ok({ profile: null }));
   if (installation.status === "unavailable")

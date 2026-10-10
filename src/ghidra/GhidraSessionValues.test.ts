@@ -93,3 +93,31 @@ describe("Ghidra mutation handshake", () => {
     ).toBe(false);
   });
 });
+
+describe("Ghidra existing Program handshake", () => {
+  it("accepts only the exact selected domain-file path", () => {
+    const value = session();
+    const selected = {
+      ...value,
+      target: { ...value.target, domain_file: "/folder/program.bin" },
+    };
+    expect(
+      parseGhidraSessionInfo(selected, {
+        ...expected,
+        expectedDomainFile: "/folder/program.bin",
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseGhidraSessionInfo(selected, {
+        ...expected,
+        expectedDomainFile: "/other/program.bin",
+      }).ok,
+    ).toBe(false);
+    expect(
+      parseGhidraSessionInfo(value, {
+        ...expected,
+        expectedDomainFile: "/folder/program.bin",
+      }).ok,
+    ).toBe(false);
+  });
+});

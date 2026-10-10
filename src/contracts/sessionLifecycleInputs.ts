@@ -25,16 +25,47 @@ const binaryTargetPathSchema = localPathStringSchema
   );
 
 /** Input contract for opening a target with an optional staged snapshot. */
-export const openBinaryInputSchema = z.strictObject({
-  path: binaryTargetPathSchema,
-  format: executableFormatHintSchema
-    .optional()
-    .describe(
-      "Explicit headerless DOS COM interpretation; omission preserves header-based detection",
-    ),
-  provider_id: analysisProviderSelectorSchema.optional(),
-  snapshot_path: snapshotPathSchema.optional(),
-});
+export const openBinaryInputSchema = z
+  .strictObject({
+    path: binaryTargetPathSchema,
+    existing_project: z
+      .strictObject({
+        project_name: z
+          .string()
+          .min(1)
+          .describe("Exact local Ghidra project name without the .gpr suffix"),
+        program: z
+          .string()
+          .min(1)
+          .describe("Exact Ghidra domain-file path, for example /firmware.bin"),
+      })
+      .optional()
+      .describe(
+        "Open an existing Ghidra project selected by path=<project>.gpr and process this exact existing program from an isolated copy",
+      ),
+    format: executableFormatHintSchema
+      .optional()
+      .describe(
+        "Explicit headerless DOS COM interpretation; omission preserves header-based detection",
+      ),
+    provider_id: analysisProviderSelectorSchema.optional(),
+    snapshot_path: snapshotPathSchema.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.existing_project === undefined) return;
+    if (value.provider_id !== "ghidra")
+      context.addIssue({
+        code: "custom",
+        path: ["provider_id"],
+        message: "existing_project requires provider_id=ghidra",
+      });
+    if (value.format !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["format"],
+        message: "existing_project cannot be combined with an import format",
+      });
+  });
 
 /** Input contract for closing a target after an optional atomic snapshot. */
 export const closeBinaryInputSchema = z.strictObject({

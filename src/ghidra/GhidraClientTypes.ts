@@ -4,6 +4,7 @@ import type { GhidraLauncher } from "./GhidraLauncher.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
 import type { GhidraTransportKind } from "./GhidraTransport.js";
+import type { AnalysisProjectSelection } from "../domain/binaryTargetTypes.js";
 
 /** Result of opening and authenticating one headless Ghidra session. */
 export type GhidraStartResult = Result<GhidraSessionInfo, GhidraSessionError>;
@@ -36,6 +37,7 @@ export interface GhidraClientOptions {
   readonly runId?: string;
   readonly targetPath: string;
   readonly targetSha256: string;
+  readonly existingProject?: AnalysisProjectSelection;
   /** Installation host shared by runtime allocation and snapshot admission. */
   readonly platform?: NodeJS.Platform;
   readonly transport?: GhidraTransportKind;
@@ -43,6 +45,7 @@ export interface GhidraClientOptions {
   readonly profileDigest: string;
   readonly expectedLanguageId?: string;
   readonly expectedCompilerSpecId?: string;
+  readonly expectedDomainFile?: string;
   readonly startupTimeoutMs?: number;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;
   readonly logger?: Logger;

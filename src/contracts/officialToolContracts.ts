@@ -104,7 +104,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "list_documents",
-    "List provider program or document identities. Hopper may expose several documents; a Ghidra headless session contains exactly its one imported Program.",
+    "List provider program or document identities. Hopper may expose several documents; a Ghidra headless session contains exactly one imported or explicitly selected Program.",
     z.object({}),
   ),
   official(

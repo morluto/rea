@@ -9,6 +9,15 @@ interface BinaryTargetIdentity {
   readonly sha256: string;
 }
 
+/** Explicit selection within an existing analysis project. */
+export interface AnalysisProjectSelection {
+  readonly markerPath: string;
+  readonly storagePath: string;
+  readonly projectName: string;
+  /** Absolute domain-file path within the project, using `/` separators. */
+  readonly documentPath: string;
+}
+
 type NonExecutableMetadata = {
   readonly architecture?: never;
   readonly availableArchitectures?: never;
@@ -46,6 +55,7 @@ export type BinaryTarget =
       NonExecutableMetadata & {
         readonly kind: "database";
         readonly format: "analysis-database";
+        readonly analysisProject?: AnalysisProjectSelection;
       })
   | (BinaryTargetIdentity &
       NonExecutableMetadata & {

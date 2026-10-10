@@ -10,6 +10,7 @@ import { createProcessCaptureEvidence } from "../application/process/ProcessEvid
 import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { AnalysisSnapshot } from "../domain/analysisSnapshot.js";
+import { dirname, join } from "node:path";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -191,6 +192,18 @@ const registerOpenLifecycleTool = ({
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),
+          ...(input.existing_project === undefined
+            ? {}
+            : {
+                analysisProject: {
+                  projectName: input.existing_project.project_name,
+                  documentPath: input.existing_project.program,
+                  storagePath: join(
+                    dirname(input.path),
+                    `${input.existing_project.project_name}.rep`,
+                  ),
+                },
+              }),
           ...(snapshot === undefined ? {} : { snapshot }),
         }),
       );

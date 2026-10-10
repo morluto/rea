@@ -5,6 +5,7 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { AnalysisSnapshot } from "../../domain/analysisSnapshot.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
+import type { AnalysisProjectTargetInput } from "../AnalysisProjectTarget.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Result } from "../../domain/result.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
@@ -46,6 +47,10 @@ export interface BinarySessionPort
       readonly formatHint?: ExecutableFormatHint;
       readonly snapshot?: AnalysisSnapshot;
       readonly providerId?: AnalysisProviderSelector;
+      readonly analysisProject?: Omit<
+        AnalysisProjectTargetInput,
+        "markerPath" | "signal"
+      >;
     },
   ): Promise<Result<BinaryTarget, AnalysisError>>;
   close(

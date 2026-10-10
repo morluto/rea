@@ -14,6 +14,10 @@ import { describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import {
+  copyAnalysisProject,
+  parseAnalysisProjectTarget,
+} from "../../../src/application/AnalysisProjectTarget.js";
+import {
   resolveAppBundleExecutable,
   type AppBundleFileSystem,
 } from "../../../src/application/AppBundleExecutable.js";
@@ -348,6 +352,72 @@ describe("binary target I/O: filesystem and app bundle target resolution", () =>
 });
 
 describe("binary target I/O: explicit kinds and executable headers", () => {
+  it("binds and copies an existing analysis project without changing the source", async () => {
+    const directory = await createTestTempDirectory("rea-analysis-project-");
+    const marker = join(directory, "Firmware.gpr");
+    const storage = join(directory, "Firmware.rep");
+    await mkdir(join(storage, "idata", "00"), { recursive: true });
+    await writeFile(marker, "marker-v1");
+    await writeFile(join(storage, "project.prp"), "properties");
+    await writeFile(join(storage, "idata", "00", "program.gbf"), "program");
+
+    const parsed = await parseAnalysisProjectTarget({
+      markerPath: marker,
+      storagePath: storage,
+      projectName: "Firmware",
+      documentPath: "/folder/program.bin",
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.value.kind !== "database") return;
+    expect(parsed.value).toMatchObject({
+      kind: "database",
+      format: "analysis-database",
+      analysisProject: {
+        projectName: "Firmware",
+        documentPath: "/folder/program.bin",
+      },
+    });
+    const destination = join(directory, "private-copy");
+    const copied = await copyAnalysisProject(
+      parsed.value.analysisProject!,
+      destination,
+      parsed.value.sha256,
+    );
+    expect(await readFile(copied.markerPath, "utf8")).toBe("marker-v1");
+    expect(
+      await readFile(
+        join(copied.storagePath, "idata", "00", "program.gbf"),
+        "utf8",
+      ),
+    ).toBe("program");
+    expect(await readFile(marker, "utf8")).toBe("marker-v1");
+  });
+
+  it("rejects a mismatched project name and missing backing store", async () => {
+    const directory = await createTestTempDirectory("rea-analysis-project-");
+    const marker = join(directory, "Firmware.gpr");
+    await writeFile(marker, "marker");
+    const mismatched = await parseAnalysisProjectTarget({
+      markerPath: marker,
+      storagePath: join(directory, "Other.rep"),
+      projectName: "Other",
+      documentPath: "/program.bin",
+    });
+    expect(mismatched).toMatchObject({
+      ok: false,
+      error: {
+        reason: expect.stringContaining("marker must be named Other.gpr"),
+      },
+    });
+    const missing = await parseAnalysisProjectTarget({
+      markerPath: marker,
+      storagePath: join(directory, "Firmware.rep"),
+      projectName: "Firmware",
+      documentPath: "/program.bin",
+    });
+    expect(missing.ok).toBe(false);
+  });
+
   it("honors an explicit database kind without relying on the file suffix", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "saved-analysis"), "database");
