@@ -172,6 +172,22 @@ describe("PE header admission and bounded traversal", () => {
       },
     ],
     [
+      "section beginning inside a header-backed payload",
+      (fixture: ReturnType<typeof peResourceFixture>) => {
+        fixture.bytes.writeUInt32LE(0x100, fixture.dataOffsets[0]);
+        fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
+        fixture.bytes.writeUInt16LE(2, 0x86);
+        const section = fixture.sectionAt + 40;
+        fixture.bytes.writeUInt32LE(4, section + 8);
+        fixture.bytes.writeUInt32LE(0x102, section + 12);
+        fixture.bytes.writeUInt32LE(4, section + 16);
+        const rawOffset = fixture.bytes.length;
+        fixture.bytes = Buffer.concat([fixture.bytes, Buffer.alloc(4)]);
+        fixture.bytes.writeUInt32LE(rawOffset, section + 20);
+        return fixture.bytes;
+      },
+    ],
+    [
       "overlapping virtual sections",
       (fixture: ReturnType<typeof peResourceFixture>) => {
         fixture.bytes.writeUInt16LE(2, 0x86);

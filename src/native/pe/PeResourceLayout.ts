@@ -94,7 +94,14 @@ export const readPeResourceLayout = (bytes: Buffer) => {
         rva - section.rva < Math.max(section.size, section.virtualSize),
     );
     if (rva < headerSize) {
-      if (candidates.length > 0 || size > headerSize - rva)
+      if (
+        sections.some(
+          (section) =>
+            section.rva < rva + size &&
+            section.rva + Math.max(section.size, section.virtualSize) > rva,
+        ) ||
+        size > headerSize - rva
+      )
         peFailure("Ambiguous resource header RVA mapping.");
       requirePeRange(bytes, rva, size);
       return rva;
