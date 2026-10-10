@@ -36,6 +36,7 @@ export interface SetupClient {
     | "omp"
     | "pi"
     | "hermes"
+    | "zcode"
     | "unsupported";
 }
 
@@ -481,6 +482,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
+  },
+  {
+    name: "zcode",
+    displayName: "ZCode",
+    configPath: [".zcode", "cli", "config.json"],
+    markerPath: [".zcode", "cli"],
+    skillPath: [".zcode", "skills"],
+    format: "zcode",
   },
   {
     name: "grok_bot",

@@ -141,6 +141,13 @@ listed after the table because its connector is not one of these files:
 | OMP                | `omp`            |
 | Pi                 | `pi`             |
 | Hermes             | `hermes`         |
+| ZCode              | `zcode`          |
+
+For ZCode, setup registers `rea` in the nested `mcp.servers` table of the
+user-level `~/.zcode/cli/config.json`. Entries carry `command`, `args`, and
+`env` without a transport discriminator. ZCode discovers personal skills from
+`~/.zcode/skills` rather than the shared directory, so setup installs its
+skill copy there.
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
 setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
