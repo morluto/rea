@@ -528,10 +528,14 @@ MCP clients do not depend on an incidental shell path. Setup shows every exact
 environment entry in its plan, writes only after approval, and never downloads,
 installs, upgrades, or modifies Ghidra or Java.
 
-Each verified session uses an ephemeral temporary project and isolated
-home/cache/config/temp paths. REA passes `-readOnly`, `-deleteProject`, uses
-Ghidra's default analysis settings, and loads its packaged Java
-bridge via `-scriptPath`; it never opens an existing user project. Linux and
+Each verified session uses a private temporary project and isolated
+home/cache/config/temp paths. Normal executable imports pass `-readOnly` and
+`-deleteProject` and use Ghidra's default analysis settings. Existing-project
+mode instead digest-binds and copies the selected `.gpr` plus complete `.rep`
+tree, then processes one exact existing Program with `-readOnly -noanalysis`.
+Ghidra opens only that private copy, never the caller's original project. See
+[existing Ghidra projects](ghidra-existing-projects.md). The packaged Java
+bridge is loaded via `-scriptPath`. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
 project remains under the selected temporary directory. If its Unix socket
 pathname would exceed the host's byte limit, REA allocates a separate mode-0700
@@ -562,7 +566,7 @@ can time out earlier even when Ghidra would complete within its startup deadline
 See [Ghidra first-query deadlines and recovery](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery)
 for client options and the close/reopen recovery flow.
 
-One session contains exactly one imported Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
+One session contains exactly one imported or explicitly selected Program; use `provider_id: "ghidra"`, `--provider ghidra`, or
 `REA_ANALYSIS_PROVIDER=ghidra` when both Hopper and Ghidra support the target.
 One persistent decompiler is owned by the Program, and a serial queue keeps
 Ghidra API calls on the owning Program thread without a fixed queue length.
