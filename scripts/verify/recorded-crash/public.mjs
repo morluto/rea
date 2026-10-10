@@ -80,7 +80,7 @@ export async function connectRecordedCrash({ entrypoint, environment }) {
         evidence.confidence,
         debuggerContext ? "derived" : "observed",
       );
-      assert.deepEqual(evidence.raw_result, report);
+      assert.equal(evidence.raw_result, null);
       assert.equal(evidence.subject.local_path, path);
       assert.equal(report.artifact.path, path);
       assert.equal(

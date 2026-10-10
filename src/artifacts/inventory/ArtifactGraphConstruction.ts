@@ -249,16 +249,14 @@ export const createArtifactEdges = (
       rootArtifactId;
     const semantic = {
       parent_artifact_id: parentArtifactId,
-      child_artifact_id: occurrence.artifact_id,
       relation:
         occurrence.entry_kind === "slice"
           ? ("slice-of" as const)
           : relationFor(occurrence.logical_path),
       occurrence_id: occurrence.occurrence_id,
-      logical_path: occurrence.logical_path,
     };
     edges.push({
-      edge_id: artifactEdgeId(semantic),
+      edge_id: artifactEdgeId(semantic, occurrence),
       ...semantic,
       producer: occurrence.entry_kind === "slice" ? (producer ?? null) : null,
       ordinal: edges.length,

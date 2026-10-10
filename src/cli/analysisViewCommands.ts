@@ -18,7 +18,7 @@ export const registerAnalysisViewCommands = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectAnalysisView, {
     description:
-      "Project a selected view of completed layout or JavaScript application Evidence JSON",
+      "Project a selected view of completed layout, JavaScript application or native function Evidence JSON",
     args: z.object({
       inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
     }),

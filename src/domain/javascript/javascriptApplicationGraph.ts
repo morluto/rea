@@ -304,8 +304,8 @@ const checkNode = (
 
 type GraphRecord = z.infer<typeof javascriptApplicationGraphRecordSchema>;
 
-const checkGraphInvariants = (
-  graph: GraphRecord,
+const checkGraphContent = (
+  graph: JavaScriptApplicationGraphInput,
   context: z.RefinementCtx,
 ): void => {
   sortedUniqueIssue(
@@ -394,7 +394,13 @@ const checkGraphInvariants = (
       context,
     );
   }
+};
 
+const checkGraphInvariants = (
+  graph: GraphRecord,
+  context: z.RefinementCtx,
+): void => {
+  checkGraphContent(graph, context);
   const { graph_id: identifier, ...semantic } = graph;
   if (
     identifier !==
@@ -410,6 +416,9 @@ const checkGraphInvariants = (
 /** Strict JavaScript Application Graph with verified commitments. */
 export const javascriptApplicationGraphSchema =
   javascriptApplicationGraphRecordSchema.superRefine(checkGraphInvariants);
+
+const javascriptApplicationGraphContentSchema =
+  javascriptApplicationGraphInputSchema.superRefine(checkGraphContent);
 
 /** Fully validated JavaScript Application Graph. */
 export type JavaScriptApplicationGraph = z.infer<
@@ -482,10 +491,11 @@ export const createJavaScriptApplicationGraph = (
     },
     limitations: uniqueSorted(parsed.limitations),
   };
-  return javascriptApplicationGraphSchema.parse({
-    ...semantic,
-    graph_id: `jag_${digestCanonicalValue(semantic, "JavaScript Application Graph")}`,
-  });
+  const content = javascriptApplicationGraphContentSchema.parse(semantic);
+  return {
+    ...content,
+    graph_id: `jag_${digestCanonicalValue(content, "JavaScript Application Graph")}`,
+  };
 };
 
 const validatedImmutableApplicationGraphs = new WeakSet<object>();

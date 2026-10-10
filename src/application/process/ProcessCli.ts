@@ -19,6 +19,7 @@ import { createProgressReporter } from "../ProgressReporter.js";
 import { captureProcessScenario } from "../../process/capture/ProcessHarness.js";
 import { PROCESS_PROVIDER } from "../../domain/process/processEvidenceProvider.js";
 import { createProcessCaptureEvidence } from "./ProcessEvidence.js";
+import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../Utf8JsonInput.js";
 
 /** Safe process-command failure returned to the CLI adapter. */
 export interface ProcessCliErrorOutput {
@@ -191,6 +192,8 @@ const readJson = async (path: string): Promise<unknown> => {
       fatal: true,
       ignoreBOM: true,
     }).decode(bytes);
+    if (text.startsWith("\uFEFF"))
+      throw new Error(JSON_BYTE_ORDER_MARK_MESSAGE);
     const parsed: unknown = JSON.parse(text);
     return parsed;
   } catch (cause: unknown) {

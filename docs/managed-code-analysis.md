@@ -82,6 +82,10 @@ x86-64 ELF and native Windows PE targets analyzed on Linux x64 with Ghidra
 See [NativeAOT recovery](ghidra-nativeaot.md) for build/configuration, recovered
 metadata, derived-memory provenance, and the real verification lane.
 
+REA's experimental Windows Ghidra boundary admits native x86 and x86-64 PE
+applications and DLLs for static analysis. This does not establish Windows
+NativeAOT metadata-recovery coverage.
+
 For NativeAOT analysis, preserve the selected native artifact's path and digest
 and report recovered type data as provider observations. Linking those types
 to native function addresses requires verified

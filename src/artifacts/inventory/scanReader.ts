@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import {
+  annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
 } from "../ArtifactPaths.js";
@@ -64,10 +65,16 @@ export const scanReader = async (
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
+  readonly caseCollisionLimitation: string | undefined;
 }> => {
   const { nodes, occurrences, pendingContradictions } = emptyScan();
   if (reader === undefined)
-    return { nodes, occurrences, pendingContradictions };
+    return {
+      nodes,
+      occurrences,
+      pendingContradictions,
+      caseCollisionLimitation: undefined,
+    };
   const context: ScanContext = {
     reader,
     signal,
@@ -90,7 +97,12 @@ export const scanReader = async (
         context.occurrenceByPath,
         context.expandedContainerIds,
       )?.occurrence_id ?? null;
-  return { nodes, occurrences, pendingContradictions };
+  return {
+    nodes,
+    occurrences,
+    pendingContradictions,
+    caseCollisionLimitation: annotateEnglishUnicodeCaseCollisions(occurrences),
+  };
 };
 
 const visitArtifactEntries = async (

@@ -36,6 +36,56 @@ after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
 
+### Compact input schema profile
+
+Some function-calling providers reject a request while any single tool's
+`parameters` schema exceeds a literal serialized size cap; Moonshot clients
+such as kimi-cli fail every request while the default catalog is attached
+([#1484](https://github.com/morluto/rea/issues/1484)). Setting the server's
+`REA_MCP_INPUT_SCHEMA_PROFILE` environment variable to `compact` renders every
+advertised input schema within a 13,312-byte budget, measured to sit below
+Moonshot's observed cap (community measurements: a 13.7 KB schema is accepted
+while a ~15 KB one is rejected). The setting is read at startup; restart the
+server to apply changes, as with `REA_MCP_MAX_RESPONSE_BYTES`. The default
+value `full` keeps the complete advertisement unchanged.
+
+The compact profile renders the same tool set, output schemas, annotations,
+and canonical server-side validation. It changes only the advertised input
+JSON Schema:
+
+- Annotation prose leaves the advertised form: nested property descriptions,
+  literal examples, defaults, and titles are dropped. The root keeps its
+  description because it states the accepted input groups.
+- Schema-local references are inlined within the budget. Kimi Code expands
+  references before sending provider requests, so sharing definitions cannot
+  establish the provider-facing size. Expansion stops at the budget before
+  allocating an oversized presentation. Unconstrained JSON fields advertise
+  all JSON value types explicitly so Kimi cannot infer string for Evidence
+  objects or arrays.
+- The few schemas whose validation structure alone exceeds the budget
+  (`compare_web_captures`, `build_reconstruction_obligation_ledger`,
+  `evaluate_reconstruction_coverage`, `project_managed_application_graph`,
+  `compare_application_versions`, `capture_browser_scenario`) are advertised
+  in a reduced form: property names, reference-resolved types (including union
+  alternatives), first-level guidance, and the root's required-field constraints,
+  with nested validation detail elided. The
+  canonical schema still rejects malformed calls server-side, so callers
+  following the reduced advertisement receive the canonical typed error
+  instead of silent acceptance.
+
+Boundary tests pin every advertised compact schema to the budget, keep them
+valid JSON Schema that still accepts every canonical example, and hold the
+set of six reduced presentations as contracts evolve. Client verification
+also checks provider-facing sizes and canonical examples after conversion by
+the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
+
+Self-contained output schemas advertise a content-bound `$id`, including their
+declared dialect. SDK validators can reuse compiled schemas across complete
+catalog refreshes and equivalent tool outputs; changing the schema changes its
+identity. Explicit schema IDs and relative external reference bases are
+preserved. This keeps every tool and validation rule in discovery and does not
+change the SDK's catalog invalidation or availability checks.
+
 `compare_web_captures` accepts exactly one of two input shapes:
 
 - Passive: `before` and `after` each contain `inspection`, the complete
@@ -192,10 +242,27 @@ the current client, so it is not a fresh-start recovery. On the same connection:
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. It is not a Windows/macOS coverage claim. REA cleans only resources it
-owns and never switches to another provider automatically. A provider timeout,
-installation failure, or host permission denial needs its own reported recovery;
-increasing a client deadline alone does not fix those failures.
+analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
+22.19.0 exercised the same connection and caller-selected native PE: the default
+60-second client request timed out, close succeeded, and reopening before a
+240-second request completed the cold overview in about 163 seconds. The next
+overview took about 19 ms. The cold and warm overviews reported two procedures
+and two segments; the input digest was unchanged and no owned runtime root or
+observed process-family member remained after final close. This was a small
+1,024-byte fixture, so the longer request setting remains an example, not a
+guarantee for larger targets. No macOS cold-start recovery was exercised.
+
+With a supplied progress token, the Windows run received an operation-start
+notification before timeout and start/completion notifications for the
+successful retry. It received no intermediate import or auto-analysis progress.
+These operation markers do not measure analysis work completed or extend the
+client's deadline. Each new provider session still imports the target into a
+fresh temporary project.
+
+REA cleans only resources it owns and never switches to another provider
+automatically. A provider timeout, installation failure, or host permission
+denial needs its own reported recovery; increasing a client deadline alone does
+not fix those failures.
 
 ## Tool results
 
@@ -243,7 +310,13 @@ Ordinary responses keep their existing complete result contract.
 ## Retained application Evidence inputs
 
 `inspect_analysis_view` projects a caller-selected view of already completed
-`inspect_binary_layout` or `analyze_javascript_application` Evidence. Source is
+`inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
+Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
+comments, callers/callees, references, unresolved calls, referenced strings and
+names, the native API record, and high-pcode facets without starting a provider. Native offset
+and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
+splits surrogate pairs, while other pages count rows. Unavailable facts and
+provider limitations remain explicit. Source is
 an exact same-session retained reference or portable inline Evidence. Views are
 a summary, a layout mitigations or linkage facet, one section/symbol/module, or
 a stable page with a caller-selected positive `limit`. Module pages include

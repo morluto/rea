@@ -590,3 +590,24 @@ describe("property mutations through TypeScript satisfies aliases", () => {
     ).toEqual({ status: "literal", value: "TOKEN" });
   });
 });
+
+describe("property mutation collection on minified bundles", () => {
+  it("records each write to one object without replaying earlier writes", () => {
+    const writes = Array.from(
+      { length: 2000 },
+      (_, index) => `source.p${index} = ${index};`,
+    ).join(" ");
+    const start = performance.now();
+    const value = resultValue(
+      `const source = { token: "TOKEN" }; ${writes} return [source.token, source.p1999];`,
+    );
+    expect(performance.now() - start).toBeLessThan(2000);
+    expect(value).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "literal", value: "TOKEN" } },
+        { value: { status: "unknown" } },
+      ],
+    });
+  }, 30000);
+});

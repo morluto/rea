@@ -95,7 +95,7 @@ npx skills add morluto/rea --skill reverse-engineer-anything
 
 This installs agent instructions and bundled references, not REA MCP
 registration or analysis engines. Follow the skill's
-[conditional connection guide](https://github.com/morluto/rea/blob/main/skill-src/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
+[conditional connection guide](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/SKILL.md#connect-only-when-needed).
 Working tools can be used immediately. If tools are missing, inspect the current
 client's registration with `doctor --client codex --json` (substitute its client
 ID), then plan repairs with `setup --client codex --dry-run --json`. Show and
@@ -135,26 +135,95 @@ listed after the table because its connector is not one of these files:
 | Antigravity        | `antigravity`    |
 | GitHub Copilot CLI | `copilot_cli`    |
 | Command Code       | `commandcode`    |
+| Qwen Code          | `qwen_code`      |
 | VS Code            | `vscode`         |
 | Grok Build         | `grok_build`     |
 | OMP                | `omp`            |
+| Pi                 | `pi`             |
+| Hermes             | `hermes`         |
+
+For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
+setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
+`~/.pi/agent/mcp.json` and installs the bundled skill under `~/.agents/skills`.
+Use `rea setup --client pi --dry-run --json` to inspect the plan, then
+`rea setup --client pi --yes --json` to approve it. Check the registration with
+`rea doctor --client pi --json`. Pi reads `mcp.json` as strict JSON, like its
+own loader: comments, trailing commas, a byte-order mark, or an empty existing
+file are invalid, and setup reports them instead of rewriting the file. Repair
+such a file to plain JSON first, then rerun setup.
+
+Setup follows Pi's `PI_CODING_AGENT_DIR`: unset or empty selects the default;
+`~` and `~/` expand to the home directory; absolute paths and file URLs select
+that directory; relative paths stay relative to the command's working directory.
+On Windows, native paths, `~\`, and Git Bash/MSYS, Cygwin, and WSL drive paths
+are normalized as Pi does. Run REA and Pi from the same working directory when
+using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
+`PI_CONFIG_DIR`, and OMP's `enabledServers`/`disabledServers` lists do not affect
+Pi registration. Doctor accepts an omitted `type` for stdio but reports a
+non-stdio type as invalid; `enabled: false` stays disabled.
+
+REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
+projects; a same-name project entry can replace the user entry or override its
+enabled state and exposure. Check that file if the user registration is aligned
+but unavailable in a project. An extension that registers `/mcp` can replace
+Pi's built-in MCP support and use its own configuration instead. Run `/reload`
+in an existing Pi session after changing servers outside the session.
+
+For Qwen Code, setup registers `rea` in the `mcpServers` table of the
+user-level `~/.qwen/settings.json`, or `$QWEN_HOME/settings.json` when configured.
+Setup and doctor follow Qwen Code's tilde and working-directory-relative home
+overrides. Qwen Code also discovers personal skills in `~/.agents/skills`,
+where setup installs the bundled workflow.
+
+Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
+is nonempty, including its shared personal skills at
+`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+policies from system defaults, user settings, trusted workspace settings, and
+system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
+`GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,
+and the selected `trustedFolders.json` (including
+`GEMINI_CLI_TRUSTED_FOLDERS_PATH`). Settings in an untrusted workspace do not
+participate. A workspace or system `mcpServers.rea` replaces the entire user
+entry; setup stops if the winning definition conflicts with its planned entry.
+Review those files manually: setup never edits administrator/workspace settings
+or grants workspace trust. Trust supplied only by a running IDE is outside this
+standalone CLI check.
+
+Codex treats an unset or empty `CODEX_HOME` as `~/.codex`. Devin honors
+`XDG_CONFIG_HOME` for its `devin/mcp_config.json` on non-Windows systems.
 
 For OMP, setup writes a `type: "stdio"` entry to the user-level
-`~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR`, an absolute
-`PI_CODING_AGENT_DIR`, and the profile selected by `OMP_PROFILE` or
+`~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR` and
+`PI_CODING_AGENT_DIR` (relative to the setup working directory), and the profile selected by `OMP_PROFILE` or
 `PI_PROFILE` (`~/.omp/profiles/<name>/agent/mcp.json`). Setup also removes
 `rea` from that file's `disabledServers` list, which would otherwise hide the
 registration. Doctor treats an `enabled: false` entry as active when
 `enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
 it. Run setup under each profile that should load REA.
 
+For Hermes, setup writes a `mcp_servers.rea` entry to `config.yaml`, preserving
+comments and unrelated settings. It resolves that file from `HERMES_HOME`, else
+from the platform default Hermes itself uses — `%LOCALAPPDATA%\hermes` on
+Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Hermes
+connects an entry unless `enabled` is false, so setup states `enabled: true`.
+
+Hermes personal skills install under the active Hermes home's `skills` directory.
+REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
+and home expansion before resolving that profile. Setup previews the resolved
+configuration and skill destinations; doctor and uninstall use those same paths.
+
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
-`mcp.rea` entry from REA.
+`mcp.rea` entry from REA. Setup honors `OPENCODE_CONFIG_DIR` and
+`OPENCODE_CONFIG`, preferring the later-loaded JSONC file when both JSON and
+JSONC exist. The ordinary XDG global configuration still participates when a
+custom directory is selected. Doctor checks the merged user registration; uninstall removes
+REA-owned entries from every applicable user file so an older entry cannot
+become active again. Malformed applicable files block setup before changes.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
-`~/.grok/config.toml` when `GROK_HOME` is unset. Setup edits that server
+`~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server
 table, `[mcp_servers.rea.env]`, and a root `disabled_mcp_servers` entry that
 names `rea`. It sets `startup_timeout_sec = 30` and leaves every other name
 in that list. The shared skill installed under `~/.agents/skills` is already
@@ -194,10 +263,11 @@ save verified paths for an existing Ghidra installation.
 
 The bundled skill is installed where each selected client discovers personal
 skills: Claude Code uses `~/.claude/skills` (or
-`$CLAUDE_CONFIG_DIR/skills` when configured), while other supported clients
-use the shared `~/.agents/skills` directory. A mixed selection plans both
-paths. Selecting the skill without a client uses the shared directory. Setup
-leaves existing skill copies in other locations untouched.
+`$CLAUDE_CONFIG_DIR/skills` when configured). Gemini CLI uses `.agents/skills`
+under its selected home; Antigravity 2.0 uses `~/.gemini/config/skills`.
+Other integrations, including Qwen Code, use `~/.agents/skills`.
+A mixed selection plans each distinct destination. Selecting the skill without a client uses the shared
+directory. Setup leaves existing skill copies in other locations untouched.
 
 `doctor --skill --json` verifies the selected copies against the bundled
 instructions and references. Consumers should use `identity.skill.state`,
@@ -489,7 +559,7 @@ entry comments atomically and returns refreshed analysis. These session metadata
 edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86 and x86-64 PE applications on fixed local NTFS volumes.
+Windows P0 admits native x86 and x86-64 PE applications and DLLs on fixed local NTFS volumes.
 The npm package bundles native Job Object ownership, protected private runtime
 DACLs, and handle-based path admission; no separate addon installation is needed.
 See the [Windows Ghidra P0 guide](windows-ghidra-p0.md) for verified scope and

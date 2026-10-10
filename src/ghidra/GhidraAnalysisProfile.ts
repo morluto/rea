@@ -34,6 +34,12 @@ export const resolveGhidraAnalysisProfile = (
       profile: createAnalysisProfile(provider, {
         target_kind: target.kind,
         target_format: target.format,
+        ...(target.format === "pe"
+          ? {
+              executable_role: target.executableRole ?? null,
+              managed: target.managed ?? null,
+            }
+          : {}),
         architecture: target.architecture ?? null,
         available_architectures: [
           ...(target.availableArchitectures ?? []),

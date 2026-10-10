@@ -71,14 +71,21 @@ export const artifactContradictionId = (input: {
     "Artifact",
   )}`;
 
-/** Identify an edge by its semantic relationship and exact occurrence. */
+/**
+ * Identify an edge by its semantic relationship and exact occurrence. The
+ * child artifact and logical path come from that occurrence.
+ */
 export const artifactEdgeId = (
-  semantic: Pick<
-    ArtifactEdge,
-    | "parent_artifact_id"
-    | "child_artifact_id"
-    | "relation"
-    | "occurrence_id"
-    | "logical_path"
-  >,
-): string => `edge_${digestCanonicalValue(semantic, "Artifact")}`;
+  edge: Pick<ArtifactEdge, "parent_artifact_id" | "relation" | "occurrence_id">,
+  occurrence: Pick<ArtifactOccurrence, "artifact_id" | "logical_path">,
+): string =>
+  `edge_${digestCanonicalValue(
+    {
+      parent_artifact_id: edge.parent_artifact_id,
+      child_artifact_id: occurrence.artifact_id,
+      relation: edge.relation,
+      occurrence_id: edge.occurrence_id,
+      logical_path: occurrence.logical_path,
+    },
+    "Artifact",
+  )}`;

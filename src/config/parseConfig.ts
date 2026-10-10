@@ -50,6 +50,9 @@ export const parseConfig = (
     ...(env.REA_MCP_MAX_RESPONSE_BYTES === undefined
       ? {}
       : { mcpMaxResponseBytes: env.REA_MCP_MAX_RESPONSE_BYTES }),
+    ...(env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+      ? {}
+      : { mcpInputSchemaProfile: env.REA_MCP_INPUT_SCHEMA_PROFILE }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}

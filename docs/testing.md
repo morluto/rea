@@ -88,6 +88,21 @@ entrypoint and include its verifier/fixture files in their cache inputs.
 
 ## End-to-end, integration and golden evidence
 
+The optional `verify:qwen-client`, `verify:pi-client`, and `verify:hermes-client`
+lanes require an installed native client. Select its executable with
+`REA_VERIFY_QWEN_COMMAND`, `REA_VERIFY_PI_COMMAND`, or `REA_VERIFY_HERMES_COMMAND`.
+They configure disposable profiles through the public REA CLI, preserve caller
+settings and backups, and exercise real stdio MCP calls and skill loading. The
+`call` mode checks complete catalog discovery and actual JavaScript Evidence;
+pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
+result that its client offloads, and Pi exercises default codemode execution.
+Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
+Receipts retain client versions, result digests, host coverage and owned-process
+cleanup. These POSIX lanes use a deterministic loopback model, so they do not
+prove live model-provider or native Windows compatibility. Qwen and Pi use
+caller-configured skill directories to isolate the fixture account from the OS
+home; this does not prove their default home-directory discovery.
+
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes an
 actual Foundation binary archive, runs the CLI and a separate stdio MCP

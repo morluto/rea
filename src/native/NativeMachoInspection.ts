@@ -15,7 +15,6 @@ import { parseOtoolLoadCommands } from "./parsers/otool.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
-  readonly provenance: readonly NativeCommandInvocation[];
   readonly limitations: readonly string[];
   readonly locations: readonly EvidenceLocation[];
 }
@@ -116,7 +115,6 @@ export const inspectNativeMacho = async (
       : normalized;
   return ok({
     result: jsonValueSchema.parse(result),
-    provenance: result.provenance,
     limitations: result.limitations,
     locations: fileOffsetLocations(result, segmentOffset),
   });

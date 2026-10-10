@@ -35,3 +35,89 @@ export const semanticPropertyPathKeyMatches = (
   const index = semanticArrayIndex(name);
   return index !== null && index >= key.startIndex;
 };
+
+interface PropertyPathCoverageNode {
+  terminal: boolean;
+  readonly exact: Map<string, PropertyPathCoverageNode>;
+  readonly selectors: Map<
+    string,
+    {
+      readonly key: JavaScriptSemanticPropertyPath[number];
+      readonly node: PropertyPathCoverageNode;
+    }
+  >;
+}
+
+const coverageNode = (): PropertyPathCoverageNode => ({
+  terminal: false,
+  exact: new Map(),
+  selectors: new Map(),
+});
+
+/** Index exact effect prefixes without widening distinct member paths. */
+export class SemanticPropertyPathCoverage {
+  readonly #root = coverageNode();
+
+  /** Retain a path only when no previously retained prefix covers it. */
+  retain(path: JavaScriptSemanticPropertyPath): boolean {
+    const pending = [{ node: this.#root, offset: 0 }];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (current === undefined) break;
+      if (current.node.terminal) return false;
+      const key = path[current.offset];
+      if (key === undefined) continue;
+      if (key !== null && typeof key !== "object") {
+        const exact = current.node.exact.get(String(key));
+        if (exact !== undefined)
+          pending.push({ node: exact, offset: current.offset + 1 });
+      }
+      for (const selected of current.node.selectors.values()) {
+        if (keyCovers(selected.key, key))
+          pending.push({ node: selected.node, offset: current.offset + 1 });
+      }
+    }
+    let node = this.#root;
+    for (const key of path) {
+      if (key !== null && typeof key !== "object") {
+        const name = String(key);
+        let child = node.exact.get(name);
+        if (child === undefined) {
+          child = coverageNode();
+          node.exact.set(name, child);
+        }
+        node = child;
+      } else {
+        const identity = JSON.stringify(key);
+        let selected = node.selectors.get(identity);
+        if (selected === undefined) {
+          selected = { key, node: coverageNode() };
+          node.selectors.set(identity, selected);
+        }
+        node = selected.node;
+      }
+    }
+    node.terminal = true;
+    node.exact.clear();
+    node.selectors.clear();
+    return true;
+  }
+}
+
+const keyCovers = (
+  covering: JavaScriptSemanticPropertyPath[number],
+  key: JavaScriptSemanticPropertyPath[number],
+): boolean => {
+  if (covering === null) return true;
+  if (key === null) return false;
+  if (typeof key !== "object")
+    return typeof covering === "object"
+      ? semanticPropertyPathKeyMatches(covering, String(key))
+      : String(covering) === String(key);
+  return (
+    typeof covering === "object" &&
+    covering.excludedKeys.every((name) => key.excludedKeys.includes(name)) &&
+    (covering.startIndex === undefined ||
+      (key.startIndex !== undefined && covering.startIndex <= key.startIndex))
+  );
+};

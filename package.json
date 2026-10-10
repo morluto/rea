@@ -179,6 +179,9 @@
     "verify:readiness": "npm run build:cached && npm run verify:fixtures && node scripts/verify-reconstruction-readiness.mjs",
     "verify:package": "npm run build:cached && node scripts/verify-package.mjs",
     "verify:package:windows": "npm run build:cached && node scripts/verify-windows-package.mjs",
+    "verify:qwen-client": "npm run build:cached && node scripts/verify-qwen-client.mjs",
+    "verify:pi-client": "npm run build:cached && node scripts/verify-native-agent-client.mjs pi",
+    "verify:hermes-client": "npm run build:cached && node scripts/verify-native-agent-client.mjs hermes",
     "probe:windows-capabilities": "npm run build:cached && node scripts/windows-capabilities.mjs",
     "verify:published": "node scripts/verify-published-package.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
@@ -269,7 +272,8 @@
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
     "zod": "4.4.3",
-    "evmole": "0.9.3"
+    "evmole": "0.9.3",
+    "yaml": "2.9.0"
   },
   "overrides": {
     "vitepress": {
@@ -293,7 +297,6 @@
     "turbo": "2.11.7",
     "typescript": "7.0.2",
     "vitepress": "1.6.4",
-    "vitest": "5.0.3",
-    "yaml": "2.9.0"
+    "vitest": "5.0.3"
   }
 }

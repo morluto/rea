@@ -547,6 +547,21 @@ describe("JavaScript Application Graph: source maps and observations", () => {
       /Edge identifier/u,
     );
   });
+
+  it("creates exactly the graph the public schema accepts", () => {
+    const graph = buildSyntheticJavaScriptApplicationGraph();
+    expect(JSON.stringify(graph)).toBe(
+      JSON.stringify(
+        javascriptApplicationGraphSchema.parse(structuredClone(graph)),
+      ),
+    );
+
+    const { graph_id: _graphId, ...semantic } = structuredClone(graph);
+    firstOf(semantic.edges, "edge").edge_id = `jag_edge_${"f".repeat(64)}`;
+    expect(() => createJavaScriptApplicationGraph(semantic)).toThrow(
+      /Edge identifier/u,
+    );
+  });
 });
 
 describe("JavaScript Application Graph: duplicate and orphan rejection", () => {

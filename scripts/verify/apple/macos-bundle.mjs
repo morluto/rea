@@ -17,6 +17,7 @@ import {
 import { verifyDyldEnvironment } from "./dyld-environment.mjs";
 import { verifyDylibResolution } from "./macos-dylib-e2e.mjs";
 import { verifyMachOOccurrences } from "./macho-occurrences.mjs";
+import { verifyNativeProvenance } from "./native-provenance.mjs";
 
 const exec = promisify(execFile);
 
@@ -69,6 +70,7 @@ const EXPECTED_BUNDLES = [
 let report;
 try {
   const { app, executable } = await buildMacosBundleFixture(root);
+  const nativeProvenance = await verifyNativeProvenance(app, executable);
   const machoOccurrences = await verifyMachOOccurrences(app, executable);
   const zip = join(root, "MacFixture.zip");
   await exec("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, zip]);
@@ -166,6 +168,7 @@ try {
     containers: containers.map(({ format }) => format),
     bundles: EXPECTED_BUNDLES.length,
     dmg_detached: true,
+    native_provenance: nativeProvenance,
     macho_occurrences: machoOccurrences,
     dylib_resolution: dylibs,
     dyld_environment: dyldEnvironment,

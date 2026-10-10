@@ -99,7 +99,7 @@ export const analysisViewLayoutEvidence = (
       operation: "inspect_binary_layout",
       parameters: { path: layout.artifact.path },
       result: layout,
-      rawResult: layout,
+      rawResult: null,
       confidence: "observed",
       limitations: layout.limitations,
       locations: [{ kind: "artifact-path", path: layout.artifact.path }],

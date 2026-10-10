@@ -249,7 +249,8 @@ export class HopperProvider implements AnalysisProviderCandidate {
           ? {
               ok: true,
               value: createAnalysisExecution(mapped.value, executionProvider, {
-                rawResult: result.value,
+                // Only the file-offset mapping differs from Hopper's reply.
+                rawResult: mapped === result ? null : result.value,
                 ...(profile === undefined ? {} : { analysisProfile: profile }),
                 limitations: [
                   ...(preparedImage === undefined

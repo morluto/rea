@@ -71,13 +71,23 @@ export const parseInterfaceBuilderRecords = (
       attributes["name"],
       className,
     );
+    // class_name, name, and id already carry these values; repeating them in
+    // attributes doubled them on every graph node.
+    const carried = new Set<string>();
+    if (attributes["customClass"] === className) carried.add("customClass");
+    if (attributes["label"] === label) carried.add("label");
+    if (attributes["objectID"] === id) carried.add("objectID");
     objects.push(
       objectNode.parse({
         id,
         kind: classifyObject(className),
         class_name: className,
         name: label ?? id,
-        attributes: jsonSafeRecord(attributes),
+        attributes: jsonSafeRecord(
+          Object.fromEntries(
+            Object.entries(attributes).filter(([key]) => !carried.has(key)),
+          ),
+        ),
       }),
     );
   }
