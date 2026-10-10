@@ -20,7 +20,7 @@ export const flutterInputSchemas = {
       .min(2)
       .max(16)
       .regex(
-        /^[a-z0-9_-]+$/u,
+        /^[a-z0-9_\x2d]+$/u,
         "ABI name as it appears under lib/, e.g. arm64-v8a",
       )
       .optional()
