@@ -117,7 +117,7 @@ function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
     expect(advertised.get(name), name).toMatchObject({ annotations });
 }
 
-function expectRecursivePropertyDescriptions(
+function expectMeaningfulPropertyDescriptions(
   schema: unknown,
   path: string,
   root: unknown = schema,
@@ -125,7 +125,7 @@ function expectRecursivePropertyDescriptions(
 ): void {
   if (!isRecord(schema)) return;
   if (typeof schema.$ref === "string" && !active.has(schema.$ref))
-    expectRecursivePropertyDescriptions(
+    expectMeaningfulPropertyDescriptions(
       resolveReference(root, schema.$ref),
       `${path}.${schema.$ref}`,
       root,
@@ -133,10 +133,13 @@ function expectRecursivePropertyDescriptions(
     );
   if (isRecord(schema.properties)) {
     for (const [property, child] of Object.entries(schema.properties)) {
-      expect(child, `${path}.${property}`).toMatchObject({
-        description: expect.any(String),
-      });
-      expectRecursivePropertyDescriptions(
+      // Omit a description rather than restate the property name.
+      const description = isRecord(child) ? child.description : undefined;
+      if (description !== undefined)
+        expect(description, `${path}.${property}`).toEqual(
+          expect.not.stringMatching(/^(?:Value for .*)?$/u),
+        );
+      expectMeaningfulPropertyDescriptions(
         child,
         `${path}.${property}`,
         root,
@@ -147,12 +150,12 @@ function expectRecursivePropertyDescriptions(
 
   for (const key of ["items", "additionalProperties"])
     if (schema[key] !== undefined)
-      expectRecursivePropertyDescriptions(schema[key], path, root, active);
+      expectMeaningfulPropertyDescriptions(schema[key], path, root, active);
   for (const key of ["allOf", "anyOf", "oneOf", "prefixItems"]) {
     const children = schema[key];
     if (Array.isArray(children))
       children.forEach((child: unknown, index: number) =>
-        expectRecursivePropertyDescriptions(
+        expectMeaningfulPropertyDescriptions(
           child,
           `${path}.${key}[${index}]`,
           root,
@@ -358,7 +361,7 @@ describe("MCP JSON Schema validity", () => {
             contract.inputSchema.safeParse(example.input).success,
             `${contract.name}: ${example.title}`,
           ).toBe(true);
-        expectRecursivePropertyDescriptions(tool?.inputSchema, contract.name);
+        expectMeaningfulPropertyDescriptions(tool?.inputSchema, contract.name);
       }
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
