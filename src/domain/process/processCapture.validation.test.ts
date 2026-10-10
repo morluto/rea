@@ -123,7 +123,7 @@ it("rejects finalization evidence that no deadline could have produced", () => {
 const withCommittedFinalization = (
   committed: number | undefined,
   exit: Record<string, unknown>,
-  comparisonCommitted: number | undefined = committed,
+  comparisonCommitted: number | "same" | "absent" = "same",
 ) => {
   const capture = emptyCapture();
   const scenario = {
@@ -132,9 +132,13 @@ const withCommittedFinalization = (
   };
   const comparisonContract = {
     ...capture.manifest.comparison_contract,
-    ...(comparisonCommitted === undefined
+    ...(comparisonCommitted === "absent"
       ? {}
-      : { finalization_ms: comparisonCommitted }),
+      : comparisonCommitted === "same"
+        ? committed === undefined
+          ? {}
+          : { finalization_ms: committed }
+        : { finalization_ms: comparisonCommitted }),
   };
   return {
     ...capture,
@@ -325,7 +329,7 @@ it("binds the comparison contract to the committed finalization interval", () =>
   const exit = { code: 0, signal: null, reason: "exited" };
 
   expect(
-    () => parseProcessCapture(withCommittedFinalization(500, exit, undefined)),
+    () => parseProcessCapture(withCommittedFinalization(500, exit, "absent")),
     "a scenario interval missing from the comparison contract is contradictory",
   ).toThrow("comparison_contract");
   expect(

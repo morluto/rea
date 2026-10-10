@@ -634,16 +634,20 @@ export const partialProcessCaptureObservationSchema = z
         : partial.observations.exit.state === "available"
           ? partial.observations.exit.value
           : undefined;
-    const committedScenario =
+    const committedManifest =
       "capture" in partial
-        ? partial.capture.manifest.scenario
+        ? partial.capture.manifest
         : partial.observations.manifest.state === "available"
-          ? partial.observations.manifest.value.scenario
+          ? partial.observations.manifest.value
           : undefined;
     const finalizationIssue =
       observedExit === undefined
         ? undefined
-        : finalizationConsistencyIssue(observedExit, committedScenario);
+        : finalizationConsistencyIssue(
+            observedExit,
+            committedManifest?.scenario,
+            committedManifest?.comparison_contract,
+          );
     if (finalizationIssue !== undefined)
       context.addIssue({
         code: "custom",

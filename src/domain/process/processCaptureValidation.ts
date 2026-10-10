@@ -124,7 +124,15 @@ export const finalizationConsistencyIssue = (
       | undefined;
   },
   committedScenario?: Readonly<Record<string, unknown>>,
+  committedComparison?: Readonly<Record<string, unknown>>,
 ): string | undefined => {
+  if (
+    committedScenario !== undefined &&
+    committedComparison !== undefined &&
+    committedScenario["finalization_ms"] !==
+      committedComparison["finalization_ms"]
+  )
+    return "comparison_contract finalization_ms must match the committed scenario";
   const { finalization } = exit;
   if (finalization === undefined) {
     // A deadline that fired under a committed interval must have attempted
@@ -171,6 +179,7 @@ const validateLifecycle = (
   const finalizationIssue = finalizationConsistencyIssue(
     capture.exit,
     capture.manifest.scenario,
+    capture.manifest.comparison_contract,
   );
   require(finalizationIssue === undefined, "exit", finalizationIssue ?? "");
 };
