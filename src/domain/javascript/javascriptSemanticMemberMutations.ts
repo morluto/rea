@@ -43,6 +43,10 @@ export const collectSemanticMemberMutations = (
     },
   });
   const recordedEffects = new Set<string>();
+  // One traversal per reached alias state. A loop that reassigns one reference
+  // through k members can reach every state along every injective member
+  // ordering, so per-path work alone grows factorially.
+  const expansions = new Set<string>();
   const selections = new Map<string, readonly string[]>();
   let arrayIterationUnknown = false;
   const pendingReferences: {
@@ -179,31 +183,47 @@ export const collectSemanticMemberMutations = (
           current.originAt === undefined
             ? binding
             : semanticMutationInitializers(binding, current.originAt, parents);
+        // Every arrival keeps its own recorded effect, but an alias state only
+        // expands once: replaying the expansion for each member ordering would
+        // multiply the same initializer walks factorially without recording any
+        // fact the first expansion did not reach.
+        const expansion = JSON.stringify([
+          binding.bindingId,
+          effect,
+          mutation?.start,
+          mutation?.end,
+          current.originAt?.start,
+          current.originAt?.end,
+        ]);
+        const repeated = expansions.has(expansion);
+        expansions.add(expansion);
         if (!primitiveWrite) {
           if (effect === "escape")
             binding.escapedPaths.push({ path, node: mutation });
           else binding.mutatedPaths.push(path);
           clearSemanticPrimitiveBindingValues(state);
-          for (const initializer of origins.initializers)
-            pending.push({
-              node: initializer.node,
-              path: [...initializer.projection, ...path],
+          if (!repeated)
+            for (const initializer of origins.initializers)
+              pending.push({
+                node: initializer.node,
+                path: [...initializer.projection, ...path],
+                bindings: nested,
+                originAt: initializer.node,
+              });
+        }
+        if (!repeated)
+          for (const initializer of origins.referenceInitializers) {
+            const copiedPath = copiedReferencePath(initializer, path, effect);
+            if (copiedPath === null) continue;
+            pendingReferences.push({
+              initializer,
+              path: copiedPath,
               bindings: nested,
+              effect,
               originAt: initializer.node,
+              ...(mutation === undefined ? {} : { mutation }),
             });
-        }
-        for (const initializer of origins.referenceInitializers) {
-          const copiedPath = copiedReferencePath(initializer, path, effect);
-          if (copiedPath === null) continue;
-          pendingReferences.push({
-            initializer,
-            path: copiedPath,
-            bindings: nested,
-            effect,
-            originAt: initializer.node,
-            ...(mutation === undefined ? {} : { mutation }),
-          });
-        }
+          }
       } else if (
         t.isMemberExpression(expression) ||
         t.isOptionalMemberExpression(expression)

@@ -39,6 +39,20 @@ describe("reference lifetimes across calls and shallow copies", () => {
     expect(performance.now() - start).toBeLessThan(2000);
   }, 30000);
 
+  it("bounds a loop that reassigns one reference through many members", () => {
+    const branches = Array.from(
+      { length: 12 },
+      (_, index) => `if (flag === ${index}) node = node.m${index};`,
+    ).join(" else ");
+    const start = performance.now();
+    expect(
+      resultValue(
+        `const seed = { mode: "initial" }; let node = seed; while (node) { ${branches} use(node); } return seed.mode;`,
+      )?.status,
+    ).toBe("unknown");
+    expect(performance.now() - start).toBeLessThan(2000);
+  }, 30000);
+
   it.each([
     ["child: {}", "child: {}", "literal"],
     ["child: {}", "other: {}", "unknown"],
