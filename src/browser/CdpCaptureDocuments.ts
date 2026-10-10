@@ -177,15 +177,25 @@ export const captureDom = (
       const parent = Math.trunc(parents[index] ?? -1);
       const nodeIndex = nodes.length;
       const nodeName = indexedString(strings, nodeNames[index]);
+      const rawAttributeNames = attributeIndexes
+        .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
+        .map((value) => indexedString(strings, value));
+      const seenAttributeNames = new Set<string>();
+      const attributeNames: string[] = [];
+      for (const name of rawAttributeNames) {
+        const lower = name.toLowerCase();
+        if (!seenAttributeNames.has(lower)) {
+          seenAttributeNames.add(lower);
+          attributeNames.push(name);
+        }
+      }
       nodes.push({
         index: nodeIndex,
         parent_index: parent < 0 ? -1 : baseIndex + parent,
         node_type: Math.max(0, Math.trunc(nodeTypes[index] ?? 0)),
         node_name: nodeName,
         node_value_length: indexedString(strings, nodeValues[index]).length,
-        attribute_names: attributeIndexes
-          .filter((_value, attributeIndex) => attributeIndex % 2 === 0)
-          .map((value) => indexedString(strings, value)),
+        attribute_names: attributeNames,
       });
       const metadata = domMetadata({
         strings,
@@ -387,7 +397,7 @@ const domMetadata = (
   for (let index = 0; index + 1 < attributes.length; index += 2) {
     const name = indexedString(strings, attributes[index]).toLowerCase();
     const value = indexedString(strings, attributes[index + 1]);
-    pairs.set(name, value);
+    if (!pairs.has(name)) pairs.set(name, value);
   }
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
   for (const attribute of domUrlAttributes) {
