@@ -324,7 +324,7 @@ it("cancels a waiting request promptly while keeping later launches behind the a
   await assertFirmwareCleanup(fixture.launches);
 });
 
-it("retains an uncertain workspace and blocks new launches after cleanup failure", async () => {
+it("retains an uncertain workspace and lets the next operation create a new root", async () => {
   const fixture = await firmwareFixture("cleanup-failure");
   const first = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
@@ -335,12 +335,18 @@ it("retains an uncertain workspace and blocks new launches after cleanup failure
   });
   const workspace = fixture.launches[0]?.cwd;
   expect(workspace).toBeDefined();
-  if (workspace !== undefined) await access(workspace);
+  if (workspace === undefined) return;
+  await access(workspace);
   const next = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
   });
   expect(next).toMatchObject({ ok: false, error: { cleanupIncomplete: true } });
-  expect(fixture.launches).toHaveLength(1);
+  expect(fixture.launches).toHaveLength(2);
+  const nextWorkspace = fixture.launches[1]?.cwd;
+  expect(nextWorkspace).toBeDefined();
+  expect(nextWorkspace).not.toBe(workspace);
+  await access(workspace);
+  if (nextWorkspace !== undefined) await access(nextWorkspace);
 });
 
 it("accepts another build on the verified release line and reports it", async () => {

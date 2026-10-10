@@ -88,6 +88,51 @@ entrypoint and include its verifier/fixture files in their cache inputs.
 
 ## End-to-end, integration and golden evidence
 
+The optional `verify:qwen-client`, `verify:pi-client`, and `verify:hermes-client`
+lanes require an installed native client. Select its executable with
+`REA_VERIFY_QWEN_COMMAND`, `REA_VERIFY_PI_COMMAND`, or `REA_VERIFY_HERMES_COMMAND`.
+They configure disposable profiles through the public REA CLI, preserve caller
+settings and backups, and exercise real stdio MCP calls and skill loading. The
+`call` mode checks complete catalog discovery and actual JavaScript Evidence;
+pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
+result that its client offloads, and Pi exercises default codemode execution.
+Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
+Receipts retain client versions, result digests, host coverage and owned-process
+cleanup. These POSIX lanes use a deterministic loopback model, so they do not
+prove live model-provider or native Windows compatibility. Qwen and Pi use
+caller-configured skill directories to isolate the fixture account from the OS
+home; this does not prove their default home-directory discovery.
+Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
+a named sticky profile with `HERMES_HOME` still pointing to its root.
+
+`verify:gemini-client` requires an installed Gemini CLI (verified with
+`@google/gemini-cli@0.63.0`); select it with `REA_VERIFY_GEMINI_COMMAND`.
+The optional POSIX lane uses native `GEMINI_CLI_HOME` discovery in an isolated
+Git project, checks setup plans, backups and idempotence, activates the installed
+personal skill, validates all forwarded input JSON Schemas against their declared
+dialect, forwards the complete REA catalog and checks full JavaScript
+Evidence for a Unicode path. Use `-- chat` for ordinary chat with REA enabled,
+or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed REA package.
+The local fixture exercises the real Gemini API adapter, including its
+`untrusted_context` tool-result envelope. Token counts are synthetic; live
+Google API and native Windows compatibility remain unverified. The lane disables
+the client's memory-based relaunch to preserve the caller's Node heap budget.
+
+`verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
+verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
+`REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
+installs the skill through `rea setup --skill`, writes the native Cordis MCP
+patch into an isolated `DSH_HOME`, and uses `DSH_AGENTS_HOME` for native personal
+skill discovery. A separate Git root prevents inherited project skills from
+masking a missing installation. The default `call` mode checks skill loading,
+complete catalog discovery, the actual forwarded input schemas and regexes,
+and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
+chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
+The fixture uses Harness's custom OpenAI adapter and the one-million-token
+context capacity declared by its default DeepSeek Flash model; it does not
+establish live DeepSeek API or native Windows coverage. Receipts include
+request artifacts, result digests and owned-process lineage.
+
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes an
 actual Foundation binary archive, runs the CLI and a separate stdio MCP

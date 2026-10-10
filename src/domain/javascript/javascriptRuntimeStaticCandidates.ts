@@ -2,6 +2,10 @@ import { posix, relative, win32 } from "node:path";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
+import {
+  logicalPathEscapesRoot,
+  normalizeJoinedLogicalPath,
+} from "../artifactIdentity.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ParsedStaticLayer } from "./javascriptRuntimeReconciliationParsing.js";
@@ -174,7 +178,7 @@ const nodePaths = (node: ApplicationNode): string[] => {
       paths.push(observation.evidence.location.value.path);
   }
   return paths
-    .map(normalizeArtifactPath)
+    .map(relativeLogicalPath)
     .filter(
       (path): path is string => path !== null && path !== "artifact-root",
     );
@@ -221,7 +225,7 @@ const pathBelowRoot = (root: string, value: string): string | null => {
     portableRemainder.startsWith("../")
   )
     return null;
-  return normalizeArtifactPath(portableRemainder);
+  return relativeLogicalPath(portableRemainder);
 };
 
 const absoluteFilePathStyle = (path: string): "posix" | "windows" | null => {
@@ -250,7 +254,7 @@ const pathBelowUrlPrefix = (prefix: string, value: string): string | null => {
   )
     return null;
   try {
-    return normalizeArtifactPath(
+    return relativeLogicalPath(
       decodeURIComponent(candidate.pathname.slice(base.pathname.length)),
     );
   } catch (cause: unknown) {
@@ -292,17 +296,13 @@ const pathWithinPrefix = (path: string, prefix: string): boolean =>
   prefix === "" || path === prefix || path.startsWith(`${prefix}/`);
 
 const safeArtifactPath = (prefix: string, suffix: string): string | null =>
-  normalizeArtifactPath(prefix === "" ? suffix : posix.join(prefix, suffix));
+  relativeLogicalPath(prefix === "" ? suffix : posix.join(prefix, suffix));
 
-const normalizeArtifactPath = (value: string): string | null => {
-  const normalized = posix
-    .normalize(value.replaceAll("\\", "/"))
-    .replace(/^\.\//u, "");
+const relativeLogicalPath = (value: string): string | null => {
+  const normalized = normalizeJoinedLogicalPath(value);
   return normalized !== "" &&
     normalized !== "." &&
-    normalized !== ".." &&
-    !normalized.startsWith("/") &&
-    !normalized.startsWith("../")
+    !logicalPathEscapesRoot(normalized)
     ? normalized
     : null;
 };

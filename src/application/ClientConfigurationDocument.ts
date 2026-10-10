@@ -1413,3 +1413,45 @@ export const clientRegistrationEntry = (
       };
   }
 };
+
+/** Parse one Gemini policy at its source boundary before consolidating scopes. */
+export const parseGeminiMcpPolicy = (parsed: ClientConfigurationDocument) =>
+  z
+    .object({
+      allowed: z.array(z.string()).optional(),
+      excluded: z.array(z.string()).optional(),
+    })
+    .passthrough()
+    .parse(parsed.document.mcp ?? {});
+
+/** Gemini consolidates excludes by union and allowlists by normalized intersection. */
+export const geminiServerPolicyBlock = (
+  policies: readonly ReturnType<typeof parseGeminiMcpPolicy>[],
+  serverKey: string,
+): string | undefined => {
+  if (policies.some(({ excluded }) => excluded?.includes(serverKey)))
+    return `Gemini mcp.excluded blocks ${serverKey}. Review the selected settings policies before rerunning setup.`;
+  const allowlists = policies.flatMap(({ allowed }) =>
+    allowed === undefined ? [] : [allowed],
+  );
+  const allowed = allowlists.reduce<string[] | undefined>(
+    (previous, current) => {
+      if (previous === undefined) return current;
+      const normalized = new Set(
+        current.map((name) => name.toLowerCase().trim()),
+      );
+      return previous.filter((name) =>
+        normalized.has(name.toLowerCase().trim()),
+      );
+    },
+    undefined,
+  );
+  // Gemini's manager applies the consolidated allowlist only when nonempty.
+  if (
+    allowed !== undefined &&
+    allowed.length > 0 &&
+    !allowed.includes(serverKey)
+  )
+    return `Gemini mcp.allowed does not include ${serverKey}. Review the selected settings policies before rerunning setup.`;
+  return undefined;
+};

@@ -65,7 +65,6 @@ const limitations = [
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
-  #cleanupFailure: AnalysisError | undefined;
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -115,7 +114,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         : AbortSignal.any([options.signal, deadline]);
     let outcome: Outcome;
     try {
-      if (this.#cleanupFailure !== undefined) return err(this.#cleanupFailure);
       if (signal.aborted) throw new AnalysisCancelledError(request.operation);
       const command = await resolveFirmwareCommand(
         this.environment,
@@ -316,29 +314,49 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
                       },
                     }),
       );
-      if (!outcome.ok && outcome.error.cleanupIncomplete) {
-        this.#cleanupFailure =
-          root === undefined ||
-          outcome.error.cleanupResources.includes(root.path)
-            ? outcome.error
-            : new ProviderCleanupError(
-                engineName,
-                [...outcome.error.cleanupResources, root.path],
-                outcome.error instanceof ProviderAdapterError
-                  ? (outcome.error.diagnostics ?? {
-                      reason: outcome.error.message,
-                    })
-                  : { reason: outcome.error.message },
-                { cause: outcome.error },
-              );
-      }
     }
     // Never remove a workspace while process ownership remains uncertain.
-    if (this.#cleanupFailure !== undefined) return err(this.#cleanupFailure);
-    try {
-      await root?.close();
-    } catch (cause: unknown) {
-      this.#cleanupFailure = new ProviderCleanupError(
+    // A leaked root stays recorded on this result and is not deleted. The next
+    // operation may create a new root; this failure is not replayed for it.
+    return finishFirmwareWorkspace(root, outcome, engineName, request);
+  }
+}
+
+/** Keep a completed extraction beside cleanup failure, or skip removal when ownership is uncertain. */
+export const finishFirmwareWorkspace = async (
+  root: { readonly path: string; close(): Promise<void> } | undefined,
+  outcome: Outcome,
+  engineName: string,
+  request: FirmwareRequest,
+): Promise<Outcome> => {
+  if (!outcome.ok && outcome.error.cleanupIncomplete) {
+    if (
+      root === undefined ||
+      outcome.error.cleanupResources.includes(root.path)
+    )
+      return outcome;
+    return err(
+      new ProviderCleanupError(
+        engineName,
+        [...outcome.error.cleanupResources, root.path],
+        outcome.error instanceof ProviderAdapterError
+          ? (outcome.error.diagnostics ?? { reason: outcome.error.message })
+          : { reason: outcome.error.message },
+        {
+          cause: outcome.error,
+          operation: request.operation,
+          ...(outcome.error.partialObservation === undefined
+            ? {}
+            : { partialObservation: outcome.error.partialObservation }),
+        },
+      ),
+    );
+  }
+  try {
+    await root?.close();
+  } catch (cause: unknown) {
+    return err(
+      new ProviderCleanupError(
         engineName,
         [
           root?.path ?? "unknown",
@@ -346,13 +364,23 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             ? [request.input.output_directory]
             : []),
         ],
+        { reason: cause instanceof Error ? cause.message : String(cause) },
         {
-          reason: cause instanceof Error ? cause.message : String(cause),
-          previous_result: outcome.ok ? outcome.value.result : null,
+          cause,
+          operation: request.operation,
+          ...(outcome.ok
+            ? {
+                partialObservation: {
+                  kind: "firmware",
+                  result: outcome.value.result,
+                },
+              }
+            : outcome.error.partialObservation === undefined
+              ? {}
+              : { partialObservation: outcome.error.partialObservation }),
         },
-      );
-      return err(this.#cleanupFailure);
-    }
-    return outcome;
+      ),
+    );
   }
-}
+  return outcome;
+};

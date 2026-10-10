@@ -20,13 +20,14 @@ import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlo
 import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.js";
 
 /** Project static object reads, writes, spreads, and destructuring. */
-export const projectSemanticObjects = (
+export function* projectSemanticObjects(
   context: SemanticFlowProjectionContext,
-): void => {
+): Generator<void, void> {
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
-  for (const operation of context.ir.objectOperations) {
+  for (const [index, operation] of context.ir.objectOperations.entries()) {
+    if (index % 64 === 0) yield;
     const occurrence = addObjectOccurrence(context, operation);
     const target = objectTarget(context, values, operation);
     const ends = objectRelationEnds(context, operation, occurrence, target);
@@ -43,7 +44,7 @@ export const projectSemanticObjects = (
     if (!resolved)
       addObjectUnknown(context, operation, target.slot ?? occurrence, target);
   }
-};
+}
 
 const OBJECT_RELATIONS = {
   read: "reads-property",

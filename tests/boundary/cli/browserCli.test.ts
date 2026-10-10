@@ -32,157 +32,156 @@ afterEach(async () => {
   await Promise.all(browsers.splice(0).map(async (browser) => browser.close()));
 });
 
-describe("browser CLI parity", () => {
-  it(
-    "returns the same Evidence discovery and inspection contracts",
-    async () => {
-      const browser = await startFakeCdpBrowser({
-        sessionTimeline: "same_origin",
-        webMcpTools: true,
-        sensitiveShapes: true,
-        commandEvents: partialScriptEvents,
-      });
-      browsers.push(browser);
-      const listed = await runCli(
-        ["list-browser-targets", browser.endpoint, "--json"],
-        process.env,
-      );
-      expect(listed).toMatchObject({
-        operation: "list_browser_targets",
-        provider: { id: "rea-cdp-browser" },
-        normalized_result: {
-          targets: expect.arrayContaining([
-            expect.objectContaining({ target_id: "allowed-page" }),
-            expect.objectContaining({ target_id: "disallowed-page" }),
-          ]),
+it(
+  "browser CLI parity returns the same Evidence discovery and inspection contracts",
+  async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "same_origin",
+      webMcpTools: true,
+      sensitiveShapes: true,
+      commandEvents: partialScriptEvents,
+      eventsBeforeReply: ["Network.enable"],
+    });
+    browsers.push(browser);
+    const listed = await runCli(
+      ["list-browser-targets", browser.endpoint, "--json"],
+      process.env,
+    );
+    expect(listed).toMatchObject({
+      operation: "list_browser_targets",
+      provider: { id: "rea-cdp-browser" },
+      normalized_result: {
+        targets: expect.arrayContaining([
+          expect.objectContaining({ target_id: "allowed-page" }),
+          expect.objectContaining({ target_id: "disallowed-page" }),
+        ]),
+      },
+    });
+    const inspected = await runCli(
+      [
+        "inspect-web-page",
+        browser.endpoint,
+        "allowed-page",
+        "--observation-ms",
+        "0",
+        "--include-console-text",
+        "--include-json-body-shapes",
+        "--include-websocket-shapes",
+        "--json",
+      ],
+      process.env,
+    );
+    expect(inspected).toMatchObject({
+      operation: "inspect_web_page",
+      provider: { id: "rea-cdp-browser" },
+      normalized_result: {
+        target: { target_id: "allowed-page" },
+        scripts: {
+          items: [{ cdp_hash: null, length: null, is_module: null }],
         },
-      });
-      const inspected = await runCli(
-        [
-          "inspect-web-page",
-          browser.endpoint,
-          "allowed-page",
-          "--observation-ms",
-          "0",
-          "--include-console-text",
-          "--include-json-body-shapes",
-          "--include-websocket-shapes",
-          "--json",
-        ],
-        process.env,
-      );
-      expect(inspected).toMatchObject({
-        operation: "inspect_web_page",
-        provider: { id: "rea-cdp-browser" },
-        normalized_result: {
-          target: { target_id: "allowed-page" },
-          scripts: {
-            items: [{ cdp_hash: null, length: null, is_module: null }],
-          },
-          network: {
-            prior_activity_available: false,
-            requests: [
-              expect.objectContaining({
-                body_shapes: expect.objectContaining({ status: "included" }),
-              }),
-            ],
-          },
-        },
-      });
-      const inspection = normalizedResult(inspected);
-      const compared = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify({ inspection }),
-          JSON.stringify({ inspection }),
-          "--json",
-        ],
-        process.env,
-      );
-      expect(compared).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          overall_status: "unknown",
-          dimensions: {
-            network: { status: "unknown", total_changes: 0 },
-          },
-        },
-      });
-      const scenarioCapture = completeScenarioCapture();
-      const scenarioCompared = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          '{"rules":[]}',
-          "--json",
-        ],
-        process.env,
-      );
-      expect(scenarioCompared).toMatchObject({
-        operation: "compare_web_captures",
-        normalized_result: {
-          comparison_kind: "browser_scenario",
-          overall_status: "unchanged",
-          alignment: { status: "aligned", aligned_steps: 2 },
-        },
-      });
-      const intentionalPolicy = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          JSON.stringify({
-            rules: [
-              {
-                rule_id: "domain",
-                artifacts: ["url"],
-                match: "app.example.test",
-                replacement: "normalized.test",
-              },
-            ],
-          }),
-          "--json",
-        ],
-        process.env,
-      );
-      expect(intentionalPolicy).toMatchObject({
-        normalized_result: {
-          normalization: { rules: [{ rule_id: "domain" }] },
-        },
-      });
-
-      const malformedPolicy = await runCli(
-        [
-          "compare-web-captures",
-          JSON.stringify(scenarioCapture),
-          JSON.stringify(scenarioCapture),
-          "--normalization-json",
-          "{invalid-policy",
-          "--json",
-        ],
-        process.env,
-      );
-      expect(malformedPolicy).toMatchObject({
-        error: "Browser observation failed",
-        code: "invalid_request",
-        details: {
-          operation: "compare_web_captures",
-          issues: [
-            {
-              path: ["normalization"],
-              reason: "invalid_format",
-              expected: "JSON",
-            },
+        network: {
+          prior_activity_available: false,
+          requests: [
+            expect.objectContaining({
+              body_shapes: expect.objectContaining({ status: "included" }),
+            }),
           ],
         },
-      });
-    },
-    INTEGRATION_TEST_TIMEOUT_MS,
-  );
-});
+      },
+    });
+    const inspection = normalizedResult(inspected);
+    const compared = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify({ inspection }),
+        JSON.stringify({ inspection }),
+        "--json",
+      ],
+      process.env,
+    );
+    expect(compared).toMatchObject({
+      operation: "compare_web_captures",
+      normalized_result: {
+        overall_status: "unknown",
+        dimensions: {
+          network: { status: "unknown", total_changes: 0 },
+        },
+      },
+    });
+    const scenarioCapture = completeScenarioCapture();
+    const scenarioCompared = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        '{"rules":[]}',
+        "--json",
+      ],
+      process.env,
+    );
+    expect(scenarioCompared).toMatchObject({
+      operation: "compare_web_captures",
+      normalized_result: {
+        comparison_kind: "browser_scenario",
+        overall_status: "unchanged",
+        alignment: { status: "aligned", aligned_steps: 2 },
+      },
+    });
+    const intentionalPolicy = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        JSON.stringify({
+          rules: [
+            {
+              rule_id: "domain",
+              artifacts: ["url"],
+              match: "app.example.test",
+              replacement: "normalized.test",
+            },
+          ],
+        }),
+        "--json",
+      ],
+      process.env,
+    );
+    expect(intentionalPolicy).toMatchObject({
+      normalized_result: {
+        normalization: { rules: [{ rule_id: "domain" }] },
+      },
+    });
+
+    const malformedPolicy = await runCli(
+      [
+        "compare-web-captures",
+        JSON.stringify(scenarioCapture),
+        JSON.stringify(scenarioCapture),
+        "--normalization-json",
+        "{invalid-policy",
+        "--json",
+      ],
+      process.env,
+    );
+    expect(malformedPolicy).toMatchObject({
+      error: "Browser observation failed",
+      code: "invalid_request",
+      details: {
+        operation: "compare_web_captures",
+        issues: [
+          {
+            path: ["normalization"],
+            reason: "invalid_format",
+            expected: "JSON",
+          },
+        ],
+      },
+    });
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
 
 describe("browser CLI capture parity", () => {
   it(

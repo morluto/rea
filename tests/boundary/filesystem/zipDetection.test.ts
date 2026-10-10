@@ -33,6 +33,80 @@ describe("ZIP signature detection", () => {
     },
   );
 
+  it("uses ZIP magic before the filename suffix", async () => {
+    const root = await createTestTempDirectory("rea-zip-suffix-");
+    const apk = join(root, "renamed.apk");
+    const program = join(root, "program.apk");
+    await writeFile(apk, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    await writeFile(program, Buffer.from([0x7f, 0x45, 0x4c, 0x46]));
+    expect(
+      (await classifyAndHashRoot(apk, false, await lstat(apk))).format,
+    ).toBe("apk");
+    expect(
+      (await classifyAndHashRoot(program, false, await lstat(program))).format,
+    ).toBe("elf");
+  });
+
+  it("requires container magic for asar, pkg, and dmg suffixes", async () => {
+    const root = await createTestTempDirectory("rea-container-magic-");
+    const asar = join(root, "app.asar");
+    const textAsar = join(root, "notes.asar");
+    const pkg = join(root, "install.pkg");
+    const textPkg = join(root, "notes.pkg");
+    const dmg = join(root, "image.dmg");
+    const textDmg = join(root, "notes.dmg");
+    const headerSize = 20;
+    await writeFile(
+      asar,
+      Buffer.from([
+        4,
+        0,
+        0,
+        0,
+        headerSize,
+        0,
+        0,
+        0,
+        headerSize - 4,
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        0x7b,
+        0x7d,
+      ]),
+    );
+    await writeFile(textAsar, Buffer.from("not an asar"));
+    await writeFile(pkg, Buffer.from("xar!"));
+    await writeFile(textPkg, Buffer.from("not a pkg"));
+    const image = Buffer.alloc(512);
+    image.write("koly", 0, "ascii");
+    await writeFile(dmg, image);
+    await writeFile(textDmg, Buffer.from("not a dmg"));
+    expect(
+      (await classifyAndHashRoot(asar, false, await lstat(asar))).format,
+    ).toBe("asar");
+    expect(
+      (await classifyAndHashRoot(textAsar, false, await lstat(textAsar)))
+        .format,
+    ).toBe("file");
+    expect(
+      (await classifyAndHashRoot(pkg, false, await lstat(pkg))).format,
+    ).toBe("pkg");
+    expect(
+      (await classifyAndHashRoot(textPkg, false, await lstat(textPkg))).format,
+    ).toBe("file");
+    expect(
+      (await classifyAndHashRoot(dmg, false, await lstat(dmg))).format,
+    ).toBe("dmg");
+    expect(
+      (await classifyAndHashRoot(textDmg, false, await lstat(textDmg))).format,
+    ).toBe("file");
+  });
+
   it.each([[], [0x50], [0x50, 0x4b], [0x50, 0x4b, 0x03]])(
     "rejects an incomplete signature %j",
     async (...bytes) => {

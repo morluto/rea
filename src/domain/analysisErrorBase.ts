@@ -98,6 +98,7 @@ import type { ArtifactInventoryPartialObservation } from "./artifactPartialObser
 import type { BrowserScenarioPartialObservation } from "./browserScenarioCapture.js";
 import type { Evidence } from "./evidence.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
+import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
@@ -109,4 +110,5 @@ export type AnalysisPartialObservation =
   | JavaScriptRuntimeObservation
   | ArtifactInventoryPartialObservation
   | Evidence
-  | AndroidPartialObservation;
+  | AndroidPartialObservation
+  | FirmwarePartialObservation;

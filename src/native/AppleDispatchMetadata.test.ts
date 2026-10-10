@@ -354,7 +354,7 @@ describe("byte-swapped universal Apple dispatch metadata", () => {
     const bytes = wrapped(false);
     bytes.writeUInt32BE(0xfeedface, 256);
     expect(() => decodeAppleDispatchMetadata(bytes, 100, provenance)).toThrow(
-      "Only little-endian 64-bit Mach-O metadata is supported",
+      "Unsupported 32-bit Mach-O metadata for requested CPU type arm64 (FAT header byte order: little-endian)",
     );
   });
 
