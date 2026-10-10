@@ -251,19 +251,9 @@ export const collectSemanticMemberMutations = (
           originAt: current.originAt,
         });
       } else {
-        if (
-          t.isArrayExpression(expression) &&
-          ((current.path[0] === "__proto__" &&
-            (effect === "escape" || current.path.length > 1)) ||
-            (current.path[0] === "constructor" &&
-              current.path[1] === "prototype"))
-        )
-          arrayIterationUnknown = true;
-        for (const value of referencedValues(
-          expression,
-          current.path,
-          effect,
-        )) {
+        for (const value of effect === "escape"
+          ? escapedReferenceLeaves(expression, current.path)
+          : expandedValues(expression, current.path, effect)) {
           if (value.iterableFallbackPath !== undefined)
             deferIterable({
               node: value.node,
@@ -290,45 +280,84 @@ export const collectSemanticMemberMutations = (
     mutation: t.Node,
     path: PropertyPath = [],
   ): void => markValue(node, path, new Set(), "escape", mutation);
-  const receiverEffects = new Set<string>();
+  function expandedValues(
+    expression: t.Node,
+    path: PropertyPath,
+    effect: ValueEffect,
+  ): readonly ReferencedValue[] {
+    if (
+      t.isArrayExpression(expression) &&
+      ((path[0] === "__proto__" && (effect === "escape" || path.length > 1)) ||
+        (path[0] === "constructor" && path[1] === "prototype"))
+    )
+      arrayIterationUnknown = true;
+    return referencedValues(expression, path, effect);
+  }
+  // Expanding a value below its references depends only on syntax, not on the
+  // escape site. Escaping an object reaches every method's results, so
+  // re-expanding it at each call through that object made N calls over N
+  // methods quadratic. Identifiers that resolve to the same binding and path
+  // are processed identically, so one stands for all of them.
+  const escapedLeaves = new WeakMap<
+    t.Node,
+    Map<string, readonly ReferencedValue[]>
+  >();
+  function escapedReferenceLeaves(
+    root: t.Node,
+    rootPath: PropertyPath,
+  ): readonly ReferencedValue[] {
+    // Parser recovery can leave an argument hole, which expands to nothing.
+    if (!t.isNode(root)) return [];
+    const rootKey = JSON.stringify(rootPath);
+    const cached = escapedLeaves.get(root)?.get(rootKey);
+    if (cached !== undefined) return cached;
+    const leaves: ReferencedValue[] = [];
+    const leafIdentities = new Set<string>();
+    const expanded = new WeakMap<t.Node, Set<string>>();
+    const pending = [...expandedValues(root, rootPath, "escape")];
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+      const value = pending[cursor];
+      if (value === undefined) break;
+      const node = unwrapJavaScriptExpression(value.node).node;
+      if (!t.isNode(node)) continue;
+      const pathKey = JSON.stringify(value.path);
+      if (t.isIdentifier(node) && value.iterableFallbackPath === undefined) {
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        const identity = JSON.stringify([
+          binding === undefined ? null : binding.bindingId,
+          binding === undefined ? node.name : null,
+          pathKey,
+        ]);
+        if (leafIdentities.has(identity)) continue;
+        leafIdentities.add(identity);
+        leaves.push(value);
+      } else if (
+        value.iterableFallbackPath !== undefined ||
+        t.isIdentifier(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node)
+      )
+        leaves.push(value);
+      else {
+        const paths = expanded.get(node) ?? new Set<string>();
+        if (paths.has(pathKey)) continue;
+        paths.add(pathKey);
+        expanded.set(node, paths);
+        pending.push(...expandedValues(node, value.path, "escape"));
+      }
+    }
+    const byPath = escapedLeaves.get(root) ?? new Map();
+    byPath.set(rootKey, leaves);
+    escapedLeaves.set(root, byPath);
+    return leaves;
+  }
   const markReceiver = (callee: t.Node, mutation: t.Node): void => {
     const expression = unwrapJavaScriptExpression(callee).node;
     if (
-      !t.isMemberExpression(expression) &&
-      !t.isOptionalMemberExpression(expression)
+      t.isMemberExpression(expression) ||
+      t.isOptionalMemberExpression(expression)
     )
-      return;
-    const receiver = unwrapJavaScriptExpression(expression.object).node;
-    if (t.isIdentifier(receiver)) {
-      const binding = resolveSemanticBindingState(
-        state,
-        receiver,
-        receiver.name,
-      );
-      if (binding !== undefined) {
-        const origins = semanticMutationInitializers(
-          binding,
-          mutation,
-          parents,
-        );
-        const identity = JSON.stringify([
-          binding.bindingId,
-          origins.initializers.map(({ node, projection }) => [
-            node.start,
-            node.end,
-            projection,
-          ]),
-          origins.referenceInitializers.map(({ node, projection }) => [
-            node.start,
-            node.end,
-            projection,
-          ]),
-        ]);
-        if (receiverEffects.has(identity)) return;
-        receiverEffects.add(identity);
-      }
-    }
-    markEscaped(receiver, mutation);
+      markEscaped(expression.object, mutation);
   };
   const markTarget = (node: t.Node, mutation: t.Node): void => {
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
