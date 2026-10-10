@@ -126,7 +126,10 @@ const hermesProfileDirectory = (
 
   let profile: string;
   try {
-    profile = readFileSync(path.join(directory, "active_profile"), "utf8").trim();
+    profile = readFileSync(
+      path.join(directory, "active_profile"),
+      "utf8",
+    ).trim();
   } catch {
     return directory;
   }
