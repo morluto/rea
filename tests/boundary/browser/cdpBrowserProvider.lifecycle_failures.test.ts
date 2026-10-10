@@ -10,6 +10,7 @@ import { observeWebSessionInputSchema } from "../../../src/domain/browserSession
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
+  type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
@@ -400,6 +401,90 @@ describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () =>
 });
 
 describe("CdpBrowserProvider: navigation commit and target identity", () => {
+  it.each([
+    ["flat browser session", {}],
+    [
+      "direct page session",
+      { pageScopedVersionWebSocket: true, omitTargetWebSocket: true },
+    ],
+  ] as const)(
+    "recovers Chromium's masked main-frame URL over a %s",
+    async (_label, transport) => {
+      const browser = await startFakeCdpBrowser({
+        attachedFrameUrl: ":",
+        ...transport,
+      });
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+
+      if (!result.ok) throw result.error;
+      expect(result.value.target).toMatchObject({
+        target_id: "allowed-page",
+        url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
+        origin: browser.allowedOrigin,
+      });
+      expect(result.value.frames[0]).toMatchObject({
+        frame_id: "frame-main",
+        url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
+        origin: browser.allowedOrigin,
+      });
+      expect(result.value.limitations).toContain(
+        "Chromium masked the main-frame URL in Page.getFrameTree; REA authorized and attributed the root frame using Target.getTargetInfo for the same attached target.",
+      );
+      expect(browser.commands.map(({ method }) => method)).toContain(
+        "Target.getTargetInfo",
+      );
+    },
+  );
+
+  it("fails closed when masked-frame target information leaves scope or changes identity", async () => {
+    const inspect = async (options: FakeOptions) => {
+      const browser = await startFakeCdpBrowser({
+        attachedFrameUrl: ":",
+        ...options,
+      });
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      return { browser, result };
+    };
+
+    const outside = await inspect({
+      targetInfoUrl: "https://private.example.test/masked",
+    });
+    expect(outside.result).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "target_not_allowed" },
+    });
+    expect(outside.browser.commands.map(({ method }) => method)).not.toContain(
+      "DOMSnapshot.captureSnapshot",
+    );
+
+    const mismatched = await inspect({ targetInfoTargetId: "other-page" });
+    expect(mismatched.result).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+    });
+    expect(
+      mismatched.browser.commands.map(({ method }) => method),
+    ).not.toContain("DOMSnapshot.captureSnapshot");
+  });
+});
+
+describe("CdpBrowserProvider: navigation commit", () => {
   it("waits for navigation commit and rechecks the attached main-frame origin", async () => {
     const transitioning = await startFakeCdpBrowser({
       transitionalFrameReads: 2,

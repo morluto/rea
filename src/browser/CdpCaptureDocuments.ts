@@ -17,15 +17,21 @@ export type CapturedResource = Omit<
   "resource_key"
 > & { readonly rawUrl: string };
 
+interface CaptureFramesOptions {
+  readonly maximum?: number;
+  readonly completeness?: CdpCaptureCompleteness;
+  readonly verifiedMainFrameUrl?: string | undefined;
+}
+
 /** Normalize every allowed frame, optionally selecting a leading frame. */
 export const captureFrames = (
   result: unknown,
   allowedOrigins: ReadonlySet<string>,
-  maximum?: number,
-  completeness?: CdpCaptureCompleteness,
+  options: CaptureFramesOptions = {},
 ): {
   readonly items: WebPageInspection["frames"];
 } => {
+  const { maximum, completeness, verifiedMainFrameUrl } = options;
   const root = recordValue(recordValue(result)?.frameTree);
   if (root === undefined) {
     completeness?.exclude("frames", "invalid_protocol_value");
@@ -37,7 +43,12 @@ export const captureFrames = (
   )) {
     const frame = recordValue(tree.frame);
     const frameId = cdpStringValue(frame?.id);
-    const sanitized = allowedSanitizedUrl(frame?.url, allowedOrigins);
+    const sanitized = allowedSanitizedUrl(
+      tree === root && verifiedMainFrameUrl !== undefined
+        ? verifiedMainFrameUrl
+        : frame?.url,
+      allowedOrigins,
+    );
     if (frame === undefined || frameId === undefined) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;

@@ -11,7 +11,10 @@ import {
 } from "../../domain/webRuntime.js";
 import type { z } from "zod";
 import { authorizeCdpTarget } from "../CdpAuthorizedTarget.js";
-import { authorizedMainFrame } from "../CdpAuthorizedMainFrame.js";
+import {
+  authorizedMainFrame,
+  reconcileMainFrame,
+} from "../CdpAuthorizedMainFrame.js";
 import {
   discoverCdpEndpoint,
   type CdpEndpointDiscovery,
@@ -68,16 +71,16 @@ export class CdpRuntimeSession {
         { maxPayloadBytes: WEB_RUNTIME_LIMITS.protocolBytes },
       );
       try {
-        const tree = runtimeFrameTreeSchema.parse(
-          await authorizedMainFrame({
-            ...transport,
-            allowedOrigins,
-            signal,
-            operation,
-          }),
-        );
+        const snapshot = await authorizedMainFrame({
+          ...transport,
+          targetId: target.id,
+          allowedOrigins,
+          signal,
+          operation,
+        });
+        const tree = runtimeFrameTreeSchema.parse(snapshot.frameTree);
         const frame = tree.frameTree.frame;
-        const url = sanitizeBrowserUrl(frame.url);
+        const url = sanitizeBrowserUrl(snapshot.url ?? "");
         if (url.origin === null)
           throw new BrowserObservationError(operation, "target_not_allowed");
         return new CdpRuntimeSession(
@@ -149,10 +152,17 @@ export class CdpRuntimeSession {
 
   /** Check document identity before joining any live node or final coverage evidence. */
   async assertDocument(): Promise<void> {
-    const frame = runtimeFrameTreeSchema.parse(
-      await this.command("Page.getFrameTree"),
-    ).frameTree.frame;
-    const url = sanitizeBrowserUrl(frame.url);
+    const frameTree = await this.command("Page.getFrameTree");
+    const snapshot = await reconcileMainFrame({
+      frameTree,
+      targetId: this.target.target_id,
+      operation: this.operation,
+      getTargetInfo: () => this.command("Target.getTargetInfo"),
+      getFrameTree: () => this.command("Page.getFrameTree"),
+    });
+    const frame = runtimeFrameTreeSchema.parse(snapshot.frameTree).frameTree
+      .frame;
+    const url = sanitizeBrowserUrl(snapshot.url ?? "");
     if (
       frame.id !== this.target.frame_id ||
       (frame.loaderId ?? null) !== this.target.loader_id ||

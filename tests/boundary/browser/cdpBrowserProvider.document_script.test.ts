@@ -255,6 +255,128 @@ describe("CdpBrowserProvider: transient WebMCP frames", () => {
   });
 });
 
+describe("CdpBrowserProvider: masked WebMCP main frame", () => {
+  it("attributes tools through verified masked-frame recovery", async () => {
+    const browser = await startFakeCdpBrowser({
+      attachedFrameUrl: ":",
+      webMcpTools: true,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.target).toMatchObject({
+      url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
+      origin: browser.allowedOrigin,
+    });
+    expect(result.value.tools.items).toContainEqual(
+      expect.objectContaining({
+        name: "search_orders",
+        frame_id: "frame-main",
+        frame_url: `${browser.allowedOrigin}/app?token=page-secret#fragment`,
+        owner_origin: browser.allowedOrigin,
+      }),
+    );
+    expect(result.value.limitations).toContain(
+      "Chromium masked the main-frame URL in Page.getFrameTree; REA authorized and attributed the root frame using Target.getTargetInfo for the same attached target.",
+    );
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).toContain("Target.getTargetInfo");
+    expect(methods).not.toContain("WebMCP.invokeTool");
+    expect(methods).not.toContain("Runtime.evaluate");
+  });
+
+  it("applies child-frame scope changes observed during masked recovery", async () => {
+    const browser = await startFakeCdpBrowser({
+      attachedFrameUrl: ":",
+      webMcpTools: true,
+      extraCollections: true,
+      commandEvents: (command) =>
+        command.method === "Target.getTargetInfo"
+          ? [
+              {
+                method: "Page.frameNavigated",
+                ...(command.sessionId === undefined
+                  ? {}
+                  : { sessionId: command.sessionId }),
+                params: {
+                  frame: {
+                    id: "frame-child",
+                    parentId: "frame-main",
+                    loaderId: "escaped-child",
+                    url: "https://private.example.test/recovered-child",
+                  },
+                },
+              },
+            ]
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    const names = result.value.tools.items.map(({ name }) => name);
+    expect(names).toEqual(
+      expect.arrayContaining(["search_orders", "update_order"]),
+    );
+    expect(names).not.toContain("child_tool");
+    expect(JSON.stringify(result.value)).not.toContain(
+      "cross-origin-child-secret",
+    );
+  });
+
+  it("fails closed when masked recovery exceeds the frame-event backlog", async () => {
+    const browser = await startFakeCdpBrowser({
+      attachedFrameUrl: ":",
+      webMcpTools: true,
+      commandEvents: (command) =>
+        command.method === "Target.getTargetInfo"
+          ? Array.from({ length: 257 }, (_, index) => ({
+              method: "Page.navigatedWithinDocument",
+              ...(command.sessionId === undefined
+                ? {}
+                : { sessionId: command.sessionId }),
+              params: {
+                frameId: "frame-main",
+                url: `https://private.example.test/${String(index)}`,
+              },
+            }))
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "BrowserObservationError", reason: "payload_limit" },
+    });
+    expect(browser.commands.map(({ method }) => method)).not.toContain(
+      "WebMCP.enable",
+    );
+  });
+});
+
 describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
   it("discovers untrusted WebMCP declarations without registering or invoking them", async () => {
     const browser = await startFakeCdpBrowser({ webMcpTools: true });

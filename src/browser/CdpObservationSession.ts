@@ -8,7 +8,12 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection, type CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
-import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
+import {
+  authorizedMainFrame,
+  MASKED_MAIN_FRAME_EVENT_LIMITATION,
+  MASKED_MAIN_FRAME_LIMITATION,
+  reconcileMainFrame,
+} from "./CdpAuthorizedMainFrame.js";
 import {
   allowedSanitizedUrl,
   isHttpUrl,
@@ -17,7 +22,6 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { isMainFrameNavigation } from "./CdpCaptureEventHelpers.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
 
@@ -50,12 +54,13 @@ export const observeCdpSession = async (
   const initial = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
+    targetId: context.target.id,
     signal: context.signal,
     allowedOrigins,
     operation: "observe_web_session",
   });
-  const initialUrl = mainFrameUrl(initial) ?? "";
-  const mainFrameId = frameId(initial);
+  const initialUrl = initial.url ?? "";
+  const mainFrameId = frameId(initial.frameTree);
   if (mainFrameId === undefined)
     throw new BrowserObservationError("inspect_web_page", "protocol_error");
   const capture = new TimelineCapture(allowedOrigins, mainFrameId, initialUrl);
@@ -125,6 +130,13 @@ export const observeCdpSession = async (
         "The timeline begins after REA attaches; earlier navigation and network activity is unavailable.",
         "Only navigation metadata is retained; headers, bodies, cookies, console values, and payloads are not captured by this tool.",
         "An out-of-policy destination ends collection immediately and is recorded without its URL.",
+        ...(initial.urlSource === "target_info" ||
+        capture.maskedMainFrameRecovered
+          ? [MASKED_MAIN_FRAME_LIMITATION]
+          : []),
+        ...(capture.maskedMainFrameEventObserved
+          ? [MASKED_MAIN_FRAME_EVENT_LIMITATION]
+          : []),
       ],
     };
   } finally {
@@ -137,6 +149,8 @@ class TimelineCapture {
   readonly timeline: TimelineEvent[] = [];
   readonly completeness = new CdpCaptureCompleteness(["timeline"]);
   finalUrl: string | null;
+  maskedMainFrameRecovered = false;
+  maskedMainFrameEventObserved = false;
   #sequence = 0;
   #pendingReload = false;
   #endReason: EndReason | undefined;
@@ -238,7 +252,10 @@ class TimelineCapture {
     });
     this.#pendingReload = false;
     if (destination.scope === "approved") this.finalUrl = destination.url;
-    else {
+    else if (rawUrl === ":") {
+      this.finalUrl = null;
+      this.maskedMainFrameEventObserved = true;
+    } else {
       this.finalUrl = null;
       this.completeness.exclude("timeline", "out_of_target_scope");
       this.end("target_left_scope");
@@ -257,7 +274,10 @@ class TimelineCapture {
       detail: null,
     });
     if (destination.scope === "approved") this.finalUrl = destination.url;
-    else {
+    else if (rawUrl === ":") {
+      this.finalUrl = null;
+      this.maskedMainFrameEventObserved = true;
+    } else {
       this.finalUrl = null;
       this.completeness.exclude("timeline", "out_of_target_scope");
       this.end("target_left_scope");
@@ -370,13 +390,34 @@ const captureFinalUrl = async (
   capture: TimelineCapture,
   allowedOrigins: ReadonlySet<string>,
 ): Promise<EndReason> => {
-  const result = await context.connection.send(
+  const frameTree = await context.connection.send(
     "Page.getFrameTree",
     {},
     context.sessionId,
     context.signal,
   );
-  const url = mainFrameUrl(result);
+  const snapshot = await reconcileMainFrame({
+    frameTree,
+    targetId: context.target.id,
+    operation: "observe_web_session",
+    getTargetInfo: () =>
+      context.connection.send(
+        "Target.getTargetInfo",
+        {},
+        context.sessionId,
+        context.signal,
+      ),
+    getFrameTree: () =>
+      context.connection.send(
+        "Page.getFrameTree",
+        {},
+        context.sessionId,
+        context.signal,
+      ),
+  });
+  if (snapshot.urlSource === "target_info")
+    capture.maskedMainFrameRecovered = true;
+  const url = snapshot.url;
   if (
     url !== undefined &&
     allowedSanitizedUrl(url, allowedOrigins) !== undefined

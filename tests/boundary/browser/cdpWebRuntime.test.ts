@@ -32,6 +32,36 @@ const fixture = async (options: FakeOptions = {}) => {
 };
 
 describe("native runtime producer boundary", () => {
+  it("uses matching target information when Chromium masks the main-frame URL", async () => {
+    const { browser, provider, execution } = await fixture({
+      commandResult: (command) =>
+        command.method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  url: ":",
+                  loaderId: "document-1",
+                },
+              },
+            }
+          : undefined,
+    });
+    const result = await provider.observeExecution(execution);
+
+    if (!result.ok) throw result.error;
+    expect(result.value.target).toMatchObject({
+      target_id: "allowed-page",
+      initial_url: `${browser.endpoint}/app?token=page-secret#fragment`,
+      origin: browser.endpoint,
+      frame_id: "runtime-main",
+      loader_id: "document-1",
+    });
+    expect(browser.commands.map(({ method }) => method)).toContain(
+      "Target.getTargetInfo",
+    );
+  });
+
   it("binds complete producer stacks by script ID and ignores foreign sessions without URL guessing", async () => {
     const { browser, provider, execution } = await fixture();
     const params = {

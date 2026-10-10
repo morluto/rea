@@ -68,6 +68,8 @@ export interface FakeOptions {
   readonly transitionalFrameReads?: number;
   readonly attachedFrameUrl?: string;
   readonly frameUrlAfterFirstRead?: string;
+  readonly targetInfoUrl?: string;
+  readonly targetInfoTargetId?: string;
   readonly navigateDuringObservationUrl?: string;
   readonly navigateDuringCaptureUrl?: string;
   readonly navigateDuringScreenshotUrl?: string;

@@ -31,6 +31,28 @@ describe("CDP document capture", () => {
     expect(resources.items).toHaveLength(2_000);
   });
 
+  it("applies a verified URL only to the opaque root frame", () => {
+    const capture = captureFrames(
+      {
+        frameTree: {
+          frame: { id: "main", url: ":" },
+          childFrames: [{ frame: { id: "child", parentId: "main", url: ":" } }],
+        },
+      },
+      new Set([origin]),
+      { verifiedMainFrameUrl: `${origin}/app` },
+    );
+
+    expect(capture.items).toEqual([
+      {
+        frame_id: "main",
+        parent_frame_id: null,
+        url: `${origin}/app`,
+        origin,
+      },
+    ]);
+  });
+
   it("retains full approved accessibility text", () => {
     const capture = captureAccessibility(
       [

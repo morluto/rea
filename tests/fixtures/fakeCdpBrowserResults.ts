@@ -26,6 +26,8 @@ export const resultFor = (
       return screenshotResult();
     case "Target.getTargets":
       return { targetInfos: targets(port, options).map(endpointTargetToInfo) };
+    case "Target.getTargetInfo":
+      return targetInfoResult(port, options);
     case "Storage.getUsageAndQuota":
       return storageUsageResult();
     case "DOMStorage.getDOMStorageItems":
@@ -80,7 +82,7 @@ const frameTreeResult = (
     frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
       ? options.frameUrlAfterFirstRead
       : frameTreeReads <= (options.transitionalFrameReads ?? 0)
-        ? ":"
+        ? ""
         : (options.electronFileUrl ?? options.attachedFrameUrl),
     options.extraCollections === true,
     options.webMcpSameUrlRegistrations === undefined
@@ -250,6 +252,24 @@ const endpointTargetToInfo = (
     ? {}
     : { parentFrameId: target.parentFrameId }),
 });
+
+const targetInfoResult = (port: number, options: FakeOptions) => {
+  const target = targets(port, options).find(
+    ({ id }) => id === versionTargetId(options),
+  );
+  if (target === undefined) return { targetInfo: {} };
+  return {
+    targetInfo: {
+      ...endpointTargetToInfo(target),
+      ...(options.targetInfoTargetId === undefined
+        ? {}
+        : { targetId: options.targetInfoTargetId }),
+      ...(options.targetInfoUrl === undefined
+        ? {}
+        : { url: options.targetInfoUrl }),
+    },
+  };
+};
 
 const frameTree = (
   port: number,

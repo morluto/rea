@@ -21,12 +21,12 @@ import {
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import {
-  captureFrames,
-  mainFrameUrl,
-  walkFrameTrees,
-} from "./CdpCaptureDocuments.js";
+import { captureFrames, walkFrameTrees } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
+import {
+  authorizedMainFrame,
+  MASKED_MAIN_FRAME_LIMITATION,
+} from "./CdpAuthorizedMainFrame.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -37,6 +37,8 @@ interface DiscoveryContext {
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
 }
+
+const MAX_PENDING_FRAME_EVENTS = 256;
 
 /** Discover WebMCP registrations without evaluating or invoking page code. */
 export const discoverWebMcp = async (
@@ -54,51 +56,60 @@ export const discoverWebMcp = async (
     context.sessionId,
     context.signal,
   );
-  const frameTree = await context.connection.send(
-    "Page.getFrameTree",
-    {},
-    context.sessionId,
-    context.signal,
-  );
-  const initialUrl = mainFrameUrl(frameTree);
-  if (allowedSanitizedUrl(initialUrl, origins) === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  const frames = captureFrames(
-    frameTree,
-    origins,
-    undefined,
-    completeness,
-  ).items;
-  const frameUrls = initialFrameScope(frameTree, frames, completeness);
   const tools = new Map<string, WebMcpDiscovery["tools"]["items"][number]>();
-  const frameScope = {
-    origins,
-    frames: frameUrls,
-    tools,
-    completeness,
-    transientFrames: new Set<string>(),
-    resolvedTransientFrames: new Set<string>(),
-  };
+  const pendingEvents: CdpEvent[] = [];
+  let pendingEventsOverflow = false;
+  let frameScope: FrameScopeState | undefined;
   const removeListener = context.connection.onEvent((event) => {
     if (event.sessionId !== context.sessionId) return;
-    if (ingestFrameScopeEvent(event, frameScope)) return;
-    ingestWebMcpEvent({
-      event,
-      input: context.input,
+    if (frameScope === undefined) {
+      if (isFrameScopeEvent(event.method)) {
+        if (pendingEvents.length >= MAX_PENDING_FRAME_EVENTS)
+          pendingEventsOverflow = true;
+        else pendingEvents.push(event);
+      }
+    } else ingestDiscoveryEvent(event, frameScope, context.input);
+  });
+  try {
+    const initialFrame = await authorizedMainFrame({
+      connection: context.connection,
+      sessionId: context.sessionId,
+      targetId: context.target.id,
+      signal: context.signal,
+      allowedOrigins: origins,
+      operation: "discover_webmcp_tools",
+    });
+    if (initialFrame.urlSource === "target_info")
+      limitations.push(MASKED_MAIN_FRAME_LIMITATION);
+    if (pendingEventsOverflow)
+      throw new BrowserObservationError(
+        "discover_webmcp_tools",
+        "payload_limit",
+      );
+    const frameTree = initialFrame.frameTree;
+    const initialUrl = initialFrame.url;
+    const frames = captureFrames(frameTree, origins, {
+      completeness,
+      verifiedMainFrameUrl: initialFrame.url,
+    }).items;
+    const frameUrls = initialFrameScope(frameTree, frames, completeness);
+    frameScope = {
+      origins,
       frames: frameUrls,
       tools,
       completeness,
-      transientFrames: frameScope.transientFrames,
-      resolvedTransientFrames: frameScope.resolvedTransientFrames,
+      transientFrames: new Set<string>(),
+      resolvedTransientFrames: new Set<string>(),
+    };
+    for (const event of pendingEvents)
+      ingestDiscoveryEvent(event, frameScope, context.input);
+    pendingEvents.length = 0;
+    await context.progress?.report({
+      phase: "browser_observation",
+      completed: 1,
+      total: 2,
+      message: "Enabling passive WebMCP discovery",
     });
-  });
-  await context.progress?.report({
-    phase: "browser_observation",
-    completed: 1,
-    total: 2,
-    message: "Enabling passive WebMCP discovery",
-  });
-  try {
     const enabled = await optionalCdpCommand(
       context,
       "WebMCP.enable",
@@ -115,12 +126,21 @@ export const discoverWebMcp = async (
         "discover_webmcp_tools",
         context.signal,
       );
-    await assertStableAuthorizedFrame(context, initialUrl, origins);
+    const finalFrame = await assertStableAuthorizedFrame(
+      context,
+      initialUrl,
+      origins,
+    );
+    if (
+      finalFrame.urlSource === "target_info" &&
+      !limitations.includes(MASKED_MAIN_FRAME_LIMITATION)
+    )
+      limitations.push(MASKED_MAIN_FRAME_LIMITATION);
     if (frameScope.transientFrames.size > 0)
       completeness.attachLimited("webmcp_tools");
     return buildWebMcpResult({
       context,
-      frameTree,
+      targetUrl: initialUrl,
       tools,
       completeness,
       limitations,
@@ -137,6 +157,28 @@ export const discoverWebMcp = async (
     });
   }
 };
+
+const ingestDiscoveryEvent = (
+  event: CdpEvent,
+  state: FrameScopeState,
+  input: DiscoverWebMcpToolsInput,
+): void => {
+  if (ingestFrameScopeEvent(event, state)) return;
+  ingestWebMcpEvent({
+    event,
+    input,
+    frames: state.frames,
+    tools: state.tools,
+    completeness: state.completeness,
+    transientFrames: state.transientFrames,
+    resolvedTransientFrames: state.resolvedTransientFrames,
+  });
+};
+
+const isFrameScopeEvent = (method: string): boolean =>
+  method === "Page.frameDetached" ||
+  method === "Page.frameNavigated" ||
+  method === "Page.navigatedWithinDocument";
 
 interface FrameScopeState {
   readonly origins: ReadonlySet<string>;
@@ -303,7 +345,7 @@ const removeFrameTools = (
 };
 
 const isTransientFrameUrl = (url: string | undefined): boolean =>
-  url === "" || url === "about:blank" || url === "about:srcdoc";
+  url === "" || url === ":" || url === "about:blank" || url === "about:srcdoc";
 
 const removeFrame = (
   frameId: string,
@@ -328,18 +370,18 @@ const assertStableAuthorizedFrame = async (
   context: DiscoveryContext,
   initialUrl: string | undefined,
   origins: ReadonlySet<string>,
-): Promise<void> => {
-  const finalTree = await context.connection.send(
-    "Page.getFrameTree",
-    {},
-    context.sessionId,
-    context.signal,
-  );
-  const finalUrl = mainFrameUrl(finalTree);
-  if (allowedSanitizedUrl(finalUrl, origins) === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  if (finalUrl !== initialUrl)
+): ReturnType<typeof authorizedMainFrame> => {
+  const finalFrame = await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    targetId: context.target.id,
+    signal: context.signal,
+    allowedOrigins: origins,
+    operation: "discover_webmcp_tools",
+  });
+  if (finalFrame.url !== initialUrl)
     throw new BrowserObservationError("inspect_web_page", "target_changed");
+  return finalFrame;
 };
 
 interface WebMcpIngestOptions {
@@ -463,7 +505,7 @@ const registrationSource = (
 
 interface WebMcpResultOptions {
   readonly context: DiscoveryContext;
-  readonly frameTree: unknown;
+  readonly targetUrl: string | undefined;
   readonly tools: ReadonlyMap<
     string,
     WebMcpDiscovery["tools"]["items"][number]
@@ -474,11 +516,10 @@ interface WebMcpResultOptions {
 }
 
 const buildWebMcpResult = (options: WebMcpResultOptions): WebMcpDiscovery => {
-  const { context, frameTree, tools, completeness, limitations, available } =
+  const { context, targetUrl, tools, completeness, limitations, available } =
     options;
-  const targetUrl = mainFrameUrl(frameTree) ?? context.target.url;
   const sanitized = allowedSanitizedUrl(
-    targetUrl,
+    targetUrl ?? context.target.url,
     new Set(context.input.allowed_origins),
   );
   return {

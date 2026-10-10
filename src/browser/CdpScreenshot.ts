@@ -13,10 +13,15 @@ import {
   recordValue,
   cdpStringValue,
 } from "./CdpCaptureValues.js";
-import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { captureFrames } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { decodeCanonicalBase64 } from "../domain/webScreenshot.js";
+import {
+  authorizedMainFrame,
+  type CdpMainFrameSnapshot,
+  MASKED_MAIN_FRAME_LIMITATION,
+  reconcileMainFrame,
+} from "./CdpAuthorizedMainFrame.js";
 
 interface ScreenshotContext {
   readonly connection: CdpConnection;
@@ -45,19 +50,24 @@ export const captureCdpScreenshot = async (
     context.sessionId,
     context.signal,
   );
-  const before = await context.connection.send(
-    "Page.getFrameTree",
-    {},
-    context.sessionId,
-    context.signal,
-  );
-  const beforeUrl = mainFrameUrl(before);
+  const before = await authorizedMainFrame({
+    connection: context.connection,
+    sessionId: context.sessionId,
+    targetId: context.target.id,
+    signal: context.signal,
+    allowedOrigins: origins,
+    operation: "capture_web_screenshot",
+  });
+  const beforeUrl = before.url;
   const authorized = allowedSanitizedUrl(beforeUrl, origins);
-  const mainFrame = captureFrames(before, origins, 1).items[0];
+  const mainFrame = captureFrames(before.frameTree, origins, {
+    maximum: 1,
+    verifiedMainFrameUrl: before.url,
+  }).items[0];
   if (authorized === undefined || mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const initialFrame = recordValue(
-    recordValue(recordValue(before)?.frameTree)?.frame,
+    recordValue(recordValue(before.frameTree)?.frameTree)?.frame,
   );
   const navigation = {
     changed: false,
@@ -70,7 +80,7 @@ export const captureCdpScreenshot = async (
     observeScreenshotNavigation(event, mainFrame.frame_id, origins, navigation);
   });
   let result: ReturnType<typeof recordValue>;
-  let after: unknown;
+  let after: CdpMainFrameSnapshot | undefined;
   try {
     result = recordValue(
       await context.connection.send(
@@ -80,12 +90,31 @@ export const captureCdpScreenshot = async (
         context.signal,
       ),
     );
-    after = await context.connection.send(
+    const afterTree = await context.connection.send(
       "Page.getFrameTree",
       {},
       context.sessionId,
       context.signal,
     );
+    after = await reconcileMainFrame({
+      frameTree: afterTree,
+      targetId: context.target.id,
+      operation: "capture_web_screenshot",
+      getTargetInfo: () =>
+        context.connection.send(
+          "Target.getTargetInfo",
+          {},
+          context.sessionId,
+          context.signal,
+        ),
+      getFrameTree: () =>
+        context.connection.send(
+          "Page.getFrameTree",
+          {},
+          context.sessionId,
+          context.signal,
+        ),
+    });
   } finally {
     removeListener();
   }
@@ -97,7 +126,7 @@ export const captureCdpScreenshot = async (
   const dimensions = pngDimensions(bytes);
   if (navigation.leftScope)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
-  const afterUrl = mainFrameUrl(after);
+  const afterUrl = after?.url;
   if (
     navigation.changed ||
     afterUrl !== beforeUrl ||
@@ -125,6 +154,10 @@ export const captureCdpScreenshot = async (
     limitations: [
       "The screenshot contains the visible viewport, including on-screen content.",
       "REA does not scroll, evaluate JavaScript, or capture beyond the current viewport.",
+      ...(before.urlSource === "target_info" ||
+      after?.urlSource === "target_info"
+        ? [MASKED_MAIN_FRAME_LIMITATION]
+        : []),
     ],
   };
 };

@@ -7,7 +7,11 @@ import { stableWebResources } from "../domain/webInventory.js";
 import type { CdpEndpointDiscovery, CdpEndpointTarget } from "./CdpEndpoint.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
-import { authorizedMainFrame } from "./CdpAuthorizedMainFrame.js";
+import {
+  authorizedMainFrame,
+  MASKED_MAIN_FRAME_LIMITATION,
+  type CdpMainFrameSnapshot,
+} from "./CdpAuthorizedMainFrame.js";
 import { captureStorage } from "./CdpCaptureStorage.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
@@ -17,7 +21,6 @@ import {
   captureFrames,
   captureResources,
   type CapturedResource,
-  mainFrameUrl,
 } from "./CdpCaptureDocuments.js";
 import {
   allowedSanitizedUrl,
@@ -101,20 +104,20 @@ const captureAuthorizedPage = async (
   const { connection, sessionId, input, signal } = context;
   await authorizeObservationWindow(state);
   await captureJsonResponseBodies(state);
-  const frameResult = await authorizedMainFrame({
+  const frameSnapshot = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
+    targetId: context.target.id,
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
   });
-  const attachedUrl = mainFrameUrl(frameResult) ?? "";
-  const frameCapture = captureFrames(
-    frameResult,
-    allowedOrigins,
-    undefined,
-    state.events.completeness,
-  );
+  recordMainFrameLimitation(limitations, frameSnapshot);
+  const attachedUrl = frameSnapshot.url ?? "";
+  const frameCapture = captureFrames(frameSnapshot.frameTree, allowedOrigins, {
+    completeness: state.events.completeness,
+    verifiedMainFrameUrl: frameSnapshot.url,
+  });
   const frames = frameCapture.items;
   const captureFrame = frames[0];
   if (captureFrame === undefined)
@@ -148,14 +151,16 @@ const captureAuthorizedPage = async (
   );
   if (!input.include_storage_keys)
     state.events.completeness.exclude("storage_keys", "not_approved", null);
-  const completedFrameResult = await authorizedMainFrame({
+  const completedFrameSnapshot = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
+    targetId: context.target.id,
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
   });
-  const completedUrl = mainFrameUrl(completedFrameResult) ?? "";
+  recordMainFrameLimitation(limitations, completedFrameSnapshot);
+  const completedUrl = completedFrameSnapshot.url ?? "";
   if (state.events.originViolation)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   if (state.events.navigationDuringCapture || completedUrl !== attachedUrl)
@@ -232,11 +237,17 @@ const authorizeObservationWindow = async (
   const initialFrameResult = await authorizedMainFrame({
     connection: context.connection,
     sessionId: context.sessionId,
+    targetId: context.target.id,
     signal: context.signal,
     allowedOrigins,
     operation: context.operation,
   });
-  const mainFrame = captureFrames(initialFrameResult, allowedOrigins).items[0];
+  recordMainFrameLimitation(state.limitations, initialFrameResult);
+  const mainFrame = captureFrames(
+    initialFrameResult.frameTree,
+    allowedOrigins,
+    { verifiedMainFrameUrl: initialFrameResult.url },
+  ).items[0];
   if (mainFrame === undefined)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   events.beginAuthorizedFrame(mainFrame.frame_id);
@@ -368,6 +379,17 @@ const accessibilityForFrames = async (
 
 const publicResource = ({ rawUrl: _rawUrl, ...resource }: CapturedResource) =>
   resource;
+
+const recordMainFrameLimitation = (
+  limitations: string[],
+  snapshot: CdpMainFrameSnapshot,
+): void => {
+  if (
+    snapshot.urlSource === "target_info" &&
+    !limitations.includes(MASKED_MAIN_FRAME_LIMITATION)
+  )
+    limitations.push(MASKED_MAIN_FRAME_LIMITATION);
+};
 
 const deduplicatedAgentHints = (
   hints: WebPageInspection["metadata"]["agent_hints"],
