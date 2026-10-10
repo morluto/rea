@@ -362,11 +362,14 @@ const artifactMessage = ({
 };
 
 const artifactPathMessage = (detail: string | undefined): string => {
-  // Kept in step with DESTINATION_CASE_COLLISION_PREFIX. Domain does not import
-  // the artifact adapter that produces the detail.
+  // Keep destination identity refusals visible. Domain does not import the
+  // artifact adapter that produces the detail.
   if (
     detail !== undefined &&
-    detail.startsWith("Destination filesystem cannot store both ")
+    (detail.startsWith("Destination filesystem cannot store both ") ||
+      detail.startsWith(
+        "Windows destination cannot materialize artifact path as a regular file:",
+      ))
   )
     return detail;
   if (

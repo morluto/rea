@@ -152,6 +152,12 @@ export class SafeOutputTree {
           `Invalid expected extraction size for ${relativePath}`,
         );
       const path = normalizeArtifactPath(relativePath);
+      // Win32 interprets a colon in any component as stream syntax, not a literal name.
+      if (this.platform === "win32" && path.includes(":"))
+        throw new ArtifactReaderFailure(
+          "path",
+          `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax. Inventory retains the logical name.`,
+        );
       this.#registry.add(path, "file");
       const destination = await this.#prepareParent(path);
       const handle = await open(

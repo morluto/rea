@@ -183,6 +183,57 @@ it("extracts case-distinct names only when the destination can preserve them", a
   expect(await readFile(join(output, "Main.js"), "utf8")).toBe("upper");
   expect(await readFile(join(output, "main.js"), "utf8")).toBe("lower");
 });
+
+it("preserves colon names in inventory and refuses Windows stream materialization", async () => {
+  const root = await createTestTempDirectory("rea-artifact-stream-");
+  const path = join(root, "fixture.zip");
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  await writer.add("0-ordinary.txt", new TextReader("ordinary content"));
+  await writer.add("hello.txt:hidden", new TextReader("secret payload"));
+  await writeFile(path, await writer.close());
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  const result = await inventory(parsed.value);
+  expect(result.occurrences.map(({ logical_path }) => logical_path)).toContain(
+    "hello.txt:hidden",
+  );
+
+  const output = join(root, "output");
+  const extracted = await new ArtifactProvider(process.env)
+    .createClient(parsed.value)
+    .execute(
+      "extract_artifact",
+      artifactExtractionExecutionSchema.parse({ output_root: output }),
+    );
+  if (process.platform === "win32") {
+    if (extracted.ok) throw new Error("expected a Windows stream path refusal");
+    const detail =
+      "Windows destination cannot materialize artifact path as a regular file: hello.txt:hidden; ':' denotes alternate data stream syntax. Inventory retains the logical name.";
+    expect(projectAnalysisError(extracted.error)).toMatchObject({
+      message: detail,
+      details: { operation: "extract_artifact", reason: "path", detail },
+    });
+    // Rollback removes the ordinary file written earlier as well as the owned tree.
+    await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      readFile(join(output, "hello.txt:hidden")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    return;
+  }
+  if (!extracted.ok) throw extracted.error;
+  expect(await readFile(join(output, "0-ordinary.txt"), "utf8")).toBe(
+    "ordinary content",
+  );
+  expect(await readFile(join(output, "hello.txt:hidden"), "utf8")).toBe(
+    "secret payload",
+  );
+  await expect(lstat(join(output, "hello.txt"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
 const inventory = async (targetValue: BinaryTarget) => {
   const result = await new ArtifactProvider(process.env)
     .createClient(targetValue)
