@@ -183,13 +183,17 @@ initiating deadline, so a target that exits during finalization is still
 reported as `timeout` or `idle_timeout`. `exit.finalization` then records
 `requested_ms`, `signal`, `outcome` (`target_exited` or `forced_kill`) and
 `elapsed_ms`; it is absent when no finalization was attempted. As for every
-deadline exit, `exit.code` stays `null`; `outcome` records that the target left
-by itself. `elapsed_ms` is timing data, measured from the `SIGTERM` to the exit
-for `target_exited` and to the `SIGKILL` for `forced_kill`. The wall-clock
-bound becomes `timeout_ms + finalization_ms + settle_ms`. Cancellation is not
-delayed: it sends `SIGKILL` immediately, also during finalization, and ends the
-run as cancelled. A scenario with the default `finalization_ms` of `0` keeps its
-committed identity.
+deadline exit, `exit.code` stays `null`. `forced_kill` means REA sent `SIGKILL`
+after the interval and the observed exit shows it; `target_exited` means the
+exit was observed without that `SIGKILL` taking effect. `elapsed_ms` is timing
+data, measured on a monotonic clock from the `SIGTERM` to the moment REA
+observes the exit, which the PTY layer can deliver slightly after the operating
+system ends the process. The nominal lifecycle budget is
+`timeout_ms + finalization_ms + settle_ms`; polling, snapshotting and cleanup
+lie outside it. Scenario `events` keep being dispatched during finalization and
+are recorded as usual. Cancellation is not delayed: it sends `SIGKILL`
+immediately, also during finalization, and ends the run as cancelled. A
+scenario with the default `finalization_ms` of `0` keeps its committed identity.
 
 Every capture requires `truncation_details`, with separate accounting for:
 
