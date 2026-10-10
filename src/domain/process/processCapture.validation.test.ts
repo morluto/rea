@@ -523,6 +523,40 @@ it("validates finalization evidence in incomplete observations", () => {
   ).toBe(false);
 });
 
+it("rejects chronologically impossible or repeated finalization attempts", () => {
+  const attempt = (signal: "SIGTERM" | "SIGKILL", sent_at_ms: number) => ({
+    signal,
+    sent_at_ms,
+    delivery: "signaled" as const,
+  });
+  const exit = (
+    elapsed_ms: number | null,
+    signals: ReturnType<typeof attempt>[],
+  ) => ({
+    reason: "timeout",
+    finalization: { requested_ms: 500, elapsed_ms, signals },
+  });
+
+  expect(
+    finalizationConsistencyIssue(
+      exit(10, [attempt("SIGTERM", 0), attempt("SIGKILL", 500)]),
+    ),
+    "an exit cannot be observed before the last recorded attempt",
+  ).toContain("elapsed_ms");
+  expect(
+    finalizationConsistencyIssue(
+      exit(600, [attempt("SIGTERM", 0), attempt("SIGTERM", 10)]),
+    ),
+    "SIGTERM is attempted once",
+  ).toContain("finalization");
+  expect(
+    finalizationConsistencyIssue(
+      exit(600, [attempt("SIGTERM", 0), attempt("SIGKILL", 500)]),
+    ),
+    "a consistent record is accepted",
+  ).toBeUndefined();
+});
+
 it("accepts the canonical finalized capture example", () => {
   expect(
     parseProcessCapture(FINALIZED_PROCESS_CAPTURE_EXAMPLE).exit,

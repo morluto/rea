@@ -296,3 +296,40 @@ it("keeps the zero-interval deadline as a bare SIGKILL", async () => {
   ).toEqual([]);
   expect(exit.finalization, "no finalization record exists").toBeUndefined();
 });
+
+it("stops waiting for a hung delivery once the exit is observed", async () => {
+  const fake = fakeTerminal({}, new Promise<void>(() => undefined));
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
+  await waitFor(() => fake.signals.includes("SIGTERM"));
+  fake.deliverExit({ exitCode: 0, signal: 0 });
+
+  const exit = observed(await pending);
+
+  expect(
+    exit.finalization?.signals,
+    "an undelivered attempt stays recorded as unverified",
+  ).toMatchObject([{ signal: "SIGTERM", delivery: "unverified" }]);
+  expect(exit.signal, "the observed exit is kept").toBe(0);
+}, 10_000);
+
+it("keeps an observed exit when a late kill delivery reports unverified", async () => {
+  let release: () => void = () => undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fake = fakeTerminal({ SIGKILL: "unverified" }, hold);
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
+  await waitFor(() => fake.signals.includes("SIGKILL"));
+  fake.deliverExit({ exitCode: 0, signal: 9 });
+  release();
+
+  const result = await pending;
+
+  expect(
+    result.unobserved,
+    "an exit that was already observed is never turned into an unobserved one",
+  ).not.toBe(true);
+  expect(observed(result).signal, "the observed exit signal is retained").toBe(
+    9,
+  );
+});
