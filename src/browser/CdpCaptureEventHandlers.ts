@@ -47,6 +47,7 @@ export const handleExecutionContextCreated = (
   )
     return;
   const key = String(identifier);
+  // New contexts may reuse an id. Scripts already parsed keep the frame stored on them.
   state.executionContextFrames.set(key, frameId);
 };
 
@@ -80,6 +81,7 @@ export const handleScriptParsed = (
     state.completeness.exclude("scripts", exclusionReasonForUrl(rawUrl));
     return;
   }
+  const executionContext = executionContextKey(params.executionContextId);
   const baseScript = {
     scriptId,
     rawUrl,
@@ -87,7 +89,11 @@ export const handleScriptParsed = (
     origin: sanitized.origin,
     ...scriptMetadataValues(params),
     language: cdpStringValue(params.scriptLanguage) ?? null,
-    executionContextKey: executionContextKey(params.executionContextId),
+    executionContextKey: executionContext,
+    frameId:
+      executionContext === null
+        ? null
+        : (state.executionContextFrames.get(executionContext) ?? null),
   };
   const baseBytes = scriptMetadataStringBytes(baseScript);
   const sourceMapDeclared =
@@ -131,6 +137,7 @@ const scriptMetadataStringBytes = (script: {
   readonly hash: string | null;
   readonly language: string | null;
   readonly executionContextKey: string | null;
+  readonly frameId: string | null;
 }): number =>
   stringByteLength(script.scriptId) +
   stringByteLength(script.rawUrl) +
@@ -138,7 +145,8 @@ const scriptMetadataStringBytes = (script: {
   stringByteLength(script.origin) +
   stringByteLength(script.hash) +
   stringByteLength(script.language) +
-  stringByteLength(script.executionContextKey);
+  stringByteLength(script.executionContextKey) +
+  stringByteLength(script.frameId);
 
 const stringByteLength = (value: string | null): number =>
   value === null ? 0 : Buffer.byteLength(value, "utf8");

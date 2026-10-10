@@ -29,7 +29,7 @@ const LINK_MODES = [
   {
     mode: "dyld-info",
     flags: ["-Wl,-no_fixup_chains"],
-    fixups: "LC_DYLD_INFO bind opcodes",
+    fixups: "LC_DYLD_INFO rebase opcodes were not decoded",
     swift: true,
   },
   { mode: "chained", flags: [], fixups: "chained fixups:", swift: true },
@@ -135,7 +135,12 @@ const checkObjc = (metadata, mode) => {
         item.selector === "reaFixtureLength",
     ) ||
     objcCoverage?.status !== "complete" ||
-    fixupCoverage(metadata)?.reason?.startsWith(mode.fixups) !== true
+    fixupCoverage(metadata)?.reason?.startsWith(mode.fixups) !== true ||
+    (mode.mode === "dyld-info") !==
+      (fixupCoverage(metadata)?.reason?.includes(
+        "LC_DYLD_INFO bind opcodes",
+      ) ===
+        true)
   )
     throw new Error(
       `Apple metadata fixture drifted (${mode.mode}): ${JSON.stringify(metadata)}`,
@@ -165,7 +170,12 @@ const checkSwift = (metadata, mode) => {
         item.owner === "ReaWitnessFixture: ReaWitnessFixtureProtocol" &&
         item.implementation_address !== null,
     ) ||
-    fixupCoverage(metadata)?.reason?.startsWith(mode.fixups) !== true
+    fixupCoverage(metadata)?.reason?.startsWith(mode.fixups) !== true ||
+    (mode.mode === "dyld-info") !==
+      (fixupCoverage(metadata)?.reason?.includes(
+        "LC_DYLD_INFO bind opcodes",
+      ) ===
+        true)
   )
     throw new Error(
       `Swift metadata fixture drifted (${mode.mode}): ${JSON.stringify(metadata)}`,
