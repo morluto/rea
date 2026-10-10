@@ -711,6 +711,7 @@ export const awaitTerminalExit = async ({
     let finalizationStartedAt: number | undefined;
     let escalationSent = false;
     let settled = false;
+    let exitObserved = false;
     const finalizationSignals: {
       signal: FinalizationSignal;
       sent_at_ms: number;
@@ -723,7 +724,8 @@ export const awaitTerminalExit = async ({
       signals: finalizationSignals.map((attempt) => ({ ...attempt })),
     });
     const unobservedExit = (): void => {
-      if (settled || finalizationStartedAt === undefined) return;
+      if (settled || exitObserved || finalizationStartedAt === undefined)
+        return;
       settled = true;
       for (const timer of timers) timer.cancel();
       timers.clear();
@@ -785,6 +787,7 @@ export const awaitTerminalExit = async ({
     };
     terminal.onExit((exit) => {
       if (settled) return;
+      exitObserved = true;
       // Measures when the exit was observed, not when the operating system
       // ended the process; the PTY layer can deliver the notification late.
       const finalizationElapsedMs =
@@ -814,7 +817,12 @@ export const awaitTerminalExit = async ({
         timer.cancel();
       }
       timers.clear();
-      void Promise.allSettled(pendingDeliveries).then(() => {
+      // A delivery that never settles must not hold back an observed exit;
+      // its attempt stays recorded as unverified.
+      void Promise.race([
+        Promise.allSettled(pendingDeliveries),
+        delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS),
+      ]).then(() => {
         if (settled) return;
         settled = true;
         resolveExit({

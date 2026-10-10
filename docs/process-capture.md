@@ -193,9 +193,10 @@ immediately, also during finalization, and ends the run as cancelled.
 }
 ```
 
-Both signals reach the captured root only while its launch-time start identity
-still matches; a signal is never sent to a process that replaced it, and REA
-does not fall back to a bare PID kill. Descendants are not signalled during
+Both signals go to the captured root after its launch-time start identity is
+checked immediately before the call, so a process that replaced the root is not
+signalled; the check and the signal are separate operations, not one atomic
+step. REA does not fall back to a bare PID kill. Descendants are not signalled during
 finalization; owned-process cleanup handles them afterwards. On a host where the
 start identity cannot be read, each attempt is recorded as `unverified`.
 

@@ -1,7 +1,10 @@
 import { expect, it, vi } from "vitest";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
-import { captureProcessScenario } from "./ProcessHarness.js";
+import {
+  captureProcessScenario,
+  retainRootSignaller,
+} from "./ProcessHarness.js";
 import { settleProcessCaptureJournal } from "./ProcessCaptureLifecycle.js";
 import { parseProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../domain/process/processCaptureExample.js";
@@ -778,4 +781,81 @@ it("fails closed on Windows before resolving or launching scenario paths", async
       reason: result.error.reason,
     },
   });
+});
+
+it("retains the root start identity once at launch and signals only with it", async () => {
+  const observe = vi.fn(async () => ({
+    state: "readable" as const,
+    identity: "id-launch",
+  }));
+  const signal = vi.fn(async () => "signaled" as const);
+  const signalRoot = retainRootSignaller(4242, 500, { observe, signal });
+
+  expect(
+    observe,
+    "the identity is read at launch, before any signal",
+  ).toHaveBeenCalledTimes(1);
+  expect(await signalRoot("SIGTERM"), "a matching identity is signalled").toBe(
+    "signaled",
+  );
+  await signalRoot("SIGKILL");
+
+  expect(
+    observe,
+    "later signals never re-read the identity",
+  ).toHaveBeenCalledTimes(1);
+  expect(
+    signal.mock.calls,
+    "both signals carry the pid and the identity retained at launch",
+  ).toEqual([
+    [4242, "id-launch", "SIGTERM"],
+    [4242, "id-launch", "SIGKILL"],
+  ]);
+});
+
+it.each([
+  ["a vanished root", async () => undefined, "gone"],
+  [
+    "an unreadable identity",
+    async () => ({ state: "unavailable" as const, reason: "unsupported" }),
+    "unverified",
+  ],
+  [
+    "a failed identity read",
+    async () => {
+      throw new Error("ps failed");
+    },
+    "unverified",
+  ],
+])(
+  "never signals without a retained identity: %s",
+  async (_label, read, delivery) => {
+    const signal = vi.fn(async () => "signaled" as const);
+    const signalRoot = retainRootSignaller(4242, 500, {
+      observe: read,
+      signal,
+    });
+
+    expect(await signalRoot("SIGTERM"), "the delivery result is recorded").toBe(
+      delivery,
+    );
+    expect(signal, "no identity means no signal at all").not.toHaveBeenCalled();
+  },
+);
+
+it("does not read an identity when there is no finalization interval", async () => {
+  const observe = vi.fn(async () => undefined);
+  const signalRoot = retainRootSignaller(4242, 0, {
+    observe,
+    signal: vi.fn(async () => "signaled" as const),
+  });
+
+  expect(
+    observe,
+    "the zero-interval path never inspects the root",
+  ).not.toHaveBeenCalled();
+  expect(
+    await signalRoot("SIGKILL"),
+    "an unretained identity stays unverified",
+  ).toBe("unverified");
 });

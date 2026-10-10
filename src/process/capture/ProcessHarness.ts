@@ -84,13 +84,20 @@ interface StartedCaptureRuntime {
 }
 
 /** Retain the root's start identity right after spawn, only when finalization can need it. */
-const retainRootSignaller = (
+export const retainRootSignaller = (
   pid: number,
   finalizationMs: number,
+  host: {
+    readonly observe: typeof observeProcessStartIdentity;
+    readonly signal: typeof signalProcessWithStartIdentity;
+  } = {
+    observe: observeProcessStartIdentity,
+    signal: signalProcessWithStartIdentity,
+  },
 ): StartedCaptureRuntime["signalRoot"] => {
   const retained =
     finalizationMs > 0
-      ? observeProcessStartIdentity(pid).then(
+      ? host.observe(pid).then(
           (observation) =>
             observation === undefined
               ? ({ state: "gone" } as const)
@@ -108,7 +115,7 @@ const retainRootSignaller = (
     if (identity === undefined || identity.state === "unverified")
       return "unverified";
     if (identity.state === "gone") return "gone";
-    return signalProcessWithStartIdentity(pid, identity.identity, signal);
+    return host.signal(pid, identity.identity, signal);
   };
 };
 

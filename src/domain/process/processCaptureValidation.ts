@@ -191,6 +191,11 @@ export const finalizationConsistencyIssue = (
     })
   )
     return "finalization signal attempt times must not decrease";
+  if (
+    finalization.signals.filter(({ signal }) => signal === "SIGTERM").length !==
+    1
+  )
+    return "finalization must attempt SIGTERM exactly once";
   const kill = finalization.signals.find(({ signal }) => signal === "SIGKILL");
   if (
     kill !== undefined &&
@@ -203,9 +208,10 @@ export const finalizationConsistencyIssue = (
     return "finalization requires an observed elapsed_ms";
   if (
     finalization.elapsed_ms !== null &&
-    finalization.elapsed_ms < first.sent_at_ms
+    finalization.elapsed_ms <
+      (finalization.signals.at(-1)?.sent_at_ms ?? first.sent_at_ms)
   )
-    return "finalization elapsed_ms cannot precede the first signal attempt";
+    return "finalization elapsed_ms cannot precede the last signal attempt";
   if (
     committedScenario !== undefined &&
     committedScenario["finalization_ms"] !== finalization.requested_ms
