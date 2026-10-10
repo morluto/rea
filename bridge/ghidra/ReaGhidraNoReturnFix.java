@@ -3,6 +3,7 @@ import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.pcode.PcodeOp;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -18,6 +19,8 @@ import java.util.TreeSet;
 public final class ReaGhidraNoReturnFix extends GhidraScript {
   @Override
   public void run() throws Exception {
+    // Windows P0 does not admit analysis-database mutation.
+    if (System.getProperty("os.name", "").startsWith("Windows")) return;
     FunctionManager fm = currentProgram.getFunctionManager();
     Listing li = currentProgram.getListing();
     Set<Address> cleared = new HashSet<>();
@@ -26,7 +29,11 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
       if (!f.hasNoReturn() || f.isThunk()) continue;
       for (Instruction ins : li.getInstructions(f.getBody(), true)) {
         FlowType ft = ins.getFlowType();
-        if (ft.isTerminal() && !ft.isJump() && !ft.isCall()) {
+        boolean decodedReturn = false;
+        for (PcodeOp operation : ins.getPcode()) {
+          if (operation.getOpcode() == PcodeOp.RETURN) decodedReturn = true;
+        }
+        if (decodedReturn && !ft.isJump() && !ft.isCall()) {
           f.setNoReturn(false);
           cleared.add(f.getEntryPoint());
           break;
@@ -35,10 +42,10 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
     }
     // A thunk inherits the flag of the function it forwards to.
     for (Function f : fm.getFunctions(true)) {
-      if (!f.isThunk() || !f.hasNoReturn()) continue;
+      monitor.checkCancelled();
+      if (!f.isThunk()) continue;
       Function target = f.getThunkedFunction(true);
       if (target != null && cleared.contains(target.getEntryPoint())) {
-        f.setNoReturn(false);
         cleared.add(f.getEntryPoint());
       }
     }
@@ -52,9 +59,9 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
         if (!(ft.isCall() && ft.isTerminal())) continue;
         Address[] flows = ins.getFlows();
         if (flows.length == 0 || !cleared.contains(flows[0])) continue;
-        // A call that really ends the function is followed by another function or padding.
+        // Do not redisassemble into an independently identified function.
         Address next = ins.getMaxAddress().add(1);
-        if (fm.getFunctionAt(next) != null || isX86Padding(next)) continue;
+        if (fm.getFunctionAt(next) != null || !currentProgram.getMemory().contains(next)) continue;
         sites.add(ins.getAddress());
       }
       for (Address s : sites) {
@@ -79,13 +86,4 @@ public final class ReaGhidraNoReturnFix extends GhidraScript {
         "REA no-return fix: cleared=" + cleared.size() + " sites=" + redone + " refit=" + owners.size());
   }
 
-  private boolean isX86Padding(Address a) {
-    if (!currentProgram.getLanguage().getProcessor().toString().equals("x86")) return false;
-    try {
-      int b = currentProgram.getMemory().getByte(a) & 0xff;
-      return b == 0xcc || b == 0x90 || b == 0x00;
-    } catch (Exception e) {
-      return false;
-    }
-  }
 }
