@@ -141,6 +141,14 @@ listed after the table because its connector is not one of these files:
 | OMP                | `omp`            |
 | Pi                 | `pi`             |
 | Hermes             | `hermes`         |
+| Qoder              | `qoder`          |
+
+For [Qoder](https://docs.qoder.com/cli/mcp-reference), setup writes
+`mcpServers.rea` into the user-level `~/.qoder/settings.json` (the
+`QODER_CONFIG_DIR` override is honored). Entries carry `command`, `args`, and
+`env`; stdio is the default transport. Qoder installs Skills through its
+Extensions UI rather than a personal skills directory, so setup does not
+install a skill copy.
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
 setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
