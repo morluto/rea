@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstatSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 
 /** One supported client configuration location. */
 export interface SetupClient {
@@ -115,6 +115,32 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME || join(home, ".grok");
 
+const hermesProfileDirectory = (
+  root: string,
+  platform: NodeJS.Platform,
+): string => {
+  const path = platform === "win32" ? win32 : { join, resolve };
+  const directory = path.resolve(root);
+  const segments = directory.split(/[\\/]+/u);
+  if (segments.at(-2) === "profiles") return directory;
+
+  let profile: string;
+  try {
+    profile = readFileSync(path.join(directory, "active_profile"), "utf8").trim();
+  } catch {
+    return directory;
+  }
+  if (
+    profile.length === 0 ||
+    profile === "default" ||
+    profile === "." ||
+    profile === ".." ||
+    /[\\/]/u.test(profile)
+  )
+    return directory;
+  return path.join(directory, "profiles", profile);
+};
+
 /**
  * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
  * Hermes's own resolver (`%LOCALAPPDATA%\\hermes` on Windows, `~/.hermes`
@@ -148,15 +174,17 @@ const hermesDirectory = ({
       (platform === "win32" && expanded.startsWith("~\\"))
     )
       return join(home, expanded.slice(2));
-    return resolve(expanded);
+    return hermesProfileDirectory(resolve(expanded), platform);
   }
   const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
-  return platform === "win32"
-    ? join(
-        env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
-        `hermes${suffix}`,
-      )
-    : join(home, `.hermes${suffix}`);
+  const root =
+    platform === "win32"
+      ? join(
+          env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
+          `hermes${suffix}`,
+        )
+      : join(home, `.hermes${suffix}`);
+  return hermesProfileDirectory(root, platform);
 };
 
 /** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
