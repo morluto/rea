@@ -262,8 +262,9 @@ Ordinary responses keep their existing complete result contract.
 
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`
-Evidence. Native views select procedure, pseudocode, assembly, callers/callees,
-references, and high-pcode facets without starting a provider. Native offset
+Evidence. Native views select procedure, pseudocode, assembly, basic blocks,
+comments, callers/callees, references, unresolved calls, referenced strings and
+names, the native API record, and high-pcode facets without starting a provider. Native offset
 and limit default to 0 and 64; pseudocode uses UTF-16 code units and never
 splits surrogate pairs, while other pages count rows. Unavailable facts and
 provider limitations remain explicit. Source is

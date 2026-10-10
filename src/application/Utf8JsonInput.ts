@@ -7,6 +7,13 @@ import { safeParseJson, type SafeJsonParseResult } from "../domain/safeJson.js";
 export const JSON_INPUT_RESOURCE_REMEDIATION =
   "Provide a smaller valid JSON value. For Evidence workflows, re-analyze a smaller selection of the original target and use its complete Evidence; splitting JSON text or trimming Evidence fields does not produce valid workflow input.";
 
+/**
+ * Strict JSON input keeps rejecting a leading byte-order mark, but names it:
+ * the parser's own message quotes the invisible U+FEFF as the bad token.
+ */
+export const JSON_BYTE_ORDER_MARK_MESSAGE =
+  "JSON input begins with a UTF-8 byte-order mark (EF BB BF), which strict JSON input does not accept. Save the file as UTF-8 without a byte-order mark.";
+
 /** Decode JSON bytes without confusing a runtime string limit with malformed input. */
 export const parseUtf8Json = (
   bytes: Uint8Array,
@@ -77,5 +84,7 @@ export const parseUtf8Json = (
       cause,
     };
   }
+  if (text.startsWith("\uFEFF"))
+    return { ok: false, error: JSON_BYTE_ORDER_MARK_MESSAGE, cause: undefined };
   return safeParseJson(text);
 };

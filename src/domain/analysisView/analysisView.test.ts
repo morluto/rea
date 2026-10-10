@@ -161,6 +161,64 @@ it("preserves native API limitations and unavailable residual unknowns", () => {
   );
 });
 
+it("pages every retained dossier collection and the native API record", () => {
+  const original = functionDossierSchema.parse(ghidraFunctionDossier());
+  const page = (
+    facet:
+      | "basic_blocks"
+      | "comments"
+      | "unresolved_calls"
+      | "referenced_strings"
+      | "referenced_names",
+    result: unknown = original,
+  ) => {
+    const view = projectAnalysisView(nativeParent(result), {
+      kind: "native",
+      facet,
+      offset: 0,
+      limit: 64,
+    });
+    if (!view.ok) throw view.error;
+    return view.value;
+  };
+  expect(page("basic_blocks")).toMatchObject({
+    item: original.basic_blocks,
+    coverage: { total: original.basic_blocks.length, exhausted: true },
+  });
+  expect(page("referenced_strings")).toMatchObject({
+    item: original.referenced_strings,
+  });
+  expect(
+    page("comments", {
+      ...original,
+      comments: [{ address: "0x401000", kind: "comment", text: "entry" }],
+    }),
+  ).toMatchObject({ item: [{ text: "entry" }] });
+  expect(page("referenced_names")).toMatchObject({ coverage: { total: 0 } });
+  const { unresolved_calls: _omitted, ...withoutUnresolved } = original;
+  expect(
+    page("unresolved_calls", {
+      ...withoutUnresolved,
+      native_value_flow: {
+        available: false,
+        reason: "No high p-code",
+        limitations: [],
+      },
+    }),
+  ).toMatchObject({ item: { available: false, reason: "not recorded" } });
+  const api = projectAnalysisView(nativeParent(), {
+    kind: "native",
+    facet: "native_api",
+    offset: 0,
+    limit: 64,
+  });
+  if (!api.ok) throw api.error;
+  expect(api.value).toMatchObject({
+    item: original.native_api,
+    coverage: { status: "complete-within-view" },
+  });
+});
+
 it("reports the malformed native dossier field", () => {
   const result = projectAnalysisView(
     nativeParent({
