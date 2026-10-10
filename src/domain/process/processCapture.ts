@@ -5,6 +5,7 @@ import { normalizationSchema } from "./processScenario.js";
 import {
   collectProcessCaptureIssues,
   finalizationConsistencyIssue,
+  finalizationManifestIssue,
 } from "./processCaptureValidation.js";
 import {
   filesystemCoverageSchema,
@@ -641,13 +642,17 @@ export const partialProcessCaptureObservationSchema = z
           ? partial.observations.manifest.value
           : undefined;
     const finalizationIssue =
-      observedExit === undefined
+      finalizationManifestIssue(
+        committedManifest?.scenario,
+        committedManifest?.comparison_contract,
+      ) ??
+      (observedExit === undefined
         ? undefined
         : finalizationConsistencyIssue(
             observedExit,
             committedManifest?.scenario,
             committedManifest?.comparison_contract,
-          );
+          ));
     if (finalizationIssue !== undefined)
       context.addIssue({
         code: "custom",

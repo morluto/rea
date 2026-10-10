@@ -107,6 +107,22 @@ const validateEventJournal = (
 };
 
 /**
+ * The committed comparison contract carries `finalization_ms` exactly when the
+ * committed scenario does, with the same value. Independent of the exit, so a
+ * partial capture with an unavailable exit is still checked.
+ */
+export const finalizationManifestIssue = (
+  committedScenario?: Readonly<Record<string, unknown>>,
+  committedComparison?: Readonly<Record<string, unknown>>,
+): string | undefined =>
+  committedScenario !== undefined &&
+  committedComparison !== undefined &&
+  committedScenario["finalization_ms"] !==
+    committedComparison["finalization_ms"]
+    ? "comparison_contract finalization_ms must match the committed scenario"
+    : undefined;
+
+/**
  * Cross-field rule for `exit.finalization`, shared by complete and partial
  * captures. Returns the violated rule, or undefined when the record is
  * consistent. Only a cancelled exit may end the interval early.
@@ -126,13 +142,11 @@ export const finalizationConsistencyIssue = (
   committedScenario?: Readonly<Record<string, unknown>>,
   committedComparison?: Readonly<Record<string, unknown>>,
 ): string | undefined => {
-  if (
-    committedScenario !== undefined &&
-    committedComparison !== undefined &&
-    committedScenario["finalization_ms"] !==
-      committedComparison["finalization_ms"]
-  )
-    return "comparison_contract finalization_ms must match the committed scenario";
+  const manifestIssue = finalizationManifestIssue(
+    committedScenario,
+    committedComparison,
+  );
+  if (manifestIssue !== undefined) return manifestIssue;
   const { finalization } = exit;
   if (finalization === undefined) {
     // A deadline that fired under a committed interval must have attempted
