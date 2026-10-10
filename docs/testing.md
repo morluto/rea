@@ -132,6 +132,20 @@ context and synthetic usage. Skills use an explicit isolated `skills.paths`
 directory, so default OS-home discovery remains unverified. Live model APIs and
 native Windows are also unverified.
 
+`verify:claude-client` requires installed Claude Code (verified with
+`@anthropic-ai/claude-code@2.1.296`); select it with `REA_VERIFY_CLAUDE_COMMAND`.
+The optional POSIX lane uses native `CLAUDE_CONFIG_DIR` discovery, an independent
+Git workspace, user settings and default built-in tools. It preserves caller
+preferences and backups, checks idempotent setup, waits through the native
+`WaitForMcpServers` tool when discovery is pending, and validates the complete
+catalog and forwarded input schemas. Call mode loads the personal skill through
+native `Skill`, checks its full body and verifies named-schema JavaScript Evidence
+for a Unicode path. Use `-- chat` for ordinary chat with REA enabled, or
+`REA_VERIFY_RUNTIME_ROOT` for a production-only installed package. The local
+Anthropic Messages/SSE fixture preserves native resource-hint envelopes in its
+request artifacts. Usage is synthetic; live Anthropic API, native Windows and
+bare-mode personal-skill activation remain unverified by this lane.
+
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
