@@ -8,13 +8,13 @@
     "url": "https://github.com/morluto/rea",
     "source": "github"
   },
-  "version": "6.3.0",
+  "version": "6.4.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "rea-agents",
-      "version": "6.3.0",
+      "version": "6.4.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
