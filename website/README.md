@@ -181,7 +181,9 @@ the analysis guides. Case-study previews live on the Showcases page.
 The closing section offers copyable project prompts, from cloning `rea.tools`
 to reconstructing a game from its executable. The experienced-reader shortcut
 lands directly on the guide links below these prompts.
-The page ends with FAQ, Discord and issue-report links under “Any questions?”.
+“Any questions?” offers FAQ, Discord and issue-report links. The page ends
+with “Join the community”, which links Discord and REA's X account.
+Every content page's header and footer link GitHub, Discord and X.
 A right-side table of contents stays visible at widths of 1440px and above.
 On narrower screens it becomes a sticky, native disclosure; selecting a link
 closes the menu and focuses the destination. The homepage script follows

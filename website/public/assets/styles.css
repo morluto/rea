@@ -178,7 +178,8 @@ section[id] {
   gap: 8px;
 }
 .nav-github,
-.nav-discord {
+.nav-discord,
+.nav-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -192,12 +193,14 @@ section[id] {
   text-decoration: none;
 }
 .nav-github:hover,
-.nav-discord:hover {
+.nav-discord:hover,
+.nav-x:hover {
   background: var(--soft);
   color: var(--ink);
 }
 .nav-github svg,
-.nav-discord svg {
+.nav-discord svg,
+.nav-x svg {
   display: block;
   flex-shrink: 0;
 }
@@ -2116,6 +2119,9 @@ pre code {
   .back-to-top {
     right: calc(1rem + env(safe-area-inset-right, 0px));
     bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  }
+  .site-footer {
+    padding-bottom: calc(2rem + 44px + env(safe-area-inset-bottom, 0px));
   }
   .container {
     width: calc(100% - 2.5rem);
