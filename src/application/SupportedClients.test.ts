@@ -3,7 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { clientSkillDirectories, supportedClients } from "./SupportedClients.js";
+import {
+  clientSkillDirectories,
+  supportedClients,
+} from "./SupportedClients.js";
 
 const roots: string[] = [];
 
@@ -14,7 +17,8 @@ const temporaryHome = (): string => {
 };
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
 });
 
 describe("Hermes profile paths", () => {
@@ -32,7 +36,9 @@ describe("Hermes profile paths", () => {
       join(hermesRoot, "profiles", "coder", "config.yaml"),
     );
     expect(
-      clientSkillDirectories(home, ["hermes"], {}, "linux").map(({ directory }) => directory),
+      clientSkillDirectories(home, ["hermes"], {}, "linux").map(
+        ({ directory }) => directory,
+      ),
     ).toEqual([join(hermesRoot, "profiles", "coder", "skills")]);
   });
 
