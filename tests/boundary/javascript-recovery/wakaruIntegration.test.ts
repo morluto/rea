@@ -97,6 +97,33 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await assertRecoveryCleanup(fixture.launches);
     });
 
+    it("accepts a later release on the verified major line with additive report fields", async () => {
+      const fixture = await recoveryFixture("additive");
+      const result = await fixture.service.recover({
+        path: fixture.path,
+        output_directory: fixture.output,
+      });
+      if (!result.ok) throw result.error;
+      const value = javascriptRecoveryResultSchema.parse(
+        result.value.normalized_result,
+      );
+      expect(value).toMatchObject({
+        status: "complete",
+        engine: { version: "1.99.0" },
+        modules: [{ reported_status: "future_status" }],
+      });
+      expect(result.value.provider.version).toBe("1.99.0");
+      expect(
+        value.limitations.some((limitation) =>
+          limitation.includes("This session uses Wakaru 1.99.0"),
+        ),
+      ).toBe(true);
+      expect(
+        JSON.parse(await readFile(value.report.path, "utf8")),
+      ).toMatchObject({ future_report_field: { nested: true } });
+      await assertRecoveryCleanup(fixture.launches);
+    });
+
     it("retains valid partial output and exact failure diagnostics", async () => {
       const fixture = await recoveryFixture("partial");
       const result = await fixture.service.recover({

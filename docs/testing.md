@@ -746,12 +746,14 @@ Neither optional toolchain is a base-lane prerequisite. See
 
 Build once with `npm run build:cached`, then run `npm run verify:javascript:recovery`.
 This focused lane requires Linux x64, util-linux `prlimit`,
-`REA_WAKARU_COMMAND` pointing to the official Wakaru 1.13.0 Linux x64 binary,
+`REA_WAKARU_COMMAND` pointing to the official Wakaru 1.14.0 Linux x64 binary,
 and `REA_JAVASCRIPT_FIXTURE_TOOLS` pointing to an isolated npm prefix containing
 esbuild 0.25.10 and webpack 5.101.3. No global installation is required.
 The lane compiles source-owned fixtures, exercises CLI and stdio MCP, verifies
 published bytes and provenance, feeds recovered modules into existing analysis,
-and compares a finite set of known fixture results. It does not establish
+and compares a finite set of known fixture results. The provider also accepts
+other ^1.13.0 releases and reports them as unverified; this lane proves the
+audited release. It does not establish
 arbitrary recovered-application equivalence. CI installs these prerequisites only
 in `.github/workflows/real-javascript-recovery.yml`; the existing `real-browser`
 lane uses real Chrome for browser capture and website workflows.

@@ -26,7 +26,7 @@ import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 const WAKARU_REQUIREMENT =
-  "Provide an absolute REA_WAKARU_COMMAND pointing to Wakaru 1.13.0 on Linux x64; no tool is installed by REA";
+  "Provide an absolute REA_WAKARU_COMMAND pointing to a Wakaru ^1.13.0 Linux x64 binary (verified with 1.14.0); no tool is installed by REA. See docs/javascript-recovery.md#install-wakaru.";
 
 /** Inject the owned process launcher while retaining production protocol parsing. */
 export type WakaruLauncher = (
