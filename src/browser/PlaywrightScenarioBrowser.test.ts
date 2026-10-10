@@ -19,6 +19,18 @@ it("locks one attached browser for spellings that discover the same endpoint", (
   );
 });
 
+it("locks one attached browser across loopback spellings of one endpoint", () => {
+  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).toBe(
+    attachedScenarioLeaseKey("http://[::1]:9222", "page-1"),
+  );
+  expect(attachedScenarioLeaseKey("http://[::1]:9222", "page-1")).not.toBe(
+    attachedScenarioLeaseKey("http://[::1]:9222", "page-2"),
+  );
+  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
+    attachedScenarioLeaseKey("http://127.0.0.1:9223", "page-1"),
+  );
+});
+
 const deferred = <Value>() => {
   let resolve: (value: Value | PromiseLike<Value>) => void = () => undefined;
   const promise = new Promise<Value>((resolvePromise) => {
@@ -301,4 +313,77 @@ it("cancels same-target queued connection before acquiring a browser", async () 
     }),
   ).rejects.toThrow("connection failed");
   expect(connectOverCDP).toHaveBeenCalledTimes(3);
+});
+
+it("serializes concurrent attach across loopback spellings of one browser", async () => {
+  const makeScenario = (endpoint: string) =>
+    browserScenarioSchema.parse({
+      browser: { mode: "connect", cdp_endpoint: endpoint, target_id: "page-1" },
+      start_url: { url: "https://example.test" },
+      actions: [
+        {
+          step_id: "wait",
+          action: "wait_for_timeout",
+          duration_ms: 1,
+        },
+      ],
+    });
+  const firstConnection =
+    deferred<Pick<Browser, "contexts" | "close" | "version">>();
+  let rejectFirstConnection: ((cause: Error) => void) | undefined;
+  const failingConnection = new Promise<never>((_resolve, reject) => {
+    rejectFirstConnection = reject;
+  });
+  const firstStarted = deferred<void>();
+  const endpoints: string[] = [];
+  const connectOverCDP = vi.fn((endpoint: string) => {
+    endpoints.push(endpoint);
+    if (endpoints.length === 1) {
+      firstStarted.resolve(undefined);
+      return firstConnection.promise;
+    }
+    return failingConnection;
+  });
+  const launcher = {
+    connectOverCDP,
+    launchPersistentContext: async () => {
+      throw new Error("Unexpected launch");
+    },
+  };
+
+  const first = openPlaywrightScenarioBrowser(
+    makeScenario("http://127.0.0.1:9222"),
+    {},
+    { launcher },
+  );
+  await firstStarted.promise;
+
+  const second = openPlaywrightScenarioBrowser(
+    makeScenario("http://[::1]:9222"),
+    {},
+    { launcher },
+  );
+  const race = await Promise.race([
+    second.then(
+      () => "settled" as const,
+      () => "settled" as const,
+    ),
+    new Promise((resolve) => setTimeout(() => resolve("queued"), 100)),
+  ]);
+  // The loopback spelling is the same browser, so the second attach must wait
+  // for the lease instead of dialing in parallel and being rejected.
+  expect(race).toBe("queued");
+  expect(connectOverCDP).toHaveBeenCalledTimes(1);
+
+  firstConnection.resolve({
+    close: vi.fn(async () => undefined),
+    contexts: vi.fn(() => []),
+    version: () => "fixture",
+  });
+  await expect(first).rejects.toThrow();
+  if (rejectFirstConnection === undefined)
+    throw new Error("second connection did not begin");
+  rejectFirstConnection(new Error("second connection failed"));
+  await expect(second).rejects.toThrow("second connection failed");
+  expect(endpoints).toEqual(["http://127.0.0.1:9222", "http://[::1]:9222"]);
 });

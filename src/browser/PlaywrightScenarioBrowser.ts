@@ -11,6 +11,7 @@ import {
 
 import type { BrowserScenario } from "../domain/browserScenario.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { isLiteralLoopbackHostname } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { withPlaywrightExecutionBoundary } from "./PlaywrightExecutionBoundary.js";
 
@@ -190,8 +191,14 @@ const createAttachedScenarioRelease = (
 export const attachedScenarioLeaseKey = (
   endpoint: string,
   targetId: string,
-): string =>
-  JSON.stringify([new URL("/json/version", endpoint).href, targetId]);
+): string => {
+  const discovery = new URL("/json/version", endpoint);
+  // One CDP browser serves every loopback stack on one port, so spellings that
+  // reach it through 127.0.0.1 or ::1 must share a single admission.
+  if (isLiteralLoopbackHostname(discovery.hostname))
+    discovery.hostname = "127.0.0.1";
+  return JSON.stringify([discovery.href, targetId]);
+};
 
 const acquireAttachedScenario = (
   scenario: Extract<BrowserScenario["browser"], { readonly mode: "connect" }>,
