@@ -629,23 +629,34 @@ describe("results of methods on an escaped receiver", () => {
   });
 
   it("expands a receiver's methods once rather than once per call (#1495)", () => {
-    const count = 2000;
-    const methods = Array.from(
-      { length: count },
-      (_, index) => `m${index}() { return shared; },`,
-    ).join(" ");
-    const calls = Array.from(
-      { length: count },
-      (_, index) => `box.m${index}().p${index} = ${index};`,
-    ).join(" ");
-    const start = performance.now();
-    const value = resultValue(
-      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`,
-    );
-    expect(performance.now() - start).toBeLessThan(2000);
-    expect(value).toMatchObject({
+    const receiverCalls = (count: number) => {
+      const methods = Array.from(
+        { length: count },
+        (_, index) => `m${index}() { return shared; },`,
+      ).join(" ");
+      const calls = Array.from(
+        { length: count },
+        (_, index) => `box.m${index}().p${index} = ${index};`,
+      ).join(" ");
+      return `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`;
+    };
+    const fastest = (body: string) =>
+      Math.min(
+        ...[0, 1].map(() => {
+          const start = performance.now();
+          resultValue(body);
+          return performance.now() - start;
+        }),
+      );
+    resultValue(receiverCalls(100));
+    // Compare growth rather than wall time, which depends on the runner and on
+    // coverage instrumentation. Four times the calls costs about 5-6x here;
+    // re-expanding every method per call cost about 13-14x.
+    const ratio = fastest(receiverCalls(1600)) / fastest(receiverCalls(400));
+    expect(ratio).toBeLessThan(10);
+    expect(resultValue(receiverCalls(400))).toMatchObject({
       status: "array",
       items: [{ value: { status: "unknown" } }],
     });
-  }, 30000);
+  }, 60000);
 });
