@@ -287,3 +287,68 @@ test.skipIf(process.platform === "win32" || galleryLibapp() === null)(
     expect(value.coverage).toBe("partial");
   },
 );
+
+it("accepts an APK whose path contains spaces through the owned snapshot", async () => {
+  const apk = await buildApk("flutter spaced.apk", [
+    {
+      path: "lib/arm64-v8a/libapp.so",
+      bytes: libapp("65817c30a78bb44c3dc3771876b6010a"),
+    },
+    { path: "lib/arm64-v8a/libflutter.so", bytes: libflutter() },
+  ]);
+  expect(apk).toContain(" ");
+  const result = await new FlutterBuildProvider({
+    environment: {},
+  }).execute({
+    operation: "identify_flutter_build",
+    input: { path: apk },
+  });
+  if (!result.ok) throw new Error(result.error.message);
+  const value = result.value.result as { flutter_detected: boolean };
+  expect(value.flutter_detected).toBe(true);
+});
+
+it("retains failed snapshot cleanup and retries it on close", async () => {
+  const apk = await buildApk("cleanup.apk", [
+    {
+      path: "lib/arm64-v8a/libapp.so",
+      bytes: libapp("65817c30a78bb44c3dc3771876b6010a"),
+    },
+  ]);
+  const spaces: string[] = [];
+  let failing = true;
+  const provider = new FlutterBuildProvider({
+    environment: {},
+    removeRoot: async (path) => {
+      if (failing) throw new Error("cleanup refused");
+      spaces.push(path);
+    },
+  });
+  const result = await provider.execute({
+    operation: "identify_flutter_build",
+    input: { path: apk },
+  });
+  expect(result.ok).toBe(true);
+  await expect(provider.close()).rejects.toThrow(/snapshot cleanup failed/u);
+  failing = false;
+  await provider.close();
+  expect(spaces.length).toBeGreaterThanOrEqual(1);
+});
+
+it("cancels before creating any snapshot root", async () => {
+  const apk = await buildApk("cancel.apk", [
+    {
+      path: "lib/arm64-v8a/libapp.so",
+      bytes: libapp("65817c30a78bb44c3dc3771876b6010a"),
+    },
+  ]);
+  const controller = new AbortController();
+  controller.abort();
+  const provider = new FlutterBuildProvider({ environment: {} });
+  const result = await provider.execute(
+    { operation: "identify_flutter_build", input: { path: apk } },
+    { signal: controller.signal },
+  );
+  expect(result.ok).toBe(false);
+  await provider.close();
+});

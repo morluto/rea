@@ -1,6 +1,17 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  constants as fsConstants,
+  mkdtemp,
+  open as openFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type {
   ExecutionOptions,
@@ -41,12 +52,29 @@ const MAX_POOL_URIS = 500;
 const MAX_POOL_TOKENS = 2_000;
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/u;
 
-/** Stream a local file digest without retaining large APKs in memory. */
-const sha256File = async (path: string): Promise<string> => {
+/**
+ * Stream a local file digest without retaining large files in memory.
+ * Aborts between chunks so a cancellation cannot run a digest to completion.
+ */
+const sha256File = async (
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<string> => {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  for await (const chunk of createReadStream(path)) {
+    if (signal?.aborted === true) throw new AnalysisCancelledError("identify");
+    hash.update(chunk as Buffer);
+  }
   return hash.digest("hex");
 };
+
+/** One owned snapshot root: a read-only copy of the admitted input. */
+interface OwnedSnapshot {
+  readonly root: string;
+  readonly path: string;
+  readonly bytes: number;
+  readonly sha256: string;
+}
 
 interface LibraryFacts {
   readonly libapp: {
@@ -86,6 +114,8 @@ const emptyFacts = (): LibraryFacts => ({
 
 export interface FlutterProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
+  /** Deterministic root removal for tests; production removes recursively. */
+  readonly removeRoot?: (path: string) => Promise<void>;
 }
 
 /**
@@ -97,8 +127,52 @@ export interface FlutterProviderOptions {
 export class FlutterBuildProvider {
   readonly environment: Readonly<Record<string, string | undefined>>;
 
+  private readonly ownedRoots = new Set<string>();
+  private readonly removeRoot: (path: string) => Promise<void>;
+
   constructor(options: FlutterProviderOptions = {}) {
     this.environment = options.environment ?? process.env;
+    this.removeRoot =
+      options.removeRoot ??
+      ((path) => rm(path, { recursive: true, force: true }));
+  }
+
+  /**
+   * Snapshot the admitted input into a provider-owned, read-only copy so a
+   * concurrently modified original cannot mix into one observation. The
+   * digest is taken from the snapshot, and every later read uses the
+   * snapshot path.
+   */
+  private async ownSnapshot(
+    operation: string,
+    path: string,
+    signal: AbortSignal | undefined,
+  ): Promise<OwnedSnapshot> {
+    const root = await mkdtemp(join(tmpdir(), "rea-flutter-"));
+    this.ownedRoots.add(root);
+    const snapshotPath = join(root, "input.apk");
+    try {
+      await copyFile(path, snapshotPath, fsConstants.COPYFILE_EXCL);
+      await chmod(snapshotPath, 0o400);
+      const info = await stat(snapshotPath);
+      const sha256 = await sha256File(snapshotPath, signal);
+      return { root, path: snapshotPath, bytes: info.size, sha256 };
+    } catch (cause) {
+      await this.discardRoot(root);
+      if (cause instanceof AnalysisCancelledError) throw cause;
+      throw new Error(`The APK could not be snapshotted: ${path}`, { cause });
+    }
+  }
+
+  /** Best-effort root removal that retains ownership when it fails. */
+  private async discardRoot(root: string): Promise<boolean> {
+    try {
+      await this.removeRoot(root);
+      this.ownedRoots.delete(root);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Pure parsing; the provider is always available. */
@@ -111,8 +185,16 @@ export class FlutterBuildProvider {
     };
   }
 
-  /** The provider holds no long-lived resources. */
-  async close(): Promise<void> {}
+  /** Retain failed snapshot cleanup ownership and retry it on close. */
+  async close(): Promise<void> {
+    const failures: unknown[] = [];
+    for (const root of [...this.ownedRoots]) {
+      if (!(await this.discardRoot(root)))
+        failures.push(new Error(`snapshot root retained: ${root}`));
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Flutter snapshot cleanup failed");
+  }
 
   async execute(
     request: FlutterRequest,
@@ -127,6 +209,9 @@ export class FlutterBuildProvider {
         options?.signal,
       );
     const { path } = request.input;
+    // Captured before the reads: an abort during streaming settles the
+    // loop through this reason rather than a re-read narrowing cannot see.
+    const abortReason = options?.signal?.reason;
     const info = await stat(path).then(
       (value) => value,
       () => null,
@@ -137,9 +222,20 @@ export class FlutterBuildProvider {
           cause: new Error(`The selected APK is not a readable file: ${path}`),
         }),
       );
-    const sha256 = await sha256File(path);
+    let snapshot: OwnedSnapshot;
+    try {
+      snapshot = await this.ownSnapshot(
+        request.operation,
+        path,
+        options?.signal,
+      );
+    } catch (cause) {
+      if (cause instanceof AnalysisCancelledError)
+        return err(new AnalysisCancelledError(request.operation));
+      return err(new AnalysisInputError(request.operation, { cause }));
+    }
     const reader = new ZipArtifactReader(
-      path,
+      snapshot.path,
       "apk",
       APK_METADATA_READ_MAX_BYTES,
     );
@@ -181,6 +277,12 @@ export class FlutterBuildProvider {
         const labeledScanner = new LabeledStringScanner();
         let bytes = 0;
         for await (const chunk of stream) {
+          if (abortReason !== undefined)
+            return err(
+              new AnalysisCancelledError(request.operation, {
+                cause: abortReason,
+              }),
+            );
           const view = chunk as Buffer;
           bytes += view.byteLength;
           if (bytes > LIBRARY_MAX_BYTES)
@@ -265,7 +367,7 @@ export class FlutterBuildProvider {
       return ok(
         createAnalysisExecution(
           {
-            target: { path, bytes: info.size, sha256 },
+            target: { path, bytes: snapshot.bytes, sha256: snapshot.sha256 },
             flutter_detected: flutterDetected,
             abis,
             coverage: partial ? "partial" : "complete",
@@ -273,6 +375,7 @@ export class FlutterBuildProvider {
           FLUTTER_PROVIDER_IDENTITY,
           {
             limitations: [
+              "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
               "The snapshot hash identifies a Dart SDK build only against an external mapping dataset; REA performs no lookup",
               "Release engine builds often carry no labeled Dart version string; absence is reported, not guessed",
               "The snapshot hash sits 20 bytes after each snapshot magic in the AOT payload; findings are observations of that layout",
@@ -287,6 +390,7 @@ export class FlutterBuildProvider {
       );
     } finally {
       await reader.close().catch(() => undefined);
+      await this.discardRoot(snapshot.root);
     }
   }
 
@@ -305,9 +409,16 @@ export class FlutterBuildProvider {
           cause: new Error(`The selected APK is not a readable file: ${path}`),
         }),
       );
-    const sha256 = await sha256File(path);
+    let snapshot: OwnedSnapshot;
+    try {
+      snapshot = await this.ownSnapshot("inspect_dart_aot", path, signal);
+    } catch (cause) {
+      if (cause instanceof AnalysisCancelledError)
+        return err(new AnalysisCancelledError("inspect_dart_aot"));
+      return err(new AnalysisInputError("inspect_dart_aot", { cause }));
+    }
     const reader = new ZipArtifactReader(
-      path,
+      snapshot.path,
       "apk",
       APK_METADATA_READ_MAX_BYTES,
     );
@@ -359,25 +470,62 @@ export class FlutterBuildProvider {
               .join(", ")}`,
           ),
         );
-      const stream = await reader.open(selected.entry, signal);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      for await (const chunk of stream) {
-        const view = chunk as Buffer;
-        total += view.byteLength;
-        if (total > LIBRARY_MAX_BYTES)
-          return err(
-            new AnalysisResourceConstraintError(
-              "inspect_dart_aot",
-              "file-size",
-              `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
-              { max_library_bytes: LIBRARY_MAX_BYTES },
-            ),
-          );
-        chunks.push(view);
+      const declared = selected.entry.declaredSize ?? LIBRARY_MAX_BYTES + 1;
+      if (declared > LIBRARY_MAX_BYTES)
+        return err(
+          new AnalysisResourceConstraintError(
+            "inspect_dart_aot",
+            "file-size",
+            `lib/${selected.abi}/libapp.so declares ${String(declared)} bytes, exceeding the ${String(LIBRARY_MAX_BYTES)}-byte read budget`,
+            { max_library_bytes: LIBRARY_MAX_BYTES },
+          ),
+        );
+      const imagePath = join(snapshot.root, "libapp.so");
+      const imageHash = createHash("sha256");
+      {
+        const stream = await reader.open(selected.entry, signal);
+        let total = 0;
+        for await (const chunk of stream) {
+          if (signal?.aborted === true)
+            return err(new AnalysisCancelledError("inspect_dart_aot"));
+          const view = chunk as Buffer;
+          total += view.byteLength;
+          if (total > LIBRARY_MAX_BYTES)
+            return err(
+              new AnalysisResourceConstraintError(
+                "inspect_dart_aot",
+                "file-size",
+                `lib/${selected.abi}/libapp.so exceeds the ${String(LIBRARY_MAX_BYTES)}-byte read budget while streaming`,
+                { max_library_bytes: LIBRARY_MAX_BYTES },
+              ),
+            );
+          imageHash.update(view);
+          await writeFile(imagePath, view, { flag: "a" });
+        }
       }
-      const image = Buffer.concat(chunks);
-      const imageSha256 = createHash("sha256").update(image).digest("hex");
+      const imageSha256 = imageHash.digest("hex");
+      // Allocate exactly the budget-checked size before reading, so the
+      // buffer cannot exceed the declared library size plus one byte.
+      const image = Buffer.alloc(declared + 1);
+      let imageLength = 0;
+      {
+        const file = await openFile(imagePath, "r");
+        try {
+          while (imageLength < image.length) {
+            const result = await file.read(
+              image,
+              imageLength,
+              image.length - imageLength,
+              null,
+            );
+            if (result.bytesRead === 0) break;
+            imageLength += result.bytesRead;
+          }
+        } finally {
+          await file.close();
+        }
+      }
+      const bounded = image.subarray(0, imageLength);
       const symbolNames = [
         "_kDartVmSnapshotData",
         "_kDartVmSnapshotInstructions",
@@ -394,12 +542,12 @@ export class FlutterBuildProvider {
       }[] = [];
       let isolateData: Buffer | null = null;
       const scanner = new SnapshotHashScanner();
-      scanner.push(image);
+      scanner.push(bounded);
       const hashScan = scanner.result();
       for (const name of symbolNames) {
-        const parsed = readElfSymbol(image, name);
+        const parsed = readElfSymbol(bounded, name);
         if ("failure" in parsed) continue;
-        const header = readSnapshotHeader(image, parsed.symbol.offset);
+        const header = readSnapshotHeader(bounded, parsed.symbol.offset);
         sections.push({
           name,
           offset: parsed.symbol.offset,
@@ -432,10 +580,10 @@ export class FlutterBuildProvider {
       return ok(
         createAnalysisExecution(
           {
-            target: { path, bytes: info.size, sha256 },
+            target: { path, bytes: snapshot.bytes, sha256: snapshot.sha256 },
             abi: selected.abi,
             libapp: {
-              bytes: total,
+              bytes: imageLength,
               sha256: imageSha256,
               snapshot_hash:
                 hashScan.candidates.length === 1
@@ -457,6 +605,7 @@ export class FlutterBuildProvider {
           FLUTTER_PROVIDER_IDENTITY,
           {
             limitations: [
+              "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
               "Snapshot sections are located through the ELF dynamic symbol table; a payload without exported snapshot symbols is refused rather than guessed",
               "String-pool entries are byte-pattern observations from the isolate data section, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser",
               "class_like_tokens are identifier-shaped runs and include incidental matches",
@@ -481,6 +630,7 @@ export class FlutterBuildProvider {
       );
     } finally {
       await reader.close().catch(() => undefined);
+      await this.discardRoot(snapshot.root);
     }
   }
 }

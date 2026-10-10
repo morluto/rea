@@ -64,6 +64,14 @@ arm64-v8a, then x86_64, then the first available ABI).
 
 ## Limits
 
+- **Owned snapshots.** Both operations copy the admitted APK into a
+  provider-owned, read-only snapshot before digesting and parsing, so a
+  concurrently modified original cannot mix into one observation; failed
+  snapshot cleanup is retained and retried on `close()`.
+- **Bounded reads.** Library reads are bounded at 256 MiB each and ZIP
+  metadata at 8 MiB; the AOT image buffer is allocated at exactly the
+  declared size before reading. Exceeded budgets report
+  `resource_constraint`.
 - REA performs **no hash-to-SDK lookup**: mapping the snapshot hash to a
   Dart SDK release requires an external dataset and is deliberately out of
   scope for this family.
@@ -73,8 +81,6 @@ arm64-v8a, then x86_64, then the first available ABI).
   why the hash is the key), and `class_like_tokens` include incidental
   matches. JEB's GUI Dart unit and native analysis of `libapp.so` cover
   some ground today.
-- Library reads are bounded at 256 MiB each and ZIP metadata at 8 MiB;
-  exceeded budgets report `resource_constraint`.
 
 ## Real verification
 
