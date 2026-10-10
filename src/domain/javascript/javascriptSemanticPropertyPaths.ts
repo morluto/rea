@@ -35,3 +35,57 @@ export const semanticPropertyPathKeyMatches = (
   const index = semanticArrayIndex(name);
   return index !== null && index >= key.startIndex;
 };
+
+/**
+ * Report whether an effect at `covering` already reaches every slot that an
+ * effect at `path` can reach: a prefix whose keys match at least as much.
+ */
+export const semanticPropertyPathCovers = (
+  covering: JavaScriptSemanticPropertyPath,
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  covering.length <= path.length &&
+  covering.every((key, index) => keyCovers(key, path[index] ?? null));
+
+/** Return the most specific path whose effect covers both paths. */
+export const semanticPropertyPathUnion = (
+  left: JavaScriptSemanticPropertyPath,
+  right: JavaScriptSemanticPropertyPath,
+): JavaScriptSemanticPropertyPath =>
+  left
+    .slice(0, Math.min(left.length, right.length))
+    .map((key, index) => keyUnion(key, right[index] ?? null));
+
+const keyCovers = (
+  covering: JavaScriptSemanticPropertyPath[number],
+  key: JavaScriptSemanticPropertyPath[number],
+): boolean => {
+  if (covering === null) return true;
+  if (key === null) return false;
+  if (typeof key !== "object")
+    return typeof covering === "object"
+      ? semanticPropertyPathKeyMatches(covering, String(key))
+      : String(covering) === String(key);
+  return (
+    typeof covering === "object" &&
+    covering.excludedKeys.every((name) => key.excludedKeys.includes(name)) &&
+    (covering.startIndex === undefined ||
+      (key.startIndex !== undefined && covering.startIndex <= key.startIndex))
+  );
+};
+
+const keyUnion = (
+  left: JavaScriptSemanticPropertyPath[number],
+  right: JavaScriptSemanticPropertyPath[number],
+): JavaScriptSemanticPropertyPath[number] => {
+  if (keyCovers(left, right)) return left;
+  if (keyCovers(right, left)) return right;
+  if (left === null || right === null) return null;
+  if (typeof left !== "object" || typeof right !== "object") return null;
+  const excludedKeys = left.excludedKeys.filter((name) =>
+    right.excludedKeys.includes(name),
+  );
+  return left.startIndex === undefined || right.startIndex === undefined
+    ? { excludedKeys }
+    : { excludedKeys, startIndex: Math.min(left.startIndex, right.startIndex) };
+};

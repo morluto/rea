@@ -18,7 +18,9 @@ import { semanticIterationSources } from "./javascriptSemanticIterationSources.j
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticArrayIndex,
+  semanticPropertyPathCovers,
   semanticPropertyPathKeyMatches,
+  semanticPropertyPathUnion,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -44,6 +46,7 @@ export const collectSemanticMemberMutations = (
   });
   const recordedEffects = new Set<string>();
   const selections = new Map<string, readonly string[]>();
+  const coveringPaths = new Map<string, PropertyPath>();
   let arrayIterationUnknown = false;
   const pendingReferences: {
     readonly initializer: JavaScriptSemanticBindingState["referenceInitializers"][number];
@@ -157,6 +160,23 @@ export const collectSemanticMemberMutations = (
             index === selectorIndex ? { ...selector, excludedKeys } : key,
           );
         }
+        // Union paths at each binding state as well. Each loop assignment can
+        // prepend its member, so carrying every ordering is factorial, while
+        // one covering path keeps every effect of the paths it covers.
+        const pathState = JSON.stringify([
+          binding.bindingId,
+          effect,
+          mutation?.start,
+          mutation?.end,
+          current.originAt?.start,
+          current.originAt?.end,
+        ]);
+        const covering = coveringPaths.get(pathState);
+        if (covering !== undefined) {
+          if (semanticPropertyPathCovers(covering, path)) continue;
+          path = semanticPropertyPathUnion(covering, path);
+        }
+        coveringPaths.set(pathState, path);
         const identity = JSON.stringify([
           binding.bindingId,
           effect,
