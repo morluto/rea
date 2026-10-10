@@ -30,6 +30,14 @@ describe("source map directives", () => {
     ).toEqual(["first.map", "second.map"]);
   });
 
+  it("reads a large inline map from a two-byte source without overflowing", () => {
+    const declared =
+      "data:application/json;charset=utf-8;base64," + "A".repeat(9_000_000);
+    const source = `const label = "ğ";\n//# sourceMappingURL=${declared}`;
+
+    expect(sourceMapUrls(source)).toEqual([declared]);
+  });
+
   it("reports nothing when no directive is present", () => {
     expect(sourceMapUrls("const value = 1;")).toEqual([]);
   });

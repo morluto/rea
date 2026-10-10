@@ -306,13 +306,18 @@ export const addSourceMapDirectives = (
       end === null
     )
       continue;
-    const match = /^(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*([^\s*]+)/u.exec(
-      source.slice(start, end),
+    const commentSource = source.slice(start, end);
+    const prefix = /^(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*/u.exec(
+      commentSource,
     );
-    if (match === null) continue;
-    const declared = match[1];
-    if (declared === undefined || declared.length === 0) continue;
-    const location = rangeForOffsets(source, start, start + match[0].length);
+    if (prefix === null) continue;
+    const declaredStart = prefix[0].length;
+    const terminator = commentSource.slice(declaredStart).search(/[\s*]/u);
+    const declaredEnd =
+      terminator === -1 ? commentSource.length : declaredStart + terminator;
+    if (declaredEnd === declaredStart) continue;
+    const declared = commentSource.slice(declaredStart, declaredEnd);
+    const location = rangeForOffsets(source, start, start + declaredEnd);
     addFindingOnce(accumulator, `source-map\0${declared}`, () =>
       accumulator.sourceMaps.push({ declared_url: declared, location }),
     );
