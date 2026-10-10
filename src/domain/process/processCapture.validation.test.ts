@@ -171,20 +171,32 @@ it("allows an early forced kill only for a cancelled exit", () => {
   };
 
   expect(
-    finalizationConsistencyIssue({ reason: "cancelled", finalization: forced }),
+    finalizationConsistencyIssue({
+      reason: "cancelled",
+      signal: 9,
+      finalization: forced,
+    }),
     "cancellation ends the interval early",
   ).toBeUndefined();
   expect(
-    finalizationConsistencyIssue({ reason: "timeout", finalization: forced }),
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      signal: 9,
+      finalization: forced,
+    }),
     "a deadline escalation waits for the whole interval",
   ).toContain("requested interval");
   expect(
-    finalizationConsistencyIssue({ reason: "exited", finalization: forced }),
+    finalizationConsistencyIssue({
+      reason: "exited",
+      signal: 9,
+      finalization: forced,
+    }),
     "partial exits need a deadline reason too",
   ).toContain("deadline exit reason");
   expect(
     finalizationConsistencyIssue(
-      { reason: "cancelled", finalization: forced },
+      { reason: "cancelled", signal: 9, finalization: forced },
       { finalization_ms: 900 },
     ),
     "the committed interval must match when the manifest is known",

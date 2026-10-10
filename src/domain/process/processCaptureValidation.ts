@@ -114,6 +114,7 @@ const validateEventJournal = (
 export const finalizationConsistencyIssue = (
   exit: {
     readonly reason: string;
+    readonly signal?: number | null | undefined;
     readonly finalization?:
       | {
           readonly requested_ms: number;
@@ -125,7 +126,16 @@ export const finalizationConsistencyIssue = (
   committedScenario?: Readonly<Record<string, unknown>>,
 ): string | undefined => {
   const { finalization } = exit;
-  if (finalization === undefined) return undefined;
+  if (finalization === undefined) {
+    // A deadline that fired under a committed interval must have attempted
+    // finalization; cancellation before the deadline legitimately has none.
+    const committed = committedScenario?.["finalization_ms"];
+    return (exit.reason === "timeout" || exit.reason === "idle_timeout") &&
+      typeof committed === "number" &&
+      committed > 0
+      ? "a deadline exit under a committed finalization_ms requires finalization evidence"
+      : undefined;
+  }
   if (exit.reason === "exited")
     return "finalization requires a deadline exit reason";
   if (
@@ -134,6 +144,8 @@ export const finalizationConsistencyIssue = (
     finalization.elapsed_ms < finalization.requested_ms
   )
     return "forced finalization cannot precede the requested interval";
+  if (finalization.outcome === "forced_kill" && exit.signal !== 9)
+    return "forced finalization requires an observed SIGKILL exit";
   if (
     committedScenario !== undefined &&
     committedScenario["finalization_ms"] !== finalization.requested_ms
