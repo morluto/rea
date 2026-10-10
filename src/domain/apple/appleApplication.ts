@@ -4,6 +4,8 @@ import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
+  anatomyNameIs,
+  anatomyTailMatches,
   appleBundleSchema,
   appleComponentSchema,
   applicationRoots,
@@ -14,6 +16,10 @@ import {
   platformsOf,
   type AppleInventoryEntry,
 } from "./appleBundleAnatomy.js";
+import {
+  isSwiftRuntimeLibrary,
+  nativeRuntimeConvention,
+} from "../nativeConvention.js";
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
@@ -239,19 +245,20 @@ const classifyComponents = (
 ) => {
   const withinApp = (path: string): boolean =>
     roots.some((root) => isWithin(path, root));
-  const anatomy = (pattern: RegExp): Component[] =>
+  const matching = (predicate: (path: string) => boolean): Component[] =>
     entries.flatMap(({ path, kind, component }) =>
       kind === "file" &&
       component !== undefined &&
       !isSidecar(path) &&
       withinApp(path) &&
-      pattern.test(path)
+      predicate(path)
         ? [component]
         : [],
     );
+  const lastSegment = (path: string): string => path.split("/").at(-1) ?? "";
   return {
     bundle_metadata: all.filter(({ path }) =>
-      /(?:^|\/)Info\.plist$/u.test(path),
+      anatomyNameIs(lastSegment(path), "Info.plist"),
     ),
     executables: all.filter(
       ({ path, format }) => withinApp(path) && isMachOFormat(format),
@@ -259,23 +266,41 @@ const classifyComponents = (
     frameworks: all.filter(({ path }) => /\.framework\//u.test(path)),
     native_libraries: all.filter(({ path }) => /\.(?:dylib|so)$/iu.test(path)),
     javascript: all.filter(({ format }) => format === "javascript-bundle"),
-    signing: all.filter(({ path }) =>
-      /(?:^|\/)(?:embedded\.(?:mobileprovision|provisionprofile)|_CodeSignature\/CodeResources)$/u.test(
-        path,
-      ),
+    signing: all.filter(
+      ({ path }) =>
+        anatomyTailMatches(path, ["_CodeSignature", "CodeResources"]) ||
+        anatomyNameIs(lastSegment(path), "embedded.mobileprovision") ||
+        anatomyNameIs(lastSegment(path), "embedded.provisionprofile"),
     ),
-    privileged_helpers: anatomy(
-      /(?:^|\/)Contents\/Library\/LaunchServices\/[^/]+$/u,
+    privileged_helpers: matching((path) =>
+      anatomyTailMatches(path, ["Contents", "Library", "LaunchServices", "*"]),
     ),
-    launchd_plists: anatomy(
-      /(?:^|\/)Contents\/Library\/Launch(?:Agents|Daemons)\/[^/]+\.plist$/u,
+    launchd_plists: matching(
+      (path) =>
+        path.endsWith(".plist") &&
+        (anatomyTailMatches(path, [
+          "Contents",
+          "Library",
+          "LaunchAgents",
+          "*",
+        ]) ||
+          anatomyTailMatches(path, [
+            "Contents",
+            "Library",
+            "LaunchDaemons",
+            "*",
+          ])),
     ).map((component) => ({
       ...component,
-      domain: component.path.includes("/LaunchDaemons/")
+      domain: component.path
+        .split("/")
+        .some((segment) => anatomyNameIs(segment, "LaunchDaemons"))
         ? ("daemon" as const)
         : ("agent" as const),
     })),
-    helpers: anatomy(/(?:^|\/)Contents\/Helpers\/[^/]+$/u),
+    helpers: matching((path) =>
+      anatomyTailMatches(path, ["Contents", "Helpers", "*"]),
+    ),
   };
 };
 
@@ -292,11 +317,13 @@ const identifyRuntimeFamilies = (all: readonly Component[]) => {
   >();
   if (all.some(({ format }) => ["mach-o", "mach-o-universal"].includes(format)))
     families.add("native");
+  if (all.some(({ path }) => isSwiftRuntimeLibrary(path)))
+    families.add("swift-objective-c");
   if (all.some(({ format }) => format === "javascript-bundle"))
     families.add("javascript");
   for (const { path } of all) {
-    const family = frameworkConvention(path);
-    if (family !== null) families.add(family);
+    const convention = nativeRuntimeConvention(path);
+    if (convention !== null) families.add(convention);
   }
   return [...families].sort(compare);
 };
@@ -337,17 +364,6 @@ const identifyBridgeCandidates = (
   });
 };
 
-/** Match whole framework segments; generic App.framework does not identify Flutter. */
-const frameworkConvention = (
-  path: string,
-): "react-native" | "flutter" | "unity" | null => {
-  if (/(?:^|\/)(?:react|reactnative|hermes)\.framework(?:\/|$)/iu.test(path))
-    return "react-native";
-  if (/(?:^|\/)flutter\.framework(?:\/|$)/iu.test(path)) return "flutter";
-  if (/(?:^|\/)unityframework\.framework(?:\/|$)/iu.test(path)) return "unity";
-  return null;
-};
-
 const bridgeBasis = (
   path: string,
 ):
@@ -355,8 +371,10 @@ const bridgeBasis = (
   | "react-native-convention"
   | "flutter-convention"
   | "unity-convention" => {
-  const family = frameworkConvention(path);
-  if (family !== null) return `${family}-convention`;
+  const convention = nativeRuntimeConvention(path);
+  if (convention === "react-native") return "react-native-convention";
+  if (convention === "flutter") return "flutter-convention";
+  if (convention === "unity") return "unity-convention";
   return "javascript-and-native-content";
 };
 

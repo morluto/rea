@@ -34,7 +34,7 @@ export const planWebScriptExport = (
       };
     const candidate = candidates[index];
     const reason = conflicts.has(index)
-      ? "Captured paths collide by content version, case, or file/directory prefix."
+      ? "Captured paths collide by content version or file/directory prefix."
       : (candidate?.reason ?? null);
     const path = reason === null ? candidate?.path : undefined;
     return {
@@ -103,40 +103,27 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
   };
 };
 
-// Register every prefix so case collisions in parent directories and a file
-// conflicting with a directory isolate all affected sources, not just the last.
+// Register every exact prefix so a repeated path, or a file that is also a
+// directory prefix, isolates every affected source. Case-distinct spellings
+// stay distinct until the destination filesystem reports a collision.
 const conflictingPaths = (
   candidates: readonly CandidatePath[],
 ): Set<number> => {
-  const prefixes = new Map<
-    string,
-    {
-      spellings: Set<string>;
-      indices: number[];
-      files: number[];
-    }
-  >();
+  const prefixes = new Map<string, { indices: number[]; files: number[] }>();
   candidates.forEach(({ path }, index) => {
     if (path === undefined) return;
     const parts = path.split("/");
     parts.forEach((_, position) => {
       const spelling = parts.slice(0, position + 1).join("/");
-      const key = spelling.toLowerCase();
-      const entry = prefixes.get(key) ?? {
-        spellings: new Set<string>(),
-        indices: [],
-        files: [],
-      };
-      entry.spellings.add(spelling);
+      const entry = prefixes.get(spelling) ?? { indices: [], files: [] };
       entry.indices.push(index);
       if (position === parts.length - 1) entry.files.push(index);
-      prefixes.set(key, entry);
+      prefixes.set(spelling, entry);
     });
   });
   const conflicts = new Set<number>();
   for (const entry of prefixes.values())
     if (
-      entry.spellings.size > 1 ||
       entry.files.length > 1 ||
       (entry.files.length > 0 && entry.indices.length > entry.files.length)
     )

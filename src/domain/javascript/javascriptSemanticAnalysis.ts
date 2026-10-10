@@ -33,12 +33,12 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { collectSemanticMemberMutations } from "./javascriptSemanticMemberMutations.js";
+import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
-import { collectJavaScriptDerivedSemantics } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { propertyName } from "./javascriptAstValues.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
@@ -107,18 +107,39 @@ export const analyzeParsedJavaScriptReferences = (
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
 ): JavaScriptSemanticIr => {
+  const steps = analyzeParsedJavaScriptSemanticsSteps(file);
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+  }
+};
+
+/**
+ * Recover semantics from a parsed artifact with a yield between analysis
+ * phases, so a caller can serve control messages within one large file.
+ * Each phase completes before the next starts; results equal the synchronous
+ * form.
+ */
+export function* analyzeParsedJavaScriptSemanticsSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptSemanticIr> {
   const state = createState(file.program);
   collectDefinitions(file.program, state);
-  collectSemanticMemberMutations(file.program, state);
+  yield;
+  yield* collectSemanticMemberMutationsSteps(file.program, state);
   traverseJavaScriptAst(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state),
   });
+  yield;
   const references = collectSemanticReferences(file.program, state);
+  yield;
   const parserPartial = file.errors.length > 0;
   const bindings = immutableSemanticBindings(state);
+  yield;
   const callables = collectSemanticReturns(file.program, state, parserPartial);
+  yield;
   const moduleLinks = resolveSemanticModuleCallables(state, callables);
-  const derived = collectJavaScriptDerivedSemantics(
+  const derived = yield* collectJavaScriptDerivedSemanticsSteps(
     file.program,
     state,
     callables,
@@ -154,7 +175,7 @@ export const analyzeParsedJavaScriptSemantics = (
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
-};
+}
 
 /** Receiver identity facts for the overloaded `.open` syntax only. */
 export type JavaScriptOpenReceiverFact =

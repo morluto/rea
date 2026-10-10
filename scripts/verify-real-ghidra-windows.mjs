@@ -24,6 +24,7 @@ import { windowsP0Capabilities } from "../dist/ghidra/GhidraProviderCapabilities
 import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
 
 const verifierRun = createVerifierRun();
 const SESSION_CAPABILITIES = GHIDRA_SESSION_CAPABILITIES.filter(
@@ -247,6 +248,14 @@ try {
       `Windows Ghidra operation proof was incomplete: ${JSON.stringify([...observed])}`,
     );
 
+  // The reference controls occupy the EXE fixture's additional function.
+  // DLL fixtures retain their independent exported-caller/return controls.
+  const compactReferences = dllFixture
+    ? null
+    : await verifyGhidraCompactReferences(
+        functionOperation,
+        architecture === "x86",
+      );
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -261,6 +270,7 @@ try {
     transport: "authenticated-loopback-tcp",
     operations: [...observed].sort((left, right) => left.localeCompare(right)),
     cleanup: "complete",
+    compact_references: compactReferences,
     native_controls: {
       job_object: true,
       protected_dacl: true,

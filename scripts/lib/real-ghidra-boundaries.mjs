@@ -40,7 +40,11 @@ export async function verifyGhidraBoundaries(
         ajv.validateSchema(tool[key]),
         `${tool.name} ${key}: ${JSON.stringify(ajv.errors)}`,
       );
-    validators.set(tool.name, ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
+        ajv.compile(tool.outputSchema),
+    );
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;

@@ -154,9 +154,23 @@ describe("unexpanded ASAR inventory controls", () => {
       "resources/encrypted.asar": "resources",
       "resources/ordinary.asar": "resources",
     });
+    expect(artifactOccurrenceAt(observed, "resources/app.asar")).toMatchObject({
+      artifact_kind: "container",
+      artifact_format: "asar",
+    });
     expect(
-      artifactOccurrenceAt(observed, "resources/encrypted.asar").hash_status,
-    ).toBe("unavailable");
+      artifactOccurrenceAt(observed, "resources/ordinary.asar"),
+    ).toMatchObject({ artifact_kind: "resource", artifact_format: "file" });
+    expect(
+      artifactOccurrenceAt(observed, "resources/encrypted.asar"),
+    ).toMatchObject({
+      artifact_kind: "unknown",
+      artifact_format: "unknown",
+      hash_status: "unavailable",
+      limitations: [
+        "The path suffix suggests ASAR, but these bytes were not read, so the container family is unknown.",
+      ],
+    });
   });
 
   it("keeps ASAR-named directories as directory parents", async () => {
@@ -195,9 +209,30 @@ describe("unexpanded ASAR inventory controls", () => {
     },
   );
 
-  it("keeps malformed filesystem archives rejected", async () => {
-    const root = await createTestTempDirectory("rea-malformed-asar-");
+  it("records filesystem files without an ASAR header as ordinary bytes", async () => {
+    const root = await createTestTempDirectory("rea-ordinary-asar-");
     await writeFile(join(root, "ordinary.asar"), "ordinary bytes");
+    const observed = await inventoryArtifact(root);
+    expect(artifactParentPaths(observed)).toEqual({
+      ".": null,
+      "ordinary.asar": ".",
+    });
+    expect(artifactOccurrenceAt(observed, "ordinary.asar")).toMatchObject({
+      artifact_kind: "resource",
+      artifact_format: "file",
+      hash_status: "verified",
+    });
+  });
+
+  it("keeps filesystem archives with a malformed ASAR header rejected", async () => {
+    const root = await createTestTempDirectory("rea-malformed-asar-");
+    const json = Buffer.from("{not json");
+    const header = Buffer.alloc(16);
+    header.writeUInt32LE(4, 0);
+    header.writeUInt32LE(json.length + 12, 4);
+    header.writeUInt32LE(json.length + 8, 8);
+    header.writeUInt32LE(json.length, 12);
+    await writeFile(join(root, "broken.asar"), Buffer.concat([header, json]));
     await expect(inventoryArtifact(root)).rejects.toMatchObject({
       reason: "format",
     });

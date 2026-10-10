@@ -9,8 +9,10 @@ evidence the reader can inspect, and a useful next step. A clean, refined
 appearance comes from precise wording, readable figures, consistent typography
 and deliberate spacing.
 
-Use this guide for new pages and revisions. Start from an existing page and
-reuse `public/assets/styles.css` and `public/assets/main.js`. Local preview and
+Use this guide for new pages and revisions. Create the common page structure
+with `python3 scripts/website.py new-page`, then reuse the relevant components
+from an existing page, `public/assets/styles.css` and `public/assets/main.js`.
+Keep shared regions in sync with `templates/`. Contribution, preview and
 publication commands are in [README.md](README.md).
 
 ## What a reader should understand

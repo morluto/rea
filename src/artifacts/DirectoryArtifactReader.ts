@@ -22,7 +22,11 @@ export class DirectoryArtifactReader implements ArtifactReader {
     this.#rootPromise = realpath(root);
   }
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  /** Enumerate entries, optionally restricting descent while retaining directories. */
+  async *entries(
+    signal?: AbortSignal,
+    descendInto?: (path: string) => boolean,
+  ): AsyncIterable<ArtifactEntry> {
     const root = await this.#rootPromise.catch((cause: unknown) => {
       throw directoryIoFailure("resolve artifact root", this.#rootPath, cause);
     });
@@ -66,7 +70,8 @@ export class DirectoryArtifactReader implements ArtifactReader {
               ? "file"
               : undefined;
         if (kind === undefined) continue;
-        if (kind === "directory") directories.push(absolute);
+        if (kind === "directory" && (descendInto?.(path) ?? true))
+          directories.push(absolute);
         yield {
           path,
           kind,

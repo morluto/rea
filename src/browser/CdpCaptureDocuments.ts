@@ -387,7 +387,8 @@ const domMetadata = (
   for (let index = 0; index + 1 < attributes.length; index += 2) {
     const name = indexedString(strings, attributes[index]).toLowerCase();
     const value = indexedString(strings, attributes[index + 1]);
-    pairs.set(name, value);
+    // HTML keeps the first declaration. A later repeat must not move dom_urls.
+    if (!pairs.has(name)) pairs.set(name, value);
   }
   const urls: WebPageInspection["metadata"]["dom_urls"] = [];
   for (const attribute of domUrlAttributes) {
