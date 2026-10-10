@@ -64,6 +64,9 @@ try {
     executable,
     [
       "--headless=new",
+      // A reachable-but-locked desktop keyring stalls headless profile startup
+      // before the first navigation is issued (issue #1384).
+      "--password-store=basic",
       ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
         ? ["--no-sandbox"]
         : []),

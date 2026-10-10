@@ -269,6 +269,12 @@ installed Chrome-family browser. An optional script argument selects an already
 installed package's `scripts/rea.mjs` entry point for packaged-artifact checks.
 The complete `verify:browser` lane includes these same checks.
 
+On Linux the lane launches its browsers with `--password-store=basic`. Without
+that flag, a reachable but locked desktop keyring on the session bus (for
+example a WSL machine with a desktop session running) stalls headless Chrome
+profile startup before the first navigation is issued, and every CDP URL
+surface then reports empty or placeholder values (#1384).
+
 After building, `verify:browser:dom` checks empty and HTML-whitespace form
 destinations against a native Chrome DOM-property oracle through CLI and stdio
 MCP. It requires `REA_BROWSER_EXECUTABLE` and accepts an optional installed REA

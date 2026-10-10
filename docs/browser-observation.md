@@ -48,10 +48,14 @@ Start a separate browser profile with an explicit debugging port. The exact exec
 google-chrome \
   --remote-debugging-port=9222 \
   --user-data-dir=/tmp/rea-browser-profile \
+  --password-store=basic \
   http://127.0.0.1:3000
 ```
 
-REA does not launch, own, or terminate this browser. Use a dedicated profile and stop it yourself when the investigation is complete. Do not expose the debugging port on a non-loopback interface.
+`--password-store=basic` keeps startup independent of the desktop keyring.
+On Linux, headless or automated Chrome that reaches a reachable-but-locked
+keyring (gnome-keyring or KWallet) stalls before its first navigation, and
+every CDP URL surface then reports empty placeholder values (#1384). REA does not launch, own, or terminate this browser. Use a dedicated profile and stop it yourself when the investigation is complete. Do not expose the debugging port on a non-loopback interface.
 
 ## Request boundary
 
