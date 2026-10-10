@@ -123,7 +123,6 @@ const registerAssetCatalogCommand = (
         .default(1_000)
         .describe("Maximum records to return"),
     }),
-    alias: {},
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.inspectAssetCatalog, () =>
         runProviderAnalysis(
@@ -170,11 +169,6 @@ const registerInterfaceBuilderCommand = (
         .default(40_000)
         .describe("Maximum decoded connections"),
     }),
-    alias: {
-      maxDocuments: "max-documents",
-      maxObjects: "max-objects",
-      maxConnections: "max-connections",
-    },
     run: ({ args, options }) =>
       logCliCommand(logger, "decode-interface-builder", () =>
         runProviderAnalysis(
@@ -242,9 +236,6 @@ const registerInspectionCommand = (
         .default("fail")
         .describe("Behavior when declared artifact integrity does not match"),
     }),
-    alias: {
-      integrityPolicy: "integrity-policy",
-    },
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-artifact", () =>
         runProviderAnalysis(

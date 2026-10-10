@@ -339,13 +339,13 @@ const artifactMessage = ({
   operation,
   reason,
   artifactDetails: details,
+  detail,
 }: ArtifactOperationError): string => {
   if (reason === "cancelled")
     return "Artifact operation was cancelled. Start it again when ready.";
   if (reason === "limit")
     return "Artifact is too large to process safely. Narrow the requested path or use a smaller artifact.";
-  if (reason === "path")
-    return "Artifact contains an unsafe or conflicting internal path. Inspect the reported path and correct the artifact before retrying.";
+  if (reason === "path") return artifactPathMessage(detail);
   if (reason === "unavailable" && details?.unpacked === true)
     return `ASAR unpacked companion bytes are unavailable for ${details.logicalPath}. Select the archive in place with its .unpacked directory beside it, then retry.`;
   if (reason === "unavailable")
@@ -359,6 +359,23 @@ const artifactMessage = ({
   if (reason === "format" || reason === "integrity")
     return "Artifact is invalid or has changed. Get a fresh copy and try again.";
   return "Artifact could not be read or written. Check file access and try again.";
+};
+
+const artifactPathMessage = (detail: string | undefined): string => {
+  // Kept in step with DESTINATION_CASE_COLLISION_PREFIX. Domain does not import
+  // the artifact adapter that produces the detail.
+  if (
+    detail !== undefined &&
+    detail.startsWith("Destination filesystem cannot store both ")
+  )
+    return detail;
+  if (
+    detail !== undefined &&
+    (detail.startsWith("Artifact path is absolute or unsafe:") ||
+      detail.startsWith("Artifact path is not normalized:"))
+  )
+    return "Artifact contains an unsafe internal path. Inspect the reported path and correct the artifact before retrying.";
+  return "Artifact contains a conflicting internal path. Inspect the reported path before retrying.";
 };
 
 const evidenceFileMessage = ({

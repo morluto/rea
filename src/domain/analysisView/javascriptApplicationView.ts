@@ -243,6 +243,10 @@ export const projectJavaScriptApplicationView = (
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const shared = parentFields(parent, analysis);
   const modules = moduleEntries(analysis.graph.nodes);
+  if (view.kind === "native")
+    return err(
+      jsIncompatible("Native views require analyze_function Evidence."),
+    );
   if (view.kind === "summary")
     return ok({
       kind: "summary",

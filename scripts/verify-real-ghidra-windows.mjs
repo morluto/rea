@@ -24,6 +24,7 @@ import { windowsP0Capabilities } from "../dist/ghidra/GhidraProviderCapabilities
 import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
 
 const verifierRun = createVerifierRun();
 const SESSION_CAPABILITIES = GHIDRA_SESSION_CAPABILITIES.filter(
@@ -62,21 +63,21 @@ if (
   );
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const architecture = process.argv[2] === "--x86" ? "x86" : "x86_64";
+const architecture = process.argv.includes("--x86") ? "x86" : "x86_64";
+const dllFixture = process.argv.includes("--dll");
+const role = dllFixture ? "shared-library" : "application";
 const targetPath = resolve(
   root,
   "build",
   "fixtures",
-  architecture === "x86"
-    ? "rea-ghidra-windows-x86.exe"
-    : "rea-ghidra-windows.exe",
+  `rea-ghidra-windows${architecture === "x86" ? "-x86" : ""}.${dllFixture ? "dll" : "exe"}`,
 );
 const target = await parseBinaryTarget(targetPath);
 if (
   !target.ok ||
   target.value.format !== "pe" ||
   target.value.architecture !== architecture ||
-  target.value.executableRole !== "application" ||
+  target.value.executableRole !== role ||
   target.value.managed !== false
 )
   throw new Error(
@@ -89,6 +90,8 @@ const profile = await resolveGhidraAnalysisProfile(
 );
 if (!profile.ok || profile.value.profile === null)
   throw new Error("Windows Ghidra profile could not be committed");
+if (profile.value.profile.parameters.executable_role !== role)
+  throw new Error("Windows Ghidra profile lost the observed PE role");
 
 const client = new GhidraClient({
   platform: installation.platform,
@@ -162,6 +165,19 @@ try {
     throw new Error(
       "Windows fixture decompilation lost its known return value",
     );
+  if (dllFixture) {
+    const callerAddress = architecture === "x86" ? "0x401000" : "0x140001000";
+    const callees = await functionOperation("procedure_callees", {
+      procedure: callerAddress,
+    });
+    if (!callees.includes(callee.address))
+      throw new Error("DLL export caller lost its controlled call reference");
+    const callerCode = await functionOperation("procedure_pseudo_code", {
+      procedure: callerAddress,
+    });
+    if (typeof callerCode !== "string" || !/\+\s*1\b/u.test(callerCode))
+      throw new Error("DLL export caller lost its addition of one");
+  }
 
   await inventory("inspect_native_load_image", {});
   const memory = await inventory("read_bytes", {
@@ -232,6 +248,14 @@ try {
       `Windows Ghidra operation proof was incomplete: ${JSON.stringify([...observed])}`,
     );
 
+  // The reference controls occupy the EXE fixture's additional function.
+  // DLL fixtures retain their independent exported-caller/return controls.
+  const compactReferences = dllFixture
+    ? null
+    : await verifyGhidraCompactReferences(
+        functionOperation,
+        architecture === "x86",
+      );
   report = {
     ok: true,
     provider: { id: "ghidra", version: SUPPORTED_GHIDRA_VERSION },
@@ -246,6 +270,7 @@ try {
     transport: "authenticated-loopback-tcp",
     operations: [...observed].sort((left, right) => left.localeCompare(right)),
     cleanup: "complete",
+    compact_references: compactReferences,
     native_controls: {
       job_object: true,
       protected_dacl: true,
@@ -254,7 +279,7 @@ try {
     limitations: [
       "approved-non-sensitive-fixtures-only",
       "windows-x64-local-ntfs-only",
-      "native-x86-and-x86-64-pe-applications-only",
+      "native-x86-and-x86-64-pe-applications-and-dlls-only",
       "no-gui-or-mutation-authority",
     ],
   };

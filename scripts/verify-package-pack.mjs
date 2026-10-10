@@ -38,7 +38,7 @@ export async function verifyPackagePack({ root, workspace }) {
     throw new Error("package did not expose both rea command entry points");
   if (packedManifest.mcpName !== "io.github.morluto/rea")
     throw new Error("package did not retain its MCP Registry ownership marker");
-  if (packedFiles.some((path) => path.startsWith("package/skill-src/")))
+  if (packedFiles.some((path) => path.startsWith("package/.agents/")))
     throw new Error(
       "package included authored skill sources instead of only the generated bundle",
     );

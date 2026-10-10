@@ -1,7 +1,7 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
   createJavaScriptApplicationGraph,
-  createImmutableJavaScriptApplicationGraphSteps,
+  sealTransferredJavaScriptApplicationGraphSteps,
   type JavaScriptApplicationGraph,
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
@@ -15,9 +15,9 @@ import {
   addJavaScriptHtmlRoles,
   addJavaScriptSourceMapOriginals,
 } from "./JavaScriptArtifactGraphDocuments.js";
-import { addJavaScriptStaticFindings } from "./JavaScriptArtifactGraphFindings.js";
+import { addJavaScriptStaticFindingsSteps } from "./JavaScriptArtifactGraphFindings.js";
 import {
-  addJavaScriptModuleRelationships,
+  addJavaScriptModuleRelationshipsSteps,
   type JavaScriptModuleRelationshipOmissions,
   addJavaScriptSourceModules,
 } from "./JavaScriptModuleRelationships.js";
@@ -51,24 +51,42 @@ export const buildJavaScriptArtifactGraph = (
   analysis: JavaScriptModuleArtifactAnalysis,
 ): JavaScriptApplicationGraph =>
   createJavaScriptApplicationGraph(
-    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+    completeSynchronously(
+      buildJavaScriptArtifactGraphInputSteps(snapshot, fileSet, analysis),
+    ),
   );
 
-/** Build a validated application graph with cooperative immutable ownership. */
-export const buildImmutableJavaScriptArtifactGraphSteps = (
+/**
+ * Build a validated application graph with cooperative immutable ownership.
+ * Constructing the graph input also runs in steps: projecting every module
+ * relationship and finding at once held the event loop for seconds.
+ */
+export function* buildImmutableJavaScriptArtifactGraphSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
-): Generator<void, JavaScriptApplicationGraph> =>
-  createImmutableJavaScriptApplicationGraphSteps(
-    buildJavaScriptArtifactGraphInput(snapshot, fileSet, analysis),
+): Generator<void, JavaScriptApplicationGraph> {
+  const input = yield* buildJavaScriptArtifactGraphInputSteps(
+    snapshot,
+    fileSet,
+    analysis,
   );
+  // The input was built here and is not retained, so it can be transferred.
+  return yield* sealTransferredJavaScriptApplicationGraphSteps(input);
+}
 
-const buildJavaScriptArtifactGraphInput = (
+const completeSynchronously = <Value>(steps: Iterator<void, Value>): Value => {
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+  }
+};
+
+function* buildJavaScriptArtifactGraphInputSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
-): unknown => {
+): Generator<void, unknown> {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const context: JavaScriptArtifactGraphContext = {
@@ -86,15 +104,23 @@ const buildJavaScriptArtifactGraphInput = (
     containerNodes: new Map([[snapshot.manifest.root_sha256, root]]),
   };
   addJavaScriptArtifactContainers(context);
+  yield;
   addJavaScriptArtifactFiles(context);
+  yield;
   const packageRoots = addJavaScriptPackageNodes(context);
+  yield;
   addJavaScriptSourceModules(context);
+  yield;
   const bundlerLimitations = addJavaScriptBundlerNodes(context);
-  const relationshipOmissions = addJavaScriptModuleRelationships(context);
-  const findingLimitations = addJavaScriptStaticFindings(context);
+  const relationshipOmissions =
+    yield* addJavaScriptModuleRelationshipsSteps(context);
+  const findingLimitations = yield* addJavaScriptStaticFindingsSteps(context);
   addElectronBoundaries(context);
+  yield;
   addJavaScriptHtmlRoles(context);
+  yield;
   addJavaScriptSourceMapOriginals(context);
+  yield;
   const coverage = graphCoverage(context);
   return {
     schema: "JavaScriptApplicationGraph",
@@ -111,7 +137,7 @@ const buildJavaScriptArtifactGraphInput = (
       ...graphLimitations(context, coverage.status, relationshipOmissions),
     ],
   };
-};
+}
 
 const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   const resourceLimits = semanticResourceLimits(context);

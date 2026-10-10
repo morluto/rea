@@ -13,6 +13,33 @@ const reference = z.strictObject({
   indirect: z.boolean(),
   computed: z.boolean(),
   operand_index: z.number().int(),
+  source_address: z.string().min(1).nullable().optional(),
+  data: z.boolean().nullable().optional(),
+  read: z.boolean().nullable().optional(),
+  write: z.boolean().nullable().optional(),
+  primary: z
+    .boolean()
+    .nullable()
+    .optional()
+    .describe(
+      "Provider primary-reference status, not proof of literal addressing or a runtime access. Null or omission means unavailable.",
+    ),
+  provenance: z
+    .string()
+    .min(1)
+    .nullable()
+    .optional()
+    .describe(
+      "Provider subsystem reporting this reference; null or omission means unavailable.",
+    ),
+  source: z
+    .string()
+    .min(1)
+    .nullable()
+    .optional()
+    .describe(
+      "Provider reference origin, such as analysis, default, imported or user_defined; null or omission means unavailable.",
+    ),
 });
 /** Provider-decoded facts for one instruction; operand tokens preserve their native ordering. */
 export const nativeInstructionSchema = z.strictObject({

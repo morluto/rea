@@ -35,7 +35,23 @@ const projectIssue = (
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
   // Branch issue paths are relative to the union; branches often agree.
-  if (issue.code === "invalid_union")
+  if (issue.code === "invalid_union") {
+    // Unmatched discriminators and ambiguous unions have no branch issues.
+    // Keep their outer failure instead of flattening it into an empty list.
+    if (issue.errors.length === 0) {
+      const expected =
+        "options" in issue ? issue.options?.filter(isSafeExpected) : undefined;
+      return [
+        {
+          path,
+          reason:
+            valueAtPath(input, path) === undefined
+              ? "missing_argument"
+              : "invalid_value",
+          ...(expected === undefined ? {} : { expected }),
+        },
+      ];
+    }
     return uniqueIssues(
       issue.errors.flatMap((branch) =>
         branch.flatMap((branchIssue) =>
@@ -46,6 +62,7 @@ const projectIssue = (
         ),
       ),
     );
+  }
   if (issue.code === "invalid_key")
     return issue.issues.flatMap((keyIssue) =>
       projectIssue(

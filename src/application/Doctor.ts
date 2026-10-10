@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
@@ -16,7 +16,6 @@ import {
   type LinuxDistribution,
 } from "./LinuxHopper.js";
 import {
-  claudeCodeSkillsDirectory,
   readInstalledSkillIdentity,
   type InstalledSkillIdentity,
 } from "./SetupSkill.js";
@@ -441,7 +440,8 @@ export const systemDoctorHost = (
       readInstalledSkillIdentity(
         homeDirectory,
         clientIds,
-        claudeCodeSkillsDirectory(homeDirectory, environment),
+        environment,
+        platform,
       ),
     clientRegistrations: () =>
       readClientRegistrationStatuses(homeDirectory, undefined, {
@@ -472,6 +472,7 @@ const executableAvailable = async (
 ): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
+    if (!(await stat(path)).isFile()) return false;
     if (platform !== "linux") return true;
     const linked = await run("ldd", [path], options);
     return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);

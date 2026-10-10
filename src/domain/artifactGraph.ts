@@ -151,12 +151,14 @@ export const integrityContradictionSchema = z.object({
   limitations: z.array(z.string()).min(1),
 });
 
-/** Parent-child derivation relation between two content-addressed artifacts. */
+/**
+ * Parent-child derivation relation between two content-addressed artifacts.
+ * The child artifact and its logical path are those of the edge's occurrence.
+ */
 const artifactEdgeSchema = z.object({
   edge_id: edgeIdSchema,
   ordinal: z.number().int().min(0),
   parent_artifact_id: artifactIdSchema,
-  child_artifact_id: artifactIdSchema,
   relation: z.enum([
     "contains",
     "extracts",
@@ -167,7 +169,6 @@ const artifactEdgeSchema = z.object({
     "derived-from",
   ]),
   occurrence_id: occurrenceIdSchema,
-  logical_path: boundedRelativePathSchema.nullable(),
   producer: artifactCommandSchema.nullable(),
 });
 

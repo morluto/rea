@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  arrayContainerSchema,
+  parseElementSteps,
+} from "../zodCollectionSteps.js";
+import { canonicalJsonDigestSteps } from "../canonicalJsonDigestSteps.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
@@ -93,11 +98,14 @@ type EdgeSemantic = Omit<ApplicationEdge, "edge_id">;
 const edgeId = (edge: EdgeSemantic): string =>
   `jag_edge_${digestCanonicalValue(edge, "JavaScript Application Graph")}`;
 
+/** The issue sink shared by schema refinement and stepwise checking. */
+type GraphIssueContext = Pick<z.RefinementCtx, "addIssue">;
+
 const sortedUniqueIssue = (
   values: readonly string[],
   path: PropertyKey[],
   label: string,
-  context: z.RefinementCtx,
+  context: GraphIssueContext,
 ): void => {
   for (let index = 1; index < values.length; index += 1) {
     if (
@@ -116,7 +124,7 @@ const sortedUniqueIssue = (
 const checkEvidenceNormalization = (
   evidence: ApplicationGraphEvidence,
   path: PropertyKey[],
-  context: z.RefinementCtx,
+  context: GraphIssueContext,
 ): void => {
   sortedUniqueIssue(
     evidence.limitations,
@@ -226,7 +234,7 @@ const observationMatchesIdentity = (
 const checkNode = (
   node: ApplicationNode,
   index: number,
-  context: z.RefinementCtx,
+  context: GraphIssueContext,
 ): void => {
   if (node.node_id !== nodeId(node))
     context.addIssue({
@@ -304,10 +312,18 @@ const checkNode = (
 
 type GraphRecord = z.infer<typeof javascriptApplicationGraphRecordSchema>;
 
-const checkGraphInvariants = (
-  graph: GraphRecord,
-  context: z.RefinementCtx,
+const checkGraphContent = (
+  graph: JavaScriptApplicationGraphInput,
+  context: GraphIssueContext,
 ): void => {
+  const steps = checkGraphContentSteps(graph, context);
+  while (steps.next().done !== true);
+};
+
+function* checkGraphContentSteps(
+  graph: JavaScriptApplicationGraphInput,
+  context: GraphIssueContext,
+): Generator<void, void> {
   sortedUniqueIssue(
     graph.root_node_ids,
     ["root_node_ids"],
@@ -353,9 +369,12 @@ const checkGraphInvariants = (
         message: "Root identifier must name a graph node",
         path: ["root_node_ids"],
       });
-  for (const [index, node] of graph.nodes.entries())
+  for (const [index, node] of graph.nodes.entries()) {
+    if (index % 64 === 0) yield;
     checkNode(node, index, context);
+  }
   for (const [index, edge] of graph.edges.entries()) {
+    if (index % 64 === 0) yield;
     const { edge_id: identifier, ...semantic } = edge;
     if (identifier !== edgeId(semantic))
       context.addIssue({
@@ -394,7 +413,13 @@ const checkGraphInvariants = (
       context,
     );
   }
+}
 
+const checkGraphInvariants = (
+  graph: GraphRecord,
+  context: GraphIssueContext,
+): void => {
+  checkGraphContent(graph, context);
   const { graph_id: identifier, ...semantic } = graph;
   if (
     identifier !==
@@ -410,6 +435,9 @@ const checkGraphInvariants = (
 /** Strict JavaScript Application Graph with verified commitments. */
 export const javascriptApplicationGraphSchema =
   javascriptApplicationGraphRecordSchema.superRefine(checkGraphInvariants);
+
+const javascriptApplicationGraphContentSchema =
+  javascriptApplicationGraphInputSchema.superRefine(checkGraphContent);
 
 /** Fully validated JavaScript Application Graph. */
 export type JavaScriptApplicationGraph = z.infer<
@@ -466,27 +494,33 @@ export const createJavaScriptApplicationEdge = (
 export const createJavaScriptApplicationGraph = (
   input: unknown,
 ): JavaScriptApplicationGraph => {
-  const parsed = javascriptApplicationGraphInputSchema.parse(input);
-  const semantic: JavaScriptApplicationGraphInput = {
-    ...parsed,
-    root_node_ids: uniqueSorted(parsed.root_node_ids),
-    nodes: [...parsed.nodes].sort((left, right) =>
-      compareUnicodeCodePoints(left.node_id, right.node_id),
-    ),
-    edges: [...parsed.edges].sort((left, right) =>
-      compareUnicodeCodePoints(left.edge_id, right.edge_id),
-    ),
-    coverage: {
-      ...parsed.coverage,
-      limits: normalizeLimits(parsed.coverage.limits),
-    },
-    limitations: uniqueSorted(parsed.limitations),
+  const semantic = normalizeGraphInput(
+    javascriptApplicationGraphInputSchema.parse(input),
+  );
+  const content = javascriptApplicationGraphContentSchema.parse(semantic);
+  return {
+    ...content,
+    graph_id: `jag_${digestCanonicalValue(content, "JavaScript Application Graph")}`,
   };
-  return javascriptApplicationGraphSchema.parse({
-    ...semantic,
-    graph_id: `jag_${digestCanonicalValue(semantic, "JavaScript Application Graph")}`,
-  });
 };
+
+const normalizeGraphInput = (
+  parsed: JavaScriptApplicationGraphInput,
+): JavaScriptApplicationGraphInput => ({
+  ...parsed,
+  root_node_ids: uniqueSorted(parsed.root_node_ids),
+  nodes: [...parsed.nodes].sort((left, right) =>
+    compareUnicodeCodePoints(left.node_id, right.node_id),
+  ),
+  edges: [...parsed.edges].sort((left, right) =>
+    compareUnicodeCodePoints(left.edge_id, right.edge_id),
+  ),
+  coverage: {
+    ...parsed.coverage,
+    limits: normalizeLimits(parsed.coverage.limits),
+  },
+  limitations: uniqueSorted(parsed.limitations),
+});
 
 const validatedImmutableApplicationGraphs = new WeakSet<object>();
 
@@ -495,6 +529,65 @@ export const createImmutableJavaScriptApplicationGraphSteps = (
   input: unknown,
 ): Generator<void, JavaScriptApplicationGraph> =>
   sealValidatedApplicationGraphSteps(createJavaScriptApplicationGraph(input));
+
+const applicationGraphShape = javascriptApplicationGraphInputSchema.shape;
+const applicationGraphContainerSchema =
+  javascriptApplicationGraphInputSchema.extend({
+    nodes: arrayContainerSchema(applicationGraphShape.nodes),
+    edges: arrayContainerSchema(applicationGraphShape.edges),
+  });
+
+/**
+ * Seal a graph whose input the caller transfers: the caller neither retains nor
+ * mutates any part of it afterwards. Only the graph's own fields are validated
+ * synchronously; nodes and edges are validated, checked, hashed and frozen in
+ * steps, because doing so at once held the event loop for large applications.
+ */
+export const sealTransferredJavaScriptApplicationGraphSteps = (
+  input: unknown,
+): Generator<void, JavaScriptApplicationGraph> =>
+  parseAndSealApplicationGraphSteps(
+    applicationGraphContainerSchema.parse(input),
+  );
+
+function* parseAndSealApplicationGraphSteps(
+  container: z.output<typeof applicationGraphContainerSchema>,
+): Generator<void, JavaScriptApplicationGraph> {
+  const issues: z.core.$ZodIssue[] = [];
+  const parsed: JavaScriptApplicationGraphInput = {
+    ...container,
+    nodes: yield* parseElementSteps(
+      applicationGraphShape.nodes.element,
+      container.nodes,
+      ["nodes"],
+      issues,
+    ),
+    edges: yield* parseElementSteps(
+      applicationGraphShape.edges.element,
+      container.edges,
+      ["edges"],
+      issues,
+    ),
+  };
+  if (issues.length > 0) throw new z.ZodError(issues);
+  const content = normalizeGraphInput(parsed);
+  let invalid = false;
+  yield* checkGraphContentSteps(content, {
+    addIssue: () => {
+      invalid = true;
+    },
+  });
+  // An invalid owned graph is a construction defect; report it with the exact
+  // issues the content schema produces.
+  if (invalid) {
+    javascriptApplicationGraphContentSchema.parse(content);
+    throw new TypeError("Application graph checks disagree with its schema");
+  }
+  return yield* sealValidatedApplicationGraphSteps({
+    ...content,
+    graph_id: `jag_${yield* canonicalJsonDigestSteps(content)}`,
+  });
+}
 
 function* sealValidatedApplicationGraphSteps(
   graph: JavaScriptApplicationGraph,

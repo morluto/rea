@@ -1,6 +1,14 @@
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -163,20 +171,86 @@ describe("selected captured module artifact boundary", () => {
     await writeFile(map, "[]");
     expect((await new LocalWebModuleArtifacts().load(input)).ok).toBe(false);
   });
-  it("preserves missing filesystem diagnostics separately from malformed input", async () => {
+});
+
+describe("caller-selected web module files", () => {
+  const selectionIssue = (field: readonly string[], message: string) => ({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: field,
+          reason: "invalid_value",
+          message: expect.stringContaining(message),
+        },
+      ],
+    },
+  });
+
+  it("reports a missing or non-file manifest selection as invalid input", async () => {
     const root = await createTestTempDirectory("rea-module-missing-");
-    await mkdir(join(root, "directory"));
+    const missing = join(root, "missing.json");
+    const directory = join(root, "directory");
+    await mkdir(directory);
+    for (const [manifest_path, message] of [
+      [missing, `(ENOENT): ${missing}`],
+      [join(missing, "manifest.json"), "(ENOENT)"],
+      [directory, `Expected a regular file without a symlink: ${directory}`],
+    ] as const) {
+      const response = await new LocalWebModuleArtifacts().load({
+        manifest_path,
+        script_index: 0,
+      });
+      if (response.ok) throw new Error("expected selection failure");
+      expect(projectAnalysisError(response.error)).toMatchObject(
+        selectionIssue(["manifest_path"], message),
+      );
+    }
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "reports an unreadable manifest as a host access denial",
+    async () => {
+      const { manifestPath } = await fixture();
+      await chmod(manifestPath, 0o000);
+      onTestFinished(() => chmod(manifestPath, 0o600));
+      const response = await new LocalWebModuleArtifacts().load({
+        manifest_path: manifestPath,
+        script_index: 0,
+      });
+      if (response.ok) throw new Error("expected access denial");
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "access_denied",
+        details: { path: manifestPath, system_code: "EACCES" },
+      });
+    },
+  );
+
+  it("reports a missing import map selection as invalid input", async () => {
+    const { root, manifestPath } = await fixture();
+    const map = join(root, "missing-import-map.json");
     const response = await new LocalWebModuleArtifacts().load({
-      manifest_path: join(root, "missing.json"),
+      manifest_path: manifestPath,
+      script_index: 0,
+      import_map: { path: map, base_url: "https://app.test/" },
+    });
+    if (response.ok) throw new Error("expected missing import map");
+    expect(projectAnalysisError(response.error)).toMatchObject(
+      selectionIssue(["import_map", "path"], `(ENOENT): ${map}`),
+    );
+  });
+
+  it("keeps a missing manifest-derived source as an artifact fault", async () => {
+    const { manifestPath, sourcePath } = await fixture();
+    await rm(sourcePath);
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: manifestPath,
       script_index: 0,
     });
-    if (response.ok) throw new Error("expected missing file");
+    if (response.ok) throw new Error("expected missing source");
     expect(response.error).toMatchObject({
       _tag: "ArtifactOperationError",
       reason: "io",
     });
-    expect(projectAnalysisError(response.error).details?.detail).toContain(
-      "ENOENT",
-    );
   });
 });

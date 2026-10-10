@@ -8,10 +8,15 @@ __attribute__((noinline, used)) int rea_cross_leaf(int value) {
 }
 
 __attribute__((noinline, used)) int rea_cross_branch(int value) {
-  if (value > 10) {
-    return rea_cross_leaf(value);
+  /* A volatile-dependent loop keeps this callee multi-block at every
+     optimization level: newer clang folds a symmetric if/else of tail calls
+     into a conditional negate, and cross-format verification requires a
+     recovered multi-block callee. */
+  int adjusted = value > 10 ? value + 1 : -value;
+  while (adjusted > 100) {
+    adjusted -= rea_cross_global;
   }
-  return rea_cross_leaf(-value);
+  return rea_cross_leaf(adjusted);
 }
 
 __attribute__((noinline, used)) int rea_cross_indirect(

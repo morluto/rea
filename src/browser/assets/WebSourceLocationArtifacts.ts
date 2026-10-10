@@ -48,6 +48,7 @@ export class LocalWebSourceLocationArtifacts implements WebSourceLocationArtifac
             operation: "trace_web_source_location",
             field: ["source_map", "path"],
             targetPath: input.source_map.path,
+            callerSelected: true,
           },
           options?.signal,
         ),

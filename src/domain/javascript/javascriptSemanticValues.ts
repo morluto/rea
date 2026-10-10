@@ -10,7 +10,7 @@ import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 
 import {
   invalidateSemanticEscapedPath,
-  invalidateSemanticMutationPath,
+  invalidateSemanticMutationPaths,
 } from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
@@ -211,12 +211,11 @@ const evaluateBinding = (
       if (isPrimitive(captured)) value = captured;
     }
   }
-  const mutated = binding.mutatedPaths.reduce(
-    invalidateSemanticMutationPath,
-    value,
-  );
-  const projected = binding.escapedPaths.reduce(
-    (value, escape) =>
+  let projected = invalidateSemanticMutationPaths(value, binding.mutatedPaths);
+  for (const escape of binding.escapedPaths) {
+    // Escapes only invalidate object references; other lattice values survive.
+    if (projected.status !== "object" && projected.status !== "array") break;
+    if (
       context.capturePoint !== undefined &&
       semanticEscapeFollowsCapture(
         binding,
@@ -224,10 +223,10 @@ const evaluateBinding = (
         escape.node,
         context.state.parentsByNode,
       )
-        ? value
-        : invalidateSemanticEscapedPath(value, escape.path),
-    mutated,
-  );
+    )
+      continue;
+    projected = invalidateSemanticEscapedPath(projected, escape.path);
+  }
   // Point-local memoization also bounds failed speculative captures. Only a
   // primitive result is allowed back into ordinary value evaluation.
   if (

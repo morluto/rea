@@ -64,6 +64,14 @@ jobs:
         env:
           REA_ANALYSIS_PROVIDER: ghidra
         run: npm run verify:ghidra:windows -- --x86 | Tee-Object -FilePath windows-ghidra-x86-proof.log
+      - name: Verify native x64 DLL Windows Ghidra operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows -- --dll | Tee-Object -FilePath windows-ghidra-dll-proof.log
+      - name: Verify native x86 DLL Windows Ghidra operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows -- --x86 --dll | Tee-Object -FilePath windows-ghidra-x86-dll-proof.log
       - name: Verify ordinary-user CLI and MCP operations
         env:
           REA_ANALYSIS_PROVIDER: ghidra
@@ -72,6 +80,14 @@ jobs:
         env:
           REA_ANALYSIS_PROVIDER: ghidra
         run: npm run verify:ghidra:windows:package -- --x86 | Tee-Object -FilePath windows-ghidra-x86-package-proof.log
+      - name: Verify ordinary-user x64 DLL CLI and MCP operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows:package -- --dll | Tee-Object -FilePath windows-ghidra-dll-package-proof.log
+      - name: Verify ordinary-user x86 DLL CLI and MCP operations
+        env:
+          REA_ANALYSIS_PROVIDER: ghidra
+        run: npm run verify:ghidra:windows:package -- --x86 --dll | Tee-Object -FilePath windows-ghidra-x86-dll-package-proof.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -81,4 +97,8 @@ jobs:
             windows-ghidra-package-proof.log
             windows-ghidra-x86-proof.log
             windows-ghidra-x86-package-proof.log
+            windows-ghidra-dll-proof.log
+            windows-ghidra-x86-dll-proof.log
+            windows-ghidra-dll-package-proof.log
+            windows-ghidra-x86-dll-package-proof.log
           retention-days: 30
