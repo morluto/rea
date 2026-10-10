@@ -183,9 +183,8 @@ export const captureDom = (
       const seenAttributeNames = new Set<string>();
       const attributeNames: string[] = [];
       for (const name of rawAttributeNames) {
-        const lower = name.toLowerCase();
-        if (!seenAttributeNames.has(lower)) {
-          seenAttributeNames.add(lower);
+        if (!seenAttributeNames.has(name)) {
+          seenAttributeNames.add(name);
           attributeNames.push(name);
         }
       }
@@ -395,7 +394,8 @@ const domMetadata = (
   } = options;
   const pairs = new Map<string, string>();
   for (let index = 0; index + 1 < attributes.length; index += 2) {
-    const name = indexedString(strings, attributes[index]).toLowerCase();
+    // Chrome already folds HTML names; SVG/XML names remain case-sensitive.
+    const name = indexedString(strings, attributes[index]);
     const value = indexedString(strings, attributes[index + 1]);
     if (!pairs.has(name)) pairs.set(name, value);
   }
