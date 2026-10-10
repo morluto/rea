@@ -608,6 +608,7 @@ const runProcessScenario = async (
     samples,
     eventJournal,
     before,
+    finalizationEnabled: scenario.finalization_ms > 0,
   });
   let runtime: StartedCaptureRuntime | undefined;
   let actualRootPid: number | undefined;

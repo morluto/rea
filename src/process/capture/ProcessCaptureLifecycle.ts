@@ -160,7 +160,7 @@ export interface ProcessCaptureObservationBuffer {
     UnverifiedProcessCapture["interaction_events"]
   >;
   exit: IncompleteProcessCaptureObservations["exit"];
-  finalization: IncompleteProcessCaptureObservations["finalization"];
+  finalization?: IncompleteProcessCaptureObservations["finalization"];
   settlement: IncompleteProcessCaptureObservations["settlement"];
   process_samples: PartialProcessObservationField<readonly ProcessSample[]>;
   filesystem_snapshots: {
@@ -180,6 +180,8 @@ export const createProcessCaptureObservationBuffer = (options: {
   readonly samples: readonly ProcessSample[];
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
   readonly before: ProcessFilesystemSnapshot;
+  /** Seed a finalization observation only for a scenario with an interval. */
+  readonly finalizationEnabled?: boolean;
 }): ProcessCaptureObservationBuffer => ({
   target_pid: {
     state: "unavailable",
@@ -196,10 +198,15 @@ export const createProcessCaptureObservationBuffer = (options: {
     state: "unavailable",
     reason: "Terminal exit was not observed before the run failed.",
   },
-  finalization: {
-    state: "unavailable",
-    reason: "Finalization was not observed before capture completion finished.",
-  },
+  ...(options.finalizationEnabled === true
+    ? {
+        finalization: {
+          state: "unavailable" as const,
+          reason:
+            "Finalization was not observed before capture completion finished.",
+        },
+      }
+    : {}),
   settlement: {
     state: "unavailable",
     reason:
@@ -746,6 +753,7 @@ export const awaitTerminalExit = async ({
       };
       finalizationSignals.push(record);
       recordFinalization(snapshot(null));
+      const deliveryBound = new AbortController();
       // The wait is bounded by the cleanup verification grace: a delivery that
       // never settles is recorded as unverified instead of holding the capture.
       pendingDeliveries.push(
@@ -753,8 +761,12 @@ export const awaitTerminalExit = async ({
           signalTarget(finalizationSignal),
           delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS, "unverified" as const, {
             ref: false,
-          }),
+            signal: deliveryBound.signal,
+          }).catch(() => "unverified" as const),
         ])
+          .finally(() => {
+            deliveryBound.abort();
+          })
           .then(
             (delivery) => {
               record.delivery = delivery;
@@ -824,12 +836,7 @@ export const awaitTerminalExit = async ({
         timer.cancel();
       }
       timers.clear();
-      // A delivery that never settles must not hold back an observed exit;
-      // its attempt stays recorded as unverified.
-      void Promise.race([
-        Promise.allSettled(pendingDeliveries),
-        delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS),
-      ]).then(() => {
+      const finish = (): void => {
         if (settled) return;
         settled = true;
         resolveExit({
@@ -839,7 +846,25 @@ export const awaitTerminalExit = async ({
             ? {}
             : { finalization: snapshot(finalizationElapsedMs) }),
         });
-      });
+      };
+      if (pendingDeliveries.length === 0) {
+        finish();
+        return;
+      }
+      // A delivery that never settles must not hold back an observed exit;
+      // its attempt stays recorded as unverified.
+      const grace = new AbortController();
+      void Promise.race([
+        Promise.allSettled(pendingDeliveries),
+        delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS, undefined, {
+          ref: false,
+          signal: grace.signal,
+        }).catch(() => undefined),
+      ])
+        .finally(() => {
+          grace.abort();
+        })
+        .then(finish);
     });
     const timeout = scheduleProcessInterval(() => {
       onLiveProgress?.();
@@ -1284,6 +1309,7 @@ export const prepareProcessCapture = async (
         samples: [],
         eventJournal: [],
         before,
+        finalizationEnabled: scenario.finalization_ms > 0,
       }),
       { scenario },
     );
