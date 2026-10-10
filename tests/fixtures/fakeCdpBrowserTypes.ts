@@ -28,6 +28,8 @@ export interface FakeCdpBrowser {
 }
 
 export interface FakeOptions {
+  /** Send these commands' producer events before acknowledging completion, as a wire barrier. */
+  readonly eventsBeforeReply?: readonly string[];
   /** Return a native-shaped command rejection through the actual wire parser. */
   readonly commandError?: (
     command: FakeCdpCommand,

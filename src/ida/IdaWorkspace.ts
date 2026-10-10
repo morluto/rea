@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, constants } from "node:fs";
-import { copyFile } from "node:fs/promises";
+import { copyFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, normalize } from "node:path";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -39,8 +39,10 @@ export class IdaWorkspace {
     target: BinaryTarget,
     root = tmpdir(),
   ): Promise<IdaWorkspace> {
+    // Upstream reports canonical paths (macOS /var -> /private/var), so the
+    // private input path must already be canonical for identity checks.
     const runtime = await PrivateRuntimeRoot.create({
-      parent: normalize(root),
+      parent: await realpath(normalize(root)),
       prefix: "rea-ida-",
     });
     const inputPath = join(runtime.path, basename(target.path));

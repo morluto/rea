@@ -8,14 +8,14 @@ import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 
 const RETAINED_EXAMPLE_ID = `ev_${"a".repeat(64)}`;
 
-/** Selected views of already completed layout and JavaScript analysis Evidence. */
+/** Selected views of already completed layout, JavaScript and native function Evidence. */
 export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
   {
     name: "inspect_analysis_view",
     ...toolContractMetadata("inspect_analysis_view"),
     kind: "application",
     description:
-      "Inspect a selected view of completed binary-layout or JavaScript application Evidence without repeating analysis. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page with a positive limit. Module pages contain JavaScript assets, bundled modules and source modules; use node_id when paths are ambiguous or unavailable. Returns selected facts inline with artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the retained Evidence when needed.",
+      "Inspect selected views of completed binary-layout, JavaScript application or native analyze_function Evidence without repeating analysis. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page. Module pages include assets, bundled and source modules; use node_id for ambiguous or unavailable paths. Native views select procedure, pseudocode, assembly, basic blocks, comments, callers/callees, references, unresolved calls, referenced strings/names, native API and high-pcode. Use nonnegative offset and a positive caller-selected limit (defaults 0 and 64); pseudocode uses UTF-16 code units, other native pages use rows. Returns artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the complete retained Evidence if needed.",
     inputSchema: inspectAnalysisViewInputSchema,
     outputSchema: evidenceResultOf(analysisViewResultSchema),
     examples: [
@@ -40,6 +40,21 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
             kind: "item",
             collection: "sections",
             selector: { name: ".text" },
+          },
+        },
+      },
+      {
+        title: "Page native high-pcode operations from retained Evidence",
+        input: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: RETAINED_EXAMPLE_ID,
+          },
+          view: {
+            kind: "native",
+            facet: "value_flow_operations",
+            offset: 0,
+            limit: 32,
           },
         },
       },

@@ -1,3 +1,5 @@
+import { posix } from "node:path";
+
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import type {
   ArtifactEdge,
@@ -5,6 +7,29 @@ import type {
   ArtifactOccurrence,
   IntegrityContradiction,
 } from "./artifactGraph.js";
+
+/** NFC spelling of a logical archive path. Inventory and path joins share it. */
+export const logicalPathNfc = (value: string): string => value.normalize("NFC");
+
+/**
+ * Lexical join against an inventoried logical path. The result is NFC.
+ * `"."` is the archive root. A path that escapes the root, or that contains
+ * NUL, is left in a form the caller can report; `logicalPathEscapesRoot`
+ * is then true.
+ */
+export const normalizeJoinedLogicalPath = (value: string): string => {
+  if (value.includes("\0")) return value;
+  return logicalPathNfc(
+    posix.normalize(value.replaceAll("\\", "/")).replace(/^\.\//u, ""),
+  );
+};
+
+/** Whether a joined logical path leaves the archive root. */
+export const logicalPathEscapesRoot = (path: string): boolean =>
+  path.includes("\0") ||
+  path === ".." ||
+  path.startsWith("../") ||
+  path.startsWith("/");
 
 /** Content-address an artifact independently of where it was observed. */
 export const artifactIdForContent = (sha256: string): string =>
@@ -71,14 +96,21 @@ export const artifactContradictionId = (input: {
     "Artifact",
   )}`;
 
-/** Identify an edge by its semantic relationship and exact occurrence. */
+/**
+ * Identify an edge by its semantic relationship and exact occurrence. The
+ * child artifact and logical path come from that occurrence.
+ */
 export const artifactEdgeId = (
-  semantic: Pick<
-    ArtifactEdge,
-    | "parent_artifact_id"
-    | "child_artifact_id"
-    | "relation"
-    | "occurrence_id"
-    | "logical_path"
-  >,
-): string => `edge_${digestCanonicalValue(semantic, "Artifact")}`;
+  edge: Pick<ArtifactEdge, "parent_artifact_id" | "relation" | "occurrence_id">,
+  occurrence: Pick<ArtifactOccurrence, "artifact_id" | "logical_path">,
+): string =>
+  `edge_${digestCanonicalValue(
+    {
+      parent_artifact_id: edge.parent_artifact_id,
+      child_artifact_id: occurrence.artifact_id,
+      relation: edge.relation,
+      occurrence_id: edge.occurrence_id,
+      logical_path: occurrence.logical_path,
+    },
+    "Artifact",
+  )}`;

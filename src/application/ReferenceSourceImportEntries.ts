@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import {
+  logicalPathEscapesRoot,
+  normalizeJoinedLogicalPath,
+} from "../domain/artifactIdentity.js";
+import {
   classifyReferenceSourcePath,
   detectReferenceSourceLanguage,
 } from "../domain/referenceSourceClassification.js";
@@ -83,10 +87,10 @@ const resolveInternalSpecifier = (
 ): { to: string; resolution: "internal" | "unresolved" } => {
   if (posix.isAbsolute(specifier))
     return { to: specifier, resolution: "unresolved" };
-  const normalized = posix.normalize(
+  const normalized = normalizeJoinedLogicalPath(
     posix.join(posix.dirname(fromPath), specifier),
   );
-  if (normalized.startsWith("../") || normalized === "..")
+  if (logicalPathEscapesRoot(normalized))
     return { to: normalized, resolution: "unresolved" };
   const suffixes = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
   const candidates = suffixes.flatMap((suffix) => [

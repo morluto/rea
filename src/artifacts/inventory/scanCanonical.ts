@@ -73,12 +73,12 @@ export const scanCanonicalArtifactInventory = async (
   try {
     if (reader instanceof AsarArtifactReader)
       await reader.prepareContainer(rootDigest?.sha256, options.signal);
-    const { nodes, occurrences, pendingContradictions } = await scanReader(
-      reader,
-      ownedReaders,
-      options.signal,
-      integrity,
-    );
+    const {
+      nodes,
+      occurrences,
+      pendingContradictions,
+      caseCollisionLimitation,
+    } = await scanReader(reader, ownedReaders, options.signal, integrity);
     outcome = {
       kind: "completed",
       snapshot: await buildInventorySnapshot({
@@ -91,6 +91,7 @@ export const scanCanonicalArtifactInventory = async (
         nodes,
         occurrences,
         pendingContradictions,
+        caseCollisionLimitation,
       }),
     };
   } catch (cause: unknown) {
@@ -130,6 +131,7 @@ interface SnapshotBuildInput {
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
+  readonly caseCollisionLimitation: string | undefined;
 }
 
 const buildInventorySnapshot = async (
@@ -202,7 +204,12 @@ const buildInventorySnapshot = async (
     edges: orderedEdges,
     provenance: reader?.provenance() ?? [],
     integrity_contradictions: integrityContradictions,
-    limitations: buildLimitations(rootFormat, reader, integrityContradictions),
+    limitations: buildLimitations(
+      rootFormat,
+      reader,
+      integrityContradictions,
+      input.caseCollisionLimitation,
+    ),
   };
 };
 
@@ -310,8 +317,10 @@ const buildLimitations = (
   rootFormat: ArtifactOccurrence["artifact_format"],
   reader: ArtifactReader | undefined,
   integrityContradictions: readonly IntegrityContradiction[],
+  caseCollisionLimitation: string | undefined,
 ): string[] => [
   ...inventoryLimitations(rootFormat, reader),
+  ...(caseCollisionLimitation === undefined ? [] : [caseCollisionLimitation]),
   ...(integrityContradictions.length === 0
     ? []
     : [

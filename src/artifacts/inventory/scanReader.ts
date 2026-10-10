@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import {
+  annotateEnglishUnicodeCaseCollisions,
   ArtifactPathRegistry,
   normalizeArtifactPath,
 } from "../ArtifactPaths.js";
@@ -16,6 +17,7 @@ import {
   classifyArtifactBytes,
   createArtifactNode,
   createOccurrence,
+  noteUnreadContainerSuffix,
   nearestParent,
   type MutableOccurrence,
 } from "./ArtifactGraphConstruction.js";
@@ -64,10 +66,16 @@ export const scanReader = async (
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
   readonly pendingContradictions: PendingIntegrityContradiction[];
+  readonly caseCollisionLimitation: string | undefined;
 }> => {
   const { nodes, occurrences, pendingContradictions } = emptyScan();
   if (reader === undefined)
-    return { nodes, occurrences, pendingContradictions };
+    return {
+      nodes,
+      occurrences,
+      pendingContradictions,
+      caseCollisionLimitation: undefined,
+    };
   const context: ScanContext = {
     reader,
     signal,
@@ -90,7 +98,12 @@ export const scanReader = async (
         context.occurrenceByPath,
         context.expandedContainerIds,
       )?.occurrence_id ?? null;
-  return { nodes, occurrences, pendingContradictions };
+  return {
+    nodes,
+    occurrences,
+    pendingContradictions,
+    caseCollisionLimitation: annotateEnglishUnicodeCaseCollisions(occurrences),
+  };
 };
 
 const visitArtifactEntries = async (
@@ -149,7 +162,8 @@ const visitArtifactEntries = async (
         occurrence.hash_status = "unavailable";
         occurrence.limitations.push(UNAVAILABLE_UNPACKED_LIMITATION);
       }
-      if (digested !== undefined) {
+      if (digested === undefined) noteUnreadContainerSuffix(occurrence);
+      else {
         context.nodes.set(digested.node.artifact_id, digested.node);
         occurrence.artifact_id = digested.node.artifact_id;
         occurrence.artifact_kind = digested.classification.kind;
@@ -164,7 +178,12 @@ const visitArtifactEntries = async (
       }
       context.occurrences.push(occurrence);
       context.occurrenceByPath.set(logicalPath, occurrence);
-      if (expandableAsar && digested !== undefined && !digested.mismatched) {
+      if (
+        expandableAsar &&
+        digested !== undefined &&
+        digested.classification.format === "asar" &&
+        !digested.mismatched
+      ) {
         const nested = new AsarArtifactReader(entry.adapterKey);
         context.ownedReaders.push(nested);
         await nested.prepareContainer(digested.node.sha256, context.signal);

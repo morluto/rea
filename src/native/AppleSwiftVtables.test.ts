@@ -66,6 +66,8 @@ describe("Swift vtable coverage facts: unresolved Swift dispatch slots", () => {
         failures: [],
         issues: [],
         decode: (_address, raw) => ({ kind: "rebase", target: raw }),
+        examined: 0,
+        unreadRebaseBytes: 0,
       },
       swift: {
         facet: "swift_conformances_static_witness_slots",
@@ -178,6 +180,8 @@ describe("Swift vtable coverage facts: unsupported pointer fixup coverage", () =
           kind: "unsupported",
           reason: "Unsupported chained pointer format 99",
         }),
+        examined: 0,
+        unreadRebaseBytes: 0,
       },
       swift: {
         facet: "swift_conformances_static_witness_slots",

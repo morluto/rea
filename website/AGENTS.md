@@ -12,8 +12,19 @@ for asset notes and the source of case-study claims.
   should explain a new fact or action.
 - Reuse the shared styles, prompts, figures and code-step components. Keep a
   case study focused on one question, with further examples in native details.
+- Edit shared header, footer and sharing markup in `templates/`; run
+  `python3 scripts/website.py sync` and commit the rendered regions with their
+  templates. Keep page bodies outside the marked regions. Author each title and
+  description once; derive sharing fields and canonicals from them. Use
+  `new-page` for a reading-page scaffold, then add its index link. Keep a draft's
+  visible label and `noindex` until the content is ready.
 - Show what REA returns and how the agent uses it. Preserve source attribution,
   target identity and verification scope.
+- Blog articles teach methods, decisions and workflows through concrete cases.
+  Lead with the takeaway. Essays can develop a personal argument through
+  experience; figures are optional and should add an explanation the prose
+  needs. Use engine details only when they explain a decision. Label working
+  outlines and mark them `noindex`.
 - Keep personal paths, account data, credentials and raw captures outside the
   public assets. Use generic inputs and label shortened display paths.
 - Follow the same clear writing standard in search titles and descriptions.
@@ -22,9 +33,13 @@ for asset notes and the source of case-study claims.
   from HTML automatically. Mark example applications `noindex` in the head and
   keep them crawlable. Maintain the SVG sharing source, not the generated PNG.
 - Check both local root and `/rea/` paths, mobile layouts, expanded details,
-  copying and downloads. Run `scripts/prepare-website.py` followed by
-  `scripts/verify-website.py` and `scripts/test-website.py`, using the website
-  Python environment described in the README.
+  copying and downloads. Run `python3 scripts/website.py check`, using the Python
+  environment described in the README. It rejects drift rather than silently
+  rewriting shared HTML. Use `website.py links` for an optional network audit;
+  distinguish missing targets from access denials and unverified fragments.
+- Check setup and support statements against the current installation/provider
+  guides and released package. Preserve historical case-study checkpoints and
+  versions unless a new investigation supplies replacement evidence.
 - Keep `website-pages.yml` as the sole, manual production publisher for
   Cloudflare and Pages. Default to `both`: both hosts receive the same verified
   artifact and pass the published-commit check. Use `pages` only when explicitly

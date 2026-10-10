@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { compactStringIdentityKey } from "../../domain/compactStringIdentity.js";
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -43,11 +44,12 @@ interface ResolvedReference {
 }
 
 /** Project imports, workers, roles, endpoints, storage, and source-map links. */
-export const addJavaScriptStaticFindings = (
+export function* addJavaScriptStaticFindingsSteps(
   context: JavaScriptArtifactGraphContext,
-): readonly string[] => {
+): Generator<void, readonly string[]> {
   const omissions = { selfReferences: 0 };
   for (const analyzed of context.analysis.files) {
+    yield;
     const { file, javascript } = analyzed;
     const asset = context.assetNodes.get(file.path);
     if (javascript === null || asset === undefined) continue;
@@ -68,7 +70,7 @@ export const addJavaScriptStaticFindings = (
     ["static reference", "static references"],
     "the referencing module",
   );
-};
+}
 
 const addReference = (
   context: JavaScriptArtifactGraphContext,
@@ -162,16 +164,15 @@ const addEndpoint = (
   const source =
     sourceNodeFor(context, input.file.path, input.value.module_key) ??
     input.asset;
+  const key = compactStringIdentityKey(input.value.value);
+  const label = `${input.value.kind} endpoint`;
   const node = context.accumulator.addNode({
     kind: "endpoint",
-    identity: artifactLocalIdentity(
-      input.file.sha256,
-      input.value.kind,
-      input.value.value,
-    ),
+    identity: artifactLocalIdentity(input.file.sha256, input.value.kind, key),
     observations: [
       {
-        label: input.value.value,
+        label:
+          input.value.value.length <= label.length ? input.value.value : label,
         properties: {
           endpoint_kind: input.value.kind,
           value: input.value.value,

@@ -16,6 +16,7 @@ import { silentLogger } from "../../../src/logger.js";
 const collect = async (
   value: unknown,
   format: "json" | "jsonl" = "json",
+  terminal = true,
 ): Promise<string> => {
   const chunks: Buffer[] = [];
   const destination = new Writable({
@@ -28,6 +29,7 @@ const collect = async (
       callback();
     },
   });
+  if (terminal) Object.defineProperty(destination, "isTTY", { value: true });
   await writeJsonOutput(value, destination, format);
   return Buffer.concat(chunks).toString("utf8");
 };
@@ -50,6 +52,16 @@ describe("incremental CLI JSON", () => {
     const shared = { value: "shared" };
     const value = { copies: [shared, shared] };
     expect(await collect(value)).toBe(`${JSON.stringify(value, null, 2)}\n`);
+  });
+
+  it("indents JSON only for a terminal and writes piped JSON compactly", async () => {
+    const value = { nested: [{ value: null }], text: "雪𝟠" };
+    expect(await collect(value, "json", true)).toBe(
+      `${JSON.stringify(value, null, 2)}\n`,
+    );
+    expect(await collect(value, "json", false)).toBe(
+      `${JSON.stringify(value)}\n`,
+    );
   });
 
   it("writes compact JSONL records and preserves an empty record set", async () => {
@@ -78,6 +90,7 @@ describe("incremental CLI JSON", () => {
         }, 1);
       },
     });
+    Object.defineProperty(destination, "isTTY", { value: true });
     await writeJsonOutput({ leaf }, destination);
     expect(largestChunk).toBeLessThan(Buffer.byteLength(leaf));
     const actual = Buffer.concat(chunks).toString("utf8");
@@ -212,6 +225,8 @@ describe("streamed CLI result surface", () => {
       expect(operation).toBe("inspect_managed_members");
       return value;
     });
+    // A terminal destination exercises the indented encoding past the limit.
+    Object.defineProperty(destination, "isTTY", { value: true });
     const argv = ["inspect-managed-members", "fixture.dll", "--json"];
     const output = createStreamedCliJsonOutput(argv, destination);
     if (output === undefined) throw new Error("Missing JSON output surface");

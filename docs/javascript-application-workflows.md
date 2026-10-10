@@ -91,16 +91,42 @@ mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
 Semantic literal nodes keep their complete value in `properties.value`; literal
-queries match that field. String labels read `string literal` rather than
-repeating the payload. A literal's `identity.role_key` commits its canonical
-JSON value as `value-sha256:<digest>`, together with its binding and property
-role. This keeps large values out of identity and display metadata without
+queries match that field. String labels use `string literal` when that is
+shorter than the complete JSON value. A literal's `identity.role_key` commits
+its canonical JSON value as `value-sha256:<digest>` when the digest key is
+shorter; smaller values keep their existing JSON key. This keeps large values
+out of identity and display metadata without expanding short values or
 truncating their Evidence.
 
-New analyses therefore produce different literal node IDs from the earlier
-payload-bearing role keys. Use IDs returned by the selected parent graph and
-read literal values from `properties.value`, rather than decoding role keys or
-labels. Previously stored graphs and their original IDs remain valid inputs.
+New analyses therefore produce different IDs for hashed literals from the
+earlier payload-bearing role keys. Use IDs returned by the selected parent
+graph and read literal values from `properties.value`, rather than decoding
+role keys or labels. Previously stored graphs and their original IDs remain
+valid inputs.
+
+Endpoint nodes keep the exact endpoint in each observation's `properties.value`;
+semantic request and response nodes keep it in `properties.endpoint`. Endpoint
+identity keys use `value-sha256:<digest>` over the canonical JSON string when
+that is shorter, or when the original value starts with the reserved digest
+prefix. Other short endpoint keys remain unchanged. Endpoint labels use the
+shorter of the exact value and `<kind> endpoint`; semantic request/response
+labels use the shorter of the endpoint and operation method. These labels are
+display metadata, not endpoint lookup values.
+
+New analyses therefore change hashed endpoint IDs and longer endpoint labels.
+Use IDs from the selected graph and read the complete endpoint properties;
+previously stored graphs still support their original IDs. Literal endpoint
+search, semantic tracing, and version comparison use the preserved values.
+
+Event and listener nodes likewise preserve the complete event name in
+`properties.event_name`. Event role keys use the same reserved-prefix string
+digest rule, scoped to the emitter; repeated registrations, removals, and
+dispatches keep one event per exact emitter/name pair. Long event labels use
+`event`, and listener labels use the shorter of `<method>:<name>` and
+`<method>:listener`. Dynamic names remain `null` with explicit uncertainty. New analyses
+change hashed event IDs and longer event/listener labels; query the preserved
+name or select IDs from the parent graph. Previously stored graphs keep their
+original IDs and remain valid trace inputs.
 
 ## Version comparison
 
@@ -157,8 +183,13 @@ Direct return expressions, including expression-bodied arrows, are evaluated
 through an execution-free value lattice. Literal object fields and direct
 return sites are represented in the result. Calls, dynamic spreads, computed
 keys, and parser recovery remain partial or unknown.
-Objects and arrays passed to calls, constructors, or tagged templates, or used
-as method receivers, are not assumed unchanged after the invocation. Aliases
+Objects and arrays passed to calls, constructors, or tagged templates, used
+as method receivers, or stored through property targets are not assumed
+unchanged afterward. Property stores conservatively retain reference escape
+uncertainty rather than pretending to execute later writes. References
+handed back by local functions, methods, constructors, async functions, and
+generators also retain escape uncertainty, including when the call is read-only;
+this does not establish that a mutation occurred. Aliases
 and shared children in spread and rest copies retain that uncertainty; copied
 primitive slots and unrelated containing properties remain known. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known
@@ -202,7 +233,7 @@ or process workflows.
 
 ## CLI and verification
 
-All five CLI commands accept inline JSON or a path to a JSON file. The CLI
+All six CLI commands accept inline JSON or a path to a JSON file. The CLI
 returns an Evidence record directly. Put the full records in a later CLI input;
 a separate CLI process has no retained MCP connection state.
 

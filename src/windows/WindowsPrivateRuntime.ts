@@ -44,7 +44,7 @@ export class WindowsPrivateRuntime {
       authority.call("runtime_create", [parent, prefix]),
     );
     const runtime = new WindowsPrivateRuntime(observation, authority);
-    runtimes.set(observation.path.toLowerCase(), runtime);
+    runtimes.set(windowsRuntimeIdentityKey(observation), runtime);
     return runtime;
   }
 
@@ -142,16 +142,30 @@ export class WindowsPrivateRuntime {
     await this.#pending?.catch(() => undefined);
     this.authority.call("runtime_close", [this.observation.handle]);
     this.#closed = true;
-    runtimes.delete(this.observation.path.toLowerCase());
+    runtimes.delete(windowsRuntimeIdentityKey(this.observation));
   }
 }
 
-/** Select an already-owned runtime; an arbitrary pathname cannot grant authority. */
+/** File id returned by the OS. Path spelling is not part of the lease key. */
+const windowsRuntimeIdentityKey = (identity: {
+  readonly volumeSerial: string;
+  readonly fileId: string;
+}): string => `${identity.volumeSerial}:${identity.fileId}`;
+
+/**
+ * Select an already-owned runtime. Only the observed `path` or `finalPath`
+ * matches, character for character. A case variant fails closed.
+ */
 export const windowsPrivateRuntime = (
   rootPath: string,
 ): WindowsPrivateRuntime => {
-  const runtime = runtimes.get(rootPath.toLowerCase());
-  if (runtime === undefined)
+  const matches = [...runtimes.values()].filter(
+    (runtime) =>
+      runtime.observation.finalPath === rootPath ||
+      runtime.observation.path === rootPath,
+  );
+  const runtime = matches[0];
+  if (matches.length !== 1 || runtime === undefined)
     throw new Error(`No native private runtime owns ${rootPath}`);
   return runtime;
 };

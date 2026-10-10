@@ -13,7 +13,16 @@ export async function verifyPackageInstall({
 }) {
   await exec(
     "npm",
-    ["install", "--global", "--ignore-scripts", "--prefix", prefix, tarball],
+    [
+      "install",
+      "--global",
+      "--ignore-scripts",
+      "--omit=dev",
+      "--install-strategy=nested",
+      "--prefix",
+      prefix,
+      tarball,
+    ],
     { env: environment },
   );
   const cli = join(prefix, "bin", "rea");

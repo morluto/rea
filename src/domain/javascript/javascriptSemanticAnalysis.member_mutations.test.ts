@@ -590,3 +590,73 @@ describe("property mutations through TypeScript satisfies aliases", () => {
     ).toEqual({ status: "literal", value: "TOKEN" });
   });
 });
+
+describe("property mutation collection on minified bundles", () => {
+  it("records each write to one object without replaying earlier writes", () => {
+    const writes = Array.from(
+      { length: 2000 },
+      (_, index) => `source.p${index} = ${index};`,
+    ).join(" ");
+    const value = resultValue(
+      `const source = { token: "TOKEN" }; ${writes} return [source.token, source.p1999];`,
+    );
+    expect(value).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "literal", value: "TOKEN" } },
+        { value: { status: "unknown" } },
+      ],
+    });
+  }, 30000);
+
+  it("indexes many returned object methods instead of rescanning the object", () => {
+    const methods = Array.from(
+      { length: 2000 },
+      (_, index) => `m${index}() { return shared; }`,
+    ).join(",");
+    const writes = Array.from(
+      { length: 2000 },
+      (_, index) => `box.m${index}().p${index} = ${index};`,
+    ).join(" ");
+    const value = resultValue(
+      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${writes} return shared.token;`,
+    );
+    expect(value?.status).toBe("unknown");
+  }, 30000);
+});
+
+describe("results of methods on an escaped receiver", () => {
+  it("makes every method's distinct result uncertain, not only the called one", () => {
+    expect(
+      resultValue(
+        'const first = { t: "A" }; const second = { t: "B" }; const kept = { t: "C" }; const box = { a() { return first; }, b() { return second; }, c() { return first; } }; box.a(); return [first.t, second.t, kept.t];',
+      ),
+    ).toMatchObject({
+      status: "array",
+      items: [
+        { value: { status: "unknown" } },
+        { value: { status: "unknown" } },
+        { value: { status: "literal", value: "C" } },
+      ],
+    });
+  });
+
+  it("keeps a shared result uncertain across a wide escaped receiver (#1495)", () => {
+    const count = 2000;
+    const methods = Array.from(
+      { length: count },
+      (_, index) => `m${index}() { return shared; },`,
+    ).join(" ");
+    const calls = Array.from(
+      { length: count },
+      (_, index) => `box.m${index}().p${index} = ${index};`,
+    ).join(" ");
+    const value = resultValue(
+      `const shared = { token: "TOKEN" }; const box = { ${methods} }; ${calls} return [shared.token];`,
+    );
+    expect(value).toMatchObject({
+      status: "array",
+      items: [{ value: { status: "unknown" } }],
+    });
+  }, 30000);
+});

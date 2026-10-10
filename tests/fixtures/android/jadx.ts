@@ -74,7 +74,11 @@ export const createJadxProtocolFixture = async (
             ownsProcessLifetime: true,
             cleanup: () => cleanupOwnedProcessGroup(spawned.ownership),
           });
-          expect((await supervisor.stop()).status).not.toBe("incomplete");
+          // The SDK can close the child transport before process exit settles.
+          // Retry retained ownership without bypassing the supervisor's proof.
+          await expect
+            .poll(() => supervisor.stop(), { timeout: 5_000 })
+            .not.toMatchObject({ status: "incomplete" });
           if (options.cwd !== undefined)
             await rm(options.cwd, { recursive: true, force: true });
         });

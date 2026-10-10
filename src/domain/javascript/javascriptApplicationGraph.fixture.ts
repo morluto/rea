@@ -109,7 +109,7 @@ type FixtureNodeArguments = [
   evidence: ApplicationGraphEvidence,
 ];
 
-const fixtureNode = (
+export const fixtureNode = (
   ...[kind, identity, label, properties, evidence]: FixtureNodeArguments
 ): FixtureNode =>
   createJavaScriptApplicationNode({

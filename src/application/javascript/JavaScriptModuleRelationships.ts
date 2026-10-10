@@ -136,15 +136,17 @@ export interface JavaScriptModuleRelationshipOmissions {
 type RelationshipOmissionCounter = { selfImports: number };
 
 /** Compose bounded CommonJS and ESM binding relationships across artifact files. */
-export const addJavaScriptModuleRelationships = (
+export function* addJavaScriptModuleRelationshipsSteps(
   context: JavaScriptArtifactGraphContext,
-): JavaScriptModuleRelationshipOmissions => {
+): Generator<void, JavaScriptModuleRelationshipOmissions> {
   const omissions = { selfImports: 0 };
   for (const analyzed of context.analysis.files) {
     const { file, semantic } = analyzed;
     const source = context.sourceModuleNodes.get(file.path);
     if (semantic === null || source === undefined) continue;
     for (const link of semantic.ir.moduleLinks) {
+      // One module can export thousands of bindings, each with return shapes.
+      yield;
       const input = { context, file, semantic, source, link };
       if (isExportLink(link)) addExportRelationship(input, omissions);
       else if (link.specifier !== null)
@@ -155,7 +157,7 @@ export const addJavaScriptModuleRelationships = (
     }
   }
   return omissions;
-};
+}
 
 const addExportRelationship = (
   input: RelationshipInput,

@@ -11,10 +11,14 @@ import {
   collectSemanticModuleLink,
   collectSemanticCallable,
   collectSemanticReferences,
+  collectSemanticReferencesSteps,
   immutableSemanticBindings,
   immutableSemanticScopes,
 } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticObjectPatternKeys,
+  semanticStaticPropertyKey,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptSemanticAnalysisState,
   JavaScriptSemanticBindingState,
@@ -28,13 +32,17 @@ import {
   semanticScopeId,
   semanticVariableScope,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
-import { collectSemanticMemberMutations } from "./javascriptSemanticMemberMutations.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
-import { collectJavaScriptDerivedSemantics } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { propertyName } from "./javascriptAstValues.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
@@ -95,26 +103,40 @@ export const analyzeParsedJavaScriptReferences = (
   name?: string,
 ): readonly JavaScriptSemanticReference[] => {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
+  completeSemanticSteps(collectDefinitionsSteps(file.program, state));
   return collectSemanticReferences(file.program, state, name);
 };
 
 /** Recover semantics from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
-): JavaScriptSemanticIr => {
+): JavaScriptSemanticIr =>
+  completeSemanticSteps(analyzeParsedJavaScriptSemanticsSteps(file));
+
+/**
+ * Recover semantics from a parsed artifact with a yield between analysis
+ * phases, so a caller can serve control messages within one large file.
+ * Each phase completes before the next starts; results equal the synchronous
+ * form.
+ */
+export function* analyzeParsedJavaScriptSemanticsSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptSemanticIr> {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
-  collectSemanticMemberMutations(file.program, state);
-  traverseJavaScriptAst(file.program, {
+  yield* collectDefinitionsSteps(file.program, state);
+  yield* collectSemanticMemberMutationsSteps(file.program, state);
+  yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state),
   });
-  const references = collectSemanticReferences(file.program, state);
+  yield;
+  const references = yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = file.errors.length > 0;
   const bindings = immutableSemanticBindings(state);
+  yield;
   const callables = collectSemanticReturns(file.program, state, parserPartial);
+  yield;
   const moduleLinks = resolveSemanticModuleCallables(state, callables);
-  const derived = collectJavaScriptDerivedSemantics(
+  const derived = yield* collectJavaScriptDerivedSemanticsSteps(
     file.program,
     state,
     callables,
@@ -150,7 +172,7 @@ export const analyzeParsedJavaScriptSemantics = (
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
-};
+}
 
 /** Receiver identity facts for the overloaded `.open` syntax only. */
 export type JavaScriptOpenReceiverFact =
@@ -168,11 +190,17 @@ export type JavaScriptOpenReceiverFact =
  */
 export const classifyParsedJavaScriptOpenReceivers = (
   file: ParsedJavaScriptSource,
-): ReadonlyMap<number, JavaScriptOpenReceiverFact> => {
+): ReadonlyMap<number, JavaScriptOpenReceiverFact> =>
+  completeSemanticSteps(classifyParsedJavaScriptOpenReceiversSteps(file));
+
+/** Classify `.open` receivers while yielding during lexical and AST scans. */
+export function* classifyParsedJavaScriptOpenReceiversSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, ReadonlyMap<number, JavaScriptOpenReceiverFact>> {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
+  yield* collectDefinitionsSteps(file.program, state);
   const facts = new Map<number, JavaScriptOpenReceiverFact>();
-  traverseJavaScriptAst(file.program, {
+  yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
         (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
@@ -248,7 +276,7 @@ export const classifyParsedJavaScriptOpenReceivers = (
     },
   });
   return facts;
-};
+}
 
 const openGlobalFact = (
   name: string,
@@ -282,6 +310,98 @@ const resolveGlobalAliasFact = (
   return openGlobalFact(name);
 };
 
+const ELECTRON_MODULE = /^electron(?:\/(?:common|main|renderer|utility))?$/u;
+
+/**
+ * Electron export paths for call and construction roots bound to Electron
+ * under another name, such as esbuild's `import { ipcMain as ipcMain2 }`.
+ * Keys are root identifier offsets; roots spelled as their export are omitted.
+ */
+export const classifyParsedJavaScriptElectronBindings = (
+  file: ParsedJavaScriptSource,
+): ReadonlyMap<number, string> =>
+  completeSemanticSteps(classifyParsedJavaScriptElectronBindingsSteps(file));
+
+/** Resolve Electron aliases while yielding during lexical and AST scans. */
+export function* classifyParsedJavaScriptElectronBindingsSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, ReadonlyMap<number, string>> {
+  const facts = new Map<number, string>();
+  const state = createState(file.program);
+  yield* collectDefinitionsSteps(file.program, state);
+  const exportsByBinding = new Map<string, string | null>();
+  yield* traverseJavaScriptAstSteps(file.program, {
+    enter: (node) => {
+      if (
+        !t.isCallExpression(node) &&
+        !t.isOptionalCallExpression(node) &&
+        !t.isNewExpression(node)
+      )
+        return;
+      const root = calleeRoot(node.callee);
+      if (root === undefined) return;
+      const binding = resolveSemanticBindingState(state, root, root.name);
+      if (binding === undefined) return;
+      let exported = exportsByBinding.get(binding.bindingId);
+      if (exported === undefined) {
+        exported = electronExport(binding, state);
+        exportsByBinding.set(binding.bindingId, exported);
+      }
+      if (exported !== null && exported !== root.name)
+        facts.set(root.start ?? -1, exported);
+    },
+  });
+  return facts;
+}
+
+const calleeRoot = (node: t.Node): t.Identifier | undefined => {
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    if (!t.isNode(node.object)) return undefined;
+    node = node.object;
+  }
+  return t.isIdentifier(node) ? node : undefined;
+};
+
+// Read import and require origins directly; general value evaluation is
+// unnecessary here and costly across large vendor bundles.
+const electronExport = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): string | null => {
+  const origin = bindingOrigin(binding, state);
+  return origin !== undefined &&
+    ELECTRON_MODULE.test(origin.specifier) &&
+    origin.importedPath.length > 0
+    ? origin.importedPath.join(".")
+    : null;
+};
+
+const bindingOrigin = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptModuleOrigin | undefined => {
+  if (binding.directOrigins.length > 0)
+    return binding.directOrigins.length === 1
+      ? binding.directOrigins[0]
+      : undefined;
+  const [initializer] = binding.initializers;
+  // A var/let declaration permits writes without proving one occurred.
+  // Require one unconditional initializer and no actual binding writes.
+  if (
+    initializer === undefined ||
+    binding.initializers.length !== 1 ||
+    binding.definitions.some(({ kind }) => kind === "assignment") ||
+    state.conditionalInitializers.has(initializer.node)
+  )
+    return undefined;
+  const origin = semanticRequireOrigin(initializer.node, state);
+  const projection = initializer.projection;
+  return origin === undefined ||
+    !projection.every((key): key is string => typeof key === "string")
+    ? undefined
+    : { ...origin, importedPath: [...origin.importedPath, ...projection] };
+};
+
 const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {
   const root: JavaScriptSemanticScopeState = {
     scopeId: semanticScopeId("program", program),
@@ -305,10 +425,10 @@ const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {
   };
 };
 
-const collectDefinitions = (
+function* collectDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-): void => {
+): Generator<void, void> {
   const stack: JavaScriptSemanticScopeState[] = [
     currentSemanticScope(state.scopes),
   ];
@@ -322,7 +442,7 @@ const collectDefinitions = (
     readonly scope: JavaScriptSemanticScopeState;
     readonly parameters: t.Function["params"];
   }[] = [];
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
       let parentScope = currentSemanticScope(stack);
       if (
@@ -405,14 +525,19 @@ const collectDefinitions = (
   });
   // All declarations must exist before resolving writes, including hoisted
   // functions and local declarations that shadow an outer binding.
-  for (const { node, scope } of assignments) bindAssignment(node, scope, state);
-  for (const { body, scope, parameters } of functionBodies)
+  for (const [index, { node, scope }] of assignments.entries()) {
+    if (index % 64 === 0) yield;
+    bindAssignment(node, scope, state);
+  }
+  for (const [index, { body, scope, parameters }] of functionBodies.entries()) {
+    if (index % 64 === 0) yield;
     for (const parameter of parameters)
       for (const identifier of assignedPatternIdentifiers(
         t.isTSParameterProperty(parameter) ? parameter.parameter : parameter,
       ))
         copyParameterToBody({ identifier, body, scope, state });
-};
+  }
+}
 
 const copyParameterToBody = (input: {
   readonly identifier: t.Identifier;
@@ -565,9 +690,21 @@ const bindAssignment = (
   else if (t.isForOfStatement(node) || t.isForInStatement(node))
     for (const pattern of t.isVariableDeclaration(node.left)
       ? node.left.declarations.map(({ id }) => id)
-      : [node.left])
+      : [node.left]) {
       for (const identifier of assignedPatternIdentifiers(pattern))
         addAssignment(identifier, node, scope, state);
+      if (t.isForOfStatement(node))
+        // Keep the loop value unknown, but preserve references yielded into
+        // each bound slot so writes/escapes can reach their iterable origins.
+        bindPattern({
+          pattern,
+          initializer: node,
+          scope,
+          state,
+          mutable: true,
+          referenceOnly: true,
+        });
+    }
 };
 
 const assignedPatternIdentifiers = (
@@ -780,7 +917,11 @@ const bindPattern = (input: BindPatternInput): void => {
   }
   if (t.isIdentifier(pattern)) {
     if (referenceOnly) {
-      const binding = scope.bindings.get(pattern.name);
+      const binding = resolveSemanticBindingFromScope(
+        scope,
+        pattern.name,
+        state,
+      );
       if (binding !== undefined && initializer !== null)
         binding.referenceInitializers.push({
           node: initializer,
@@ -864,14 +1005,7 @@ const bindPattern = (input: BindPatternInput): void => {
           referenceOnly: true,
           copyKind: "object-rest",
           copyProjectionOffset: projection.length,
-          copyExcludedKeys: pattern.properties.flatMap((property) => {
-            if (t.isRestElement(property)) return [];
-            const key = semanticStaticPropertyKey(
-              property.key,
-              property.computed,
-            );
-            return key === null ? [] : [key];
-          }),
+          copyExcludedKeys: semanticObjectPatternKeys(pattern),
         });
       } else {
         const name = semanticStaticPropertyKey(property.key, property.computed);

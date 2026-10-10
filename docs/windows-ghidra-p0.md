@@ -17,7 +17,7 @@ additional permission flag or degraded mode is required.
 - Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+;
 - an operator-installed Ghidra 12.1.x distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
-- an explicit native, non-managed, non-DLL x86 or x86-64 PE application; and
+- an explicit native, non-managed x86 or x86-64 PE application or DLL; and
 - the 25 read-only Ghidra inventory, memory, and function-analysis operations.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
@@ -37,6 +37,13 @@ PyGhidra are not prerequisites. Users do not build the native addon.
 REA selects its packaged bridge scripts by explicit path. Same-named files or
 directories in the caller's working directory do not select a different
 script or require users to clean that directory before analysis.
+
+Native DLL analysis preserves the PE shared-library role in the analysis profile.
+REA imports an immutable copy for static analysis; it does not load the library
+into the analyst process or execute its entry routine. The source-owned DLL
+fixtures have no entry routine or imports and expose two exported functions.
+The same native snapshot, path-admission and cleanup requirements apply to EXEs
+and DLLs.
 
 ## Configuration
 
@@ -100,7 +107,7 @@ and artifact SHA-256 before loading the package-owned addon. Native failure
 reasons remain distinct from a valid installation and an unsupported target.
 
 PE header classification and SHA-256 come from the same open file. The Windows
-provider admits native x86 and x86-64 PE applications and rejects unsupported roles,
+provider admits native x86 and x86-64 PE applications and DLLs and rejects unsupported roles,
 architectures, managed images, and malformed headers. The original selected
 source coordinate is preserved for native admission.
 
@@ -159,7 +166,11 @@ artifact and manifest.
 npm run verify:windows-native
 npm run verify:ghidra:windows
 npm run verify:ghidra:windows -- --x86
+npm run verify:ghidra:windows -- --dll
+npm run verify:ghidra:windows -- --x86 --dll
 npm run verify:ghidra:windows:package -- --x86
+npm run verify:ghidra:windows:package -- --dll
+npm run verify:ghidra:windows:package -- --x86 --dll
 npm run verify:ghidra:windows:package -- C:\fixtures\installed-rea C:\fixtures\sample.exe
 ```
 

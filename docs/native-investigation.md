@@ -195,6 +195,14 @@ outside-memory and undecodable addresses have separate outcomes. Effective
 memory base/index/displacement roles and per-instruction context mode remain
 unavailable; `mode` is the program language variant.
 
+Compact instruction references and call-target references preserve the source
+address, operand index, DATA/READ/WRITE classification, primary status, provider
+`provenance`, and reference `source` (for Ghidra: `analysis`, `default`, `imported`
+or `user_defined`). Primary status reports the provider's chosen reference; it
+does not establish literal addressing. Analyzer-inferred indexed targets remain
+static references, not observed runtime reads or writes. Older evidence may omit
+the additive fields, and null or omitted facts mean unavailable rather than false.
+
 Ghidra distinguishes a return using decoded instruction p-code's `RETURN`
 operation. `flow.classification_evidence` preserves the Listing flow type and
 the observed return evidence; mnemonic spelling alone is not the classifier.
@@ -379,7 +387,7 @@ the tool fails with a `debugger-attach-denied` reason.
 Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86-64 PE applications on local NTFS using bundled Job Object ownership,
+x86 and x86-64 PE applications and DLLs on local NTFS using bundled Job Object ownership,
 protected runtime DACLs, and handle-based path admission. See [Windows Ghidra P0](windows-ghidra-p0.md) and
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
