@@ -1,31 +1,25 @@
 import { err, ok, type Result } from "../domain/result.js";
-import { PRODUCT_IDENTITY } from "../identity.js";
 import { readFile } from "node:fs/promises";
 import {
   effectiveClientServer,
-  geminiServerPolicyBlock,
-  parseGeminiMcpPolicy,
   parseClientConfiguration,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 
 /** A named source failure that setup can explain without losing the bad path. */
-interface ClientConfigurationFileError {
+export interface ClientConfigurationFileError {
   readonly kind: "unreadable" | "malformed";
   readonly path: string;
   readonly detail: string;
 }
 
-const readConfigurationFile = async (
+/** Preserve named read failures and distinguish a missing source from an empty file. */
+export const readConfigurationText = async (
   path: string,
-  format: SetupClient["format"],
-): Promise<
-  Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
-> => {
-  let content: string;
+): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
   try {
-    content = await readFile(path, "utf8");
+    return ok(await readFile(path, "utf8"));
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return ok(undefined);
@@ -35,6 +29,19 @@ const readConfigurationFile = async (
       detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
     });
   }
+};
+
+/** Read and parse one configuration at its source boundary. */
+export const readConfigurationFile = async (
+  path: string,
+  format: SetupClient["format"],
+): Promise<
+  Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
+> => {
+  const source = await readConfigurationText(path);
+  if (!source.ok) return source;
+  const content = source.value;
+  if (content === undefined) return ok(undefined);
   try {
     return ok(parseClientConfiguration(content, format));
   } catch (cause: unknown) {
@@ -98,40 +105,4 @@ export const effectiveClientConfiguration = (
       );
   }
   return { ...last, servers, legacyServers: {} };
-};
-
-/** Respect every Gemini allowlist/exclude list without changing managed policy. */
-export const readClientPolicyBlock = async (
-  client: SetupClient,
-  userDocument?: ClientConfigurationDocument,
-): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
-  if (client.name !== "gemini_cli") return ok(undefined);
-  const sources: { path: string; document: ClientConfigurationDocument }[] = [];
-  for (const path of client.policyPaths ?? []) {
-    const document = await readConfigurationFile(path, "json");
-    if (!document.ok) return document;
-    if (document.value !== undefined)
-      sources.push({ path, document: document.value });
-  }
-  let user = userDocument;
-  if (user === undefined) {
-    const files = await readClientConfigurationFiles(client);
-    if (!files.ok) return files;
-    user = effectiveClientConfiguration(files.value);
-  }
-  if (user !== undefined)
-    sources.push({ path: client.configPath, document: user });
-  const policies: ReturnType<typeof parseGeminiMcpPolicy>[] = [];
-  for (const { path, document } of sources) {
-    try {
-      policies.push(parseGeminiMcpPolicy(document));
-    } catch (cause: unknown) {
-      return err({
-        kind: "malformed",
-        path,
-        detail: `Gemini MCP policy in ${path} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      });
-    }
-  }
-  return ok(geminiServerPolicyBlock(policies, PRODUCT_IDENTITY.mcpServerKey));
 };

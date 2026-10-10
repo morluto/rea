@@ -1,7 +1,5 @@
-import {
-  readClientConfigurationFiles,
-  readClientPolicyBlock,
-} from "./ClientConfigurationFiles.js";
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
+import { readClientConfigurationFiles } from "./ClientConfigurationFiles.js";
 import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
@@ -52,7 +50,11 @@ const configureClientDocument = async (
 ): Promise<ClientConfigurationResult> => {
   const files = await readClientConfigurationFiles(client);
   if (!files.ok) return { status: "failed", reason: "readback" };
-  const policy = await readClientPolicyBlock(client);
+  const policy = await readClientPolicyBlock(
+    client,
+    undefined,
+    clientConfigurationDesired(client, environment, command, client.format),
+  );
   if (!policy.ok || policy.value !== undefined)
     return { status: "failed", reason: "readback" };
   const transactionPath = await resolveClientConfigTransactionPath(
@@ -72,7 +74,11 @@ const configureClientDocument = async (
       original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
-    const policy = await readClientPolicyBlock(client, parsed);
+    const policy = await readClientPolicyBlock(
+      client,
+      parsed,
+      clientConfigurationDesired(client, environment, command, parsed.dialect),
+    );
     if (!policy.ok || policy.value !== undefined)
       return { status: "failed", reason: "readback" };
   } catch (cause: unknown) {
@@ -174,7 +180,16 @@ export const clientConfigurationAligned = async (
     if (!files.ok) return false;
     const original = await readFile(client.configPath, "utf8");
     const parsed = parseClientConfiguration(original, client.format);
-    const policy = await readClientPolicyBlock(client, parsed);
+    const policy = await readClientPolicyBlock(
+      client,
+      parsed,
+      clientConfigurationDesired(
+        client,
+        providerEnvironment,
+        command,
+        parsed.dialect,
+      ),
+    );
     return (
       policy.ok &&
       policy.value === undefined &&
@@ -206,7 +221,16 @@ export const inspectClientConfiguration = async (
   if (client.format === "unsupported") return { status: "already_current" };
   const files = await readClientConfigurationFiles(client);
   if (!files.ok) return { status: "invalid", remediation: files.error.detail };
-  const policy = await readClientPolicyBlock(client);
+  const policy = await readClientPolicyBlock(
+    client,
+    undefined,
+    clientConfigurationDesired(
+      client,
+      providerEnvironment,
+      command,
+      client.format,
+    ),
+  );
   if (!policy.ok)
     return { status: "invalid", remediation: policy.error.detail };
   if (policy.value !== undefined)
@@ -233,7 +257,16 @@ export const inspectClientConfiguration = async (
   }
   try {
     const parsed = parseClientConfiguration(original, client.format);
-    const policy = await readClientPolicyBlock(client, parsed);
+    const policy = await readClientPolicyBlock(
+      client,
+      parsed,
+      clientConfigurationDesired(
+        client,
+        providerEnvironment,
+        command,
+        parsed.dialect,
+      ),
+    );
     if (!policy.ok)
       return { status: "invalid", remediation: policy.error.detail };
     if (policy.value !== undefined)

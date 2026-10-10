@@ -1,7 +1,7 @@
+import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
   effectiveClientConfiguration,
   readClientConfigurationFiles,
-  readClientPolicyBlock,
 } from "./ClientConfigurationFiles.js";
 import {
   clientServerForcedEnabled,
@@ -200,7 +200,7 @@ const registrationAligned = (
 ): boolean => {
   const command = [registration.command, ...registration.args];
   if (
-    registration.disabled === true ||
+    (client.format !== "grok" && registration.disabled === true) ||
     (registration.enabled === false && !forcedEnabled)
   )
     return false;

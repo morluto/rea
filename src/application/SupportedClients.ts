@@ -9,8 +9,15 @@ export interface SetupClient {
   readonly configPath: string;
   /** User configuration files in increasing precedence, including the write target. */
   readonly configPaths?: readonly string[];
-  /** Read-only administrator/default policy sources; never setup write targets. */
-  readonly policyPaths?: readonly string[];
+  /** Read-only Gemini scopes and trust inputs; never setup write targets. */
+  readonly geminiSettings?: {
+    readonly systemPath: string;
+    readonly defaultsPath: string;
+    readonly workspaceDirectory: string;
+    readonly trustedFoldersPath: string;
+    readonly trustOverride?: boolean;
+    readonly platform: NodeJS.Platform;
+  };
   /** Unresolved path evidence only; consumers must not perform I/O on it. */
   readonly configPathError?: string;
   readonly markerPath?: string;
@@ -44,7 +51,9 @@ interface ClientDefinition {
   readonly format: NonNullable<SetupClient["format"]>;
   readonly skillPath?: ClientPath;
   readonly configPaths?: (context: ClientPathContext) => readonly string[];
-  readonly policyPaths?: (context: ClientPathContext) => readonly string[];
+  readonly geminiSettings?: (
+    context: ClientPathContext,
+  ) => NonNullable<SetupClient["geminiSettings"]>;
 }
 
 const vscodeUserDirectory = ({
@@ -253,14 +262,17 @@ const opencodeDirectory = ({ home, env }: ClientPathContext): string =>
 const openCodeConfigurationPaths = (
   context: ClientPathContext,
 ): readonly string[] => {
-  const directory = opencodeDirectory(context);
+  const directory = join(
+    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
+    "opencode",
+  );
   const overrideDirectory = context.env.OPENCODE_CONFIG_DIR;
   const paths = [
     join(directory, "config.json"),
     join(directory, "opencode.json"),
     join(directory, "opencode.jsonc"),
     ...(context.env.OPENCODE_CONFIG ? [context.env.OPENCODE_CONFIG] : []),
-    ...(overrideDirectory
+    ...(overrideDirectory !== undefined
       ? [
           join(overrideDirectory, "opencode.json"),
           join(overrideDirectory, "opencode.jsonc"),
@@ -274,17 +286,18 @@ const openCodeConfigurationPaths = (
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   // The selected directory is loaded after an explicit file by OpenCode V1.
   const overrideDirectory = context.env.OPENCODE_CONFIG_DIR;
-  const candidates = overrideDirectory
-    ? [
-        join(overrideDirectory, "opencode.json"),
-        join(overrideDirectory, "opencode.jsonc"),
-      ].map((path) => resolve(path))
-    : context.env.OPENCODE_CONFIG
-      ? [resolve(context.env.OPENCODE_CONFIG)]
-      : [
-          join(opencodeDirectory(context), "opencode.json"),
-          join(opencodeDirectory(context), "opencode.jsonc"),
-        ].map((path) => resolve(path));
+  const candidates =
+    overrideDirectory !== undefined
+      ? [
+          join(overrideDirectory, "opencode.json"),
+          join(overrideDirectory, "opencode.jsonc"),
+        ].map((path) => resolve(path))
+      : context.env.OPENCODE_CONFIG
+        ? [resolve(context.env.OPENCODE_CONFIG)]
+        : [
+            join(opencodeDirectory(context), "opencode.json"),
+            join(opencodeDirectory(context), "opencode.jsonc"),
+          ].map((path) => resolve(path));
   return (
     [...candidates].reverse().find((path) => {
       try {
@@ -299,7 +312,7 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
       }
     }) ??
     resolve(
-      overrideDirectory
+      overrideDirectory !== undefined
         ? join(overrideDirectory, "opencode.json")
         : context.env.OPENCODE_CONFIG ||
             join(opencodeDirectory(context), "opencode.json"),
@@ -307,10 +320,11 @@ const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   );
 };
 
-const geminiPolicyPaths = ({
+const geminiSettings = ({
+  home,
   platform,
   env,
-}: ClientPathContext): readonly string[] => {
+}: ClientPathContext): NonNullable<SetupClient["geminiSettings"]> => {
   const system =
     env.GEMINI_CLI_SYSTEM_SETTINGS_PATH ||
     (platform === "darwin"
@@ -318,11 +332,25 @@ const geminiPolicyPaths = ({
       : platform === "win32"
         ? "C:\\ProgramData\\gemini-cli\\settings.json"
         : "/etc/gemini-cli/settings.json");
-  return [
-    system,
-    env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH ||
+  const trustOverride =
+    env.GEMINI_RESTRICTED_MODE === "true" ||
+    env.GEMINI_CLI_TRUST_WORKSPACE === "false"
+      ? false
+      : env.GEMINI_CLI_TRUST_WORKSPACE === "true"
+        ? true
+        : undefined;
+  return {
+    systemPath: system,
+    defaultsPath:
+      env.GEMINI_CLI_SYSTEM_DEFAULTS_PATH ||
       join(dirname(system), "system-defaults.json"),
-  ];
+    workspaceDirectory: process.cwd(),
+    trustedFoldersPath:
+      env.GEMINI_CLI_TRUSTED_FOLDERS_PATH ||
+      join(env.GEMINI_CLI_HOME || home, ".gemini", "trustedFolders.json"),
+    ...(trustOverride === undefined ? {} : { trustOverride }),
+    platform,
+  };
 };
 
 const devinDirectory = ({ home, platform, env }: ClientPathContext): string =>
@@ -368,7 +396,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "gemini_cli",
     displayName: "Gemini CLI",
-    policyPaths: geminiPolicyPaths,
+    geminiSettings,
     configPath: ({ home, env }: ClientPathContext) =>
       join(env.GEMINI_CLI_HOME || home, ".gemini", "settings.json"),
     markerPath: ({ home, env }: ClientPathContext) =>
@@ -504,9 +532,9 @@ export const supportedClients = (
         name: definition.name,
         displayName: definition.displayName,
         configPath,
-        ...(definition.policyPaths === undefined
+        ...(definition.geminiSettings === undefined
           ? {}
-          : { policyPaths: definition.policyPaths(context) }),
+          : { geminiSettings: definition.geminiSettings(context) }),
         ...(definition.configPaths === undefined
           ? {}
           : {

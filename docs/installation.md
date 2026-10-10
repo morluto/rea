@@ -177,9 +177,17 @@ where setup installs the bundled workflow.
 
 Gemini CLI uses `$GEMINI_CLI_HOME/.gemini/settings.json` when that home override
 is nonempty, including its shared personal skills at
-`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check the user, system, and
-system-default MCP allow/exclude policies. A policy blocking REA requires a
-manual policy review; setup does not change administrator settings.
+`$GEMINI_CLI_HOME/.agents/skills`. Setup and doctor check MCP allow/exclude
+policies from system defaults, user settings, trusted workspace settings, and
+system overrides. Workspace trust follows `GEMINI_CLI_TRUST_WORKSPACE`,
+`GEMINI_RESTRICTED_MODE`, the effective `security.folderTrust.enabled` setting,
+and the selected `trustedFolders.json` (including
+`GEMINI_CLI_TRUSTED_FOLDERS_PATH`). Settings in an untrusted workspace do not
+participate. A workspace or system `mcpServers.rea` replaces the entire user
+entry; setup stops if the winning definition conflicts with its planned entry.
+Review those files manually: setup never edits administrator/workspace settings
+or grants workspace trust. Trust supplied only by a running IDE is outside this
+standalone CLI check.
 
 Codex treats an unset or empty `CODEX_HOME` as `~/.codex`. Devin honors
 `XDG_CONFIG_HOME` for its `devin/mcp_config.json` on non-Windows systems.
@@ -209,7 +217,8 @@ both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier
 `mcp.rea` entry from REA. Setup honors `OPENCODE_CONFIG_DIR` and
 `OPENCODE_CONFIG`, preferring the later-loaded JSONC file when both JSON and
-JSONC exist. Doctor checks the merged user registration; uninstall removes
+JSONC exist. The ordinary XDG global configuration still participates when a
+custom directory is selected. Doctor checks the merged user registration; uninstall removes
 REA-owned entries from every applicable user file so an older entry cannot
 become active again. Malformed applicable files block setup before changes.
 
