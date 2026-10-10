@@ -591,6 +591,45 @@ describe("JavaScript semantic values for properties unaffected by a mutation", (
       ),
     ).toEqual({ status: "literal", value: 3 });
   });
+
+  it("keeps every conditional-alias child affected after a member write", () => {
+    expect(
+      resultValue(`
+        const left = { value: 1 };
+        const right = { value: 2 };
+        const source = { left, right };
+        const alias = flag ? source.left : source.right;
+        alias.value = 2;
+        return left.value;
+      `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps every conditional-alias child affected after an alias escape", () => {
+    expect(
+      resultValue(`
+        const left = { value: 1 };
+        const right = { value: 2 };
+        const source = { left, right };
+        const alias = flag ? source.left : source.right;
+        mutate(alias);
+        return left.value;
+      `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps the reversed conditional-alias child affected after a member write", () => {
+    expect(
+      resultValue(`
+        const left = { value: 1 };
+        const right = { value: 2 };
+        const source = { left, right };
+        const alias = flag ? source.right : source.left;
+        alias.value = 2;
+        return right.value;
+      `)?.status,
+    ).toBe("unknown");
+  });
 });
 
 describe("property mutations through TypeScript satisfies aliases", () => {
