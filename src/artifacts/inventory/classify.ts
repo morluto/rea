@@ -15,6 +15,7 @@ import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
   hasZipSignature,
   zipPackageFormatForPath,
+  type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
@@ -77,7 +78,7 @@ const classifyRootFormat = async (
   const observed = await handle.read(magic, 0, magic.length, 0);
   const prefix = magic.subarray(0, observed.bytesRead);
   const lower = path.toLowerCase();
-  if (hasZipSignature(prefix)) return zipPackageFormatForPath(lower) ?? "zip";
+  if (hasZipSignature(prefix)) return zipRootPackageFormat(lower);
   if (lower.endsWith(".asar") && hasAsarHeader(prefix)) return "asar";
   if (
     lower.endsWith(".pkg") &&
@@ -93,6 +94,16 @@ const classifyRootFormat = async (
     return classifyArtifactBytes(prefix, size);
   return format;
 };
+
+/**
+ * Classify a verified ZIP root by suffix. The HarmonyOS App Pack suffix
+ * `.app` is a root-input concept only: magic is verified above, and a nested
+ * ZIP member ending in `.app` (for example inside an IPA) stays `zip`.
+ */
+const zipRootPackageFormat = (lower: string): ZipPackageFormat =>
+  lower.endsWith(".app")
+    ? "app-pack"
+    : (zipPackageFormatForPath(lower) ?? "zip");
 
 /**
  * Electron ASAR starts with a size pickle whose payload is one uint32, then

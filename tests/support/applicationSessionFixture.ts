@@ -1,7 +1,13 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
+import {
+  TextReader,
+  Uint8ArrayReader,
+  Uint8ArrayWriter,
+  ZipWriter,
+} from "@zip.js/zip.js";
+import { z } from "zod";
 
 import { createDirectAnalysis } from "../../src/composition/directAnalysis.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
@@ -18,6 +24,60 @@ export const requireSuccessfulProjection = (
   if (!result.ok)
     throw new TypeError("Expected application projection to succeed");
   return result.value;
+};
+
+/** Write one synthetic ZIP application package from literal entries. */
+export const writeApplicationZip = async (
+  prefix: string,
+  filename: string,
+  entries: ReadonlyArray<{
+    readonly path: string;
+    readonly content: string | Uint8Array;
+  }>,
+): Promise<string> => {
+  const root = await createTestTempDirectory(prefix);
+  const path = join(root, filename);
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  for (const entry of entries)
+    await writer.add(
+      entry.path,
+      typeof entry.content === "string"
+        ? new TextReader(entry.content)
+        : new Uint8ArrayReader(entry.content),
+    );
+  await writeFile(path, await writer.close());
+  return path;
+};
+
+/** Build inventory Evidence for a written package through the real pipeline. */
+export const inventoryApplicationPackage = async (
+  path: string,
+): Promise<Evidence> =>
+  parseEvidence(await runProviderAnalysis(path, "inventory_artifact", {}));
+
+/**
+ * Project the same inventory Evidence twice and return the schema-parsed
+ * result, failing when the two projections are not byte-identical.
+ */
+export const requireDeterministicProjection = <Schema extends z.ZodType>(
+  project: (input: {
+    inventory_evidence: readonly Evidence[];
+  }) => Result<Evidence, AnalysisError>,
+  inventory: Evidence,
+  schema: Schema,
+): z.output<Schema> => {
+  const left = requireSuccessfulProjection(
+    project({ inventory_evidence: [inventory] }),
+  );
+  const right = requireSuccessfulProjection(
+    project({ inventory_evidence: [inventory] }),
+  );
+  if (
+    JSON.stringify(left.normalized_result) !==
+    JSON.stringify(right.normalized_result)
+  )
+    throw new TypeError("Expected repeated projection to be identical");
+  return schema.parse(left.normalized_result);
 };
 
 /**

@@ -95,6 +95,7 @@ export const CLI_COMMANDS = Object.freeze({
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
   projectAndroidApplicationGraph: "project-android-application-graph",
   projectAppleApplicationGraph: "project-apple-application-graph",
+  projectHarmonyApplicationGraph: "project-harmony-application-graph",
 });
 
 /** Ordered primary CLI inventory; aliases are intentionally excluded. */

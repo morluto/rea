@@ -170,6 +170,8 @@
     "fixtures:firmware": "node scripts/fixtures/firmware/generate.mjs",
     "verify:android": "npm run build:cached && node scripts/verify/android/analysis.mjs",
     "fixtures:android": "node scripts/fixtures/android/fetch.mjs",
+    "verify:harmony": "npm run build:cached && node scripts/verify/harmony/analysis.mjs",
+    "fixtures:harmony": "node scripts/fixtures/harmony/fetch.mjs",
     "verify:agent": "npm run build:cached && node scripts/verify-agent-experience.mjs",
     "verify:hopper:linux": "npm run verify:fixtures && npm run build:cached && node scripts/verify-real-hopper-linux.mjs",
     "verify:setup:linux": "npm run build:cached && node scripts/verify-linux-setup-e2e.mjs",

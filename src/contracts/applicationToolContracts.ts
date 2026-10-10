@@ -24,6 +24,10 @@ import {
   appleApplicationProjectionInputSchema,
   appleApplicationProjectionResultSchema,
 } from "../domain/apple/appleApplication.js";
+import {
+  harmonyApplicationProjectionInputSchema,
+  harmonyApplicationProjectionResultSchema,
+} from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
@@ -36,6 +40,7 @@ import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "./javascript/javascr
 import {
   ANDROID_APPLICATION_GRAPH_EXAMPLE,
   APPLE_APPLICATION_GRAPH_EXAMPLE,
+  HARMONY_APPLICATION_GRAPH_EXAMPLE,
   MACOS_APPLICATION_GRAPH_EXAMPLE,
 } from "./mobileApplicationGraphExamples.js";
 
@@ -296,6 +301,22 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_harmony_application_graph",
+    ...toolContractMetadata("project_harmony_application_graph"),
+    description:
+      "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
+    kind: "application",
+    inputSchema: harmonyApplicationProjectionInputSchema,
+    outputSchema: evidenceResultOf(harmonyApplicationProjectionResultSchema),
+    examples: [
+      {
+        title:
+          "Project HAP inventory Evidence into a HarmonyOS application graph",
+        input: HARMONY_APPLICATION_GRAPH_EXAMPLE,
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
@@ -326,6 +347,9 @@ export function applicationToolContract(
 export function applicationToolContract(
   name: "project_apple_application_graph",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[8];
+export function applicationToolContract(
+  name: "project_harmony_application_graph",
+): (typeof APPLICATION_TOOL_CONTRACTS)[9];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

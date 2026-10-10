@@ -1,0 +1,21 @@
+{
+  "name": "VHome",
+  "version": "2.6.14-beta",
+  "source": "https://github.com/muleos/VHome-release",
+  "source_revision": "v2.6.14-beta",
+  "license": null,
+  "license_note": "Upstream declares no license; the fixture is downloaded and hash-verified at verification time and never redistributed or committed.",
+  "url": "https://github.com/muleos/VHome-release/releases/download/v2.6.14-beta/VHome-2.6.14-beta-unsigned.hap",
+  "filename": "VHome-2.6.14-beta-unsigned.hap",
+  "sha256": "06cccd1c53bad215dbe52512e05f837a386ecb1e69f7464a126913f008ac5e2d",
+  "unsigned": true,
+  "upstream_instability": "The upstream repository rotates and replaces release assets: the originally pinned v5.0.111-beta release was deleted, and the v2.6.14-beta asset itself was replaced within hours (sha256 d19c8dcd9866bbf07332544e727d5e14fb03ddf103aa2562a83eab87b8181ce8 became 06cccd1c53bad215dbe52512e05f837a386ecb1e69f7464a126913f008ac5e2d on 2026-10-10). A hash mismatch must be treated as an upstream rotation, not a network error.",
+  "entry_count": 238,
+  "bytecode_entries": ["ets/modules.abc"],
+  "native_libraries": [
+    "libs/arm64-v8a/libc++_shared.so",
+    "libs/arm64-v8a/libImSDK.so",
+    "libs/arm64-v8a/libxuspine.so"
+  ],
+  "manifests": ["module.json", "pack.info"]
+}

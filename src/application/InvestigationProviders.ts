@@ -58,6 +58,13 @@ export const ANDROID_APPLICATION_PROVIDER = {
   version: "1",
 } as const;
 
+/** Provider identity for deterministic HarmonyOS application projections. */
+export const HARMONY_APPLICATION_PROVIDER = {
+  id: "rea-harmony-application",
+  name: "REA HarmonyOS application workflows",
+  version: "1",
+} as const;
+
 /** Provider identity for verified publication of retained website scripts. */
 export const WEB_SCRIPT_EXPORT_PROVIDER = {
   id: "rea-web-script-export",

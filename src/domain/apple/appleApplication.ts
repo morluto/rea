@@ -1,6 +1,3 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
 import {
@@ -28,6 +25,10 @@ import {
   bridgeCandidateCoverageSchema,
   projectCartesianCandidates,
 } from "../bridgeCandidateProjection.js";
+import {
+  compareProjectionStrings,
+  projectionDigest,
+} from "../mobileApplicationGraphProjection.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const pathSchema = z.string().min(1);
@@ -436,11 +437,6 @@ const projectionLimitations = (facts: {
   "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];
 
-const compare = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
-const digest = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Apple application projection is not canonical JSON");
-  return createHash("sha256").update(encoded).digest("hex");
-};
+const compare = compareProjectionStrings;
+const digest = (value: unknown): string =>
+  projectionDigest(value, "Apple application projection");

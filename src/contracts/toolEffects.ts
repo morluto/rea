@@ -285,6 +285,7 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
   evaluate_reconstruction_coverage: effects(),
   project_android_application_graph: evidence,
   project_apple_application_graph: evidence,
+  project_harmony_application_graph: evidence,
   open_binary: effects({ mutatesSession: true, launchesProcess: true }),
   close_binary: effects({
     mutatesSession: true,

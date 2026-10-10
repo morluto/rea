@@ -3,6 +3,7 @@ import { Cli, z } from "incur";
 
 import { projectAndroidApplicationEvidence } from "../application/android/AndroidApplicationService.js";
 import { projectAppleApplicationEvidence } from "../application/apple/AppleApplicationService.js";
+import { projectHarmonyApplicationEvidence } from "../application/harmony/HarmonyApplicationService.js";
 import {
   compareApplicationVersionsEvidenceValidated,
   compareJavaScriptExportShapesEvidenceValidated,
@@ -19,6 +20,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
 import { appleApplicationProjectionInputSchema } from "../domain/apple/appleApplication.js";
+import { harmonyApplicationProjectionInputSchema } from "../domain/harmony/harmonyApplication.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { traceApplicationFeatureInputSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
@@ -106,6 +108,20 @@ export const registerApplicationCommands = (
     inputSchema: appleApplicationProjectionInputSchema,
     workflow: (input) => {
       const result = projectAppleApplicationEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectHarmonyApplicationGraph,
+    description:
+      "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
+    inputSchema: harmonyApplicationProjectionInputSchema,
+    workflow: (input) => {
+      const result = projectHarmonyApplicationEvidence(input);
       return result.ok
         ? { ok: true, value: jsonValueSchema.parse(result.value) }
         : result;
