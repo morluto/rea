@@ -291,7 +291,7 @@ export const parseDumpsysPackageOutput = (
   let inPermissions = false;
   let permissions = 0;
   for (const line of stdout.split(/\r?\n/u)) {
-    if (line.trim().startsWith('requested permissions:')) {
+    if (line.trim().startsWith("requested permissions:")) {
       inPermissions = true;
       continue;
     }
@@ -342,9 +342,9 @@ export const parseSettingsGetOutput = (
   return { value: trimmed, deviceReportedNull: false };
 };
 
-/** Parse the `OK: /path (N bytes)` line `adb bugreport` prints on success. */
-export const parseBugreportOkPath = (stdout: string): string | null => {
-  const match = /^OK:\s+(\S+)/mu.exec(stdout.trim());
+/** Parse the host-side completion line from `adb bugreport`. */
+export const parseBugreportCopiedPath = (stdout: string): string | null => {
+  const match = /^Bug report copied to (.+)\r?$/mu.exec(stdout.trim());
   return match === null ? null : match[1]!;
 };
 

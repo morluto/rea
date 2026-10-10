@@ -887,7 +887,7 @@ it("collects a device bugreport archive with its digest", async () => {
     (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "-s" ] && [ "$3" = "bugreport" ]; then
   printf 'bugreport-bytes' > "${join(root, "bugreport-test.zip")}"
-  printf 'OK: ${join(root, "bugreport-test.zip")} (15 bytes)\\n'
+  printf 'Bug report copied to ${join(root, "bugreport-test.zip")}\\n'
   exit 0
 fi
 exit 1`,
@@ -903,4 +903,58 @@ exit 1`,
     sha256: digest,
     adb_reported_path: join(root, "bugreport-test.zip"),
   });
+});
+
+it("quotes caller text before adb joins the remote shell command", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+shift 3
+# Model adb's remote command joining, then execute the resulting shell string.
+printf '#!/bin/sh\nprintf "%%s" "$@" > "${join(root, "observed")}"\n' > "${join(root, "ls")}"
+chmod +x "${join(root, "ls")}"
+PATH="${root}:$PATH" sh -c "$*"
+`,
+  );
+  const value = `/sdcard/a 'quoted'; touch ${join(root, "injected")}`;
+  await providerOver(binary).execute({
+    operation: "list_adb_directory",
+    input: { serial: "device", device_path: value },
+  });
+  expect(await readFile(join(root, "observed"), "utf8")).toContain(value);
+  await expect(readFile(join(root, "injected"))).rejects.toThrow();
+});
+
+it("preserves a screen output created while capture is running", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+printf 'existing evidence' > "${join(root, "captures", "screen.png")}"
+printf '\\211PNG\\r\\n\\032\\n\\0\\0\\0\\rIHDR\\0\\0\\0\\004\\0\\0\\0\\003'
+`,
+  );
+  const result = await providerOver(binary).execute({
+    operation: "capture_adb_screen",
+    input: { serial: "device", output_directory: join(root, "captures") },
+  });
+  expect(result.ok).toBe(false);
+  expect(await readFile(join(root, "captures", "screen.png"), "utf8")).toBe(
+    "existing evidence",
+  );
+});
+
+it("reports cancellation arriving during the version probe", async () => {
+  const { binary } = await writeAdbStub(() => "exec sleep 30");
+  const controller = new AbortController();
+  const pending = providerOver(binary).execute(
+    { operation: "inspect_adb_client", input: {} },
+    { signal: controller.signal },
+  );
+  const timer = setTimeout(() => controller.abort(), 50);
+  try {
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(projectAnalysisError(result.error).code).toBe("cancelled");
+  } finally {
+    clearTimeout(timer);
+  }
 });

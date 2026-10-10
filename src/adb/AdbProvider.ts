@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, constants as fsConstants } from "node:fs";
-import { access, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import type {
@@ -45,7 +45,7 @@ import {
 } from "./AdbDeviceOutput.js";
 import {
   parseAmStartOutput,
-  parseBugreportOkPath,
+  parseBugreportCopiedPath,
   parseDumpsysPackageOutput,
   parseFeatureListOutput,
   parseLsOutput,
@@ -103,12 +103,22 @@ const sha256File = async (path: string): Promise<string> => {
   return hash.digest("hex");
 };
 
-/** Fixed adb argument vectors; caller values never reach a shell. */
+/** adb joins shell operands into a remote POSIX command; quote at that boundary. */
+const quoteShellOperand = (value: string): string =>
+  /^[A-Za-z0-9_./:=@+,\-]+$/u.test(value)
+    ? value
+    : "'" + value.replaceAll("'", "'\\''") + "'";
+
 const adbArguments = (
   serial: string | undefined,
   arguments_: readonly string[],
-): readonly string[] =>
-  serial === undefined ? [...arguments_] : ["-s", serial, ...arguments_];
+): readonly string[] => {
+  const operands =
+    arguments_[0] === "shell"
+      ? ["shell", ...arguments_.slice(1).map(quoteShellOperand)]
+      : [...arguments_];
+  return serial === undefined ? operands : ["-s", serial, ...operands];
+};
 
 interface AdbRunLimits {
   readonly timeoutMs: number;
@@ -126,9 +136,6 @@ const runAdb = async (
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation));
-  // Captured before the call: an abort during execution settles the promise
-  // through this reason rather than a re-read that narrowing cannot see.
-  const abortReason = signal?.reason;
   try {
     return ok(
       await execFileOutput(binary, arguments_, {
@@ -139,8 +146,8 @@ const runAdb = async (
       }),
     );
   } catch (cause) {
-    if (abortReason !== undefined)
-      return err(new AnalysisCancelledError(operation, { cause: abortReason }));
+    if (signal?.aborted || execFileOutputFailure(cause)?.code === "ABORT_ERR")
+      return err(new AnalysisCancelledError(operation, { cause }));
     const failure = execFileOutputFailure(cause);
     if (failure === undefined)
       return err(
@@ -311,7 +318,7 @@ const refuseExistingTarget = async (
   path: string,
 ): Promise<AnalysisError | undefined> => {
   if (
-    await stat(path).then(
+    await lstat(path).then(
       () => true,
       () => false,
     )
@@ -331,7 +338,7 @@ export interface AdbProviderOptions {
  * ADB device inspection and acquisition over a caller-selected adb binary.
  *
  * Every operation composes fixed adb argument vectors: caller values occupy
- * positional arguments only and never reach a shell. The provider never
+ * positional arguments, escaped when adb forwards them to the device shell. The provider never
  * starts an emulator, installs platform tools, or drives the device UI; the
  * only device mutation is the caller-requested file push, which requires an
  * explicit overwrite choice and verifies its transfer digest.
@@ -395,6 +402,7 @@ export class AdbProvider {
     try {
       identity = await inspectAdbClient(selection, signal);
     } catch (cause) {
+      if (cause instanceof AnalysisCancelledError) return err(cause);
       if (cause instanceof AdbConfigurationFailure)
         return err(
           new AnalysisCapabilityUnavailableError(
@@ -1066,6 +1074,7 @@ export class AdbProvider {
         signal,
       );
       if (!pulled.ok) {
+        if (pulled.error instanceof AnalysisCancelledError) return pulled;
         failures.push({
           device_path: entry.device_path,
           stage: "pull",
@@ -1668,7 +1677,17 @@ export class AdbProvider {
           "screencap did not return a PNG payload; the device may not expose a display",
         ),
       );
-    await writeFile(localPath, captured.value);
+    try {
+      await writeFile(localPath, captured.value, { flag: "wx" });
+    } catch (cause) {
+      return err(
+        new AnalysisOutputError(
+          operation,
+          `The screen output could not be created exclusively: ${localPath}`,
+          { cause },
+        ),
+      );
+    }
     const sha256 = createHash("sha256").update(captured.value).digest("hex");
     return ok(
       createAnalysisExecution(
@@ -1716,7 +1735,7 @@ export class AdbProvider {
       signal,
     );
     if (!collected.ok) return collected;
-    const reportedPath = parseBugreportOkPath(collected.value.stdout);
+    const reportedPath = parseBugreportCopiedPath(collected.value.stdout);
     if (reportedPath === null)
       return err(
         new AnalysisProtocolError(

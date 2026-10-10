@@ -1,3 +1,4 @@
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { isAbsolute } from "node:path";
 
 import {
@@ -85,12 +86,15 @@ export const inspectAdbClient = async (
   try {
     const { stdout } = await execFileOutput(selection.binary, ["version"], {
       timeout: VERSION_TIMEOUT_MS,
+      stopSignal: "SIGTERM",
       maxBuffer: VERSION_MAX_OUTPUT_BYTES,
       ...(signal === undefined ? {} : { signal }),
     });
     return parseAdbVersionOutput(stdout);
   } catch (cause) {
     const failure = execFileOutputFailure(cause);
+    if (signal?.aborted || failure?.code === "ABORT_ERR")
+      throw new AnalysisCancelledError("inspect_adb_client", { cause });
     if (failure?.code === "ENOENT")
       throw new AdbConfigurationFailure(
         "binary_missing",
