@@ -175,7 +175,21 @@ export const createJavaScriptSemanticGraphProjection =
     ): Value => {
       bindSemanticGraphApplicationNodes(state, applicationGraph);
       if (state.roots.size === 0) addFallbackRoot(rootArtifactSha256, state);
+      const relations = [...state.relations.values()];
       const unknowns = [...state.unknowns.values()];
+      type Family = (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number];
+      const retainedByFamily = new Map<Family, number>();
+      const unknownIdsByFamily = new Map<Family, string[]>();
+      for (const relation of relations) {
+        const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
+        retainedByFamily.set(family, (retainedByFamily.get(family) ?? 0) + 1);
+      }
+      for (const unknown of unknowns) {
+        const identifiers = unknownIdsByFamily.get(unknown.family);
+        if (identifiers === undefined)
+          unknownIdsByFamily.set(unknown.family, [unknown.unknown_id]);
+        else identifiers.push(unknown.unknown_id);
+      }
       const graph = factory({
         schema: "JavaScriptSemanticRelationGraph",
         root_artifact_sha256: rootArtifactSha256,
@@ -183,7 +197,7 @@ export const createJavaScriptSemanticGraphProjection =
         root_node_ids: [...state.roots],
         evidence_contexts: state.evidenceContexts.contexts,
         nodes: [...state.nodes.values()],
-        relations: [...state.relations.values()],
+        relations,
         fingerprints,
         unknowns,
         coverage: {
@@ -204,15 +218,9 @@ export const createJavaScriptSemanticGraphProjection =
           families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
             family,
             status: semanticFamilyStatus(family),
-            retained_relations: [...state.relations.values()].filter(
-              (relation) =>
-                JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation] ===
-                family,
-            ).length,
+            retained_relations: retainedByFamily.get(family) ?? 0,
             omitted_relations: truncatedFiles > 0 ? null : 0,
-            unknown_ids: unknowns
-              .filter((unknown) => unknown.family === family)
-              .map(({ unknown_id: identifier }) => identifier),
+            unknown_ids: unknownIdsByFamily.get(family) ?? [],
           })),
         },
         limitations: [

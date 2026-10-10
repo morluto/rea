@@ -211,12 +211,17 @@ const evaluateBinding = (
       if (isPrimitive(captured)) value = captured;
     }
   }
-  const mutated = binding.mutatedPaths.reduce(
-    invalidateSemanticMutationPath,
-    value,
-  );
-  const projected = binding.escapedPaths.reduce(
-    (value, escape) =>
+  let projected = value;
+  for (const path of binding.mutatedPaths) {
+    projected = invalidateSemanticMutationPath(projected, path);
+    // Every subsequent write returns this same root unknown. Replaying those
+    // paths at every newly collected effect otherwise becomes quadratic.
+    if (projected.status === "unknown") break;
+  }
+  for (const escape of binding.escapedPaths) {
+    // Escapes only invalidate object references; other lattice values survive.
+    if (projected.status !== "object" && projected.status !== "array") break;
+    if (
       context.capturePoint !== undefined &&
       semanticEscapeFollowsCapture(
         binding,
@@ -224,10 +229,10 @@ const evaluateBinding = (
         escape.node,
         context.state.parentsByNode,
       )
-        ? value
-        : invalidateSemanticEscapedPath(value, escape.path),
-    mutated,
-  );
+    )
+      continue;
+    projected = invalidateSemanticEscapedPath(projected, escape.path);
+  }
   // Point-local memoization also bounds failed speculative captures. Only a
   // primitive result is allowed back into ordinary value evaluation.
   if (

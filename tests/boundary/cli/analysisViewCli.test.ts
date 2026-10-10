@@ -80,3 +80,48 @@ cliTest("rejects a request that omits source", async ({ cli }) => {
     details: { operation: "inspect-analysis-view" },
   });
 });
+
+for (const [view, reason] of [
+  [{ kind: "unknown-view" }, "invalid_value"],
+  [{}, "missing_argument"],
+] as const) {
+  cliTest(
+    `reports correction details for ${reason} view kind`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-view-variant-");
+      const input = join(root, "view.json");
+      await writeFile(
+        input,
+        JSON.stringify({
+          source: {
+            kind: "inline",
+            evidence: analysisViewLayoutEvidence(),
+          },
+          view,
+        }),
+      );
+      const result = await cli.run({
+        arguments: ["inspect-analysis-view", input, "--json"],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["view", "kind"],
+              reason,
+              expected: expect.arrayContaining(["summary", "page"]),
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(result.json)).not.toContain("unknown-view");
+    },
+  );
+}
