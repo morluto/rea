@@ -26,7 +26,16 @@ health transition leaves that catalog unchanged and does not emit
 Advertised input and output schemas contain no reachable recursive references.
 Schemas share repeated definitions through schema-local references while
 preserving complete nested fields and validation rules. Input properties retain
-their descriptions and literal examples. Root object unions are presented as
+their descriptions and literal examples.
+
+Hosts forward input schemas to the model with every request, so advertised
+examples never copy complete producer Evidence. An embedded Evidence record is
+shown as its exact `{"kind":"retained-evidence","evidence_id":"ev_..."}`
+reference where the tool accepts one. An example that can only carry inline
+Evidence stays in the canonical contract and its executable tests, but is not
+advertised. Every advertised example is a distinct valid canonical input.
+
+Root object unions are presented as
 one object without root `anyOf`, `oneOf`, or `allOf` for model API compatibility.
 The projection merges properties, retains shared required fields and
 group-specific field dependencies, and describes the accepted input groups.
