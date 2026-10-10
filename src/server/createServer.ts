@@ -301,6 +301,7 @@ const registerConfiguredAnalysisTools = (
     options.binaryLayout ?? createBinaryLayoutService(environment),
     toolLogger,
     recordEvidence,
+    evidenceById,
   );
   registerAnalysisViewTool(server, toolLogger, evidenceById, recordEvidence);
   registerEvmTools(

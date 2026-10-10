@@ -150,9 +150,10 @@ list stays complete; availability depends on the operation, target, and host.
 ## Work summary-first
 
 Start with the default result and use its inline Evidence and graph context.
-For a JavaScript application whose size is unknown or large, call
-`analyze_javascript_application` with `"detail": "summary"`, then inspect the
-retained `parent_evidence_id` with `inspect_analysis_view`.
+For a JavaScript application or ELF layout whose size is unknown or large,
+call `analyze_javascript_application` or `inspect_binary_layout` with
+`"detail": "summary"`, then inspect the retained `parent_evidence_id` with
+`inspect_analysis_view`.
 Do not repeat an identical tool call. Make a focused follow-up only when the
 returned result leaves a specific question unanswered.
 

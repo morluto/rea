@@ -3,15 +3,22 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
+import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { analysisViewLayoutFixture } from "../../fixtures/analysisView.js";
+import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const contract = toolContract("analyze_javascript_application");
 
-const connect = async (retainsEvidence: boolean) => {
+const connect = async (
+  retainsEvidence: boolean,
+  binaryLayout?: BinaryLayoutService,
+) => {
   const session = createTestBinarySession(() => {
     throw new Error("JavaScript analysis must not start a deep provider");
   });
@@ -26,6 +33,7 @@ const connect = async (retainsEvidence: boolean) => {
             },
           },
         },
+    binaryLayout === undefined ? {} : { binaryLayout },
   );
   const client = new Client({ name: "analysis-summary-detail", version: "1" });
   onTestFinished(async () => {
@@ -121,5 +129,42 @@ it("refuses summary detail when the server cannot retain the complete Evidence",
   expect(failure.error).toMatchObject({
     code: "capability_unavailable",
     message: expect.stringContaining("detail complete"),
+  });
+});
+
+it("returns the summary of retained binary layout Evidence", async () => {
+  const layout = analysisViewLayoutFixture();
+  const client = await connect(
+    true,
+    new BinaryLayoutService({
+      identity: BINARY_LAYOUT_TEST_PROVIDER,
+      inspect: () => Promise.resolve(ok(layout)),
+    }),
+  );
+  const layoutContract = toolContract("inspect_binary_layout");
+  const summary = await client.callTool({
+    name: layoutContract.name,
+    arguments: { path: layout.artifact.path, detail: "summary" },
+  });
+  expect(summary.isError).not.toBe(true);
+  const evidence = layoutContract.outputSchema.parse(summary.structuredContent);
+  expect(evidence).toMatchObject({
+    operation: "inspect_analysis_view",
+    normalized_result: {
+      kind: "summary",
+      parent_operation: "inspect_binary_layout",
+    },
+  });
+  const [parentId] = evidence.evidence_links;
+  const sections = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parentId },
+      view: { kind: "page", collection: "sections", offset: 0, limit: 8 },
+    },
+  });
+  expect(sections.isError).not.toBe(true);
+  expect(sections.structuredContent).toMatchObject({
+    normalized_result: { kind: "page", parent_evidence_id: parentId },
   });
 });

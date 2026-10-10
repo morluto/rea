@@ -11,9 +11,10 @@ import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
 } from "../../domain/javascript/electronActiveObservation.js";
-import { z } from "zod";
-
-import { analysisViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import {
+  analysisDetailOutputSchemaOf,
+  analysisDetailSchema,
+} from "../analysisDetail.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
@@ -29,18 +30,10 @@ const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
 /** Caller-selected delivery of a completed JavaScript application analysis. */
 export const analyzeJavaScriptApplicationRequestSchema =
   analyzeJavaScriptApplicationInputSchema.extend({
-    detail: z
-      .enum(["complete", "summary"])
-      .default("complete")
-      .describe(
-        "complete returns the complete application analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; page modules or select items from normalized_result.parent_evidence_id.",
-      ),
+    detail: analysisDetailSchema,
   });
-const applicationOutputSchema = evidenceResultOf(
-  z.union([
-    javascriptApplicationAnalysisResultSchema,
-    analysisViewResultSchema,
-  ]),
+const applicationOutputSchema = analysisDetailOutputSchemaOf(
+  javascriptApplicationAnalysisResultSchema,
 );
 const reconciliationOutputSchema = evidenceResultOf(
   javascriptRuntimeReconciliationResultSchema,

@@ -318,12 +318,14 @@ Ordinary responses keep their existing complete result contract.
 
 ## Retained application Evidence inputs
 
-`analyze_javascript_application` accepts `detail`: `complete` (default) returns
-the complete analysis Evidence; `summary` records that complete Evidence in the
-session and returns the derived `inspect_analysis_view` summary Evidence
-instead. Its `normalized_result.parent_evidence_id` and `evidence_links` name
-the retained analysis, so later views and application workflows read it without
-repeating analysis or moving the complete graph through the response.
+`analyze_javascript_application` and `inspect_binary_layout` accept `detail`:
+`complete` (default) returns the complete analysis Evidence; `summary` records
+that complete Evidence in the session and returns the derived
+`inspect_analysis_view` summary Evidence instead. Its
+`normalized_result.parent_evidence_id` and `evidence_links` name the retained
+analysis, so later views and application workflows read it without repeating
+analysis or moving the complete record through the response. A server without
+session retention refuses summary detail with `capability_unavailable`.
 
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`

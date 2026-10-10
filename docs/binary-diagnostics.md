@@ -91,6 +91,12 @@ one-shot invocations pass portable inline Evidence JSON; an MCP session uses
 the retained `evidence_id`. Page `limit` is required and bounded by the
 measured MCP stdio budget documented on the tool contract.
 
+Over MCP, `inspect_binary_layout` with `"detail": "summary"` retains the
+complete layout Evidence in the session and returns only its summary view.
+Its `normalized_result.parent_evidence_id` names the retained layout for later
+section, symbol, mitigation or linkage views. The default `complete` detail and
+CLI output are unchanged.
+
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. The reply budget applies to the decoder
 record; the CLI/MCP Evidence envelope adds copies and encoding overhead. The
