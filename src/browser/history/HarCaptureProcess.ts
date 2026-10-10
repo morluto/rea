@@ -1,10 +1,9 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { TextDecoder } from "node:util";
 import { z } from "zod";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
-import { decodeHarCapture } from "./HarCapture.js";
+import { decodeHarCapture, decodeHarText } from "./HarCapture.js";
 
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
@@ -23,17 +22,12 @@ const main = async (): Promise<void> => {
       request.snapshot_path,
       WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
     );
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-        snapshot.bytes,
-      );
-    } catch {
-      throw new CaptureFormatError("format", "HAR is not valid UTF-8 JSON.");
-    }
     reply = {
       ok: true,
-      value: decodeHarCapture(text, request.sensitive_values),
+      value: decodeHarCapture(
+        decodeHarText(snapshot.bytes),
+        request.sensitive_values,
+      ),
     };
   } catch (cause: unknown) {
     reply =
