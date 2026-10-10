@@ -39,6 +39,11 @@ import {
   ghidraInstallationDiagnostics,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
+import {
+  isGhidraPspTarget,
+  GHIDRA_PSP_LIMITATIONS,
+} from "./GhidraPspProfile.js";
+import { ghidraPspExtensionSchema } from "./GhidraPspExtension.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraInstallationPolicy.js";
 import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
@@ -87,6 +92,26 @@ export const createGhidraProviderClient = (input: {
   );
   if (!prerequisites.ok) return unavailableClient(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const psp = isGhidraPspTarget(target);
+  const pspExtension = psp
+    ? ghidraPspExtensionSchema.safeParse(
+        committedProfile.parameters.psp_extension,
+      )
+    : null;
+  if (
+    pspExtension !== null &&
+    (!pspExtension.success ||
+      committedProfile.parameters.language_id !== "Allegrex:LE:32:default" ||
+      committedProfile.parameters.loader !== "PspElfLoader")
+  )
+    return unavailableClient(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the supported PSP profile and installed Allegrex extension before opening the session.",
+        },
+      }),
+    );
   const extensionProfile = ghidraExtensionSchema
     .array()
     .safeParse(committedProfile.parameters.analysis_extensions ?? []);
@@ -142,6 +167,9 @@ export const createGhidraProviderClient = (input: {
       bridgeScriptPath: fileURLToPath(
         new URL("../../bridge/ghidra/ReaGhidraBridge.java", import.meta.url),
       ),
+      ...(pspExtension?.success === true
+        ? { pspExtension: pspExtension.data }
+        : {}),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
       ...(target.format === "dos-com" ? { dosCom: true } : {}),
       platform: installation.platform,
@@ -161,6 +189,12 @@ export const createGhidraProviderClient = (input: {
     ...(["dos-mz", "dos-com"].includes(target.format)
       ? {
           expectedLanguageId: "x86:LE:16:Real Mode",
+          expectedCompilerSpecId: "default",
+        }
+      : {}),
+    ...(psp
+      ? {
+          expectedLanguageId: "Allegrex:LE:32:default",
           expectedCompilerSpecId: "default",
         }
       : {}),
@@ -192,6 +226,7 @@ export const createGhidraProviderClient = (input: {
   const sessionLimitations = [
     ...providerLimitations,
     ...targetLimitations,
+    ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
     ...ghidraExtensionLimitations(extensions),
     ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
   ];

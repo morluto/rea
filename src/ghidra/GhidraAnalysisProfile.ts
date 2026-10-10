@@ -12,13 +12,16 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
+import { ghidraMipsProfileParameters } from "./GhidraMipsProfile.js";
+
 import {
-  ghidraMipsProfileParameters,
-  ghidraMipsUnsupportedReason,
-} from "./GhidraMipsProfile.js";
+  ghidraProcessorUnsupportedReason,
+  isGhidraPspTarget,
+} from "./GhidraPspProfile.js";
+import { resolveGhidraPspExtension } from "./GhidraPspExtension.js";
 
 /** Resolve version-bound, deterministic semantics before Ghidra imports a target. */
-export const resolveGhidraAnalysisProfile = (
+export const resolveGhidraAnalysisProfile = async (
   target: BinaryTarget,
   identity: ProviderIdentity,
   installation: GhidraInstallationInspection,
@@ -32,7 +35,7 @@ export const resolveGhidraAnalysisProfile = (
     return Promise.resolve(
       err(new ProviderAdapterError(identity.id, "resolve_analysis_profile")),
     );
-  const mipsReason = ghidraMipsUnsupportedReason(target);
+  const mipsReason = ghidraProcessorUnsupportedReason(target);
   if (mipsReason !== null)
     return Promise.resolve(
       err(
@@ -43,6 +46,10 @@ export const resolveGhidraAnalysisProfile = (
         ),
       ),
     );
+  const pspExtension = isGhidraPspTarget(target)
+    ? await resolveGhidraPspExtension(installation, signal)
+    : null;
+  if (pspExtension !== null && !pspExtension.ok) return pspExtension;
   const provider = { ...identity, version: installation.providerVersion };
   const dosMz = target.format === "dos-mz";
   const dosCom = target.format === "dos-com";
@@ -109,6 +116,15 @@ export const resolveGhidraAnalysisProfile = (
           : {}),
         analyzer_preset: "ghidra-default",
         ...ghidraMipsProfileParameters(target),
+        ...(pspExtension?.ok === true
+          ? {
+              mips_support_lane: "psp-elf32-exec-eabi32-allegrex-v2",
+              loader: "PspElfLoader",
+              language_id: "Allegrex:LE:32:default",
+              compiler_spec_id: "default",
+              psp_extension: { ...pspExtension.value },
+            }
+          : {}),
       }),
     }),
   );

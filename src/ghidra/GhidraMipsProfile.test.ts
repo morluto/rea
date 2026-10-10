@@ -105,7 +105,7 @@ describe("bounded Ghidra MIPS admission", () => {
     [{ type: 1 }, "ET_EXEC"],
     [{ type: 3 }, "ET_EXEC"],
     [{ type: 0xffa0 }, "ET_EXEC"],
-    [{ flags: 0x10a23001 }, "Machine-specific"],
+    [{ flags: 0x10a23001 }, "separate MIPS ABI flags"],
     [{ flags: 0x70001021 }, "o32"],
     [{ flags: 0x70000001 }, "o32"],
     [{ flags: 0x70002001 }, "o32"],

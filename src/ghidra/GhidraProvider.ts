@@ -30,7 +30,10 @@ import {
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
 import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
-import { ghidraMipsUnsupportedReason } from "./GhidraMipsProfile.js";
+import {
+  ghidraProcessorUnsupportedReason,
+  isGhidraPspTarget,
+} from "./GhidraPspProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
@@ -142,7 +145,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       };
     if (hostPlatform === "win32")
       return inspectWindowsP0TargetSupport(target, diagnostics);
-    const mipsReason = ghidraMipsUnsupportedReason(target);
+    const mipsReason =
+      isGhidraPspTarget(target) &&
+      (hostPlatform !== "linux" ||
+        (this.installationHost?.architecture ?? process.arch) !== "x64")
+        ? "The initial PSP Allegrex profile is verified on Linux x64 only."
+        : ghidraProcessorUnsupportedReason(target);
     if (mipsReason !== null)
       return {
         status: "unsupported",
