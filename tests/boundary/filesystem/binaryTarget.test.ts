@@ -700,7 +700,12 @@ describe("binary Info.plist app bundle targets", () => {
     "resolves %s from a binary Info.plist on every host",
     async (bundle, programs, plist) => {
       const directory = await createTestTempDirectory("rea-app-bplist-");
-      for (const name of ["Ordinary", " App ", "Tab\t"]) {
+      // Windows file names cannot hold a tab or end in a space.
+      const names =
+        process.platform === "win32"
+          ? ["Ordinary"]
+          : ["Ordinary", " App ", "Tab\t"];
+      for (const name of names) {
         const app = join(directory, name, bundle);
         const executable = join(app, ...programs, name);
         await mkdir(join(app, ...programs), { recursive: true });
