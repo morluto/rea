@@ -4,7 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { resolveJavaScriptSourceMapReference } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import { analyzeParsedJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import {
-  analyzeParsedJavaScriptSemantics,
+  analyzeParsedJavaScriptSemanticsSteps,
   classifyParsedJavaScriptOpenReceivers,
 } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
@@ -189,6 +189,7 @@ function* analyzeArtifactFileSteps<
     return;
   }
   const openReceiverFacts = classifyParsedJavaScriptOpenReceivers(parsed);
+  yield;
   const analysis = analyzeParsedJavaScriptStaticSource(
     file.text.value,
     parsed,
@@ -198,7 +199,7 @@ function* analyzeArtifactFileSteps<
   yield;
   const semantics =
     analysis.parse_status === "complete" || analysis.parse_status === "partial"
-      ? analyzeParsedJavaScriptSemantics(parsed)
+      ? yield* analyzeParsedJavaScriptSemanticsSteps(parsed)
       : null;
   const projected =
     semantics === null

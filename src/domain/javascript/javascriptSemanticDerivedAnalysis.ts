@@ -42,37 +42,66 @@ export const collectJavaScriptDerivedSemantics = (
   callables: readonly JavaScriptSemanticCallable[],
   parserPartial: boolean,
 ): DerivedSemanticAnalysis => {
+  const steps = collectJavaScriptDerivedSemanticsSteps(
+    program,
+    state,
+    callables,
+    parserPartial,
+  );
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+  }
+};
+
+/**
+ * Collect derived semantics with a yield between collectors. Each collector
+ * completes before the next starts, so results equal the synchronous form.
+ */
+export function* collectJavaScriptDerivedSemanticsSteps(
+  program: t.Program,
+  state: JavaScriptSemanticAnalysisState,
+  callables: readonly JavaScriptSemanticCallable[],
+  parserPartial: boolean,
+): Generator<void, DerivedSemanticAnalysis> {
   const calls = collectJavaScriptSemanticCalls(program, state, callables);
+  yield;
   const promiseOperations = collectJavaScriptSemanticPromises(
     program,
     state,
     callables,
   );
+  yield;
   const asyncEffects = collectJavaScriptSemanticAsyncEffects(
     program,
     state,
     callables,
   );
+  yield;
   const childProcesses = collectJavaScriptSemanticChildProcesses(
     program,
     state,
     callables,
   );
+  yield;
   const dataEffects = collectJavaScriptSemanticDataEffects(
     program,
     state,
     callables,
   );
+  yield;
   const resourceOperations = collectJavaScriptSemanticResources(
     program,
     state,
     callables,
   );
+  yield;
   const objectOperations = collectJavaScriptSemanticObjects(
     program,
     state,
     callables,
   );
+  yield;
   const functionFingerprints = collectJavaScriptSemanticFingerprints({
     state,
     callables,
@@ -96,4 +125,4 @@ export const collectJavaScriptDerivedSemantics = (
     objectOperations,
     functionFingerprints,
   };
-};
+}
