@@ -127,10 +127,6 @@ export const createJavaScriptSemanticGraphNode = (
     ...parsed,
     application_node_ids: uniqueSorted(parsed.application_node_ids),
     evidence: evidenceContexts.intern(parsed.evidence),
-    identifier_strategy: {
-      strategy: "semantic-content-sha256" as const,
-      stability: "artifact-version" as const,
-    },
   };
   return javaScriptSemanticNodeSchema.parse({
     ...semantic,
@@ -147,10 +143,6 @@ export const createJavaScriptSemanticGraphRelation = (
   const semantic = {
     ...parsed,
     evidence: evidenceContexts.intern(parsed.evidence),
-    identifier_strategy: {
-      strategy: "semantic-content-sha256" as const,
-      stability: "relationship-exact" as const,
-    },
   };
   return javaScriptSemanticRelationSchema.parse({
     ...semantic,
