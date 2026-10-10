@@ -6,10 +6,7 @@ import {
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
-import {
-  classifyArtifactBytes,
-  classifyArtifactContent,
-} from "./ArtifactGraphConstruction.js";
+import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import {
@@ -78,35 +75,15 @@ const classifyRootFormat = async (
   const prefix = magic.subarray(0, observed.bytesRead);
   const lower = path.toLowerCase();
   if (hasZipSignature(prefix)) return zipPackageFormatForPath(lower) ?? "zip";
-  if (lower.endsWith(".asar") && hasAsarHeader(prefix)) return "asar";
   if (
     lower.endsWith(".pkg") &&
     prefix.subarray(0, 4).toString("ascii") === "xar!"
   )
     return "pkg";
   if (lower.endsWith(".dmg") && (await hasKolyTrailer(handle))) return "dmg";
-  const size = (await handle.stat()).size;
-  const format = classifyArtifactContent(path, prefix, size).format;
-  // Path suffixes stay role hints for nested members. A root whose container
-  // magic did not match is classified from the bytes that were read.
-  if (format === "asar" || format === "pkg" || format === "dmg")
-    return classifyArtifactBytes(prefix, size);
-  return format;
-};
-
-/**
- * Electron ASAR starts with a size pickle whose payload is one uint32, then
- * a header pickle whose payload begins with a JSON object.
- */
-const hasAsarHeader = (prefix: Buffer): boolean => {
-  if (prefix.length < 16 || prefix.readUInt32LE(0) !== 4) return false;
-  const headerSize = prefix.readUInt32LE(4);
-  const payloadSize = prefix.readUInt32LE(8);
-  if (headerSize < 16 || payloadSize !== headerSize - 4) return false;
-  const stringLength = prefix.readUInt32LE(12);
-  return (
-    stringLength >= 2 && stringLength <= payloadSize - 4 && prefix[16] === 0x7b
-  );
+  // ASAR is chosen from its header pickle; any other suffix is a role hint.
+  return classifyArtifactContent(path, prefix, (await handle.stat()).size)
+    .format;
 };
 
 const hasKolyTrailer = async (handle: FileHandle): Promise<boolean> => {

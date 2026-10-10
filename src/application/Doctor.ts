@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, readdir } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
 
@@ -472,6 +472,7 @@ const executableAvailable = async (
 ): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
+    if (!(await stat(path)).isFile()) return false;
     if (platform !== "linux") return true;
     const linked = await run("ldd", [path], options);
     return linuxSharedLibrariesAvailable(`${linked.stdout}\n${linked.stderr}`);

@@ -841,14 +841,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject instructionReference(Reference reference) {
         JsonObject item = new JsonObject();
-        RefType type = reference.getReferenceType();
+        JsonObject kind = referenceKind(reference);
+        item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
         item.addProperty("target_address", canonicalAddress(reference.getToAddress()));
-        item.addProperty("type", type.getName());
-        item.addProperty("call", type.isCall());
-        item.addProperty("jump", type.isJump());
-        item.addProperty("indirect", type.isIndirect());
-        item.addProperty("computed", type.isComputed());
-        item.addProperty("operand_index", reference.getOperandIndex());
+        for (String field : List.of("type", "call", "jump", "indirect", "computed",
+                "operand_index", "data", "read", "write", "primary", "provenance"))
+            item.add(field, kind.get(field));
+        item.addProperty("source", normalizedSource(reference.getSource()));
         return item;
     }
 

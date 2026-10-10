@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
@@ -29,7 +32,7 @@ import {
 } from "./javascriptStaticAnalysisState.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import {
-  classifyParsedJavaScriptElectronBindings,
+  classifyParsedJavaScriptElectronBindingsSteps,
   classifyParsedJavaScriptOpenReceivers,
   type JavaScriptOpenReceiverFact,
 } from "./javascriptSemanticAnalysis.js";
@@ -57,30 +60,42 @@ export const analyzeParsedJavaScriptStaticSource = (
   source: string,
   file: ParsedJavaScriptSource,
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
-): JavaScriptStaticAnalysis => {
+): JavaScriptStaticAnalysis =>
+  completeSemanticSteps(
+    analyzeParsedJavaScriptStaticSourceSteps(source, file, openReceiverFacts),
+  );
+
+/** Static analysis that yields during its source traversal; results are unchanged. */
+export function* analyzeParsedJavaScriptStaticSourceSteps(
+  source: string,
+  file: ParsedJavaScriptSource,
+  openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
+): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  traverseStaticSource(file, {
+  const electronBindings =
+    yield* classifyParsedJavaScriptElectronBindingsSteps(file);
+  yield* traverseStaticSourceSteps(file, {
     source,
     accumulator,
     ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
-    electronBindings: classifyParsedJavaScriptElectronBindings(file),
+    electronBindings,
   });
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator);
-};
+}
 
-const traverseStaticSource = (
+function* traverseStaticSourceSteps(
   file: ParsedJavaScriptSource,
   findings: JavaScriptFindingContext,
-): void => {
-  traverseJavaScriptAst(file, {
+): Generator<void, void> {
+  yield* traverseJavaScriptAstSteps(file, {
     enter: (node) => {
       findings.accumulator.visitedNodes += 1;
       inspectNode(node, findings);
       return undefined;
     },
   });
-};
+}
 
 const finalizeStaticAnalysis = (
   source: string,

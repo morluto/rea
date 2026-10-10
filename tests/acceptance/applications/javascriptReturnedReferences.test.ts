@@ -115,3 +115,39 @@ cliTest(
   ({ cli }) => verifyJavaScriptReturnShapes(cli, source, assertReturns),
   120_000,
 );
+
+cliTest(
+  "analyzes wide receiver returns without losing escaped reference facts",
+  ({ cli }) => {
+    const width = 160_000;
+    const object = Array.from(
+      { length: width },
+      (_, index) => `p${index}:0`,
+    ).join(",");
+    const array = "0,".repeat(width);
+    const wideSource = [
+      ["wideObject", `{${object},last:shared}`],
+      ["wideArray", `[${array}shared]`],
+    ]
+      .map(
+        ([name, value]) =>
+          `export function ${name}(){const shared={x:1};const box={wide(){return ${value}},noop(){}};box.noop();return {x:shared.x,keep:7};}`,
+      )
+      .join("\n");
+    return verifyJavaScriptReturnShapes(cli, wideSource, (fields) => {
+      for (const name of ["wideObject", "wideArray"]) {
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({ path: "/x", state: "unknown" }),
+        );
+        expect(fields(name)).toContainEqual(
+          expect.objectContaining({
+            path: "/keep",
+            state: "literal",
+            value: 7,
+          }),
+        );
+      }
+    });
+  },
+  120_000,
+);
