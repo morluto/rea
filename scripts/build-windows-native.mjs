@@ -84,7 +84,8 @@ if (!(await exists(join(headers, "node_api.h")))) {
 }
 const artifact = "rea-windows-x64.node";
 // MSVC short-import libraries do not produce a correct Node import table with
-// GNU ld. Generate a GNU import library for the exact stable Node-API symbols.
+// GNU ld. Generate a GNU delay-import library for the exact stable Node-API
+// symbols; addon.cc binds it to the host executable, whatever its file name.
 const sources = ["addon.cc", "filesystem.cc", "process.cc"];
 const sourceText = (
   await Promise.all(
@@ -106,7 +107,7 @@ await writeFile(
   definition,
   `LIBRARY node.exe\nEXPORTS\n${symbols.join("\n")}\n`,
 );
-run("x86_64-w64-mingw32-dlltool", ["-d", definition, "-l", library]);
+run("x86_64-w64-mingw32-dlltool", ["-d", definition, "-y", library]);
 run(compiler, [
   "-std=c++17",
   "-O2",
