@@ -9,11 +9,12 @@ import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 /** Injectable MCP boundary used by the provider and conformance tests. */
 export interface JebMcpConnection {
   /** Connect lazily and return the advertised tool names. */
-  connect(): Promise<readonly string[]>;
+  connect(signal?: AbortSignal): Promise<readonly string[]>;
   /** Invoke one JEB MCP tool and decode its single structured result. */
   call(
     name: string,
     args: Readonly<Record<string, JsonValue>>,
+    signal?: AbortSignal,
   ): Promise<JsonValue>;
   close(): Promise<void>;
 }
@@ -63,20 +64,29 @@ export const createStreamableHttpJebMcpConnection: JebMcpConnectionFactory = (
   let client: Client | undefined;
   let serverTools: readonly string[] | undefined;
   return {
-    async connect() {
+    async connect(signal) {
       client ??= new Client({ name: "rea-jeb", version: "0.0.0" });
       if (serverTools === undefined) {
-        await client.connect(new StreamableHTTPClientTransport(endpoint));
-        const listing = await client.listTools();
+        await client.connect(
+          new StreamableHTTPClientTransport(endpoint),
+          signal === undefined ? {} : { signal },
+        );
+        const listing = await client.listTools(
+          {},
+          signal === undefined ? {} : { signal },
+        );
         serverTools = listing.tools.map((tool) => tool.name);
       }
       return serverTools;
     },
-    async call(name, args) {
-      if (client === undefined) await this.connect();
+    async call(name, args, signal) {
+      if (serverTools === undefined) await this.connect(signal);
       if (client === undefined)
         throw new AnalysisProtocolError("JEB MCP client failed to connect");
-      const result = await client.callTool({ name, arguments: args });
+      const result = await client.callTool(
+        { name, arguments: args },
+        signal === undefined ? {} : { signal },
+      );
       return decodeJebToolResult(result);
     },
     async close() {

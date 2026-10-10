@@ -32,6 +32,13 @@ export const parseJebMcpEndpoint = (
         cause: "Only http and https JEB MCP endpoints are supported",
       }),
     );
+  if (url.hostname !== "127.0.0.1" && url.hostname !== "[::1]")
+    return err(
+      new AnalysisInputError("jeb_mcp_endpoint", {
+        cause:
+          "JEB MCP endpoint must use a literal loopback host (127.0.0.1 or ::1)",
+      }),
+    );
   if (url.username !== "" || url.password !== "")
     return err(
       new AnalysisInputError("jeb_mcp_endpoint", {

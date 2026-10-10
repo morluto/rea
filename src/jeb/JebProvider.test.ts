@@ -5,6 +5,8 @@ import type { JebMcpConnection } from "./JebMcpConnection.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
+  AnalysisProtocolError,
+  AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 
@@ -205,4 +207,68 @@ describe("JebProvider target and endpoint selection", () => {
       /credentials/,
     );
   });
+});
+
+it("refuses remote endpoints before constructing a connection", () => {
+  expect(
+    () =>
+      new JebProvider({
+        environment: { REA_JEB_MCP_URL: "http://example.com/mcp" },
+      }),
+  ).toThrow(AnalysisInputError);
+});
+
+it.each(["list_jeb_units", "decompile_jeb_item"] as const)(
+  "rejects an omitted successful payload for %s",
+  async (operation) => {
+    const provider = providerWith(
+      scriptedConnection({
+        get_client_information: { success: true, version: "5.48.0" },
+        list_units: { success: true },
+        decompile_code_item: { success: true },
+      }),
+    );
+    const result = await provider.execute(
+      operation === "list_jeb_units"
+        ? { operation, input: { count: 10, index: 0 } }
+        : {
+            operation,
+            input: { item_address: "LTest;->x()V", item_kind: "method" },
+          },
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+  },
+);
+
+it("forwards in-flight cancellation to the MCP call", async () => {
+  const controller = new AbortController();
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const provider = providerWith({
+    async connect() {
+      return [];
+    },
+    async close() {},
+    async call(_name, _args, signal) {
+      entered();
+      await new Promise<void>((_resolve, reject) =>
+        signal!.addEventListener("abort", () => reject(signal!.reason), {
+          once: true,
+        }),
+      );
+      return {};
+    },
+  });
+  const pending = provider.execute(
+    { operation: "inspect_jeb_client", input: {} },
+    { signal: controller.signal },
+  );
+  await started;
+  controller.abort();
+  const result = await pending;
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
 });
