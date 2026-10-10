@@ -885,3 +885,15 @@ npm run evidence:check
 
 The records preserve unsupported and unverified coverage as explicit unknowns.
 Run the matching real-tool prerequisites described in this guide.
+
+## Frida instrumentation
+
+`npm run verify:frida` builds REA, spawns a short-lived local Node.js fixture,
+loads a harmless marker script before resuming it, captures the message, and
+detaches. This lane requires Linux on the REA host and the optional Frida
+binding; it does not need a Frida server or a caller-selected process. To run
+the separate remote attach lane, pass `-- --address HOST:PORT --pid PID` for an
+explicitly selected process. Optional remote flags are `--token`,
+`--certificate`, `--origin`, and `--keepalive-interval`; authentication values
+are not written to files or included in the report. Mock tests do not establish
+real device/server compatibility.

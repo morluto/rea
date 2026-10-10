@@ -157,6 +157,7 @@
     "verify:ghidra:cross-format": "npm run build:cached && node scripts/verify-real-ghidra.mjs --cross-format",
     "verify:ghidra:windows": "npm run build:cached && npm run build:ghidra-windows-fixture && node scripts/verify-real-ghidra-windows.mjs",
     "verify:browser": "npm run build:cached && node scripts/verify-real-browser.mjs",
+    "verify:frida": "npm run build:cached && node scripts/verify-frida.mjs",
     "verify:browser:dom": "node scripts/verify-browser-dom-destinations.mjs",
     "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
@@ -295,5 +296,11 @@
     "vitepress": "1.6.4",
     "vitest": "5.0.3",
     "yaml": "2.9.0"
+  },
+  "optionalDependencies": {
+    "frida": "17.23.2"
+  },
+  "allowScripts": {
+    "frida@17.23.2": true
   }
 }

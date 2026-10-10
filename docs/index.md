@@ -43,4 +43,6 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 
 See [installation and setup](./installation.md) for requirements and configuration.
 
+For runtime instrumentation, see the [Frida guide](./frida-instrumentation.md).
+
 ![REA inspecting a native binary in Hopper](./assets/rea-hopper-analysis.png)

@@ -7,6 +7,8 @@ import { createRecordedCrashService } from "../composition/binaryDiagnostics.js"
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { registerAnalysisViewTool } from "./registerAnalysisViewTool.js";
 import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
+import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
+import { registerFridaTools } from "./registerFridaTools.js";
 import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -23,6 +25,7 @@ import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioC
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
 import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
+import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
 import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
@@ -99,6 +102,7 @@ export interface CreateServerOptions {
   readonly electronObservation?: ElectronObservationPort;
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
+  readonly fridaInstrumentation?: FridaInstrumentationPort;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
 }
@@ -186,6 +190,8 @@ export const createServer = (
   const server = createMcpServer(session, delivery);
   const android =
     options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+  const fridaInstrumentation =
+    options.fridaInstrumentation ?? new FridaInstrumentationManager();
   const availability = installSessionToolAvailability(
     session,
     selectedOptions,
@@ -211,9 +217,24 @@ export const createServer = (
     withAdmittedAnalysis: withAdmittedAnalysis(source),
   };
   registerBinaryAnalysisTools(toolContext);
+  registerFridaTools(
+    server,
+    fridaInstrumentation,
+    toolLogger,
+    delivery,
+    session === undefined
+      ? undefined
+      : (input) => session.recordEvidence(input),
+  );
   const previousOnclose = server.server.onclose;
   server.server.onclose = () => {
     previousOnclose?.();
+    void fridaInstrumentation.closeAll().catch((cause: unknown) => {
+      logger.error(
+        { error: cause instanceof Error ? cause.message : String(cause) },
+        "Frida session cleanup after MCP close failed",
+      );
+    });
     void android.close().catch((cause: unknown) => {
       logger.error(
         { error: cause instanceof Error ? cause.message : String(cause) },
@@ -223,7 +244,11 @@ export const createServer = (
   };
   const closeServer = server.close.bind(server);
   server.close = async () => {
-    const results = await Promise.allSettled([closeServer(), android.close()]);
+    const results = await Promise.allSettled([
+      closeServer(),
+      android.close(),
+      fridaInstrumentation.closeAll(),
+    ]);
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
   };

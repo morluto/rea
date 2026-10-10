@@ -48,6 +48,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
     },
     {
+      id: "frida",
+      surface: "instrumentation-provider",
+      contracts: sources.fridaContracts.FRIDA_TOOL_CONTRACTS,
+    },
+    {
       id: "browser",
       surface: "browser-provider",
       contracts: [
@@ -128,6 +133,10 @@ export const providerCatalog = (sources) => {
     activeContracts,
   } = electronContractSlices(sources);
   return [
+    {
+      identity: sources.fridaProvider.FRIDA_PROVIDER_IDENTITY,
+      contracts: sources.fridaContracts.FRIDA_TOOL_CONTRACTS,
+    },
     {
       identity: sources.hopperProvider.HOPPER_PROVIDER_IDENTITY,
       contracts: declaredContracts(
