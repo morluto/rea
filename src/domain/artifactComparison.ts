@@ -350,19 +350,20 @@ const relationsByPath = (
     inventory.occurrences.map((item) => [item.occurrence_id, item]),
   );
   for (const edge of inventory.edges) {
-    const path = edge.logical_path ?? ".";
-    const values = output.get(path);
     const occurrence = occurrences.get(edge.occurrence_id);
+    // An incomplete inventory can omit the occurrence that names the child.
+    if (occurrence?.artifact_id === null || occurrence === undefined) continue;
+    const path = occurrence.logical_path;
+    const values = output.get(path);
     const projection: RelationProjection = {
       parent_logical_path:
-        occurrence?.parent_occurrence_id === null ||
-        occurrence?.parent_occurrence_id === undefined
+        occurrence.parent_occurrence_id === null
           ? null
           : (occurrences.get(occurrence.parent_occurrence_id)?.logical_path ??
             null),
-      child_artifact_id: edge.child_artifact_id,
+      child_artifact_id: occurrence.artifact_id,
       relation: edge.relation,
-      logical_path: edge.logical_path,
+      logical_path: occurrence.logical_path,
       producer: edge.producer,
     };
     if (values === undefined) output.set(path, [projection]);

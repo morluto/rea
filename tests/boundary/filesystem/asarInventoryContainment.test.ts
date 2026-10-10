@@ -75,10 +75,9 @@ describe("expanded ASAR inventory containment", () => {
       const child = artifactOccurrenceAt(nested, path);
       expect(nested.edges).toContainEqual(
         expect.objectContaining({
-          logical_path: path,
+          occurrence_id: child.occurrence_id,
           relation: "contains",
           parent_artifact_id: artifactOccurrenceAt(nested, parent).artifact_id,
-          child_artifact_id: child.artifact_id,
         }),
       );
       if (path.startsWith("resources/app.asar/"))

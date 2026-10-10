@@ -211,8 +211,14 @@ const validateCompleteInventory = (inventory: InventorySet): void => {
     );
   for (const occurrence of inventory.occurrences)
     validateOccurrence(occurrence, inventory, nodeIds, occurrenceIds);
+  const occurrencesById = new Map(
+    inventory.occurrences.map((occurrence) => [
+      occurrence.occurrence_id,
+      occurrence,
+    ]),
+  );
   for (const edge of inventory.edges)
-    validateEdge(edge, nodeIds, occurrenceIds);
+    validateEdge(edge, nodeIds, occurrencesById);
   for (const contradiction of inventory.integrityContradictions) {
     if (
       !nodeIds.has(contradiction.parent_artifact_id) ||
@@ -273,22 +279,17 @@ const validateOccurrence = (
 const validateEdge = (
   edge: ArtifactInventoryResult["edges"][number],
   nodeIds: ReadonlySet<string>,
-  occurrenceIds: ReadonlySet<string>,
+  occurrences: ReadonlyMap<string, ArtifactOccurrence>,
 ): void => {
+  const occurrence = occurrences.get(edge.occurrence_id);
   if (
     !nodeIds.has(edge.parent_artifact_id) ||
-    !nodeIds.has(edge.child_artifact_id) ||
-    !occurrenceIds.has(edge.occurrence_id)
+    occurrence?.artifact_id === null ||
+    occurrence === undefined ||
+    !nodeIds.has(occurrence.artifact_id)
   )
     throw new TypeError("Artifact edge references a missing graph member");
-  const semantic = {
-    parent_artifact_id: edge.parent_artifact_id,
-    child_artifact_id: edge.child_artifact_id,
-    relation: edge.relation,
-    occurrence_id: edge.occurrence_id,
-    logical_path: edge.logical_path,
-  };
-  if (edge.edge_id !== artifactEdgeId(semantic))
+  if (edge.edge_id !== artifactEdgeId(edge, occurrence))
     throw new TypeError("Artifact edge ID does not match its identity");
 };
 
