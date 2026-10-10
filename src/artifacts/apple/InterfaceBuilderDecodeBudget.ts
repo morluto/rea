@@ -93,17 +93,23 @@ export const estimatePropertyListDecodeBytes = (
   bytes: Buffer,
   maxBytes: number,
   xmlText?: string,
-): number => {
-  const estimate =
-    bytes.subarray(0, 8).toString("ascii") === "bplist00"
-      ? estimateBinaryPlistExpansion(bytes, maxBytes)
-      : estimateXmlPlistExpansion(bytes, maxBytes, xmlText);
+): BinaryPlistExpansion => {
+  if (bytes.subarray(0, 8).toString("ascii") === "bplist00") {
+    const expansion = estimateBinaryPlistExpansion(bytes, maxBytes);
+    if (expansion.estimatedBytes > maxBytes)
+      throw new InterfaceBuilderDecodeBudgetExceeded(
+        "aggregate_decode_budget_exhausted",
+        "plist representation exceeds the aggregate Interface Builder decode budget",
+      );
+    return expansion;
+  }
+  const estimate = estimateXmlPlistExpansion(bytes, maxBytes, xmlText);
   if (estimate > maxBytes)
     throw new InterfaceBuilderDecodeBudgetExceeded(
       "aggregate_decode_budget_exhausted",
       "plist representation exceeds the aggregate Interface Builder decode budget",
     );
-  return estimate;
+  return { estimatedBytes: estimate, omittedPrototypeKeys: 0 };
 };
 
 const estimateXmlPlistExpansion = (
@@ -147,6 +153,20 @@ const estimateXmlPlistExpansion = (
   return decodedSourceBytes * 2 + elementCount * 128;
 };
 
+const PROTOTYPE_KEY_ASCII = Buffer.from("__proto__");
+const PROTOTYPE_KEY_UTF16BE = Buffer.alloc(PROTOTYPE_KEY_ASCII.length * 2);
+for (let index = 0; index < PROTOTYPE_KEY_ASCII.length; index += 1)
+  PROTOTYPE_KEY_UTF16BE.writeUInt16BE(
+    PROTOTYPE_KEY_ASCII[index] ?? 0,
+    index * 2,
+  );
+
+/** Byte estimate and dictionary keys the JSON projection cannot retain. */
+export interface BinaryPlistExpansion {
+  readonly estimatedBytes: number;
+  readonly omittedPrototypeKeys: number;
+}
+
 /** Resource a binary plist preflight found over its budget, or a malformed reference cycle. */
 export type BinaryPlistExpansionFailure = "cycle" | "depth" | "expansion";
 
@@ -186,7 +206,7 @@ export const estimateBinaryPlistExpansion = (
     fail = interfaceBuilderBudgetFailure,
     bounds = "strict",
   }: BinaryPlistExpansionOptions = {},
-): number => {
+): BinaryPlistExpansion => {
   if (bytes.length < 40)
     throw new TypeError("binary plist trailer is truncated");
   const trailer = bytes.length - 32;
@@ -217,6 +237,42 @@ export const estimateBinaryPlistExpansion = (
     offsetTable + objectCount * offsetSize > tableEnd
   )
     throw new TypeError("binary plist trailer or object table is invalid");
+  let omittedPrototypeKeys = 0;
+  const readObjectBytes = (object: number): Buffer | undefined => {
+    const objectOffset = readInteger(
+      offsetTable + object * offsetSize,
+      offsetSize,
+    );
+    if (objectOffset < 8 || objectOffset >= objectsEnd) return undefined;
+    const objectMarker = bytes[objectOffset] ?? 0;
+    const objectType = objectMarker >> 4;
+    if (objectType !== 5 && objectType !== 6) return undefined;
+    let objectSize = objectMarker & 0x0f;
+    let cursor = objectOffset + 1;
+    if (objectSize === 0x0f) {
+      const extended = bytes[cursor] ?? 0;
+      if (extended >> 4 !== 1 || (extended & 0x0f) > 3) return undefined;
+      cursor += 1;
+      const integerSize = 1 << (extended & 0x0f);
+      objectSize = readInteger(cursor, integerSize);
+      cursor += integerSize;
+      if (objectSize < 0) return undefined;
+    }
+    const byteLength = objectType === 6 ? objectSize * 2 : objectSize;
+    if (!Number.isSafeInteger(byteLength) || cursor + byteLength > objectsEnd)
+      return undefined;
+    return bytes.subarray(cursor, cursor + byteLength);
+  };
+  const isPrototypeKey = (object: number): boolean => {
+    const text = readObjectBytes(object);
+    return (
+      text !== undefined &&
+      ((text.length === PROTOTYPE_KEY_ASCII.length &&
+        text.equals(PROTOTYPE_KEY_ASCII)) ||
+        (text.length === PROTOTYPE_KEY_UTF16BE.length &&
+          text.equals(PROTOTYPE_KEY_UTF16BE)))
+    );
+  };
   let estimate = bytes.length * 2 + objectCount * 16;
   if (estimate > maxBytes)
     throw fail("expansion", `binary plist object table exceeds ${budget}`);
@@ -278,6 +334,13 @@ export const estimateBinaryPlistExpansion = (
       continue;
     }
     if (type !== 10 && type !== 13) continue;
+    if (type === 13) {
+      for (let index = 0; index < size; index += 1) {
+        const key = readInteger(cursor + index * referenceSize, referenceSize);
+        if (key >= 0 && key < objectCount && isPrototypeKey(key))
+          omittedPrototypeKeys += 1;
+      }
+    }
     const childCount = type === 13 ? size * 2 : size;
     const refsEnd = cursor + childCount * referenceSize;
     if (!Number.isSafeInteger(refsEnd) || refsEnd > objectsEnd)
@@ -301,5 +364,5 @@ export const estimateBinaryPlistExpansion = (
     }
     pendingObjectCount += childCount;
   }
-  return estimate;
+  return { estimatedBytes: estimate, omittedPrototypeKeys };
 };

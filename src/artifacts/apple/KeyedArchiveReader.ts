@@ -51,19 +51,23 @@ export const decodeKeyedArchiveBytes = (
   // plist.parseBinary recurses on every object reference and copies shared
   // containers, so a few hundred bytes can exhaust memory or the stack.
   // RangeError reports a resource limit; a reference cycle is malformed.
-  if (binary)
-    estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
-      budget: "the keyed archive decode budget",
-      fail: (kind, message) =>
-        kind === "cycle"
-          ? new TypeError(
-              "binary plist object references form a cycle, which a property list cannot represent",
-            )
-          : new RangeError(message),
-      bounds: "decoder",
-    });
+  const binaryExpansion = binary
+    ? estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
+        budget: "the keyed archive decode budget",
+        fail: (kind, message) =>
+          kind === "cycle"
+            ? new TypeError(
+                "binary plist object references form a cycle, which a property list cannot represent",
+              )
+            : new RangeError(message),
+        bounds: "decoder",
+      })
+    : undefined;
   const parsed = binary
-    ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
+    ? {
+        value: parseBinary(bytes),
+        omittedPrototypeKeys: binaryExpansion?.omittedPrototypeKeys ?? 0,
+      }
     : parseXmlPropertyList(xmlText ?? "");
   const { value: plistValue, unknownRealCount } = projectPlistValue(
     parsed.value,

@@ -65,6 +65,63 @@ describe("inert keyed archive decoding", () => {
       "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
     );
   });
+  it("reports a binary archive dictionary keyed __proto__ as omitted", () => {
+    const placeholder = "proto_key";
+    const encoded = Buffer.from(
+      buildBinary({
+        ...archive,
+        [placeholder]: "x",
+        $objects: ["$null", "value"],
+      }),
+    );
+    const needle = Buffer.from(placeholder);
+    const start = encoded.indexOf(needle);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(encoded.indexOf(needle, start + needle.length)).toBe(-1);
+    Buffer.from("__proto__").copy(encoded, start);
+    const graph = decodeKeyedArchiveBytes(encoded, {
+      offset: 0,
+      limit: 2,
+    });
+    expect(graph.objects.map(({ value }) => value)).toEqual(["$null", "value"]);
+    expect(graph.limitations).toContain(
+      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
+  });
+  it("counts each dictionary that references a shared __proto__ key", () => {
+    const placeholder = "proto_key";
+    const encoded = Buffer.from(
+      buildBinary({
+        ...archive,
+        [placeholder]: "x",
+        $objects: ["$null", { [placeholder]: "y", label: "value" }],
+      }),
+    );
+    const needle = Buffer.from(placeholder);
+    const prototypeKey = Buffer.from("__proto__");
+    let found = 0;
+    let index = encoded.indexOf(needle);
+    while (index !== -1) {
+      prototypeKey.copy(encoded, index);
+      found += 1;
+      index = encoded.indexOf(needle, index + needle.length);
+    }
+    expect(found).toBeGreaterThan(0);
+    const graph = decodeKeyedArchiveBytes(encoded, {
+      offset: 0,
+      limit: 4,
+    });
+    expect(graph.limitations).toContain(
+      "2 dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
+    );
+  });
+  it("does not report a prototype-key omission for an ordinary binary archive", () => {
+    const graph = decodeKeyedArchiveBytes(Buffer.from(buildBinary(archive)), {
+      offset: 0,
+      limit: 2,
+    });
+    expect(graph.limitations.join("\n")).not.toContain("keyed __proto__");
+  });
   it("rejects missing roots, malformed plist, and non-keyed archives", () => {
     expect(() =>
       decodeKeyedArchiveBytes(Buffer.from("bplist00bad"), {
@@ -174,6 +231,30 @@ describe("binary plist reference preflight", () => {
         selection,
       ),
     ).toThrow(RangeError);
+  });
+
+  it("reports a UTF-16 dictionary key __proto__ as omitted", () => {
+    const utf16 = Buffer.alloc(3 + 18);
+    utf16[0] = 0x6f;
+    utf16[1] = 0x10;
+    utf16[2] = 9;
+    const text = Buffer.from("__proto__");
+    for (let index = 0; index < text.length; index += 1)
+      utf16.writeUInt16BE(text[index] ?? 0, 3 + index * 2);
+    const dict = Buffer.alloc(5);
+    dict[0] = 0xd1;
+    dict.writeUInt16BE(10, 1);
+    dict.writeUInt16BE(11, 3);
+    const decoded = decodeKeyedArchiveBytes(
+      keyedRoot([plistArray([9]), dict, utf16, plistString("hidden")]),
+      selection,
+    );
+    expect(decoded.objects[0]).toEqual(
+      expect.objectContaining({ id: 0, value: {} }),
+    );
+    expect(decoded.limitations).toContain(
+      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
   });
 
   it("decodes shared leaf references", () => {
