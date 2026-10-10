@@ -36,6 +36,13 @@ after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
 
+Self-contained output schemas advertise a content-bound `$id`, including their
+declared dialect. SDK validators can reuse compiled schemas across complete
+catalog refreshes and equivalent tool outputs; changing the schema changes its
+identity. Explicit schema IDs and relative external reference bases are
+preserved. This keeps every tool and validation rule in discovery and does not
+change the SDK's catalog invalidation or availability checks.
+
 `compare_web_captures` accepts exactly one of two input shapes:
 
 - Passive: `before` and `after` each contain `inspection`, the complete
