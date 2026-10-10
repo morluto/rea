@@ -8,8 +8,140 @@ import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { SqliteDatabaseService } from "../../../src/application/sqlite/SqliteDatabaseService.js";
+import { PassThrough } from "node:stream";
+import { once } from "node:events";
+import { access } from "node:fs/promises";
+import {
+  serveStdio,
+  StdioServerTransport,
+} from "@modelcontextprotocol/server/stdio";
+import pino from "pino";
+import { createManagedBinarySession } from "../../../src/composition/binary.js";
+import { startMcpTransport } from "../../../src/main/transport.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
+
+it.each(["handle", "stdin"] as const)(
+  "retains failed SQLite cleanup through production stdio shutdown: %s",
+  async (shutdown) => {
+    const root = await PrivateRuntimeRoot.create({
+      prefix: "rea-sqlite-stdio-cleanup-",
+    });
+    let removalAllowed = false;
+    let attempts = 0;
+    const sqliteDatabase = new SqliteDatabaseService({
+      inspect: async () => {
+        throw new Error("No inspection requested");
+      },
+      close: async () => {
+        attempts += 1;
+        if (!removalAllowed) throw new Error("SQLite snapshot removal denied");
+        await root.close();
+      },
+    });
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const logger = pino({ enabled: false });
+    const session = createManagedBinarySession();
+    const started = await startMcpTransport(
+      {
+        env: {},
+        serve: (factory, options) =>
+          serveStdio(factory, {
+            ...options,
+            transport: new StdioServerTransport(stdin, stdout),
+          }),
+        createServer: (source, options) =>
+          createServer(source, { ...options, sqliteDatabase }),
+        writeStderr: () => undefined,
+        setExitCode: () => undefined,
+        registerShutdown: () => () => undefined,
+      },
+      session,
+      {
+        environment: {},
+        delivery: createToolResultDelivery(undefined),
+        logger,
+        serverLogger: logger,
+        loadOptionalProviders: async () => ({}),
+      },
+    );
+    if (!started.ok) throw new Error("Transport startup failed");
+    try {
+      const response = once(stdout, "data");
+      stdin.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-11-25",
+            capabilities: {},
+            clientInfo: { name: "sqlite-cleanup-test", version: "1.0.0" },
+          },
+        })}\n`,
+      );
+      const [reply] = await response;
+      expect(JSON.parse(String(reply))).toMatchObject({
+        id: 1,
+        result: { serverInfo: { name: "rea" } },
+      });
+      if (shutdown === "stdin") {
+        stdin.end();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      await expect(started.handle.close()).rejects.toBeInstanceOf(
+        AggregateError,
+      );
+      expect(attempts).toBeGreaterThan(0);
+      await expect(access(root.path)).resolves.toBeUndefined();
+      removalAllowed = true;
+      await started.handle.close();
+      await expect(access(root.path)).rejects.toMatchObject({ code: "ENOENT" });
+      const completedAttempts = attempts;
+      await started.handle.close();
+      expect(attempts).toBe(completedAttempts);
+    } finally {
+      removalAllowed = true;
+      await started.handle.close();
+      await started.closeAndroid();
+      await session.close();
+      await root.close();
+      stdin.destroy();
+      stdout.destroy();
+    }
+  },
+);
+
+it("awaits SQLite cleanup and retries its retained owner after failed server shutdown", async () => {
+  let removalAllowed = false;
+  let attempts = 0;
+  const sqliteDatabase = new SqliteDatabaseService({
+    inspect: async () => {
+      throw new Error("No inspection requested");
+    },
+    close: async () => {
+      attempts += 1;
+      if (!removalAllowed) throw new Error("SQLite snapshot removal denied");
+    },
+  });
+  const server = createServer(
+    { kind: "fixed", analysis: { execute: async () => ok(null) } },
+    { sqliteDatabase },
+  );
+  resources.push(server);
+  try {
+    await expect(server.close()).rejects.toBeInstanceOf(AggregateError);
+    expect(attempts).toBe(1);
+  } finally {
+    removalAllowed = true;
+  }
+  await server.close();
+  expect(attempts).toBe(2);
+});
 
 afterEach(async () => {
   await Promise.all(

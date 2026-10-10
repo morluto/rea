@@ -46,6 +46,8 @@ const SOURCE_PATHS = {
   pwntoolsProvider: "dist/native/pwntools/PwntoolsRelease.js",
   nativeContracts: "dist/contracts/native/nativeToolContracts.js",
   evmContracts: "dist/contracts/evm/evmToolContracts.js",
+  sqliteContracts: "dist/contracts/sqlite/sqliteToolContracts.js",
+  sqliteProvider: "dist/sqlite/SqliteDatabaseLimits.js",
   evmProvider: "dist/evm/EvmoleRelease.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   managedContracts: "dist/contracts/managed/managedToolContracts.js",

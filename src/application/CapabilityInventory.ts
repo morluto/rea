@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { satisfies } from "semver";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
@@ -270,6 +271,14 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "inspect_sqlite_database")
+    return satisfies(process.versions.node, "^24.15.0 || >=26.0.0")
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_unavailable",
+          remediation:
+            "SQLite inspection requires Node.js 24.x >=24.15 or 26+ with the native DatabaseSync.limits API. Other REA features retain their published runtime requirements. The inspection worker verifies the API before querying the snapshot.",
+        };
   if (name === "trace_web_module_imports")
     return {
       reason: "available",

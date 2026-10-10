@@ -55,6 +55,17 @@ export const startMcpTransport = async (
     );
   }
   const androidProviders: AndroidAnalysisPort[] = [];
+  const servers = new Set<ReturnType<typeof createServer>>();
+  const closeServers = async (): Promise<void> => {
+    const results = await Promise.allSettled(
+      [...servers].map((server) => server.close()),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length > 0)
+      throw new AggregateError(failures, "REA server cleanup failed");
+  };
   const closeAndroid = async (): Promise<void> => {
     const results = await Promise.allSettled(
       androidProviders.map((provider) => provider.close()),
@@ -71,7 +82,7 @@ export const startMcpTransport = async (
           serverContext.environment,
         );
         androidProviders.push(android);
-        return (dependencies.createServer ?? createServer)(
+        const server = (dependencies.createServer ?? createServer)(
           { kind: "session", session },
           {
             logger: serverContext.logger,
@@ -81,6 +92,14 @@ export const startMcpTransport = async (
             androidAnalysis: android,
           },
         );
+        // The SDK can discard a server even when its provider cleanup failed.
+        servers.add(server);
+        const closeServer = server.close.bind(server);
+        server.close = async () => {
+          await closeServer();
+          servers.delete(server);
+        };
+        return server;
       },
       {
         onerror: () => {
@@ -90,10 +109,12 @@ export const startMcpTransport = async (
       },
     );
   } catch (cause: unknown) {
-    const [binaryCleanup, androidCleanup] = await Promise.allSettled([
-      session.close(),
-      closeAndroid(),
-    ]);
+    const [binaryCleanup, androidCleanup, serverCleanup] =
+      await Promise.allSettled([
+        session.close(),
+        closeAndroid(),
+        closeServers(),
+      ]);
     serverLogger.error(
       {
         error: cause instanceof Error ? cause.message : String(cause),
@@ -109,7 +130,7 @@ export const startMcpTransport = async (
       );
       dependencies.writeStderr(`${cleanupError.message}\n`);
     }
-    for (const cleanup of [binaryCleanup, androidCleanup]) {
+    for (const cleanup of [binaryCleanup, androidCleanup, serverCleanup]) {
       if (cleanup.status === "rejected") {
         const reason =
           cleanup.reason instanceof Error
@@ -124,5 +145,22 @@ export const startMcpTransport = async (
     }
     return { ok: false };
   }
-  return { ok: true, handle, closeAndroid };
+  return {
+    ok: true,
+    handle: {
+      close: async () => {
+        const results = await Promise.allSettled([
+          handle.close(),
+          closeServers(),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1)
+          throw new AggregateError(failures, "REA transport cleanup failed");
+      },
+    },
+    closeAndroid,
+  };
 };

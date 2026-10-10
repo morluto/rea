@@ -41,6 +41,11 @@ const sessionEvidence = effects({ mutatesSession: true });
 
 /** Explicit effect audit for every public tool. */
 export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
+  inspect_sqlite_database: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   inspect_evm_interface: effects({
     mutatesSession: true,
     writesFilesystem: true,
