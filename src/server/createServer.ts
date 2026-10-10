@@ -62,9 +62,13 @@ import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysi
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
+import { registerApktoolTools } from "./registerApktoolTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
+import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
+import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
@@ -99,6 +103,7 @@ export interface CreateServerOptions {
   readonly webRuntime?: WebRuntimeService;
   readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
+  readonly apktoolAnalysis?: ApktoolResourceAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
@@ -197,6 +202,9 @@ export const createServer = (
   );
   const android =
     options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+  const apktool =
+    options.apktoolAnalysis ??
+    createApktoolResourceAnalysisProvider(environment);
   const availability = installSessionToolAvailability(
     session,
     selectedOptions,
@@ -239,6 +247,12 @@ export const createServer = (
       if (result.status === "rejected") throw result.reason;
   };
   registerConfiguredAnalysisTools(toolContext, android);
+  registerApktoolTools(
+    server,
+    new ApktoolResourceAnalysisService(apktool),
+    toolLogger,
+    recordEvidence,
+  );
   registerObservationTools(toolContext);
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {

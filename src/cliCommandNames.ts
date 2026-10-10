@@ -45,6 +45,8 @@ export const CLI_COMMANDS = Object.freeze({
   inspectFirmwareRegions: "inspect-firmware-regions",
   extractFirmware: "extract-firmware",
   inspectAndroidPackage: "inspect-android-package",
+  inspectApktoolClient: "inspect-apktool-client",
+  decodeAndroidResources: "decode-android-resources",
   searchAndroidClasses: "search-android-classes",
   inspectAndroidClass: "inspect-android-class",
   inspectAndroidMethod: "inspect-android-method",
