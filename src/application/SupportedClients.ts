@@ -1,4 +1,5 @@
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { lstatSync } from "node:fs";
 
 /** One supported client configuration location. */
@@ -10,6 +11,8 @@ export interface SetupClient {
   readonly configPaths?: readonly string[];
   /** Read-only administrator/default policy sources; never setup write targets. */
   readonly policyPaths?: readonly string[];
+  /** Unresolved path evidence only; consumers must not perform I/O on it. */
+  readonly configPathError?: string;
   readonly markerPath?: string;
   readonly format?:
     | "json"
@@ -20,6 +23,8 @@ export interface SetupClient {
     | "commandcode"
     | "grok"
     | "omp"
+    | "pi"
+    | "hermes"
     | "unsupported";
 }
 
@@ -101,6 +106,50 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME || join(home, ".grok");
 
+/**
+ * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
+ * Hermes's own resolver (`%LOCALAPPDATA%\\hermes` on Windows, `~/.hermes`
+ * elsewhere), including the optional `HERMES_DATA_DIR_SUFFIX` that is appended
+ * to the literal `hermes`/`.hermes` directory name.
+ */
+const hermesDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  const override = env.HERMES_HOME?.trim();
+  if (override) {
+    const expandedVariables = override.replace(
+      /\$(\w+|\{[^}]*\})/gu,
+      (match, variable: string) => {
+        const key = variable.startsWith("{") ? variable.slice(1, -1) : variable;
+        return env[key] ?? match;
+      },
+    );
+    const expanded =
+      platform === "win32"
+        ? expandedVariables.replace(
+            /%([^%]+)%/gu,
+            (match, variable: string) => env[variable] ?? match,
+          )
+        : expandedVariables;
+    if (expanded === "~") return home;
+    if (
+      expanded.startsWith("~/") ||
+      (platform === "win32" && expanded.startsWith("~\\"))
+    )
+      return join(home, expanded.slice(2));
+    return resolve(expanded);
+  }
+  const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
+  return platform === "win32"
+    ? join(
+        env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
+        `hermes${suffix}`,
+      )
+    : join(home, `.hermes${suffix}`);
+};
+
 /** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
 const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
   const root = env.SAND_DATA_ROOT;
@@ -153,6 +202,41 @@ const ompAgentDirectory = (context: ClientPathContext): string => {
   if (profile !== undefined) return join(root, "profiles", profile, "agent");
   const override = context.env.PI_CODING_AGENT_DIR;
   return override ? resolve(override) : join(root, "agent");
+};
+
+/**
+ * Pi's public getAgentDir()/normalizePath semantics, not OMP's profiles.
+ * Keep relative overrides relative: filesystem consumers resolve them in cwd.
+ */
+const piAgentDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  const paths = platform === "win32" ? win32 : { join };
+  let directory = env.PI_CODING_AGENT_DIR;
+  if (!directory) return paths.join(home, ".pi", "agent");
+  if (
+    platform === "win32" &&
+    directory.startsWith("/") &&
+    !directory.startsWith("//") &&
+    !directory.includes("\\")
+  ) {
+    const drive = /^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/iu.exec(
+      directory,
+    );
+    if (drive !== null)
+      directory = `${drive[1]?.toUpperCase()}:\\${drive[2]?.replaceAll("/", "\\") ?? ""}`;
+  }
+  if (directory === "~") return home;
+  if (
+    directory.startsWith("~/") ||
+    (platform === "win32" && directory.startsWith("~\\"))
+  )
+    return paths.join(home, directory.slice(2));
+  if (directory.startsWith("file://"))
+    return fileURLToPath(directory, { windows: platform === "win32" });
+  return directory;
 };
 
 const copilotDirectory = ({ home, env }: ClientPathContext): string =>
@@ -373,6 +457,27 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "omp",
   },
   {
+    name: "pi",
+    displayName: "Pi",
+    configPath: (context: ClientPathContext) =>
+      (context.platform === "win32" ? win32 : { join }).join(
+        piAgentDirectory(context),
+        "mcp.json",
+      ),
+    markerPath: piAgentDirectory,
+    format: "pi",
+  },
+  {
+    name: "hermes",
+    displayName: "Hermes",
+    skillPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "skills"),
+    configPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "config.yaml"),
+    markerPath: hermesDirectory,
+    format: "hermes",
+  },
+  {
     name: "grok_bot",
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
@@ -393,24 +498,35 @@ export const supportedClients = (
   const context = { home, platform, env };
   const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
   return definitions.map((definition) => {
-    const configPath = resolvePath(definition.configPath, context);
-    return {
-      name: definition.name,
-      displayName: definition.displayName,
-      configPath,
-      ...(definition.policyPaths === undefined
-        ? {}
-        : { policyPaths: definition.policyPaths(context) }),
-      ...(definition.configPaths === undefined
-        ? {}
-        : {
-            configPaths: [
-              ...new Set([...definition.configPaths(context), configPath]),
-            ],
-          }),
-      markerPath: resolvePath(definition.markerPath, context),
-      format: definition.format,
-    };
+    try {
+      const configPath = resolvePath(definition.configPath, context);
+      return {
+        name: definition.name,
+        displayName: definition.displayName,
+        configPath,
+        ...(definition.policyPaths === undefined
+          ? {}
+          : { policyPaths: definition.policyPaths(context) }),
+        ...(definition.configPaths === undefined
+          ? {}
+          : {
+              configPaths: [
+                ...new Set([...definition.configPaths(context), configPath]),
+              ],
+            }),
+        markerPath: resolvePath(definition.markerPath, context),
+        format: definition.format,
+      };
+    } catch (cause: unknown) {
+      if (definition.name !== "pi") throw cause;
+      return {
+        name: definition.name,
+        displayName: definition.displayName,
+        format: definition.format,
+        configPath: env.PI_CODING_AGENT_DIR ?? "",
+        configPathError: `Invalid PI_CODING_AGENT_DIR: ${cause instanceof Error ? cause.message : String(cause)}. Repair the override before configuring Pi.`,
+      };
+    }
   });
 };
 

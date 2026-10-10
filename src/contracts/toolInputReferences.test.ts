@@ -97,9 +97,14 @@ describe("advertised input references", () => {
           before: { description: "Exact byte range in the selected artifact." },
           after: { description: "Exact byte range in the selected artifact." },
           metadata: { default: literal, examples: [literal] },
-          constructor: { description: "Value for constructor." },
         },
       });
+      // Inherited object keys never supply a description.
+      expect(inline).not.toHaveProperty([
+        "properties",
+        "constructor",
+        "description",
+      ]);
       const ajv =
         target === "draft-2020-12"
           ? new Ajv2020({ strict: false })
