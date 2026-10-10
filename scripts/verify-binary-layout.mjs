@@ -862,11 +862,26 @@ try {
   sectionHeavy.writeUInt16LE(sectionCount, 60);
   const sectionHeavyPath = join(root.path, "section-heavy.o");
   await writeFile(sectionHeavyPath, sectionHeavy);
+  // A section-count workload can hit the deadline before exhausting memory,
+  // depending on the Python build and native-library allocation behavior.
+  // Keep enough address space for interpreter startup, then use valid ELF
+  // padding to exhaust it while reading/mapping the snapshot, independently of
+  // section traversal speed. Stay within REA's 32 MiB input budget and require
+  // a real allocation failure, never a timeout or an unmarked startup failure.
+  const memoryLimit = 64 * 1024 * 1024;
+  const memoryHeavy = Buffer.alloc(32 * 1024 * 1024);
+  object.copy(memoryHeavy);
+  const memoryHeavyPath = join(root.path, "memory-heavy.o");
+  await writeFile(memoryHeavyPath, memoryHeavy);
+  for (const mode of ["cli", "mcp"]) {
+    await inspect(mode, memoryHeavyPath);
+    cases++;
+  }
   const memoryWrapper = join(root.path, "python-memory-constraint");
   const quotedPython = "'" + python.replaceAll("'", "'\"'\"'") + "'";
   await writeFile(
     memoryWrapper,
-    `#!/bin/sh\nexec /usr/bin/prlimit --as=100663296 -- ${quotedPython} "$@"\n`,
+    `#!/bin/sh\nexec /usr/bin/prlimit --as=${memoryLimit} -- ${quotedPython} "$@"\n`,
     { mode: 0o700 },
   );
   const memoryEnvironment = {
@@ -888,7 +903,7 @@ try {
     for (const mode of ["cli", "mcp"]) {
       const error = await inspect(
         mode,
-        sectionHeavyPath,
+        memoryHeavyPath,
         "resource_constraint",
         memoryEnvironment,
         memoryClient,
@@ -897,13 +912,13 @@ try {
       assert.equal(error.details.resource, "memory");
       assert.ok(
         error.details.reported_limits === null ||
-          error.details.reported_limits.address_space_bytes === 100663296,
+          error.details.reported_limits.address_space_bytes === memoryLimit,
       );
       assert.equal(error.details.captured_output.truncated, false);
       assert.ok(error.remediation.action.includes("memory"));
       cases++;
     }
-    assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
+    assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
   } finally {
     try {
       await memoryClient.close();

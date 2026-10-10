@@ -1,0 +1,57 @@
+name: Real Go binary metadata
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/real-go-binary.yml"
+      - "src/go/**"
+      - "src/domain/go/**"
+      - "src/application/go/**"
+      - "src/contracts/go/**"
+      - "src/composition/go.ts"
+      - "src/cli/goCommands.ts"
+      - "src/server/registerGoTools.ts"
+      - "src/server/createServer.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/artifacts/readStableArtifact*.ts"
+      - "src/artifacts/ArtifactReader.ts"
+      - "src/process/PrivateRuntimeRoot.ts"
+      - "scripts/verify-go-binary.mjs"
+      - "scripts/lib/mcp-verifier-results.mjs"
+      - "scripts/rea.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".nvmrc"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-go-binary-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_OPTIONS: --max-old-space-size=768
+  HUSKY: "0"
+
+jobs:
+  real-go-binary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.1"
+          cache: false
+      - run: npm ci
+      - name: Verify compiler-produced ELF, PE and Mach-O through public CLI and MCP
+        run: npm run verify:go:binary

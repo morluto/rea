@@ -47,6 +47,8 @@ const SOURCE_PATHS = {
   nativeContracts: "dist/contracts/native/nativeToolContracts.js",
   evmContracts: "dist/contracts/evm/evmToolContracts.js",
   evmProvider: "dist/evm/EvmoleRelease.js",
+  goContracts: "dist/contracts/go/goToolContracts.js",
+  goProvider: "dist/go/GoBinaryProvider.js",
   artifactContracts: "dist/contracts/artifactToolContracts.js",
   managedContracts: "dist/contracts/managed/managedToolContracts.js",
   firmwareContracts: "dist/contracts/firmware/firmwareToolContracts.js",

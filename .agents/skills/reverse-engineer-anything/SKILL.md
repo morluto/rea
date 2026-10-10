@@ -111,6 +111,12 @@ explicit path or endpoint and do not need it.
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. See the
   [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
+- Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
+  with the explicit local file. This built-in target-free inspection requires no
+  Go installation or disassembler. Preserve raw module bytes and source ranges;
+  absent metadata does not prove a binary is not Go, and unparsed text records
+  remain explicit. See the
+  [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its

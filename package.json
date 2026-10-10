@@ -232,6 +232,7 @@
     "verify:browser:runtime": "npm run build:cached && node scripts/verify-browser-runtime.mjs",
     "verify:web:network-captures": "npm run build:cached && node scripts/verify-web-network-captures.mjs",
     "verify:binary:layout": "npm run build:cached && node scripts/verify-binary-layout.mjs",
+    "verify:go:binary": "npm run build:cached && node scripts/verify-go-binary.mjs",
     "verify:evm:interface": "npm run build:cached && node scripts/verify-evm-interface.mjs",
     "verify:recorded:crash": "npm run build:cached && node scripts/verify-recorded-crash.mjs",
     "mcp-catalog:check:built": "node scripts/generate-mcp-tool-catalog.mjs --check",

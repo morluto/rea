@@ -178,6 +178,9 @@ export class PwntoolsDecoder<
             requestPath,
           ],
           cwd: root.path,
+          // Caller-selected Python launchers can exec through prlimit or a
+          // shell wrapper. Keep parent/group/run-token ownership across exec.
+          expectedCommand: null,
           runId: `rea-artifact-decoder-${randomUUID()}`,
           hostEnvironment: {
             ...this.environment,

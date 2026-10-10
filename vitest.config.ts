@@ -37,7 +37,7 @@ const TEST_PROJECTS = [
     name: "adapters",
     include: [
       "src/*.test.ts",
-      "src/{apktool,jeb,adb,artifacts,browser,dotnet,evm,firmware,ghidra,hopper,ida,inspector,javascript,native,process,reference,server,windows}/**/*.test.ts",
+      "src/{apktool,jeb,adb,artifacts,browser,dotnet,evm,firmware,ghidra,go,hopper,ida,inspector,javascript,native,process,reference,server,windows}/**/*.test.ts",
     ],
     pool: "forks" as const,
     maxWorkers: MAX_TEST_WORKERS,
