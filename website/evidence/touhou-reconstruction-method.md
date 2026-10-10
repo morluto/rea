@@ -131,9 +131,9 @@ models are the author's argument, supported by the described project record.
 They are not a measured agent-versus-human performance ratio.
 
 Engine APIs, compiler flags, addresses and ledger schemas remain in references.
-The full draft replaces the outline and removes its `noindex` directive; the
-generated sitemap includes the article. Its visible draft label identifies
-the current local review state. No production publication was requested.
+The full essay replaces the outline and removes its `noindex` directive; the
+generated sitemap includes the article. The author approved publication on
+10 October 2026, and the review labels were removed from the article and Blog hub.
 
 ## GensokyoClub quotation and policy
 

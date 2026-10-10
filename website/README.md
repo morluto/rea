@@ -130,11 +130,11 @@ guide. Add a figure when it contributes a useful explanation; an opening flow
 is optional. Case studies remain focused on one inspected behavior. Keep engine
 details in supporting references unless they explain a relevant decision.
 
-The Touhou article is a full English draft for local review. Its provenance,
+The Touhou article is an English essay. Its provenance,
 quoted README passage and milestone counting rules are in
 [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
 The completed text has normal search metadata and is included in the generated
-sitemap. Its visible review label can be removed when the draft is finalized.
+sitemap.
 
 Keep the copy direct and specific. Explain the task and the result before listing
 tool names. Setup commands and runtime requirements should match the released
