@@ -2,6 +2,7 @@ import type { JavaScriptSemanticResourceLimit } from "./javascriptSemanticValueT
 import type { ApplicationCoverage } from "./javascriptApplicationEvidenceSchemas.js";
 import {
   SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  SEMANTIC_MODULE_SOURCE_BYTES_LIMIT,
   SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT,
   SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT,
 } from "./javascriptSemanticResourceLimits.js";
@@ -61,6 +62,10 @@ const semanticResourceBounds: Record<
   "expression-depth": {
     value: SEMANTIC_EXPRESSION_DEPTH_LIMIT,
     unit: "depth",
+  },
+  "module-source-bytes": {
+    value: SEMANTIC_MODULE_SOURCE_BYTES_LIMIT,
+    unit: "bytes",
   },
 };
 

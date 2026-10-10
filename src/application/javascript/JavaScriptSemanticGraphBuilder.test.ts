@@ -20,8 +20,41 @@ import {
 } from "../../domain/javascript/javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { semanticCoverageResourceLimits } from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { failedJavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 
 const SHA256 = "a".repeat(64);
+
+it("preserves failed source coverage without inventing a resource limit", () => {
+  const graph = graphFor("invalid source", failedJavaScriptSemanticIr());
+  expect(graph.coverage).toMatchObject({
+    status: "partial",
+    omitted_nodes: null,
+    omitted_relations: null,
+    limits: [],
+  });
+  const query = queryJavaScriptSemanticGraph(graph, {
+    seed: { kind: "endpoint", value: "/missing" },
+    direction: "backward-provenance",
+    allowed_relations: ["constructs-request"],
+  });
+  expect(query.status).toBe("partial");
+  expect(query.unknowns).toContainEqual(
+    expect.objectContaining({ reason: "incomplete-module", family: "request" }),
+  );
+  expect(query.limitations).toContain(
+    "JavaScript parsing failed; no semantic absence claim is available.",
+  );
+  expect(query.evidence_contexts).toContainEqual(
+    expect.objectContaining({
+      coverage: {
+        status: "partial",
+        truncated: false,
+        omitted_count: null,
+        limits: [],
+      },
+    }),
+  );
+});
 
 it("projects closure and direct interprocedural flow without execution", () => {
   const graph = graphFor(`

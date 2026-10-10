@@ -1,5 +1,14 @@
 import { createJavaScriptSemanticGraphUnknown } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import {
+  JAVASCRIPT_SEMANTIC_RELATION_FAMILIES,
+  JAVASCRIPT_SEMANTIC_RELATION_FAMILY,
+  JAVASCRIPT_SEMANTIC_RELATIONS,
+  type JavaScriptSemanticGraphNode,
+} from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import {
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
 import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -277,3 +286,43 @@ export function* projectSemanticFrontiers(
     addSemanticGraphUnknown(context.state, unknown);
   }
 }
+
+/** Preserve whole-module failure frontiers even when no query seed survives. */
+export const projectFailedSemanticSource = (
+  file: JavaScriptArtifactFile,
+  ir: JavaScriptSemanticIr,
+  state: SemanticGraphProjectionState,
+): void => {
+  const resourceLimits = semanticCoverageResourceLimits(ir.coverage);
+  // A skipped module can contain any relation family. Keep these
+  // frontiers global so even a query with no retained seed sees them.
+  for (const family of JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)
+    addSemanticGraphUnknown(
+      state,
+      createJavaScriptSemanticGraphUnknown(
+        {
+          node_id: null,
+          family,
+          relation_kinds: JAVASCRIPT_SEMANTIC_RELATIONS.filter(
+            (relation) =>
+              JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation] === family,
+          ),
+          reason:
+            resourceLimits.length > 0 ? "resource-limit" : "incomplete-module",
+          detail: `Semantic analysis failed for ${file.path}; no semantic absence claim is available. ${ir.limitations.join(" ")}`,
+          candidate_node_ids: [],
+          evidence: {
+            ...unknownSemanticEvidence(file, null),
+            coverage: {
+              status: "partial",
+              truncated: resourceLimits.length > 0,
+              omitted_count: null,
+              limits: semanticResourceLimitCoverage(resourceLimits),
+            },
+            limitations: ir.limitations,
+          },
+        },
+        state.evidenceContexts,
+      ),
+    );
+};
