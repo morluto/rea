@@ -41,6 +41,7 @@ const waitFor = async (condition: () => boolean): Promise<void> => {
 const start = (
   fake: ReturnType<typeof fakeTerminal>,
   scenario: Readonly<Record<string, unknown>>,
+  signal?: AbortSignal,
 ) =>
   awaitTerminalExit({
     terminal: fake.terminal,
@@ -51,7 +52,7 @@ const start = (
     }),
     started: Date.now(),
     lastOutput: () => Date.now(),
-    signal: undefined,
+    signal,
     timers: new Set<ProcessTimer>(),
     interactions: [],
     dispatchedEventIndexes: new Set<number>(),
@@ -73,6 +74,34 @@ it("reports a self-exit as target_exited when its notification arrives after the
   expect(
     fake.signals.filter((signal) => signal === "SIGKILL"),
     "the escalation is sent once, not on every poll",
+  ).toHaveLength(1);
+  expect(
+    fake.signals.filter((signal) => signal === "SIGTERM"),
+    "the finalization signal is sent once, not on every poll",
+  ).toHaveLength(1);
+});
+
+it("kills at once when cancelled during the finalization interval", async () => {
+  const fake = fakeTerminal();
+  const controller = new AbortController();
+  const pending = start(
+    fake,
+    { timeout_ms: 100, finalization_ms: 60_000 },
+    controller.signal,
+  );
+  await waitFor(() => fake.signals.includes("SIGTERM"));
+  controller.abort();
+  await waitFor(() => fake.signals.includes("SIGKILL"));
+  fake.deliverExit({ exitCode: 0, signal: 9 });
+
+  const exit = await pending;
+
+  expect(exit.reason, "cancellation replaces the initiating deadline").toBe(
+    "cancelled",
+  );
+  expect(
+    fake.signals.filter((signal) => signal === "SIGKILL"),
+    "the abort branch itself sent one SIGKILL, long before the interval ended",
   ).toHaveLength(1);
 });
 
