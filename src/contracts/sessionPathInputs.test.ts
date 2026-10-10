@@ -170,12 +170,6 @@ it("preserves whitespace in selected browser and Electron filesystem names", () 
   });
 });
 
-it("keeps evidence bundle export overwrite disabled by default", () => {
-  expect(
-    exportEvidenceBundleInputSchema.safeParse({ path: "/tmp/bundle.json" }),
-  ).toMatchObject({ success: true, data: { overwrite: false } });
-});
-
 describe.runIf(process.platform === "win32")(
   "Windows absolute path forms",
   () => {

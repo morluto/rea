@@ -16,3 +16,11 @@ export const compareUnicodeCodePoints = (
   if (leftIndex === left.length && rightIndex === right.length) return 0;
   return leftIndex === left.length ? -1 : 1;
 };
+
+/**
+ * Collision-free composite key for deduplication/sorting. `\0`-joins
+ * collide when any component contains NUL (valid in JS property names);
+ * a JSON tuple escapes every component. Single owner for composite keys.
+ */
+export const compositeKey = (parts: readonly unknown[]): string =>
+  JSON.stringify(parts);

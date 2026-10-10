@@ -45,6 +45,47 @@ const LC_VERSION_MIN_TVOS = 0x2f;
 const LC_VERSION_MIN_WATCHOS = 0x30;
 const LC_BUILD_VERSION = 0x32;
 
+// `mach-o/loader.h` `PLATFORM_*` numbers observed via Apple linker output.
+const PLATFORM_MACOS = 1;
+const PLATFORM_IOS = 2;
+const PLATFORM_TVOS = 3;
+const PLATFORM_WATCHOS = 4;
+const PLATFORM_IOSSIMULATOR = 7;
+const PLATFORM_TVOSSIMULATOR = 8;
+const PLATFORM_WATCHOSSIMULATOR = 9;
+
+const CPU_TYPE_I386 = 7;
+const CPU_TYPE_X86_64 = 0x01000007;
+
+/**
+ * Legacy `LC_VERSION_MIN_*` commands predate explicit simulator platform
+ * IDs. Per Apple's dyld rules the image CPU type distinguishes simulator
+ * from device: Intel images are simulator, ARM images are device
+ * (tvOS simulator applies to x86_64 only). `LC_BUILD_VERSION` platform
+ * numbers are preserved verbatim; unknown future numbers stay unknown
+ * downstream, never mapped to nearest.
+ */
+const legacyVersionMinPlatform = (
+  command: number,
+  cpuType: number,
+): number | undefined => {
+  const isIntel = cpuType === CPU_TYPE_I386 || cpuType === CPU_TYPE_X86_64;
+  switch (command) {
+    case LC_VERSION_MIN_MACOSX:
+      return PLATFORM_MACOS;
+    case LC_VERSION_MIN_IPHONEOS:
+      return isIntel ? PLATFORM_IOSSIMULATOR : PLATFORM_IOS;
+    case LC_VERSION_MIN_TVOS:
+      return cpuType === CPU_TYPE_X86_64
+        ? PLATFORM_TVOSSIMULATOR
+        : PLATFORM_TVOS;
+    case LC_VERSION_MIN_WATCHOS:
+      return isIntel ? PLATFORM_WATCHOSSIMULATOR : PLATFORM_WATCHOS;
+    default:
+      return undefined;
+  }
+};
+
 /** `mach-o/loader.h` `dylib_use_command`: `nameoff == 28` and this marker. */
 const DYLIB_USE_MARKER = 0x1a741800;
 const DYLIB_USE_WEAK_LINK = 0x1;
@@ -377,12 +418,7 @@ const decodeCommand = (
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = new Map<number, number>([
-    [LC_VERSION_MIN_MACOSX, 1],
-    [LC_VERSION_MIN_IPHONEOS, 2],
-    [LC_VERSION_MIN_TVOS, 3],
-    [LC_VERSION_MIN_WATCHOS, 4],
-  ]).get(command);
+  const legacyPlatform = legacyVersionMinPlatform(command, slice.cpu_type);
   if (legacyPlatform !== undefined) {
     if (body.byteLength < 16)
       throw new MachoFormatIssue(

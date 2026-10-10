@@ -79,7 +79,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "analyze_javascript_application",
     ...toolContractMetadata("analyze_javascript_application"),
     description:
-      "Reconstruct one local ASAR or extracted JavaScript application as an inline application graph without executing it. Returns all recovered graph nodes, edges, semantic relations, limitations, and coverage.",
+      "Reconstruct one local ASAR or extracted JavaScript application as an inline application graph without executing it. Returns recovered graph nodes, edges, semantic relations, integrity contradictions, limitations, and coverage. Integrity mismatches fail by default; record-and-continue retains observed bytes as untrusted and marks graph coverage partial.",
     kind: "electron-provider",
     inputSchema: analyzeJavaScriptApplicationInputSchema,
     outputSchema: applicationOutputSchema,
@@ -89,6 +89,7 @@ export const ELECTRON_TOOL_CONTRACTS = [
         input: {
           input_path: "/Applications/Example.app/Contents/Resources/app.asar",
           format: "auto",
+          integrity_policy: "fail",
         },
       },
     ],

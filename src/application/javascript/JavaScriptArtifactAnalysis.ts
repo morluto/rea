@@ -47,7 +47,6 @@ interface MutableArtifactAnalysis<
   findings: number;
   modules: number;
   parseFailures: number;
-  truncatedScopes: number;
 }
 
 interface ArtifactAnalysisContext<
@@ -132,7 +131,6 @@ const finalizeArtifactAnalysis = <
 >(
   state: MutableArtifactAnalysis<SemanticIr>,
 ): JavaScriptArtifactAnalysis<SemanticIr> => {
-  const truncatedScopes = state.truncatedScopes;
   return {
     files: state.files,
     packages: state.packages,
@@ -143,13 +141,9 @@ const finalizeArtifactAnalysis = <
     findings: state.findings + state.htmlScripts.length,
     modules: state.modules,
     parse_failures: state.parseFailures,
-    truncated_scopes: truncatedScopes,
     limitations: [
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-      ...(truncatedScopes === 0
-        ? []
-        : ["Some static-analysis scopes were truncated."]),
     ],
   };
 };
@@ -222,7 +216,6 @@ const emptyArtifactAnalysis = <
   findings: 0,
   modules: 0,
   parseFailures: 0,
-  truncatedScopes: 0,
 });
 
 const addStructuredObservations = (

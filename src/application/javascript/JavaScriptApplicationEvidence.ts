@@ -90,4 +90,5 @@ const parameters = (
   input: AnalyzeJavaScriptApplicationInput,
 ): EvidenceObservation["parameters"] => ({
   format: input.format,
+  integrity_policy: input.integrity_policy,
 });

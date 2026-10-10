@@ -390,6 +390,26 @@ describe("semantic expression depth bounds", () => {
     });
   });
 
+  it("counts erased TypeScript wrappers against expression depth", () => {
+    const parsed = parseJavaScriptSource("const answer = true;");
+    const declaration = parsed?.program.body[0];
+    const declarator = t.isVariableDeclaration(declaration)
+      ? declaration.declarations[0]
+      : undefined;
+    if (parsed === null || !t.isVariableDeclarator(declarator))
+      throw new Error("Expected parsed binding initializer");
+    let expression: t.Expression = t.booleanLiteral(true);
+    for (let index = 0; index < 300; index += 1)
+      expression = t.tsAsExpression(expression, t.tsStringKeyword());
+    declarator.init = expression;
+
+    const ir = analyzeParsedJavaScriptSemantics(parsed);
+    expect(topLevelBinding(ir, "answer").value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "expression-depth",
+    });
+  });
+
   it("preserves exact shallow addition alternatives", () => {
     expect(valueOf('(choice ? "a" : "b") + (other ? "1" : "2")')).toEqual({
       status: "union",

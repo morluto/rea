@@ -4,6 +4,46 @@ import { runSetup } from "./Setup.js";
 import type { SetupProgressEvent } from "./SetupTypes.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 
+describe("skill plan destinations", () => {
+  it("plans a Claude-only skill in its personal location", async () => {
+    const host = new FakeSetupHost();
+    host.clients = [{ name: "claude_code", configPath: "/claude.json" }];
+
+    const result = await runSetup(
+      { ...options(false), clientIds: ["claude_code"] },
+      host,
+    );
+
+    expect(
+      result.plannedActions
+        .filter(({ kind }) => kind === "install_skill")
+        .map(({ target }) => target),
+    ).toEqual(["/fixture/home/.claude/skills/reverse-engineer-anything"]);
+  });
+
+  it("plans both shared and personal skill roots for mixed clients", async () => {
+    const host = new FakeSetupHost();
+    host.clients = [
+      { name: "claude_code", configPath: "/claude.json" },
+      { name: "codex", configPath: "/codex.toml", format: "toml" },
+    ];
+
+    const result = await runSetup(
+      { ...options(false), clientIds: ["claude_code", "codex"] },
+      host,
+    );
+
+    expect(
+      result.plannedActions
+        .filter(({ kind }) => kind === "install_skill")
+        .map(({ target }) => target),
+    ).toEqual([
+      "/fixture/home/.agents/skills/reverse-engineer-anything",
+      "/fixture/home/.claude/skills/reverse-engineer-anything",
+    ]);
+  });
+});
+
 describe("setup workflow", () => {
   it("returns a complete plan without mutation", async () => {
     const host = new FakeSetupHost();

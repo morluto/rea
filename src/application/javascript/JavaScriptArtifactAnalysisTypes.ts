@@ -123,7 +123,6 @@ export interface JavaScriptArtifactAnalysis<
   readonly findings: number;
   readonly modules: number;
   readonly parse_failures: number;
-  readonly truncated_scopes: number;
   readonly limitations: readonly string[];
 }
 

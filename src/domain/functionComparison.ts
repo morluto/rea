@@ -1,4 +1,5 @@
 import { canonicalJson } from "./comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { parseFunctionEvidence } from "./functionDossierEvidence.js";
 import { functionMatch } from "./functionComparisonNormalization.js";
 import {
@@ -40,6 +41,6 @@ export const compareFunctions = (
             ]
           : []),
       ]),
-    ].sort((a, b) => a.localeCompare(b)),
+    ].sort((a, b) => compareUnicodeCodePoints(a, b)),
   });
 };

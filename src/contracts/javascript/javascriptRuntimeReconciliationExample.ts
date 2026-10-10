@@ -7,6 +7,7 @@ import { createWebTextArtifact } from "../../domain/webContentArtifact.js";
 import {
   createJavaScriptSemanticGraph,
   createJavaScriptSemanticGraphNode,
+  JavaScriptSemanticEvidenceContextRegistry,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 
@@ -70,25 +71,30 @@ const graph = createJavaScriptApplicationGraph({
   coverage: completeCoverage,
   limitations: [],
 });
-const semanticNode = createJavaScriptSemanticGraphNode({
-  kind: "module",
-  identity: {
-    artifact_sha256: applicationSha256,
-    module_path: "renderer.js",
-    source_range: null,
-    role_key: "example-module",
+const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
+const semanticNode = createJavaScriptSemanticGraphNode(
+  {
+    kind: "module",
+    identity: {
+      artifact_sha256: applicationSha256,
+      module_path: "renderer.js",
+      source_range: null,
+      role_key: "example-module",
+    },
+    function_node_id: null,
+    application_node_ids: [asset.node_id],
+    label: "renderer.js",
+    properties: {},
+    evidence: graphEvidence,
   },
-  function_node_id: null,
-  application_node_ids: [asset.node_id],
-  label: "renderer.js",
-  properties: {},
-  evidence: graphEvidence,
-});
+  evidenceContexts,
+);
 const semanticGraph = createJavaScriptSemanticGraph({
   schema: "JavaScriptSemanticRelationGraph",
   root_artifact_sha256: applicationSha256,
   application_graph_id: graph.graph_id,
   root_node_ids: [semanticNode.node_id],
+  evidence_contexts: evidenceContexts.contexts,
   nodes: [semanticNode],
   relations: [],
   fingerprints: [],
@@ -128,6 +134,7 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
       root_artifact_sha256: applicationSha256,
       inventory_manifest_id: `agm_${"2".repeat(64)}`,
       inventory_graph_sha256: "3".repeat(64),
+      integrity_contradictions: [],
       graph,
       semantic_graph: semanticGraph,
       summary: {
@@ -163,7 +170,6 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
         findings: 0,
         modules: 0,
         parse_failures: 0,
-        truncated_scopes: 0,
       },
       limitations: [],
     },

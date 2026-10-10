@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
+import { canonicalJson } from "../domain/comparisonSemantics.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+
 import type {
   ReconstructionObligation,
   ReconstructionObligationLedger,
@@ -118,7 +121,8 @@ export const obligationLedgerStatus = (
 export const obligationEdgeOrder = (
   left: { readonly obligation_id: string },
   right: { readonly obligation_id: string },
-): number => JSON.stringify(left).localeCompare(JSON.stringify(right));
+): number =>
+  compareUnicodeCodePoints(canonicalJson(left), canonicalJson(right));
 
 export const digestObligationLedgerValue = (value: unknown): string => {
   const encoded = canonicalize(value);

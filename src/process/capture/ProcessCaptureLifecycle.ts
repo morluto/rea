@@ -250,11 +250,13 @@ export const buildCaptureResult = (
     options.before,
     options.after,
   );
-  const hasUnknownFilesystemEffects = filesystemEffects.some(
-    ({ status }) => status === "unknown",
-  );
-  const incompleteFilesystemUnknown =
-    "Path absence in incomplete enumeration or below an unfollowed symbolic link remains unknown.";
+  const filesystemUnknowns = [
+    ...new Set(
+      filesystemEffects.flatMap((effect) =>
+        effect.status === "unknown" ? [effect.reason] : [],
+      ),
+    ),
+  ];
   return {
     manifest: options.manifest,
     normalization: options.scenario.normalization,
@@ -291,7 +293,7 @@ export const buildCaptureResult = (
       "Filesystem observations are before/after snapshots, not syscall traces.",
       "Inherited host environment variables are not recorded and may affect results.",
       ...(!hasFilesystemObservations ? [filesystemObservationUnknown] : []),
-      ...(hasUnknownFilesystemEffects ? [incompleteFilesystemUnknown] : []),
+      ...filesystemUnknowns,
       ...captureCoverageUnknowns(options.truncationDetails).map(
         ({ reason }) => reason,
       ),
@@ -324,14 +326,10 @@ export const buildCaptureResult = (
             },
           ]
         : []),
-      ...(hasUnknownFilesystemEffects
-        ? [
-            {
-              scope: "filesystem" as const,
-              reason: incompleteFilesystemUnknown,
-            },
-          ]
-        : []),
+      ...filesystemUnknowns.map((reason) => ({
+        scope: "filesystem" as const,
+        reason,
+      })),
       ...(hasSensitiveScriptedInput
         ? [{ scope: "interaction" as const, reason: sensitiveInputUnknown }]
         : []),

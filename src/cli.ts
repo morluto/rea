@@ -31,7 +31,10 @@ import { registerJavaScriptRuntimeObservationCommands } from "./cliJavaScriptRun
 import { registerApplicationCommands } from "./cli/applicationCommands.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
-import type { CliResultOutput } from "./cli/streamedJsonOutput.js";
+import {
+  streamCliCommandResults,
+  type CliResultOutput,
+} from "./cli/streamedJsonOutput.js";
 
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
@@ -64,12 +67,7 @@ export const createCli = (
   });
 
   registerSetupCommands(cli, logger, environment);
-  registerCoreAnalysisCommands(
-    cli,
-    logger,
-    analysis.runDirectAnalysis,
-    resultOutput,
-  );
+  registerCoreAnalysisCommands(cli, logger, analysis.runDirectAnalysis);
   registerUtilityCommands(cli, logger, environment, analysis);
   registerEvmCommands(cli, logger, environment);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
@@ -89,9 +87,10 @@ export const createCli = (
   registerJavaScriptRecoveryCommands(cli, logger, environment);
   registerAdvancedBrowserCommands(cli, logger);
   registerBrowserScenarioCommands(cli, logger, environment);
-  registerElectronCommands(cli, logger, environment, resultOutput);
+  registerElectronCommands(cli, logger, environment);
   registerJavaScriptRuntimeObservationCommands(cli, logger);
   registerApplicationCommands(cli, logger);
   presentOmittableDefaults(cli);
+  if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
   return cli;
 };

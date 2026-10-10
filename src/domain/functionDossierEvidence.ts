@@ -1,4 +1,5 @@
 import { parseEvidence, type Evidence } from "./evidence.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { functionDossierSchema, type FunctionDossier } from "./hopperValues.js";
 
 /** Complete function observation parsed from one analyze_function Evidence record. */
@@ -25,6 +26,6 @@ export const parseFunctionEvidence = (input: unknown): FunctionSnapshot => {
     dossier,
     limitations: [
       ...new Set([...evidence.limitations, ...dossier.limitations]),
-    ].sort((left, right) => left.localeCompare(right)),
+    ].sort((left, right) => compareUnicodeCodePoints(left, right)),
   };
 };

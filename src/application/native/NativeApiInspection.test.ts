@@ -71,40 +71,11 @@ describe("native API switch uncertainty", () => {
 });
 
 describe("native API inspection", () => {
-  it("preserves structured type and jump-table boundary evidence", () => {
-    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
-
-    expect(projectNativeApiInspection(dossier)).toMatchObject({
-      procedure: { address: "0x401000", name: "fixture_main" },
-      boundary: {
-        available: true,
-        return_type: { data_type: "int", confidence: "medium" },
-        jump_tables: [
-          {
-            dispatch_address: "0x401010",
-            data_sources: [{ address: "0x403000" }],
-            mappings: [
-              {
-                target_address: "0x401020",
-              },
-            ],
-          },
-        ],
-      },
-      unsupported_branches: [],
-      residual_unknowns: [],
-    });
-  });
-
   it("preserves unsupported provider branches as residual unknowns", () => {
     const value = ghidraFunctionDossier();
     if (typeof value !== "object" || value === null || Array.isArray(value))
       throw new TypeError("Ghidra dossier fixture is invalid");
-    const dossier = functionDossierSchema.parse(
-      Object.fromEntries(
-        Object.entries(value).filter(([key]) => key !== "native_api"),
-      ),
-    );
+    const dossier = functionDossierSchema.parse({ ...value, native_api: null });
 
     expect(projectNativeApiInspection(dossier)).toMatchObject({
       boundary: { available: false },

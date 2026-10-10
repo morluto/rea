@@ -26,6 +26,7 @@ import {
 } from "../../domain/artifactGraph.js";
 import { AnalysisUnsupportedTargetError } from "../../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { scanArtifactInventory } from "../inventory/ArtifactInventory.js";
 
 /** Local extraction input with the output root chosen by the adapter. */
@@ -49,13 +50,41 @@ export const extractArtifact = async (
     signal,
     environment: input.environment,
   });
+  return materializeArtifactInventory(input, sourcePath, snapshot, signal);
+};
+
+/** Materialize a scanned inventory, verifying every current occurrence against it. */
+export const materializeArtifactInventory = async (
+  input: ArtifactExtractionInput,
+  sourcePath: string,
+  snapshot: ArtifactInventorySnapshot,
+  signal?: AbortSignal,
+): Promise<ArtifactExtractionResult> => {
+  abortIfNeeded(signal);
   const selectedOccurrences = snapshot.occurrences.filter(
     (occurrence) =>
       (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&
       occurrence.logical_path !== ".",
   );
+  const regularPaths = new Set(
+    selectedOccurrences.map(({ logical_path: path }) => path),
+  );
+  const activeOccurrences = selectedOccurrences.filter(({ logical_path }) => {
+    // Nested members remain represented by their containing regular file;
+    // only entries exposed by the active reader are materialized.
+    let path = logical_path;
+    for (
+      let slash = path.lastIndexOf("/");
+      slash >= 0;
+      slash = path.lastIndexOf("/")
+    ) {
+      path = path.slice(0, slash);
+      if (regularPaths.has(path)) return false;
+    }
+    return true;
+  });
   const selectedIds = new Set(
-    selectedOccurrences.map(({ occurrence_id: id }) => id),
+    activeOccurrences.map(({ occurrence_id: id }) => id),
   );
   const occurrences = new Map<string, ArtifactOccurrence>();
   const neededNodes = new Set<string>();
@@ -72,7 +101,7 @@ export const extractArtifact = async (
     occurrences,
     nodes,
   };
-  const selected = selectedOccurrences.map((occurrence) => {
+  const selected = activeOccurrences.map((occurrence) => {
     // REA never decrypts archive entries, so an encrypted entry makes the
     // complete extraction unsupported rather than the archive invalid.
     if (occurrence.encrypted)
@@ -143,7 +172,6 @@ const materializeSelection = async ({
   const extracted: ExtractedOccurrence[] = [];
   try {
     output = await SafeOutputTree.create(input.outputRoot);
-    const materialized: SelectedOccurrence[] = [];
     const registry = new ArtifactPathRegistry();
     for await (const entry of reader.entries(signal)) {
       const path = normalizeArtifactPath(entry.path);
@@ -172,8 +200,13 @@ const materializeSelection = async ({
         bytes_written: written.bytesWritten,
         created: true,
       });
-      materialized.push(selectedItem);
+      byPath.delete(path);
     }
+    if (byPath.size > 0)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Inventoried regular artifact entries were not materialized: ${[...byPath.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      );
     readerCloseAttempted = true;
     await reader.close();
     readerClosed = true;
@@ -183,7 +216,7 @@ const materializeSelection = async ({
     const result = createExtractionResult(
       input,
       inventory,
-      materialized,
+      selected,
       extracted,
     );
     await output.commit();

@@ -25,7 +25,12 @@ export const filesystemCoverageSchema = z.strictObject({
       path: z.string(),
       size_bytes: z.number().int().nonnegative(),
       remaining_budget_bytes: z.number().int().nonnegative(),
-      reason: z.enum(["file_bytes_budget", "file_changed_or_short_read"]),
+      reason: z.enum([
+        "file_bytes_budget",
+        "file_changed_or_short_read",
+        "file_unavailable",
+      ]),
+      system_code: z.string().nullable(),
     }),
   ),
 });

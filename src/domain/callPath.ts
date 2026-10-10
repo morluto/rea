@@ -10,6 +10,7 @@ import {
   parseFunctionEvidence,
   type FunctionSnapshot,
 } from "./functionDossierEvidence.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 /** Minimal directed caller-to-callee adjacency for call-path search. */
 class CallGraph {
@@ -104,9 +105,7 @@ export const buildCallPath = (input: CallPathInput): CallPathResult => {
     goal: parsed.goal.address,
     explored: summarizeSearch(graph, search.reached),
     evidence_links: uniqueEvidence(snapshots.values()),
-    limitations: [...new Set(limitations)].sort((left, right) =>
-      left.localeCompare(right),
-    ),
+    limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   };
   const searchScope = { exhaustive };
   if (found)
@@ -242,9 +241,7 @@ const inspectSearch = ({
       );
       continue;
     }
-    const neighbors = graph
-      .outNeighbors(node)
-      .sort((left, right) => left.localeCompare(right));
+    const neighbors = graph.outNeighbors(node).sort(compareUnicodeCodePoints);
     for (const neighbor of neighbors)
       if (!reached.has(neighbor)) {
         reached.set(neighbor, depth + 1);
@@ -289,7 +286,7 @@ const enumeratePaths = ({
             distance !== undefined &&
             goalDistances.get(neighbor) === distance - 1,
         )
-        .sort((left, right) => left.localeCompare(right));
+        .sort(compareUnicodeCodePoints);
       neighbors.set(node, candidates);
     }
     return { neighbors: candidates, nextIndex: 0 };
@@ -370,4 +367,4 @@ const snapshotLinks = (snapshot: FunctionSnapshot | undefined): string[] => {
 const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
   [
     ...new Set([...snapshots].flatMap((snapshot) => snapshotLinks(snapshot))),
-  ].sort((left, right) => left.localeCompare(right));
+  ].sort(compareUnicodeCodePoints);

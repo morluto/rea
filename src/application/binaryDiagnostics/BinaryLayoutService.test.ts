@@ -5,6 +5,7 @@ import {
   BINARY_LAYOUT_TEST_PROVIDER,
 } from "../../../tests/fixtures/binaryDiagnostics/layout.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import { err, ok } from "../../domain/result.js";
 
 it.each([
@@ -27,6 +28,19 @@ it.each([
     });
   },
 );
+
+it("records the decoded layout once in its Evidence", async () => {
+  const layout = binaryLayoutFixture();
+  const service = new BinaryLayoutService({
+    identity: BINARY_LAYOUT_TEST_PROVIDER,
+    inspect: () => Promise.resolve(ok(layout)),
+  });
+  const result = await service.inspect({ path: layout.artifact.path });
+  if (!result.ok) throw result.error;
+  const evidence = parseEvidence(result.value);
+  expect(evidence.normalized_result).toEqual(layout);
+  expect(evidence.raw_result).toBeNull();
+});
 
 it("preserves a provider's actionable unsupported reason", async () => {
   const failure = new AnalysisCapabilityUnavailableError(

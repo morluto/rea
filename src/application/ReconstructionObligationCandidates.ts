@@ -12,6 +12,7 @@ import type {
   ReconstructionObligation,
   ReviewedReconstructionObligation,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { resolveJavaScriptSemanticEvidence } from "../domain/javascript/javascriptSemanticGraph.js";
 import { parseApplicationGraphEvidence } from "./javascript/JavaScriptApplicationEvidenceGraph.js";
 import {
   applicationObligationPolicy,
@@ -75,7 +76,14 @@ const deriveApplicationCandidates = (
   )
     return;
   try {
-    const source = parseApplicationGraphEvidence(evidence);
+    const parsed = parseApplicationGraphEvidence(evidence);
+    if (!parsed.ok) {
+      limitations.add(
+        `Application Evidence ${evidence.evidence_id} could not generate candidates because it failed graph validation.`,
+      );
+      return;
+    }
+    const source = parsed.value;
     for (const node of source.graph.nodes) {
       const candidatePolicy = applicationObligationPolicy(node.kind);
       if (candidatePolicy === undefined) {
@@ -111,6 +119,10 @@ const deriveApplicationCandidates = (
       for (const node of source.semanticGraph.nodes) {
         const candidatePolicy = semanticObligationPolicy(node.kind);
         if (candidatePolicy === undefined) continue;
+        const evidenceContext = resolveJavaScriptSemanticEvidence(
+          source.semanticGraph,
+          node.evidence,
+        );
         addCandidate(
           candidates,
           generatedCandidate({
@@ -125,7 +137,7 @@ const deriveApplicationCandidates = (
               graphReference(
                 evidence,
                 records,
-                node.evidence,
+                evidenceContext,
                 `${source.semanticGraph.graph_id}/node/${node.node_id}`,
               ),
             ],

@@ -153,14 +153,15 @@ export async function verifyDebugFunctionOperations(
   const denseSwitchDossier = await functionCall(client, "analyze_function", {
     procedure: denseSwitchProcedure.address,
   });
-  if (process.platform === "linux" && process.arch === "x64")
-    assertDenseSwitchDossier(denseSwitchDossier, denseSwitchProcedure.address);
-  else
-    assertDossier(denseSwitchDossier, {
-      address: denseSwitchProcedure.address,
-      requireAssembly: true,
-      requireMultiBlock: true,
-    });
+  // The debug fixture is compiled -O0, and GCC 16 and later lower dense
+  // switches to compare chains at -O0, so this dossier asserts only its
+  // complete shape; the optimized jump-table variant proves dense jump-table
+  // completeness through assertDenseSwitchDossier.
+  assertDossier(denseSwitchDossier, {
+    address: denseSwitchProcedure.address,
+    requireAssembly: true,
+    requireMultiBlock: true,
+  });
   assertIndirectDossier(indirectDossier, leaf.address);
 
   const { cancellation, timeout } = await verifyRequestCancellationAndTimeout(
@@ -370,6 +371,19 @@ async function verifyConcurrentRequests(client, entry, leaf) {
   if (concurrent.length !== 2)
     throw new Error("Ghidra serial request queue lost a concurrent result");
   return "serialized-two-results";
+}
+
+/** Prove dense jump-table completeness on the optimized jump-table fixture. */
+export async function verifyJumpTableDenseSwitch(client, procedures) {
+  const denseSwitchProcedure = requireProcedure(
+    procedures,
+    "rea_ghidra_inventory_dense_switch",
+  );
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: denseSwitchProcedure.address,
+  });
+  assertDenseSwitchDossier(dossier, denseSwitchProcedure.address);
+  return { dense_switch: dossierSummary(dossier) };
 }
 
 export async function verifyStrippedFunctionOperations(client, entryString) {

@@ -80,7 +80,7 @@ or close. Provider failures are returned with their original reason. For an
 `ambiguous` selection error, choose from `details.candidate_ids`; for
 `provider_unavailable`, run `rea doctor --provider ID --json` to diagnose the
 selected engine. See [task readiness](installation.md#check-readiness-for-your-task)
-and [provider selection](adr/0001-provider-selection-and-analysis-profiles.md).
+and [provider selection](mcp-contracts.md#identity-and-discovery).
 
 The session reports work still in progress through `analysis_activity`.
 A client timeout can end its wait while the provider continues analyzing.
@@ -95,6 +95,12 @@ A snapshot retains successful analysis results for later queries. REA reuses
 an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
+
+Snapshots retain eligible target-scoped question histories in full, including
+mutation Evidence recorded while another target was active. Observations and
+related questions must still belong to the saved target. If those dependencies
+cannot be retained, the entire history is excluded instead of reverting the
+question to an earlier revision or disposition.
 
 ```bash
 rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/path/to/analysis/program.json
@@ -146,6 +152,10 @@ The import records hashes and metadata for the supplied files, separately
 from observations of the current app. File names do not automatically exclude
 files. Set `REA_REFERENCE_SECRET_PATTERNS_JSON` to a JSON array of ignore
 patterns when you want to exclude selected paths.
+
+JavaScript and TypeScript import parsing requires valid UTF-8. Malformed source
+bytes retain their original hashes and sizes with a decoding diagnostic; REA
+does not infer module targets from replacement characters.
 
 Historical-source import requires safe no-follow file opens on Linux or
 macOS. Native Windows returns `unsupported_host`; use Linux REA inside WSL

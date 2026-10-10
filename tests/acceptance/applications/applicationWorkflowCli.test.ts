@@ -457,7 +457,219 @@ describe("application workflow CLI input", () => {
   });
 });
 
+describe("application workflow CLI copy boundaries", () => {
+  it("compares source values excluded from escaped rest and spread copies", async () => {
+    const root = await createTestTempDirectory("rea-copy-boundary-cli-");
+    temporary.push(root);
+    const sources = [
+      `export default function make() {
+        function mutate(value) { value.changed = true; }
+        const objectRest = { only: { value: "TOKEN" } };
+        const { only, ...restObject } = objectRest;
+        mutate(restObject);
+        const arrayRest = [{ value: "TOKEN" }];
+        const [head, ...restArray] = arrayRest;
+        mutate(restArray);
+        const objectSpread = { child: { value: "TOKEN" } };
+        const spreadObject = { ...objectSpread, child: {} };
+        mutate(spreadObject.child);
+        const arraySpread = [{ value: "TOKEN" }];
+        const spreadArray = [{}, ...arraySpread];
+        mutate(spreadArray[0]);
+        return {
+          kind: "copy-boundary",
+          objectRest: objectRest.only.value,
+          arrayRest: arrayRest[0].value,
+          objectSpread: objectSpread.child.value,
+          arraySpread: arraySpread[0].value,
+        };
+      }`,
+      `export default function make() {
+        return {
+          kind: "copy-boundary",
+          objectRest: "UPDATED", arrayRest: "UPDATED",
+          objectSpread: "UPDATED", arraySpread: "UPDATED",
+        };
+      }`,
+    ];
+    const [left, right] = await analyzeCliSources(root, sources);
+    const inputPath = join(root, "comparison.json");
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        left,
+        right,
+        left_module_path: "parser.mjs",
+        left_export_name: "default",
+        right_module_path: "parser.mjs",
+        right_export_name: "default",
+      }),
+    );
+    const compared = await runCli([
+      "compare-javascript-export-shapes",
+      inputPath,
+      "--json",
+    ]);
+    expect(compared).toMatchObject({
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 4, unknown: 0 },
+        coverage: { status: "complete-within-inputs" },
+        changes: expect.arrayContaining(
+          ["/arrayRest", "/arraySpread", "/objectRest", "/objectSpread"].map(
+            (path) =>
+              expect.objectContaining({
+                status: "changed",
+                path,
+                left: { availability: "literal", value: "TOKEN" },
+                right: { availability: "literal", value: "UPDATED" },
+              }),
+          ),
+        ),
+      },
+    });
+  }, 20_000);
+});
+
+describe("application workflow CLI and MCP capture lifetimes", () => {
+  it("compares captured primitives and source values after aliases are replaced", async () => {
+    const root = await createTestTempDirectory("rea-capture-lifetime-cli-");
+    temporary.push(root);
+    const fields = [
+      "rebound",
+      "rest",
+      "snapshot",
+      "destructured",
+      "objectSnapshot",
+      "arraySnapshot",
+      "unusedFallback",
+      "nestedSnapshot",
+      "declaratorSnapshot",
+    ];
+    const sources = [
+      `export default function make() {
+        function mutate(value) { value.value = "MUTATED"; }
+        const original = {value: "TOKEN"};
+        let alias = original;
+        alias = {};
+        mutate(alias);
+        const child = {value: "TOKEN"};
+        let {...rest} = {child};
+        rest = {child: {}};
+        rest.child.value = "MUTATED";
+        const source = {value: "TOKEN"};
+        const snapshot = source.value;
+        const {value: destructured} = source;
+        const objectSnapshot = {value: source.value};
+        const arraySnapshot = [source.value];
+        mutate(source);
+        const fallback = {value: "TOKEN"};
+        const container = {child: {}};
+        const {child: selected = fallback} = container;
+        mutate(selected);
+        const nestedSource = {value: "TOKEN"};
+        const nestedSnapshot = nestedSource.value;
+        const ignored = mutate(nestedSource);
+        const declaratorSource = {value: "TOKEN"},
+          declaratorSnapshot = declaratorSource.value,
+          declaratorIgnored = mutate(declaratorSource);
+        return {
+          kind: "capture-boundary",
+          rebound: original.value, rest: child.value,
+          snapshot, destructured,
+          objectSnapshot: objectSnapshot.value, arraySnapshot: arraySnapshot[0],
+          unusedFallback: fallback.value, nestedSnapshot, declaratorSnapshot,
+        };
+      }`,
+      `export default function make() { return ${JSON.stringify({
+        kind: "capture-boundary",
+        ...Object.fromEntries(fields.map((field) => [field, "UPDATED"])),
+      })}; }`,
+    ];
+    const [left, right] = await analyzeCliSources(root, sources);
+    // Execute the authored fixtures independently of static analysis.
+    for (const [index, value] of ["TOKEN", "UPDATED"].entries()) {
+      const { stdout } = await execute(process.execPath, [
+        "--input-type=module",
+        "--eval",
+        "const module = await import(process.argv[1]); console.log(JSON.stringify(module.default()));",
+        join(root, String(index), "parser.mjs"),
+      ]);
+      expect(JSON.parse(stdout)).toEqual({
+        kind: "capture-boundary",
+        ...Object.fromEntries(fields.map((field) => [field, value])),
+      });
+    }
+    const input = {
+      left,
+      right,
+      left_module_path: "parser.mjs",
+      left_export_name: "default",
+      right_module_path: "parser.mjs",
+      right_export_name: "default",
+    };
+    const inputPath = join(root, "comparison.json");
+    await writeFile(inputPath, JSON.stringify(input));
+    const expected = {
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: fields.length, unknown: 0 },
+        coverage: { status: "complete-within-inputs" },
+        changes: expect.arrayContaining(
+          fields.map((field) =>
+            expect.objectContaining({
+              path: `/${field}`,
+              status: "changed",
+              left: { availability: "literal", value: "TOKEN" },
+              right: { availability: "literal", value: "UPDATED" },
+            }),
+          ),
+        ),
+      },
+    };
+    expect(
+      await runCli(["compare-javascript-export-shapes", inputPath, "--json"]),
+    ).toMatchObject(expected);
+    expect(await compareThroughStdioMcp(input)).toMatchObject(expected);
+  }, 20_000);
+});
+
 describe("application workflow CLI export Evidence", () => {
+  it("preserves uncertainty after a helper can mutate an awaited return object", async () => {
+    const root = await createTestTempDirectory("rea-awaited-export-shape-cli-");
+    temporary.push(root);
+    const sources = [
+      `export default async function make() {
+        const result = { kind: "record" };
+        function mutate(value) { value.extra = 1; }
+        mutate(await result);
+        return result;
+      }`,
+      'export default async function make() { return { kind: "record", extra: 1 }; }',
+    ];
+    const [left, right] = await analyzeCliSources(root, sources);
+    const compared = await runCli([
+      "compare-javascript-export-shapes",
+      JSON.stringify({
+        left,
+        right,
+        left_module_path: "parser.mjs",
+        left_export_name: "default",
+        right_module_path: "parser.mjs",
+        right_export_name: "default",
+      }),
+      "--json",
+    ]);
+    expect(compared).toMatchObject({
+      operation: "compare_javascript_export_shapes",
+      normalized_result: {
+        summary: { added: 0, removed: 0, changed: 0 },
+        coverage: { status: "partial" },
+        changes: expect.arrayContaining([
+          expect.objectContaining({ status: "unknown" }),
+        ]),
+      },
+    });
+  }, 20_000);
+
   it("compares exact export shapes from file-backed Evidence", async () => {
     const root = await createTestTempDirectory("rea-export-shape-cli-");
     temporary.push(root);
@@ -646,6 +858,54 @@ describe("application workflow CLI validation", () => {
     });
   }, 20_000);
 });
+
+const compareThroughStdioMcp = async (
+  input: Record<string, unknown>,
+): Promise<unknown> => {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [resolve("scripts/rea.mjs"), "mcp"],
+    cwd: process.cwd(),
+    env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+    stderr: "pipe",
+  });
+  const client = new Client({
+    name: "javascript-capture-parity",
+    version: "1",
+  });
+  try {
+    await client.connect(transport);
+    const response = await client.callTool({
+      name: "compare_javascript_export_shapes",
+      arguments: input,
+    });
+    expect(response.isError).not.toBe(true);
+    return response.structuredContent;
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  }
+};
+
+const analyzeCliSources = (
+  root: string,
+  sources: readonly string[],
+): Promise<unknown[]> =>
+  Promise.all(
+    sources.map(async (source, index) => {
+      const applicationRoot = join(root, String(index));
+      await mkdir(applicationRoot);
+      await writeFile(join(applicationRoot, "parser.mjs"), source);
+      return runCli([
+        "analyze-javascript-application",
+        applicationRoot,
+        "--json",
+      ]);
+    }),
+  );
 
 const runCli = async (
   arguments_: readonly string[],

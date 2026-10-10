@@ -100,7 +100,7 @@ describe("dependency install freshness", () => {
   it("checks installed dependencies before restoring a cached build", async () => {
     const root = await createBuildCacheFixture();
     const seeded = await runNpm(root, ["run", "build:cached"]);
-    expect(seeded.status, seeded.stderr).toBe(0);
+    expect(seeded.status, `${seeded.stdout}${seeded.stderr}`).toBe(0);
 
     const rootLock = asRecord(
       JSON.parse(await readFile(join(root, "package-lock.json"), "utf8")),
@@ -151,6 +151,8 @@ const createBuildCacheFixture = async (): Promise<string> => {
   const scripts = asRecord(packageJson?.scripts);
   if (
     packageJson === undefined ||
+    typeof packageJson.name !== "string" ||
+    typeof packageJson.version !== "string" ||
     typeof scripts?.["build:cached"] !== "string"
   )
     throw new Error("package is missing its cached build command");
@@ -189,7 +191,12 @@ const createBuildCacheFixture = async (): Promise<string> => {
   );
   await writeFile(
     join(root, "scripts/cache-fixture-build.mjs"),
-    'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/cache-fixture.js", "built"); await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");\n',
+    `import { mkdir, writeFile } from "node:fs/promises";
+await mkdir("dist", { recursive: true });
+await writeFile("dist/cache-fixture.js", "built");
+await writeFile("dist/catalogIdentity.js", "export const CATALOG_IDENTITY = { counts: { mcp_tools: 1 } };\\n");
+await writeFile("dist/identity.js", ${JSON.stringify(`export const PRODUCT_IDENTITY = ${JSON.stringify({ packageSpecifier: `${packageJson.name}@latest`, registrationPackageSpecifier: `${packageJson.name}@${packageJson.version}` })};\n`)});
+`,
   );
   await createNodeModulesLinks(root);
   await writeFile(

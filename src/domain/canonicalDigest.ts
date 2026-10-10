@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-/** Hash canonicalize-compatible JSON without assembling an aggregate string. */
+/**
+ * Streaming SHA-256 over canonical JSON. Hashing owner (avoids assembling
+ * aggregate strings); `comparisonSemantics.canonicalJson` (canonicalize lib)
+ * is the string-comparison owner. JSON object keys follow RFC 8785's UTF-16
+ * code-unit order in both; entity-list ordering is a separate concern.
+ */
 export const digestCanonicalValue = (
   value: unknown,
   context = "Comparison",
@@ -64,6 +69,7 @@ const emitCanonical = (
     } else {
       emit("{");
       let first = true;
+      // Match canonicalize/RFC 8785, including supplementary-plane keys.
       for (const key of Object.keys(value).sort()) {
         if (
           Reflect.get(value, key) === undefined ||

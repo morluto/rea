@@ -235,33 +235,35 @@ describe("Ghidra headless launcher", () => {
         profileDigest: "a".repeat(64),
       });
       if (!launched.ok) throw launched.error;
-      const capturePath = join(runtimeRoot, "launch-capture.json");
-      await vi.waitFor(() => access(`${capturePath}.ready`), {
-        timeout: 10_000,
-      });
-      const capture = launchCaptureSchema.parse(
-        JSON.parse(await readFile(capturePath, "utf8")),
-      );
-      const encodedArguments = JSON.stringify(capture.arguments);
-      const encodedEnvironment = JSON.stringify(capture.environment);
-      expect(encodedArguments).not.toContain(token);
-      expect(encodedEnvironment).not.toContain(token);
-      expect(capture).toMatchObject({
-        ...(process.platform === "win32" ? {} : { descriptor_mode: 0o600 }),
-        descriptor_has_token: true,
-      });
-      expectIsolatedEnvironment(capture.environment, runtimeRoot, javaHome);
-      expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).toBe("");
-      if (process.platform !== "win32")
-        expect(
-          (await stat(join(runtimeRoot, "ownership.json"))).mode & 0o777,
-        ).toBe(0o600);
-
-      const cleaned = await launched.value.cleanup?.();
-      expect(cleaned).toMatchObject({ cleaned: true });
-      await expect(
-        access(join(runtimeRoot, "project")),
-      ).resolves.toBeUndefined();
+      try {
+        const capturePath = join(runtimeRoot, "launch-capture.json");
+        await vi.waitFor(() => access(`${capturePath}.ready`), {
+          timeout: 10_000,
+        });
+        const capture = launchCaptureSchema.parse(
+          JSON.parse(await readFile(capturePath, "utf8")),
+        );
+        const encodedArguments = JSON.stringify(capture.arguments);
+        const encodedEnvironment = JSON.stringify(capture.environment);
+        expect(encodedArguments).not.toContain(token);
+        expect(encodedEnvironment).not.toContain(token);
+        expect(capture).toMatchObject({
+          ...(process.platform === "win32" ? {} : { descriptor_mode: 0o600 }),
+          descriptor_has_token: true,
+        });
+        expectIsolatedEnvironment(capture.environment, runtimeRoot, javaHome);
+        expect(capture.environment.GHIDRA_HEADLESS_JAVA_OPTIONS).toBe("");
+        if (process.platform !== "win32")
+          expect(
+            (await stat(join(runtimeRoot, "ownership.json"))).mode & 0o777,
+          ).toBe(0o600);
+      } finally {
+        const cleaned = await launched.value.cleanup?.();
+        expect(cleaned).toMatchObject({ cleaned: true });
+        await expect(
+          access(join(runtimeRoot, "project")),
+        ).resolves.toBeUndefined();
+      }
     },
   );
 });

@@ -54,29 +54,8 @@ class OwnedFixtureLauncher implements BridgeLauncher {
 }
 
 class UnconfirmedFixtureLauncher implements BridgeLauncher {
-  launch(session: BridgeSession) {
-    return Promise.resolve(
-      ok({
-        process: spawn(
-          process.execPath,
-          [
-            fixturePath,
-            session.socketPath,
-            session.token,
-            session.runId,
-            "unconfirmed",
-          ],
-          { stdio: ["ignore", "ignore", "pipe"] },
-        ),
-        ownsProcessLifetime: false,
-        providerLifetime: "external-application" as const,
-        shutdownMode: "bridge-request" as const,
-      }),
-    );
-  }
-}
+  constructor(readonly ownsProcessLifetime = false) {}
 
-class UnconfirmedOwnedFixtureLauncher implements BridgeLauncher {
   launch(session: BridgeSession) {
     return Promise.resolve(
       ok({
@@ -91,8 +70,8 @@ class UnconfirmedOwnedFixtureLauncher implements BridgeLauncher {
           ],
           { stdio: ["ignore", "ignore", "pipe"] },
         ),
-        ownsProcessLifetime: true as const,
-        providerLifetime: "launcher-process" as const,
+        ownsProcessLifetime: this.ownsProcessLifetime,
+        providerLifetime: "external-application" as const,
         shutdownMode: "bridge-request" as const,
       }),
     );
@@ -158,55 +137,41 @@ describe("HopperClient cleanup", () => {
     });
   });
 
-  it("reports unconfirmed unowned document cleanup as a typed close failure", async () => {
-    const client = new HopperClient({
-      launcher: new UnconfirmedFixtureLauncher(),
-      startupTimeoutMs: 1_000,
-    });
-    clients.push(client);
-    expect((await client.start()).ok).toBe(true);
+  it.each([
+    ["unowned", false],
+    ["owned helper", true],
+  ] as const)(
+    "reports unconfirmed external document cleanup for an %s process",
+    async (_description, ownsProcessLifetime) => {
+      const client = new HopperClient({
+        launcher: new UnconfirmedFixtureLauncher(ownsProcessLifetime),
+        startupTimeoutMs: 1_000,
+      });
+      clients.push(client);
+      expect((await client.start()).ok).toBe(true);
 
-    const closed = await client.close();
+      const closed = await client.close();
 
-    expect(closed).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "ProviderAdapterError",
-        cleanupIncomplete: true,
-        cleanupResources: expect.arrayContaining(["hopper-document"]),
-      },
-    });
-    if (!closed.ok)
-      expect(projectAnalysisError(closed.error)).toMatchObject({
-        code: "cleanup_incomplete",
-        details: {
-          provider_id: "hopper",
-          operation: "close_binary",
-          cleanup: "incomplete",
-          resources: expect.arrayContaining(["hopper-document"]),
+      expect(closed).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "ProviderAdapterError",
+          cleanupIncomplete: true,
+          cleanupResources: expect.arrayContaining(["hopper-document"]),
         },
       });
-  });
-
-  it("does not treat an owned launcher exit as bridge document shutdown", async () => {
-    const client = new HopperClient({
-      launcher: new UnconfirmedOwnedFixtureLauncher(),
-      startupTimeoutMs: 1_000,
-    });
-    clients.push(client);
-    expect((await client.start()).ok).toBe(true);
-
-    const closed = await client.close();
-
-    expect(closed).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "ProviderAdapterError",
-        cleanupIncomplete: true,
-        cleanupResources: expect.arrayContaining(["hopper-document"]),
-      },
-    });
-  });
+      if (!closed.ok)
+        expect(projectAnalysisError(closed.error)).toMatchObject({
+          code: "cleanup_incomplete",
+          details: {
+            provider_id: "hopper",
+            operation: "close_binary",
+            cleanup: "incomplete",
+            resources: expect.arrayContaining(["hopper-document"]),
+          },
+        });
+    },
+  );
 
   it("kills only its owned Hopper group and emits sanitized shutdown coordinates", async () => {
     const unrelated = spawn(

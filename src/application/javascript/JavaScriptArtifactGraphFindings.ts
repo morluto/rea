@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -283,6 +285,9 @@ const addSourceMapEdge = (
   context: JavaScriptArtifactGraphContext,
   input: FindingInput<StaticSourceMap>,
 ): void => {
+  const declaredUrlSha256 = createHash("sha256")
+    .update(input.value.declared_url)
+    .digest("hex");
   const resolvedPath = resolveArtifactPathByContext({
     declaredPath: input.value.declared_url,
     sourcePath: input.file.path,
@@ -293,38 +298,43 @@ const addSourceMapEdge = (
     resolvedPath === null ? undefined : context.filesByPath.get(resolvedPath);
   const resolvedNode =
     resolvedPath === null ? undefined : context.fileNodes.get(resolvedPath);
-  const target =
-    resolvedFile?.kind === "source-map" && resolvedNode !== undefined
-      ? resolvedNode
-      : context.accumulator.addNode({
-          kind: "source-map",
-          identity: artifactLocalIdentity(
+  const isAvailable =
+    resolvedFile?.kind === "source-map" && resolvedNode !== undefined;
+  const target = context.accumulator.addNode({
+    kind: "source-map",
+    identity:
+      isAvailable && resolvedNode !== undefined
+        ? resolvedNode.identity
+        : artifactLocalIdentity(
             input.file.sha256,
             "unresolved-source-map",
-            input.value.declared_url,
+            declaredUrlSha256,
           ),
-          observations: [
-            {
-              label: input.value.declared_url,
-              properties: {
-                declared_url: input.value.declared_url,
-                resolved_path: resolvedPath,
-                available: false,
-              },
-              evidence: staticInferenceEvidence({
-                sha256: input.file.sha256,
-                path: input.file.path,
-                range: input.value.location,
-                operation: "discover-source-map",
-                coverage: input.coverage,
-                confidence: "medium",
-                limitations: [
-                  "The declared source map was not present in the inventoried artifact.",
-                ],
-              }),
-            },
-          ],
-        });
+    observations: [
+      {
+        label: "source map reference",
+        properties: {
+          declared_url: input.value.declared_url,
+          declared_url_sha256: declaredUrlSha256,
+          resolved_path: resolvedPath,
+          available: isAvailable,
+        },
+        evidence: staticInferenceEvidence({
+          sha256: input.file.sha256,
+          path: input.file.path,
+          range: input.value.location,
+          operation: "discover-source-map",
+          coverage: input.coverage,
+          confidence: "medium",
+          limitations: isAvailable
+            ? []
+            : [
+                "The declared source map was not present in the inventoried artifact.",
+              ],
+        }),
+      },
+    ],
+  });
   addStaticInferenceEdge(context, {
     source: input.asset,
     target,
@@ -333,7 +343,7 @@ const addSourceMapEdge = (
     coverage: input.coverage,
     relation: "maps_to",
     properties: {
-      declared_url: input.value.declared_url,
+      declared_url_sha256: declaredUrlSha256,
       resolved_path: resolvedPath,
     },
   });

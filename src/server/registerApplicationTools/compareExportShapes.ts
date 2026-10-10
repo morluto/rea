@@ -41,7 +41,9 @@ export const registerCompareJavaScriptExportShapesTool = (
       const comparison = javaScriptExportShapeComparisonResultSchema.parse(
         result.value.normalized_result,
       );
-      const unknown = comparison.summary.unknown > 0;
+      const unknown =
+        comparison.summary.unknown > 0 ||
+        comparison.coverage.status !== "complete-within-inputs";
       return recordResult(
         { ...options, delivery: server.delivery },
         contract,

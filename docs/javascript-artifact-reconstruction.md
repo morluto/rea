@@ -22,7 +22,7 @@ The tool reads the caller-selected local directory or ASAR path directly:
 ```bash
 rea analyze /absolute/path/to/apps/app.asar --json
 rea analyze-javascript-application /absolute/path/to/apps/app.asar \
-  --json
+  --integrity-policy record-and-continue --json
 ```
 
 Generic `rea analyze` selects this static provider for directories and `.asar`
@@ -47,11 +47,14 @@ The equivalent MCP input is:
 ```json
 {
   "input_path": "/absolute/path/to/apps/app.asar",
-  "format": "auto"
+  "format": "auto",
+  "integrity_policy": "fail"
 }
 ```
 
 `input_path` must be absolute. `format` accepts `auto`, `asar`, or `directory`.
+`integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
+the MCP tool default to `fail`.
 The result retains the canonical local path, root artifact digest, artifact
 manifest and graph commitments, JavaScript Application Graph, static
 Electron summary, reconstruction statistics, and explicit limitations. It does
@@ -63,8 +66,12 @@ ASAR inventory checks Electron integrity metadata for embedded archive entries
 and supplied `.asar.unpacked` companion files. An integrity failure identifies
 the logical path, declared and calculated SHA-256 values, and whether the entry
 was unpacked. By default, a mismatch is returned as a failure with its artifact
-context. Requests that support `integrity_policy` can explicitly select
-`record-and-continue` to inspect verified siblings while retaining the mismatch.
+context. Application analysis can explicitly select `record-and-continue` to
+analyze observed bytes while retaining each contradiction's declared and
+observed hashes and `observed-untrusted` trust. Such results mark application
+graph coverage partial and include every contradicted path in the limitations.
+Mismatched nested ASARs stay opaque rather than being expanded. An unpacked
+entry whose companion bytes were not supplied remains `unavailable`.
 
 An unpacked entry whose companion bytes were not supplied remains
 `unavailable`. REA continues analyzing embedded JavaScript and records the
@@ -105,6 +112,23 @@ Field selection remains useful when the caller needs a
 smaller view, for example `--format json --filter-output
 evidence_id,normalized_result.statistics`. Streaming output does not bound the
 memory needed to construct the analysis graph itself.
+
+CLI workflows parse larger JSON input files incrementally from one verified
+regular-file handle, without constructing a document-sized string. Smaller
+files retain native JSON parsing. Both paths require strict JSON and valid
+UTF-8, and return one complete value; the assembled object still needs memory.
+An individual JSON string exceeding the native length limit or the available
+heap headroom for assembly returns
+`resource_constraint` with `input_reason: "too-large"`. Supply a smaller valid
+value; for Evidence workflows, re-analyze a smaller selection of the original
+target and use its complete Evidence. Splitting JSON text or trimming Evidence
+fields does not produce a valid workflow input.
+
+Evidence bundle and analysis snapshot file readers still decode whole
+documents. Their runtime string-limit failures report a resource constraint
+with the selected path, observed bytes and UTF-16 limit, rather than malformed
+JSON.
+
 MCP prepares the complete repeated response incrementally against the pinned
 SDK's 10 MiB stdio receive-buffer budget. Oversized results return an actionable
 transport constraint and the exact same-session Evidence reference. Use
@@ -283,6 +307,8 @@ such as `./web3:app.js` still names a local artifact.
 Package `exports` fallback arrays are supported both at the top level and under
 the root `"."` entry. The resolver selects targets in declared order using the
 same conditional and invalid-entry handling as nested exports arrays.
+For imports and requires, the active Node conditions include `module-sync`;
+earlier active conditions retain precedence over later ones.
 
 ESM relative module paths and selected package exports targets use URL suffix handling
 and one percent-decoding pass. CommonJS relative paths and legacy package main

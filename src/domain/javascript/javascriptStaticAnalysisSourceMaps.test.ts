@@ -30,6 +30,60 @@ describe("source map directives", () => {
     ).toEqual(["first.map", "second.map"]);
   });
 
+  it("reads a large inline map from a two-byte source without overflowing", () => {
+    const declared =
+      "data:application/json;charset=utf-8;base64," + "A".repeat(9_000_000);
+    const source = `const label = "ğ";\n//# sourceMappingURL=${declared}`;
+
+    expect(sourceMapUrls(source)).toEqual([declared]);
+  });
+
+  it.each([
+    ["after the marker", "//#", "sourceMappingURL=x"],
+    ["before the equals sign", "//# sourceMappingURL", "=x"],
+    ["before the URL", "//# sourceMappingURL=", "x"],
+  ])("reads 9.5M spaces %s without overflowing", (_label, prefix, suffix) => {
+    const source = `ğ${prefix}${" ".repeat(9_500_000)}${suffix}`;
+    expect(analyzeJavaScriptStaticSource(source).source_map_urls).toEqual([
+      {
+        declared_url: "x",
+        location: {
+          start: { line: 1, column: 1 },
+          end: { line: 1, column: source.length },
+        },
+      },
+    ]);
+  });
+
+  it.each([
+    "//#",
+    "//# \t",
+    "//# sourceMappingURL",
+    "//# sourceMappingURL \t",
+    "//# sourceMappingURL=",
+    "//# sourceMappingURL= \t",
+    "/*# sourceMappingURL= */",
+    "//# sourceMappingURLx=app.js.map",
+    "//# sourceMappingURL app.js.map",
+  ])("ignores an incomplete or malformed directive: %s", (source) => {
+    expect(sourceMapUrls(source)).toEqual([]);
+  });
+
+  it("preserves Unicode whitespace and URL terminator boundaries", () => {
+    const source =
+      "ğ/*@\u00a0sourceMappingURL\u2003=\ufeffapp.js.map* ignored */";
+    const declaredEnd = source.indexOf("* ignored");
+    expect(analyzeJavaScriptStaticSource(source).source_map_urls).toEqual([
+      {
+        declared_url: "app.js.map",
+        location: {
+          start: { line: 1, column: 1 },
+          end: { line: 1, column: declaredEnd },
+        },
+      },
+    ]);
+  });
+
   it("reports nothing when no directive is present", () => {
     expect(sourceMapUrls("const value = 1;")).toEqual([]);
   });

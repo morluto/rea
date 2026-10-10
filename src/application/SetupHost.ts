@@ -16,6 +16,7 @@ import {
 import { installMacHopper, systemMacHopperInstallHost } from "./MacHopper.js";
 import { supportedClients, type SetupClient } from "./SupportedClients.js";
 import {
+  claudeCodeSkillsDirectory as resolveClaudeCodeSkillsDirectory,
   canonicalSkillNeedsInstall,
   installCanonicalSkill,
 } from "./SetupSkill.js";
@@ -78,7 +79,7 @@ export const hostRemediation = async (
       : undefined;
   }
   if ((await host.linuxDistribution())?.supported === true) return undefined;
-  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, 64-bit Arch Linux, and CachyOS; configure an existing supported provider instead.";
+  return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, and CachyOS; configure an existing supported provider instead.";
 };
 
 /** Production setup effects for Hopper, agent configuration, and the canonical skill directory. */
@@ -89,9 +90,14 @@ export const systemSetupHost = (
   const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
   const platform = doctorHost.platform;
   const { homeDirectory } = doctorHost;
+  const claudeSkillsDirectory = resolveClaudeCodeSkillsDirectory(
+    homeDirectory,
+    environment,
+  );
   return {
     platform,
     homeDirectory,
+    claudeCodeSkillsDirectory: claudeSkillsDirectory,
     registrationCommand: setupRegistrationCommand(
       platform,
       environment.npm_command === "exec",
@@ -143,8 +149,14 @@ export const systemSetupHost = (
             (aligned) => !aligned,
           ),
     inspectClientConfiguration: inspectClientConfiguration,
-    skillNeedsInstall: () => canonicalSkillNeedsInstall(homeDirectory),
-    installSkill: () => installCanonicalSkill(homeDirectory),
+    skillNeedsInstall: (clientIds) =>
+      canonicalSkillNeedsInstall(
+        homeDirectory,
+        clientIds,
+        claudeSkillsDirectory,
+      ),
+    installSkill: (clientIds) =>
+      installCanonicalSkill(homeDirectory, clientIds, claudeSkillsDirectory),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
   };
 };

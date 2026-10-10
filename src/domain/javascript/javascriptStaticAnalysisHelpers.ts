@@ -14,8 +14,12 @@ import type {
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../unicodeCodePointOrder.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -100,8 +104,8 @@ const findChunkRuntime = (node: t.Node): string | undefined => {
       pending.push(current.right, current.left);
       continue;
     }
-    if (t.isParenthesizedExpression(current) || t.isTSAsExpression(current))
-      pending.push(current.expression);
+    const unwrapped = unwrapJavaScriptExpression(current).node;
+    if (unwrapped !== current) pending.push(unwrapped);
   }
   return undefined;
 };
@@ -673,7 +677,17 @@ export const detectVendors = (source: string): string[] =>
 export const registrationKey = (
   registration: JavaScriptBundlerRegistration,
 ): string =>
-  `${registration.runtime}\0${registration.chunk_keys.join("\0")}\0${String(registration.unknown_chunk_keys)}\0${registration.modules.map(({ module_key: key, source_sha256: digest }) => `${key}:${digest}`).join("\0")}`;
+  // Collision-free tuple: chunk/module keys are variable-length source-derived
+  // lists, so NUL-joins would collapse ["a\0b"] with ["a", "b"].
+  compositeKey([
+    registration.runtime,
+    registration.chunk_keys,
+    String(registration.unknown_chunk_keys),
+    registration.modules.map(({ module_key: key, source_sha256: digest }) => [
+      key,
+      digest,
+    ]),
+  ]);
 
 /** Sort values by a deterministic unique semantic key. */
 export const sortedUnique = <Value>(

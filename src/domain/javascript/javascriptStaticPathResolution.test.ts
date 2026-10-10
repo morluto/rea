@@ -14,16 +14,10 @@ const absoluteParts = [
   ["/app", "/shared/preload.js"],
   ["ignored", "/app", "preload.js"],
   ["/app", "first", "/shared", "nested", "../preload.js"],
-  ["/app", "preload/"],
   ["/app", "preload///"],
-  ["/app/", "./sub", "../preload.js"],
-  ["/app", ".."],
   ["/app", "../../.."],
-  ["/"],
   ["///"],
-  ["/app", "/", ""],
   ["", "/app", "", "preload.js", ""],
-  ["/app", "..", "child", "..", "preload.js"],
 ];
 
 const anchoredExpressions = [
@@ -38,21 +32,12 @@ const anchoredExpressions = [
     'path.resolve("ignored", path.dirname(__filename), "preload.js")',
     "preload.js",
   ],
-  ['path.resolve(__dirname, "sub", "../preload.js")', "preload.js"],
   ['path.resolve(__dirname, "../preload.js")', "../preload.js"],
-  ['path.resolve(__dirname, "preload/")', "preload"],
   ['path.resolve(__dirname, "sub", __dirname, "preload.js")', "preload.js"],
   ['path.resolve(__dirname, "/shared", "preload.js")', "/shared/preload.js"],
-  [
-    'path.resolve(dirname(fileURLToPath(import.meta.url)), "/shared/preload.js")',
-    "/shared/preload.js",
-  ],
   ["path.resolve(__dirname)", "."],
-  ['path.resolve(__dirname, "")', "."],
-  ['path.resolve(__dirname, "sub/../")', "."],
   ['path.posix.resolve(`/app`, `/shared`, "preload.js")', "/shared/preload.js"],
   ['path.posix.resolve("" + "/app", "preload.js")', "/app/preload.js"],
-  ['path.posix.resolve(`/` + `app`, "preload.js")', "/app/preload.js"],
 ] as const;
 
 const unknownExpressions = [

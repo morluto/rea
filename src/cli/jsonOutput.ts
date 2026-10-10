@@ -10,7 +10,7 @@ export const writeJsonOutput = async (
   destination: Writable,
   format: JsonOutputFormat = "json",
 ): Promise<void> => {
-  for (const part of bufferedJsonParts(documentParts(value, format)))
+  for (const part of bufferedJsonParts(jsonOutputParts(value, format)))
     await writePart(destination, part);
 };
 
@@ -35,7 +35,8 @@ const writePart = (destination: Writable, part: string): Promise<void> =>
     }
   });
 
-function* documentParts(
+/** The exact formatted document, including its final newline. */
+export function* jsonOutputParts(
   value: unknown,
   format: JsonOutputFormat,
 ): Generator<string> {

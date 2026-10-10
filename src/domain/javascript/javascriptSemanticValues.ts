@@ -1,8 +1,17 @@
 import * as t from "@babel/types";
 
+import {
+  semanticCapturePosition,
+  semanticEscapeFollowsCapture,
+  semanticBindingPrecedesCapture,
+} from "./javascriptSemanticMutationInitializers.js";
+
 import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
 
-import { invalidateSemanticMutationPath } from "./javascriptSemanticMutationValues.js";
+import {
+  invalidateSemanticEscapedPath,
+  invalidateSemanticMutationPath,
+} from "./javascriptSemanticMutationValues.js";
 
 import type { JavaScriptBindingProvenance } from "./javascriptSemanticIr.js";
 import type {
@@ -20,6 +29,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
   semanticAmbiguousProvenance,
@@ -45,6 +55,7 @@ interface EvaluationContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly bindings: ReadonlySet<string>;
   readonly expressionDepth: number;
+  readonly capturePoint?: t.Node;
   readonly primitiveBindingValues: Map<string, JavaScriptSemanticValue>;
 }
 
@@ -52,6 +63,25 @@ const primitiveBindingValuesByState = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<string, JavaScriptSemanticValue>
 >();
+
+const primitiveExpressionValuesByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakMap<t.Node, JavaScriptSemanticValue>
+>();
+
+const capturedBindingValuesByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakMap<t.Node, Map<string, JavaScriptSemanticValue>>
+>();
+
+/** Discard primitive projections evaluated before mutation collection finished. */
+export const clearSemanticPrimitiveBindingValues = (
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  primitiveBindingValuesByState.delete(state);
+  capturedBindingValuesByState.delete(state);
+  primitiveExpressionValuesByState.delete(state);
+};
 
 const primitiveBindingValuesFor = (
   state: JavaScriptSemanticAnalysisState,
@@ -84,17 +114,25 @@ export const evaluateSemanticBinding = (
     primitiveBindingValues: primitiveBindingValuesFor(state),
   });
 
-/** Evaluate one arbitrary inert expression in the established lexical state. */
+/** Evaluate an inert expression, optionally at an earlier reference capture. */
 export const evaluateSemanticExpression = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticValue =>
-  evaluateExpression(node, {
+  capturePoint?: t.Node,
+): JavaScriptSemanticValue => {
+  const context: EvaluationContext = {
     state,
     bindings: new Set(),
     expressionDepth: 0,
     primitiveBindingValues: primitiveBindingValuesFor(state),
-  });
+  };
+  return evaluateExpression(
+    node,
+    capturePoint === undefined
+      ? context
+      : (captureContextAt(capturePoint, context) ?? context),
+  );
+};
 
 /** Follow module provenance through destructuring, members, and aliases. */
 export const evaluateSemanticProvenance = (
@@ -114,6 +152,20 @@ const evaluateBinding = (
 ): JavaScriptSemanticValue => {
   if (context.bindings.has(binding.bindingId))
     return { status: "cycle", reason: `Alias cycle at ${binding.name}.` };
+  if (
+    context.capturePoint !== undefined &&
+    !semanticBindingPrecedesCapture(
+      binding,
+      context.capturePoint,
+      context.state.parentsByNode,
+    )
+  ) {
+    const { capturePoint: _capturePoint, ...liveContext } = context;
+    return evaluateBinding(binding, {
+      ...liveContext,
+      primitiveBindingValues: primitiveBindingValuesFor(context.state),
+    });
+  }
   const cached = context.primitiveBindingValues.get(binding.bindingId);
   if (cached !== undefined) return cached;
   if (binding.initializers.length === 0)
@@ -145,15 +197,41 @@ const evaluateBinding = (
   if (initializer === undefined)
     return { status: "unknown", reason: "Missing binding initializer." };
   const nested = nestedContext(context, binding.bindingId);
-  const value = projectValue(
+  let value = projectValue(
     evaluateExpression(initializer.node, nested),
     initializer.projection,
   );
-  const projected = binding.mutatedPaths.reduce(
+  if (!isPrimitive(value)) {
+    const captureContext = primitiveCaptureContext(initializer.node, nested);
+    if (captureContext !== undefined) {
+      const captured = projectValue(
+        evaluateExpression(initializer.node, captureContext),
+        initializer.projection,
+      );
+      if (isPrimitive(captured)) value = captured;
+    }
+  }
+  const mutated = binding.mutatedPaths.reduce(
     invalidateSemanticMutationPath,
     value,
   );
+  const projected = binding.escapedPaths.reduce(
+    (value, escape) =>
+      context.capturePoint !== undefined &&
+      semanticEscapeFollowsCapture(
+        binding,
+        context.capturePoint,
+        escape.node,
+        context.state.parentsByNode,
+      )
+        ? value
+        : invalidateSemanticEscapedPath(value, escape.path),
+    mutated,
+  );
+  // Point-local memoization also bounds failed speculative captures. Only a
+  // primitive result is allowed back into ordinary value evaluation.
   if (
+    context.capturePoint !== undefined ||
     projected.status === "literal" ||
     projected.status === "union" ||
     (isSemanticResourceLimit(projected) &&
@@ -170,8 +248,23 @@ const evaluateExpression = (
 ): JavaScriptSemanticValue => {
   if (context.expressionDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT)
     return semanticResourceLimitUnknown("expression-depth");
+  const unwrapped = unwrapJavaScriptExpression(node);
+  if (unwrapped.depth > 0) {
+    if (
+      context.expressionDepth + unwrapped.depth >
+      SEMANTIC_EXPRESSION_DEPTH_LIMIT
+    )
+      return semanticResourceLimitUnknown("expression-depth");
+    return evaluateExpression(unwrapped.node, {
+      ...context,
+      expressionDepth: context.expressionDepth + unwrapped.depth,
+    });
+  }
   const literal = readExactJavaScriptLiteral(node);
-  if (literal.found) return { status: "literal", value: literal.value };
+  if (literal.found)
+    return typeof literal.value === "number"
+      ? primitiveSet([literal.value])
+      : { status: "literal", value: literal.value };
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     return binding === undefined
@@ -196,13 +289,6 @@ const evaluateExpression = (
   if (t.isBinaryExpression(node, { operator: "+" }))
     return evaluateAddition(node, context);
   if (t.isUnaryExpression(node)) return evaluateUnary(node, context);
-  if (
-    (t.isTSAsExpression(node) ||
-      t.isTSTypeAssertion(node) ||
-      t.isTSNonNullExpression(node)) &&
-    t.isExpression(node.expression)
-  )
-    return evaluateExpression(node.expression, nestedContext(context));
   return { status: "unknown", reason: `Unsupported ${node.type} value.` };
 };
 
@@ -292,7 +378,7 @@ const evaluateObject = (
       name,
       presence: "present",
       value: t.isObjectProperty(property)
-        ? evaluateExpression(property.value, nestedContext(context))
+        ? evaluateCapturedExpression(property.value, nestedContext(context))
         : {
             status: "unknown",
             reason: "Object method or accessor value is not a primitive.",
@@ -342,7 +428,7 @@ const evaluateArray = (
     items.push({
       name: String(items.length),
       presence: "present",
-      value: evaluateExpression(element, nestedContext(context)),
+      value: evaluateCapturedExpression(element, nestedContext(context)),
     });
   }
   return unknownItems
@@ -527,6 +613,21 @@ const provenanceForExpression = (
       "unknown",
       semanticResourceLimitReason("expression-depth"),
     );
+  const unwrapped = unwrapJavaScriptExpression(node);
+  if (unwrapped.depth > 0) {
+    if (
+      context.expressionDepth + unwrapped.depth >
+      SEMANTIC_EXPRESSION_DEPTH_LIMIT
+    )
+      return semanticUnresolvedProvenance(
+        "unknown",
+        semanticResourceLimitReason("expression-depth"),
+      );
+    return provenanceForExpression(unwrapped.node, {
+      ...context,
+      expressionDepth: context.expressionDepth + unwrapped.depth,
+    });
+  }
   const required = semanticRequireOrigin(node, context.state);
   if (required !== undefined) return semanticOriginsProvenance([required]);
   if (t.isIdentifier(node)) {
@@ -580,11 +681,20 @@ const provenanceForExpression = (
       provenanceForExpression(left, nestedContext(context)),
       provenanceForExpression(right, nestedContext(context)),
     ];
-    const origins = candidates.flatMap((candidate) => candidate.origins);
+    const origins = uniqueSemanticOrigins(
+      candidates.flatMap((candidate) => candidate.origins),
+    );
+    const allModuleOrigins = candidates.every(
+      ({ status }) => status === "module",
+    );
+    if (allModuleOrigins && origins.length === 1)
+      return semanticOriginsProvenance(origins);
     return origins.length > 0
       ? semanticAmbiguousProvenance(
-          uniqueSemanticOrigins(origins),
-          "Multiple module origins.",
+          origins,
+          allModuleOrigins
+            ? "Multiple module origins."
+            : "Conditional provenance includes a non-module alternative.",
         )
       : semanticUnresolvedProvenance(
           "unknown",
@@ -615,9 +725,74 @@ const nestedContext = (
 ): EvaluationContext => ({
   state: context.state,
   primitiveBindingValues: context.primitiveBindingValues,
+  ...(context.capturePoint === undefined
+    ? {}
+    : { capturePoint: context.capturePoint }),
   expressionDepth: context.expressionDepth + 1,
   bindings:
     bindingId === undefined
       ? context.bindings
       : new Set([...context.bindings, bindingId]),
 });
+
+const isPrimitive = (value: JavaScriptSemanticValue): boolean =>
+  value.status === "literal" || value.status === "union";
+
+const primitiveCaptureContext = (
+  node: t.Node,
+  context: EvaluationContext,
+): EvaluationContext | undefined => {
+  if (t.isObjectExpression(node) || t.isArrayExpression(node)) return undefined;
+  return captureContextAt(node, context);
+};
+
+const captureContextAt = (
+  node: t.Node,
+  context: EvaluationContext,
+): EvaluationContext | undefined => {
+  if (
+    context.capturePoint !== undefined ||
+    semanticCapturePosition(node, context.state.parentsByNode) === null
+  )
+    return undefined;
+  let captures = capturedBindingValuesByState.get(context.state);
+  if (captures === undefined) {
+    captures = new WeakMap();
+    capturedBindingValuesByState.set(context.state, captures);
+  }
+  let values = captures.get(node);
+  if (values === undefined) {
+    values = new Map();
+    captures.set(node, values);
+  }
+  return { ...context, capturePoint: node, primitiveBindingValues: values };
+};
+
+const evaluateCapturedExpression = (
+  node: t.Node,
+  context: EvaluationContext,
+): JavaScriptSemanticValue => {
+  // A literal field captures its primitive at construction, even when its
+  // containing object is subsequently read at another capture point.
+  let values = primitiveExpressionValuesByState.get(context.state);
+  const cached = values?.get(node);
+  if (cached !== undefined) return cached;
+  let value = evaluateExpression(node, context);
+  if (!isPrimitive(value)) {
+    const captureContext = primitiveCaptureContext(node, context);
+    if (captureContext !== undefined) {
+      const captured = evaluateExpression(node, captureContext);
+      if (isPrimitive(captured)) value = captured;
+    }
+  }
+  // Never publish values evaluated at somebody else's capture point. Like
+  // binding caches, these entries are discarded whenever effects change.
+  if (context.capturePoint === undefined && isPrimitive(value)) {
+    if (values === undefined) {
+      values = new WeakMap();
+      primitiveExpressionValuesByState.set(context.state, values);
+    }
+    values.set(node, value);
+  }
+  return value;
+};

@@ -8,7 +8,10 @@ import {
   semanticCallableIdForNode,
   semanticReadsBeforeWrite,
 } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -205,6 +208,7 @@ const expressionObjectIdentity = (
   let current = node;
   let staticPath = true;
   while (current !== null && current !== undefined) {
+    current = unwrapJavaScriptExpression(current).node;
     if (
       t.isMemberExpression(current) ||
       t.isOptionalMemberExpression(current)
@@ -216,14 +220,7 @@ const expressionObjectIdentity = (
       if (name === null) staticPath = false;
       else path.push(name);
       current = current.object;
-    } else if (
-      t.isTSAsExpression(current) ||
-      t.isTSTypeAssertion(current) ||
-      t.isTSNonNullExpression(current) ||
-      t.isTSSatisfiesExpression(current)
-    )
-      current = current.expression;
-    else break;
+    } else break;
   }
   return {
     bindingId: t.isIdentifier(current)

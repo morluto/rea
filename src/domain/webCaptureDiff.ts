@@ -1,4 +1,5 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import type { WebPageInspection } from "./browserObservationSchemas.js";
 import {
   webCaptureDiffSchema,
@@ -59,8 +60,8 @@ const compareIdentities = (
     if (!before.has(identity)) changes.push({ identity, change: "added" });
   return changes.sort(
     (left, right) =>
-      left.identity.localeCompare(right.identity) ||
-      left.change.localeCompare(right.change),
+      compareUnicodeCodePoints(left.identity, right.identity) ||
+      compareUnicodeCodePoints(left.change, right.change),
   );
 };
 
@@ -195,13 +196,7 @@ const compareWebCaptureDimensions = (
         sectionsComplete(after, ["resources"]),
       "Resource inventory was incomplete in at least one observation.",
     ),
-    network: compareDimension(
-      networkMap(before),
-      networkMap(after),
-      sectionsComplete(before, ["network_requests"]) &&
-        sectionsComplete(after, ["network_requests"]),
-      "Network capture is attach-window limited or incomplete.",
-    ),
+    network: networkDimension(before, after),
     metadata: compareDimension(
       singleton("metadata", digestCanonicalValue(metadataProjection(before))),
       singleton("metadata", digestCanonicalValue(metadataProjection(after))),
@@ -228,16 +223,85 @@ const keyed = <T>(
     values.map((value) => [identity(value), digestCanonicalValue(value)]),
   );
 
+type BodyShapeSources = {
+  readonly request: boolean;
+  readonly response: boolean;
+};
+
+const bodyShapesSelected = (inspection: WebPageInspection): boolean =>
+  !inspection.completeness.excluded.some(
+    ({ section, reason }) =>
+      section === "json_body_shapes" && reason === "not_approved",
+  ) &&
+  (inspection.network.requests.length === 0 ||
+    inspection.network.requests.some(
+      ({ body_shapes }) => body_shapes.status !== "not_approved",
+    ));
+
+const networkIdentity = (
+  request: WebPageInspection["network"]["requests"][number],
+): string =>
+  `net_${digestCanonicalValue({ method: request.method, url: request.url, resource_type: request.resource_type })}`;
+
+const networkDimension = (
+  before: WebPageInspection,
+  after: WebPageInspection,
+): Dimension => {
+  const selected = bodyShapesSelected(before) && bodyShapesSelected(after);
+  const sources = new Map<string, BodyShapeSources>();
+  if (selected) {
+    const observedSources = (inspection: WebPageInspection) => {
+      const result = new Map<string, BodyShapeSources>();
+      for (const request of inspection.network.requests) {
+        const identity = networkIdentity(request);
+        const previous = result.get(identity);
+        result.set(identity, {
+          request:
+            previous?.request !== false && request.body_shapes.request !== null,
+          response:
+            previous?.response !== false &&
+            request.body_shapes.response !== null,
+        });
+      }
+      return result;
+    };
+    const left = observedSources(before);
+    const right = observedSources(after);
+    for (const [identity, coverage] of left) {
+      const next = right.get(identity);
+      sources.set(identity, {
+        request: coverage.request && next?.request === true,
+        response: coverage.response && next?.response === true,
+      });
+    }
+  }
+  const shapesComplete =
+    !selected ||
+    [before, after].every(
+      (inspection) =>
+        sectionsComplete(inspection, ["json_body_shapes"]) &&
+        inspection.network.requests.every(
+          ({ body_shapes }) => body_shapes.status === "included",
+        ),
+    );
+  return compareDimension(
+    networkMap(before, sources),
+    networkMap(after, sources),
+    sectionsComplete(before, ["network_requests"]) &&
+      sectionsComplete(after, ["network_requests"]) &&
+      shapesComplete,
+    "Network capture or selected JSON body-shape coverage is attach-window limited, unavailable, or incomplete.",
+  );
+};
+
 const networkMap = (
   inspection: WebPageInspection,
+  sources: ReadonlyMap<string, BodyShapeSources>,
 ): ReadonlyMap<string, string> => {
   const grouped = new Map<string, unknown[]>();
   for (const request of inspection.network.requests) {
-    const identity = `net_${digestCanonicalValue({
-      method: request.method,
-      url: request.url,
-      resource_type: request.resource_type,
-    })}`;
+    const identity = networkIdentity(request);
+    const shapes = sources.get(identity);
     const values = grouped.get(identity) ?? [];
     values.push({
       status: request.status,
@@ -251,7 +315,12 @@ const networkMap = (
         }) => redirect,
       ),
       initiator: request.initiator,
-      body_shapes: request.body_shapes,
+      ...(shapes?.request === true
+        ? { request_shape: request.body_shapes.request }
+        : {}),
+      ...(shapes?.response === true
+        ? { response_shape: request.body_shapes.response }
+        : {}),
     });
     grouped.set(identity, values);
   }
@@ -301,7 +370,12 @@ const incompleteSections = (completeness: {
 const domProjection = (inspection: WebPageInspection) => ({
   frames: inspection.frames
     .map(({ url, origin }) => ({ url, origin }))
-    .sort((left, right) => left.url.localeCompare(right.url)),
+    .sort(
+      (left, right) =>
+        compareUnicodeCodePoints(left.url, right.url) ||
+        compareUnicodeCodePoints(left.origin ?? "", right.origin ?? "") ||
+        Number(left.origin !== null) - Number(right.origin !== null),
+    ),
   nodes: inspection.dom.nodes.map(({ index: _index, ...node }) => node),
 });
 

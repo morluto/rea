@@ -1,5 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -385,13 +386,30 @@ const verifyImport = async (
     operation: "import_managed_reconstruction",
     provider: { id: "rea-dotnet-workflows" },
     confidence: "inferred",
+    authority: "analyst-inference",
     normalized_result: {
+      phase: "reconstruction-import",
       executed: false,
+      decompiler: { name: "ilspycmd", version: "9.1.0.7988", family: "ilspy" },
       summary: { imported_methods: 1, decompiled_csharp_methods: 1 },
       methods: [
         {
           token: method.token,
-          validation: { canonical_observation: false },
+          signature_sha256: method.signature.raw_sha256,
+          normalized_il_sha256: method.body.normalized_il_sha256,
+          reconstruction: {
+            kind: "decompiled-csharp",
+            language: "csharp",
+            text_sha256: createHash("sha256")
+              .update("internal static void Main() { }")
+              .digest("hex"),
+          },
+          validation: {
+            matched_static_member: true,
+            exact_build_required: true,
+            canonical_observation: false,
+            confidence_floor: "inference",
+          },
         },
       ],
     },

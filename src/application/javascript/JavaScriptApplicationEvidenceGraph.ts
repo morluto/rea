@@ -9,6 +9,13 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import {
+  type AnalysisInputIssue,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
+import { projectInputIssues } from "../../domain/inputIssueProjection.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import { z } from "zod";
+import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
@@ -28,6 +35,24 @@ export interface ApplicationGraphEvidenceSource {
     | "managed-application";
   readonly rootArtifactSha256: string;
   readonly semanticGraph: JavaScriptSemanticGraph | null;
+}
+
+/** Caller-owned Evidence failed validation at the application graph boundary. */
+export interface ApplicationGraphEvidenceInputFailure {
+  readonly issues: readonly AnalysisInputIssue[];
+}
+
+/** Convert typed parser issues into this workflow's caller-facing input error. */
+export const applicationGraphEvidenceInputError = (
+  operation: string,
+  failure: ApplicationGraphEvidenceInputFailure,
+): AnalysisInputError =>
+  new AnalysisInputError(operation, undefined, failure.issues);
+
+class InvalidApplicationGraphEvidence extends Error {
+  constructor(readonly issues: readonly AnalysisInputIssue[]) {
+    super("Application graph Evidence failed input validation");
+  }
 }
 
 const ownedApplicationSources = new WeakMap<
@@ -51,7 +76,7 @@ export const rememberOwnedApplicationGraphEvidence = (
     );
   ownedApplicationSources.set(
     evidence,
-    Object.freeze(staticApplicationSourceForResult(evidence, result)),
+    Object.freeze(staticApplicationSourceForResult(evidence, result, [])),
   );
   return evidence;
 };
@@ -59,62 +84,79 @@ export const rememberOwnedApplicationGraphEvidence = (
 /** Parse and authenticate one REA-produced JavaScript Application Graph Evidence. */
 export const parseApplicationGraphEvidence = (
   input: unknown,
-): ApplicationGraphEvidenceSource => {
-  const evidence = parseEvidence(input);
-  const owned = ownedApplicationSources.get(evidence);
-  if (owned !== undefined) return owned;
-  if (
-    evidence.operation === "analyze_javascript_application" &&
-    evidence.predicate_type === "rea.javascript-application-analysis" &&
-    providerMatches(evidence, JAVASCRIPT_APPLICATION_PROVIDER)
-  )
-    return staticApplicationSource(evidence);
-  if (
-    evidence.operation === "reconcile_javascript_runtime" &&
-    evidence.predicate_type === "rea.javascript-runtime-reconciliation" &&
-    providerMatches(evidence, JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER)
-  )
-    return staticRuntimeSource(evidence);
-  if (
-    evidence.operation === "project_managed_application_graph" &&
-    evidence.predicate_type === "rea.managed-application-graph" &&
-    providerMatches(evidence, MANAGED_WORKFLOW_PROVIDER)
-  )
-    return managedApplicationSource(evidence);
-  throw new TypeError(
-    "Application workflow requires authenticated analyze_javascript_application, reconcile_javascript_runtime, or project_managed_application_graph Evidence",
-  );
-};
+  path: readonly (string | number)[] = [],
+): Result<
+  ApplicationGraphEvidenceSource,
+  ApplicationGraphEvidenceInputFailure
+> =>
+  captureInputValidation(() => {
+    const evidence = parseEvidenceInput(input, path);
+    const owned = ownedApplicationSources.get(evidence);
+    if (owned !== undefined) return owned;
+    if (evidence.operation === "analyze_javascript_application") {
+      requirePredicate(evidence, "rea.javascript-application-analysis", path);
+      requireProvider(evidence, JAVASCRIPT_APPLICATION_PROVIDER, path);
+      return staticApplicationSource(evidence, path);
+    }
+    if (evidence.operation === "reconcile_javascript_runtime") {
+      requirePredicate(evidence, "rea.javascript-runtime-reconciliation", path);
+      requireProvider(
+        evidence,
+        JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
+        path,
+      );
+      return staticRuntimeSource(evidence, path);
+    }
+    if (evidence.operation === "project_managed_application_graph") {
+      requirePredicate(evidence, "rea.managed-application-graph", path);
+      requireProvider(evidence, MANAGED_WORKFLOW_PROVIDER, path);
+      return managedApplicationSource(evidence, path);
+    }
+    throw invalidEvidence(
+      path,
+      "operation",
+      "Expected authenticated JavaScript analysis, runtime reconciliation, or managed application graph Evidence.",
+    );
+  });
 
 const staticApplicationSource = (
   evidence: Evidence,
+  path: readonly (string | number)[],
 ): ApplicationGraphEvidenceSource => {
-  const result = javascriptApplicationAnalysisResultSchema.parse(
+  const result = parseCallerValue(
+    (input) => javascriptApplicationAnalysisResultSchema.parse(input),
     evidence.normalized_result,
+    [...path, "normalized_result"],
   );
-  return staticApplicationSourceForResult(evidence, result);
+  return staticApplicationSourceForResult(evidence, result, path);
 };
 
 const staticApplicationSourceForResult = (
   evidence: Evidence,
   result: JavaScriptApplicationAnalysisResult,
+  path: readonly (string | number)[],
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "shipped-artifact" ||
     evidence.confidence !== "derived"
   )
-    throw new TypeError(
-      "JavaScript application Evidence authority or confidence is invalid",
+    throw invalidEvidence(
+      path,
+      "authority",
+      "JavaScript application Evidence must use shipped-artifact authority and derived confidence.",
     );
   if (evidence.predicate_type !== "rea.javascript-application-analysis")
-    throw new TypeError(
-      "JavaScript application Evidence predicate does not match its result shape",
+    throw invalidEvidence(
+      path,
+      "predicate_type",
+      "JavaScript application Evidence predicate does not match its result shape.",
     );
-  analyzeJavaScriptApplicationInputSchema.parse({
-    input_path: result.input_path,
-    ...evidence.parameters,
-  });
-  assertApplicationSubject(evidence, result);
+  parseCallerValue(
+    (input) => analyzeJavaScriptApplicationInputSchema.parse(input),
+    { input_path: result.input_path, ...evidence.parameters },
+    [...path, "parameters"],
+  );
+  assertApplicationSubject(evidence, result, path);
   return {
     evidence,
     graph: result.graph,
@@ -126,30 +168,40 @@ const staticApplicationSourceForResult = (
 
 const staticRuntimeSource = (
   evidence: Evidence,
+  path: readonly (string | number)[],
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
     evidence.confidence !== "inferred"
   )
-    throw new TypeError(
-      "JavaScript runtime reconciliation Evidence authority or confidence is invalid",
+    throw invalidEvidence(
+      path,
+      "authority",
+      "Runtime reconciliation Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = javascriptRuntimeReconciliationResultSchema.parse(
+  const result = parseCallerValue(
+    (input) => javascriptRuntimeReconciliationResultSchema.parse(input),
     evidence.normalized_result,
+    [...path, "normalized_result"],
   );
-  if (
-    result.evidence_links.some(
-      (evidenceId) => !evidence.evidence_links.includes(evidenceId),
-    )
-  )
-    throw new TypeError(
-      "Runtime reconciliation result references Evidence outside its envelope",
+  const unmatchedLink = result.evidence_links.find(
+    (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+  );
+  if (unmatchedLink !== undefined)
+    throw invalidEvidence(
+      [...path, "normalized_result"],
+      "evidence_links",
+      `Runtime reconciliation result references Evidence ${unmatchedLink} outside its envelope.`,
     );
   const applicationLayer = result.static_layers.find(
     ({ role }) => role === "application",
   );
   if (applicationLayer === undefined)
-    throw new TypeError("Runtime reconciliation application layer is missing");
+    throw invalidEvidence(
+      [...path, "normalized_result"],
+      "static_layers",
+      "Runtime reconciliation Evidence must include its application layer.",
+    );
   return {
     evidence,
     graph: result.graph,
@@ -161,24 +213,30 @@ const staticRuntimeSource = (
 
 const managedApplicationSource = (
   evidence: Evidence,
+  path: readonly (string | number)[],
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
     evidence.confidence !== "inferred"
   )
-    throw new TypeError(
-      "Managed application graph Evidence authority or confidence is invalid",
+    throw invalidEvidence(
+      path,
+      "authority",
+      "Managed application graph Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = managedApplicationGraphResultSchema.parse(
+  const result = parseCallerValue(
+    (input) => managedApplicationGraphResultSchema.parse(input),
     evidence.normalized_result,
+    [...path, "normalized_result"],
   );
-  if (
-    result.evidence_links.some(
-      (evidenceId) => !evidence.evidence_links.includes(evidenceId),
-    )
-  )
-    throw new TypeError(
-      "Managed application graph result references Evidence outside its envelope",
+  const unmatchedLink = result.evidence_links.find(
+    (evidenceId) => !evidence.evidence_links.includes(evidenceId),
+  );
+  if (unmatchedLink !== undefined)
+    throw invalidEvidence(
+      [...path, "normalized_result"],
+      "evidence_links",
+      `Managed application graph result references Evidence ${unmatchedLink} outside its envelope.`,
     );
   return {
     evidence,
@@ -192,6 +250,7 @@ const managedApplicationSource = (
 const assertApplicationSubject = (
   evidence: Evidence,
   result: JavaScriptApplicationAnalysisResult,
+  path: readonly (string | number)[],
 ): void => {
   if (
     evidence.subject === null ||
@@ -199,8 +258,10 @@ const assertApplicationSubject = (
     evidence.subject.format !== result.format ||
     evidence.subject.local_path !== result.input_path
   )
-    throw new TypeError(
-      "JavaScript application Evidence subject does not match its result",
+    throw invalidEvidence(
+      path,
+      "subject",
+      "JavaScript application Evidence subject must match the analyzed artifact identity and input path.",
     );
 };
 
@@ -216,15 +277,116 @@ const providerMatches = (
   evidence.provider.name === provider.name &&
   evidence.provider.version === provider.version;
 
+const requirePredicate = (
+  evidence: Evidence,
+  expected: string,
+  path: readonly (string | number)[],
+): void => {
+  if (evidence.predicate_type !== expected)
+    throw invalidEvidence(
+      path,
+      "predicate_type",
+      `Expected predicate ${expected} for operation ${evidence.operation}.`,
+    );
+};
+
+const requireProvider = (
+  evidence: Evidence,
+  expected: {
+    readonly id: string;
+    readonly name: string;
+    readonly version: string;
+  },
+  path: readonly (string | number)[],
+): void => {
+  if (!providerMatches(evidence, expected))
+    throw invalidEvidence(
+      path,
+      "provider",
+      `Expected provider ${expected.id} v${expected.version} for operation ${evidence.operation}.`,
+    );
+};
+
 /** Parse unique, artifact-bound Evidence that may extend a native handoff. */
 export const parseNativeApplicationEvidence = (
   inputs: readonly unknown[],
-): Evidence[] => {
-  const parsed = inputs.map((input) => parseEvidence(input));
-  if (parsed.some(({ subject }) => subject === null))
-    throw new TypeError("Native handoff Evidence requires an artifact subject");
-  const ids = parsed.map(({ evidence_id: id }) => id);
-  if (new Set(ids).size !== ids.length)
-    throw new TypeError("Native handoff Evidence must be unique");
-  return parsed;
+  path: readonly (string | number)[] = [],
+): Result<readonly Evidence[], ApplicationGraphEvidenceInputFailure> =>
+  captureInputValidation(() => {
+    const parsed = inputs.map((input, index) =>
+      parseEvidenceInput(input, [...path, index]),
+    );
+    const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
+    if (withoutSubject !== -1)
+      throw invalidEvidence(
+        [...path, withoutSubject],
+        "subject",
+        "Native handoff Evidence requires an artifact subject.",
+      );
+    const ids = parsed.map(({ evidence_id: id }) => id);
+    if (new Set(ids).size !== ids.length)
+      throw invalidEvidence(
+        path,
+        "evidence_id",
+        "Native handoff Evidence must be unique.",
+      );
+    return parsed;
+  });
+
+const captureInputValidation = <Value>(
+  operation: () => Value,
+): Result<Value, ApplicationGraphEvidenceInputFailure> => {
+  try {
+    return ok(operation());
+  } catch (cause: unknown) {
+    if (cause instanceof InvalidApplicationGraphEvidence)
+      return err({ issues: cause.issues });
+    throw cause;
+  }
 };
+
+const parseEvidenceInput = (
+  input: unknown,
+  path: readonly (string | number)[],
+): Evidence => {
+  try {
+    return parseEvidence(input);
+  } catch (cause: unknown) {
+    if (cause instanceof z.ZodError) throw zodInputFailure(cause, input, path);
+    throw cause;
+  }
+};
+
+const parseCallerValue = <Value>(
+  parse: (input: unknown) => Value,
+  input: unknown,
+  path: readonly (string | number)[],
+): Value => {
+  try {
+    return parse(input);
+  } catch (cause: unknown) {
+    if (cause instanceof z.ZodError) throw zodInputFailure(cause, input, path);
+    throw cause;
+  }
+};
+
+const zodInputFailure = (
+  cause: z.ZodError,
+  input: unknown,
+  path: readonly (string | number)[],
+): InvalidApplicationGraphEvidence =>
+  new InvalidApplicationGraphEvidence(
+    projectInputIssues(cause.issues, input).map((issue) => ({
+      ...issue,
+      path: [...path, ...issue.path],
+    })),
+  );
+
+const invalidEvidence = (
+  path: readonly (string | number)[],
+  field: string,
+  message: string,
+): InvalidApplicationGraphEvidence =>
+  new InvalidApplicationGraphEvidence([
+    { path: [...path, field], reason: "invalid_value", message },
+  ]);

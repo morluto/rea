@@ -143,8 +143,10 @@ Every capture requires `truncation_details`, with separate accounting for:
 - `filesystem_before` and `filesystem_after`: file-count/depth limits,
   enumeration failures, whole-file hash budget and bytes successfully hashed.
   Each retained regular file without a digest has an aliased path, size,
-  remaining budget and reason: `file_bytes_budget` or
-  `file_changed_or_short_read`. A file too large for the remaining budget is
+  remaining budget and reason: `file_bytes_budget`,
+  `file_changed_or_short_read`, or `file_unavailable`. Its `system_code` is
+  null unless an OS file operation failed, in which case it preserves the
+  reported error code. A file too large for the remaining budget is
   skipped; a later smaller file can still be hashed. Hash omissions do not
   imply incomplete path enumeration.
 - `process`: sampling limit and whether sampling ended partially. Coverage
@@ -155,8 +157,9 @@ results for unaffected dimensions and mark affected dimensions unknown; an
 incomplete capture cannot locate the first divergence across all dimensions.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
-were omitted. Older truncated captures without these details retain the
-conservative comparison behavior. These diagnostics use the existing scenario
+were omitted. Captures missing `truncation_details` are rejected on import;
+preserve them as historical files and recapture for current comparisons.
+These diagnostics use the existing scenario
 budgets; they do not introduce a separate file-hashing budget.
 
 When the host withholds an unrelated process’s ownership token, REA leaves that

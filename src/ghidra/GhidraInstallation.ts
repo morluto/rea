@@ -1,10 +1,23 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
-import { accessSync, readFileSync } from "node:fs";
+import {
+  accessSync,
+  closeSync,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from "node:fs";
 import { posix, win32 } from "node:path";
 
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
+import {
+  parseExecutableHeader,
+  type ExecutableMetadata,
+} from "../domain/binaryTarget.js";
+import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   ghidraApplicationProperties,
@@ -32,6 +45,103 @@ const NATIVE_PLATFORMS: Readonly<
   linux: { x64: "linux_x86_64", arm64: "linux_arm_64" },
   darwin: { x64: "mac_x86_64", arm64: "mac_arm_64" },
   win32: { x64: "win_x86_64" },
+};
+
+/** Executable format each supported host runs its own Ghidra native tools as. */
+const NATIVE_TOOL_FORMATS: Readonly<
+  Partial<Record<NodeJS.Platform, ExecutableMetadata["format"]>>
+> = {
+  linux: "elf",
+  darwin: "mach-o",
+  win32: "pe",
+};
+
+/** Node architecture identifiers as the executable-header parser reports them. */
+const NATIVE_ARCHITECTURES: readonly {
+  readonly node: NodeJS.Architecture;
+  readonly binary: BinaryArchitecture;
+}[] = [
+  { node: "x64", binary: "x86_64" },
+  { node: "ia32", binary: "x86" },
+  { node: "arm", binary: "arm" },
+  { node: "arm64", binary: "arm64" },
+];
+
+/** Bound installation discovery reads; larger headers remain unknown. */
+const EXECUTABLE_HEADER_PROBE_BYTES = 4096;
+
+/** Compatibility of one present native decompiler with the inspected host. */
+type NativeDecompilerCompatibility =
+  | {
+      readonly status: "incompatible";
+      readonly detail: string;
+      readonly remediation: string;
+    }
+  | { readonly status: "compatible"; readonly detail: string }
+  | { readonly status: "unknown"; readonly detail: string };
+
+/**
+ * Judge a native decompiler by its own executable header instead of the
+ * directory name that admits it.
+ *
+ * Only a header that positively contradicts the host is `incompatible`. An
+ * absent, unreadable, truncated, or unrecognized header stays `unknown`, so a
+ * file the other checks already accept is never refused on missing evidence.
+ */
+const assessNativeDecompiler = (
+  path: string,
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+  probe: GhidraExecutableHeaderProbe | undefined,
+): NativeDecompilerCompatibility => {
+  const expectedFormat = NATIVE_TOOL_FORMATS[platform];
+  const expectedArchitecture = NATIVE_ARCHITECTURES.find(
+    ({ node }) => node === architecture,
+  )?.binary;
+  if (expectedFormat === undefined || expectedArchitecture === undefined)
+    return {
+      status: "unknown",
+      detail: `${path} is executable, but no native tool format is defined for ${platform}/${architecture}`,
+    };
+  let parsed =
+    probe === undefined
+      ? undefined
+      : parseExecutableHeader(probe.bytes, architecture, probe.size);
+  if (probe !== undefined && parsed !== undefined && !parsed.ok) {
+    // FAT parsing selects a host slice. A validated foreign slice can still
+    // prove that its complete architecture table excludes this host. If the
+    // host is listed but its slice is malformed, preserve the unknown outcome.
+    for (const { node } of NATIVE_ARCHITECTURES) {
+      if (node === architecture) continue;
+      const alternative = parseExecutableHeader(probe.bytes, node, probe.size);
+      if (
+        alternative.ok &&
+        !alternative.value.availableArchitectures.includes(expectedArchitecture)
+      ) {
+        parsed = alternative;
+        break;
+      }
+    }
+  }
+  if (parsed === undefined || !parsed.ok)
+    return {
+      status: "unknown",
+      detail: `${path} is executable, but its executable format for ${platform}/${architecture} could not be established`,
+    };
+  const observed = `${parsed.value.format} ${parsed.value.architecture}`;
+  const expected = `${expectedFormat} ${expectedArchitecture}`;
+  if (observed === expected)
+    return {
+      status: "compatible",
+      detail: `${path} reports ${observed}, which matches ${platform}/${architecture}`,
+    };
+  const nativeDirectory = NATIVE_PLATFORMS[platform]?.[architecture];
+  const executable = platform === "win32" ? "decompile.exe" : "decompile";
+  return {
+    status: "incompatible",
+    detail: `${path} reports ${observed}, but ${platform}/${architecture} requires ${expected}`,
+    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${nativeDirectory ?? "<platform>"}/${executable} built for ${expected}, or its build/os equivalent. REA does not build or install native tools.`,
+  };
 };
 
 /** Caller-owned paths and host coordinates used for one installation probe. */
@@ -117,12 +227,27 @@ export interface GhidraJavaObservation {
   readonly runtime: "jdk" | "jre";
 }
 
+/** A bounded executable-header probe: a small prefix plus the whole file size. */
+export interface GhidraExecutableHeaderProbe {
+  /** A bounded prefix; a larger or unreadable header remains unknown. */
+  readonly bytes: Buffer;
+  /** Whole-file size, since header commitments are checked against it, not the prefix. */
+  readonly size: number;
+}
+
 /** Narrow synchronous seam used by provider discovery without launching Ghidra. */
 export interface GhidraInstallationHost {
   readonly platform?: NodeJS.Platform;
   readonly architecture?: NodeJS.Architecture;
   readText(path: string): string | undefined;
   executable(path: string): boolean;
+  /**
+   * Read a bounded header prefix of one executable so admission can reject a
+   * tool built for another platform or architecture. An omitted seam, or an
+   * unreadable file, reports the header as unknown and never rejects an
+   * installation that the other checks already accept.
+   */
+  executableHeader?(path: string): GhidraExecutableHeaderProbe | undefined;
   probeJava(
     command: string,
     environment: NodeJS.ProcessEnv,
@@ -352,15 +477,7 @@ const installationChecks = ({
     remediation:
       "Restore support/analyzeHeadless or support/analyzeHeadless.bat from the official Ghidra release.",
   }),
-  installationCheck({
-    name: "native_decompiler",
-    passed: coordinates.nativeDecompilerPath !== null,
-    code: "executable_missing",
-    detail:
-      coordinates.nativeDecompilerPath ??
-      `Matching native decompiler for ${platform}/${architecture} was not found`,
-    remediation: `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
-  }),
+  nativeDecompilerCheck({ coordinates, platform, architecture, host }),
   javaCheck(
     coordinates.java,
     coordinates.javaCommand,
@@ -472,6 +589,40 @@ const installationCheck = (options: {
         remediation: options.remediation,
       };
 
+/** Require a present native decompiler without positively incompatible bytes. */
+const nativeDecompilerCheck = ({
+  coordinates,
+  platform,
+  architecture,
+  host,
+}: Pick<
+  GhidraInstallationCheckContext,
+  "coordinates" | "platform" | "architecture" | "host"
+>): GhidraInstallationCheck => {
+  const path = coordinates.nativeDecompilerPath;
+  const compatibility =
+    path === null
+      ? undefined
+      : assessNativeDecompiler(
+          path,
+          platform,
+          architecture,
+          host.executableHeader?.(path),
+        );
+  return installationCheck({
+    name: "native_decompiler",
+    passed: path !== null && compatibility?.status !== "incompatible",
+    code: "executable_missing",
+    detail:
+      compatibility?.detail ??
+      `Matching native decompiler for ${platform}/${architecture} was not found`,
+    remediation:
+      compatibility?.status === "incompatible"
+        ? compatibility.remediation
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+  });
+};
+
 const versionCheck = (
   properties: GhidraApplicationProperties | undefined,
 ): GhidraInstallationCheck => {
@@ -543,10 +694,30 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
       return undefined;
     }
   },
+  executableHeader(path) {
+    let handle: number | undefined;
+    try {
+      handle = openSync(
+        path,
+        constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOCTTY,
+      );
+      const metadata = fstatSync(handle);
+      if (!metadata.isFile()) return undefined;
+      const bytes = Buffer.alloc(EXECUTABLE_HEADER_PROBE_BYTES);
+      const read = readSync(handle, bytes, 0, bytes.length, 0);
+      return { bytes: bytes.subarray(0, read), size: metadata.size };
+    } catch (cause: unknown) {
+      // best-effort cleanup: a header that cannot be read stays unknown.
+      void cause;
+      return undefined;
+    } finally {
+      if (handle !== undefined) closeSync(handle);
+    }
+  },
   executable(path) {
     try {
       accessSync(path, constants.X_OK);
-      return true;
+      return statSync(path).isFile();
     } catch (cause: unknown) {
       // best-effort cleanup: optional executable probing; failure means missing.
       void cause;

@@ -6,6 +6,7 @@ import {
 } from "../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../src/application/DirectAnalysisDependencies.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
+import { analysisCliErrorEnvelopeSchema } from "../../src/contracts/errorSchemas.js";
 import type { AnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { AnalysisTimeoutError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -83,7 +84,7 @@ describe("one-shot analysis cleanup outcomes", () => {
           operation: "read_bytes",
           subject: { local_path: path },
           normalized_result: { observation: "retained result" },
-          raw_result: { observation: "retained result" },
+          raw_result: null,
         },
       },
     });
@@ -104,7 +105,8 @@ describe("one-shot analysis cleanup outcomes", () => {
       "read_bytes",
       {},
     );
-    expect(result).toMatchObject({
+    const callerError = analysisCliErrorEnvelopeSchema.parse(result);
+    expect(callerError).toMatchObject({
       code: "cleanup_incomplete",
       category: primary.category,
       message: primary.message,
@@ -114,6 +116,10 @@ describe("one-shot analysis cleanup outcomes", () => {
         cleanup_error: projectAnalysisError(cleanupError),
       },
     });
+    expect(callerError.details).not.toHaveProperty("primary_error");
+    expect(
+      JSON.stringify(callerError).match(/retained observation/g),
+    ).toHaveLength(1);
     expect(isCliOperationFailure(result)).toBe(true);
   });
 
@@ -192,7 +198,7 @@ describe("managed one-shot cleanup outcomes", () => {
               operation: "inspect_managed_artifact",
               observation: "retained result",
             },
-            rawResult: { observation: "retained result" },
+            rawResult: null,
             provider: { id: "fixture" },
           },
         },

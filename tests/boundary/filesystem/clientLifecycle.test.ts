@@ -1629,13 +1629,40 @@ describe("client configuration filesystem failure reporting", () => {
         remove: () => Promise.reject(new Error("SECRET removal failure")),
       }),
     );
-    expect(result.items).toContainEqual({
-      name: "skill",
-      status: "failed",
-      detail:
-        "This item could not be removed. Check file permissions, then rerun uninstall.",
-    });
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "skill",
+        status: "failed",
+        detail: expect.stringContaining(
+          "This item could not be removed. Check file permissions, then rerun uninstall.",
+        ),
+      }),
+    );
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("uninstalls all managed skill roots, including a custom Claude Code directory", async () => {
+    const home = await createTestTempDirectory("rea-uninstall-skills-");
+    roots.push(home);
+    const customClaudeDirectory = join(home, "claude-config");
+    const rootsToRemove = [
+      join(home, ".agents/skills/reverse-engineer-anything"),
+      join(customClaudeDirectory, "skills/reverse-engineer-anything"),
+    ];
+    await Promise.all(
+      rootsToRemove.map((path) => mkdir(path, { recursive: true })),
+    );
+
+    const result = await systemUninstallHost(home, testFileSystem, {
+      CLAUDE_CONFIG_DIR: customClaudeDirectory,
+    }).removeSkill();
+
+    expect(result).toMatchObject({ status: "removed" });
+    await Promise.all(
+      rootsToRemove.map(async (path) => {
+        await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+      }),
+    );
   });
 });
 

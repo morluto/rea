@@ -103,6 +103,27 @@ const cases: readonly {
     exports: { browser: "./../outside.cjs", default: "./actual.cjs" },
     expected: "node_modules/fixture/actual.cjs",
   },
+  {
+    name: "active module-sync rejects an invalid target instead of default",
+    exports: { "module-sync": "./../outside.cjs", default: "./actual.cjs" },
+    expected: null,
+    nodeError: "ERR_INVALID_PACKAGE_TARGET",
+    rejectedTarget: "./../outside.cjs",
+  },
+  {
+    name: "module-sync null blocks default",
+    exports: { "module-sync": null, default: "./actual.cjs" },
+    expected: null,
+    nodeError: "ERR_PACKAGE_PATH_NOT_EXPORTED",
+  },
+  {
+    name: "unmatched nested module-sync permits default",
+    exports: {
+      "module-sync": { browser: "./missing.cjs" },
+      default: "./actual.cjs",
+    },
+    expected: "node_modules/fixture/actual.cjs",
+  },
   ...["./bad%.cjs", "./bad%C3.cjs"].map((target) => ({
     name: `malformed URL ${target} is selected before URL decoding`,
     exports: [target, "./actual.cjs"],

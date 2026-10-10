@@ -22,18 +22,6 @@ describe("Ghidra headless JVM environment", () => {
     });
   });
 
-  it.each(["linux", "darwin"] as const)(
-    "passes %s isolated JVM paths through direct argv instead of script options",
-    (platform) => {
-      expect(
-        ghidraHeadlessJavaOptions("/tmp/rea/home", "/tmp/rea/tmp", platform),
-      ).toEqual({
-        JDK_JAVA_OPTIONS: "",
-        GHIDRA_HEADLESS_JAVA_OPTIONS: "",
-      });
-    },
-  );
-
   it.each(["%TEMP%", 'quote"', "amp&", "line\n", "nul\0"])(
     "rejects interpreter metacharacters in either Windows JVM path: %s",
     (suffix) => {

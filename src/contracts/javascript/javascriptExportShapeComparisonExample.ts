@@ -13,6 +13,7 @@ import {
 import {
   createJavaScriptSemanticGraph,
   createJavaScriptSemanticGraphNode,
+  JavaScriptSemanticEvidenceContextRegistry,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
 import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
@@ -28,6 +29,7 @@ const captures = {
       "agm_f30ded9a83d43a3980417bbe63dfad569e83386f243c4d6a01af0166372cb9e6",
     inventory_graph_sha256:
       "4b8aceaf67e43fd8317ec1f5fd1df5235f8fa402335accf011683e008c6bc62c",
+    integrity_contradictions: [],
   },
   total: {
     input_path: "/examples/javascript-export-presence/right",
@@ -37,6 +39,7 @@ const captures = {
       "agm_d3ceaa1af38fb3474070ca25c0d4644282e5fb7d5824cee3e3a81391481e9fc1",
     inventory_graph_sha256:
       "3e9bc926951480c35385efe5650d9d781631bd74c37a523d543b5fbe06b01ce6",
+    integrity_contradictions: [],
   },
 };
 const summary = {
@@ -72,7 +75,6 @@ const statistics = {
   findings: 1,
   modules: 0,
   parse_failures: 0,
-  truncated_scopes: 0,
 };
 const modulePath = "parser.mjs";
 const limitations = [
@@ -183,30 +185,35 @@ const exampleEvidence = (property: "count" | "total") => {
     coverage: partialApplicationCoverage([], null),
     limitations,
   });
-  const module = createJavaScriptSemanticGraphNode({
-    kind: "module",
-    identity: {
-      artifact_sha256: artifact.sha256,
-      module_path: modulePath,
-      source_range: null,
-      role_key: "example-module",
+  const evidenceContexts = new JavaScriptSemanticEvidenceContextRegistry();
+  const module = createJavaScriptSemanticGraphNode(
+    {
+      kind: "module",
+      identity: {
+        artifact_sha256: artifact.sha256,
+        module_path: modulePath,
+        source_range: null,
+        role_key: "example-module",
+      },
+      function_node_id: null,
+      application_node_ids: [exported.node_id],
+      label: modulePath,
+      properties: {},
+      evidence: {
+        ...evidence,
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+      },
     },
-    function_node_id: null,
-    application_node_ids: [exported.node_id],
-    label: modulePath,
-    properties: {},
-    evidence: {
-      ...evidence,
-      authority: "ast-static-analysis",
-      state: "observed",
-      confidence: "exact",
-    },
-  });
+    evidenceContexts,
+  );
   const semanticGraph = createJavaScriptSemanticGraph({
     schema: "JavaScriptSemanticRelationGraph",
     root_artifact_sha256: metadata.root_artifact_sha256,
     application_graph_id: graph.graph_id,
     root_node_ids: [module.node_id],
+    evidence_contexts: evidenceContexts.contexts,
     nodes: [module],
     relations: [],
     fingerprints: [],

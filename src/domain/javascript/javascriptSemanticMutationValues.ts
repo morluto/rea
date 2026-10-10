@@ -1,9 +1,42 @@
-import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type {
+  JavaScriptSemanticProperty,
+  JavaScriptSemanticValue,
+} from "./javascriptSemanticValueTypes.js";
+import {
+  semanticPropertyPathKeyMatches,
+  type JavaScriptSemanticPropertyPath,
+} from "./javascriptSemanticPropertyPaths.js";
+
+/** Invalidate escaped object references without rewriting their containing slots. */
+export const invalidateSemanticEscapedPath = (
+  value: JavaScriptSemanticValue,
+  path: JavaScriptSemanticPropertyPath,
+): JavaScriptSemanticValue => {
+  if (value.status !== "object" && value.status !== "array") return value;
+  const [key, ...remaining] = path;
+  if (key === undefined)
+    return {
+      status: "unknown",
+      reason: "This object reference may have been mutated by a call.",
+    };
+  const invalidateChild = (
+    property: JavaScriptSemanticProperty,
+  ): JavaScriptSemanticProperty =>
+    semanticPropertyPathKeyMatches(key, property.name)
+      ? {
+          ...property,
+          value: invalidateSemanticEscapedPath(property.value, remaining),
+        }
+      : property;
+  return value.status === "object"
+    ? { ...value, properties: value.properties.map(invalidateChild) }
+    : { ...value, items: value.items.map(invalidateChild) };
+};
 
 /** Invalidate only slots that an explicit mutation can affect. */
 export const invalidateSemanticMutationPath = (
   value: JavaScriptSemanticValue,
-  path: readonly (string | number | null)[],
+  path: JavaScriptSemanticPropertyPath,
 ): JavaScriptSemanticValue => {
   const [key, ...remaining] = path;
   const unknown: JavaScriptSemanticValue = {
@@ -11,13 +44,20 @@ export const invalidateSemanticMutationPath = (
     reason: "This property may have been mutated.",
   };
   if (key === undefined || key === null) return unknown;
-  if (value.status === "object") {
-    const name = String(key);
-    const observed = value.properties.some(
-      (property) => property.name === name,
+  if (value.status === "object" || value.status === "array") {
+    if (value.status === "array" && key === "length")
+      return {
+        status: "array",
+        items: [],
+        unknownItems: true,
+        omittedItems: null,
+      };
+    const slots = value.status === "object" ? value.properties : value.items;
+    const observed = slots.some((property) =>
+      semanticPropertyPathKeyMatches(key, property.name),
     );
-    const properties = value.properties.map((property) =>
-      property.name === name
+    const properties = slots.map((property) =>
+      semanticPropertyPathKeyMatches(key, property.name)
         ? {
             ...property,
             ...(remaining.length === 0
@@ -27,31 +67,15 @@ export const invalidateSemanticMutationPath = (
           }
         : property,
     );
-    if (!observed)
-      properties.push({ name, value: unknown, presence: "unknown-coverage" });
-    return { ...value, properties };
-  }
-  if (value.status === "array") {
-    const name = String(key);
-    // Array length writes can remove every index; ordinary named properties
-    // and sparse indices affect only their own slot.
-    if (name === "length") return unknown;
-    const observed = value.items.some((item) => item.name === name);
-    const items = value.items.map((item) =>
-      item.name === name
-        ? {
-            ...item,
-            presence:
-              remaining.length === 0
-                ? ("unknown-coverage" as const)
-                : item.presence,
-            value: invalidateSemanticMutationPath(item.value, remaining),
-          }
-        : item,
-    );
-    if (!observed)
-      items.push({ name, presence: "unknown-coverage", value: unknown });
-    return { ...value, items };
+    if (!observed && typeof key !== "object")
+      properties.push({
+        name: String(key),
+        value: unknown,
+        presence: "unknown-coverage",
+      });
+    return value.status === "object"
+      ? { ...value, properties }
+      : { ...value, items: properties };
   }
   return unknown;
 };

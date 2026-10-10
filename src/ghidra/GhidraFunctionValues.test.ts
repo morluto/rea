@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import {
   parseGhidraFunctionResult,
@@ -33,6 +34,54 @@ describe("Ghidra function-analysis result values", () => {
       ).toMatchObject({ ok: true });
       expect(
         parseGhidraFunctionResult("procedure_references", incomplete),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    },
+  );
+
+  it.each(["block_membership", "parameters", "parameter_uses"])(
+    "rejects a value-flow result missing %s",
+    (field) => {
+      const dossier = ghidraFunctionDossier();
+      if (
+        typeof dossier !== "object" ||
+        dossier === null ||
+        Array.isArray(dossier)
+      )
+        throw new TypeError("Ghidra dossier fixture is invalid");
+      const flow = dossier.native_value_flow;
+      if (typeof flow !== "object" || flow === null || Array.isArray(flow))
+        throw new TypeError("Ghidra p-code fixture is invalid");
+      if (!Array.isArray(flow.operations))
+        throw new TypeError("Ghidra operation fixture is invalid");
+      const incompleteFlow =
+        field === "block_membership"
+          ? {
+              ...flow,
+              operations: flow.operations.map((operation, index) =>
+                index !== 0 ||
+                typeof operation !== "object" ||
+                operation === null ||
+                Array.isArray(operation)
+                  ? operation
+                  : Object.fromEntries(
+                      Object.entries(operation).filter(
+                        ([key]) => key !== field,
+                      ),
+                    ),
+              ),
+            }
+          : Object.fromEntries(
+              Object.entries(flow).filter(([key]) => key !== field),
+            );
+
+      expect(
+        parseGhidraFunctionResult(
+          "analyze_function",
+          jsonValueSchema.parse({
+            ...dossier,
+            native_value_flow: incompleteFlow,
+          }),
+        ),
       ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
     },
   );

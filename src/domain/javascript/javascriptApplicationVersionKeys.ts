@@ -1,5 +1,8 @@
 import { canonicalJson } from "../comparisonSemantics.js";
-import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JsonValue } from "../jsonValue.js";
 
@@ -295,7 +298,7 @@ const uniqueStringProperty = (
 
 const joined = (...values: readonly unknown[]): string | null => {
   const strings = values.map(nonEmptyString);
-  return strings.some((value) => value === null) ? null : strings.join("\0");
+  return strings.some((value) => value === null) ? null : compositeKey(strings);
 };
 
 const nonEmptyString = (value: unknown): string | null =>

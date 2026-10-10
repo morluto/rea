@@ -1,6 +1,8 @@
 import { z } from "zod";
 import canonicalize from "canonicalize";
 
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+
 import {
   evidenceSchema,
   immutableEvidence,
@@ -72,7 +74,7 @@ export const createEvidenceBundle = (
   unknowns: readonly ResidualUnknown[] = [],
 ): EvidenceBundle => {
   const sortedRecords = [...records].sort((left, right) =>
-    left.evidence_id.localeCompare(right.evidence_id),
+    compareUnicodeCodePoints(left.evidence_id, right.evidence_id),
   );
   return {
     artifacts: uniqueSorted(
@@ -117,14 +119,14 @@ export const createEvidenceBundle = (
     ),
     unknowns: [...unknowns].sort(
       (left, right) =>
-        left.unknown_id.localeCompare(right.unknown_id) ||
+        compareUnicodeCodePoints(left.unknown_id, right.unknown_id) ||
         left.revision - right.revision,
     ),
     records: sortedRecords,
   };
 };
 
-/** Restrict a bundle to records and complete unknown histories for one artifact. */
+/** Retain target records and eligible complete unknown histories with their mutation evidence. */
 export const evidenceBundleForTarget = (
   bundle: EvidenceBundle,
   sha256: string,
@@ -132,57 +134,56 @@ export const evidenceBundleForTarget = (
   const recordsById = new Map(
     bundle.records.map((record) => [record.evidence_id, record]),
   );
-  const candidates = bundle.unknowns.filter(
-    ({ scope_digest: scopeDigest }) => scopeDigest === sha256,
-  );
-  const retained = new Set<ResidualUnknown>();
-  const revisionsById = new Map<string, number>();
-  const dependents = new Map<string, Set<ResidualUnknown>>();
-  for (const unknown of candidates) {
-    const mutationEvidenceIds = new Set(unknown.mutation_evidence_ids);
-    const evidenceAvailable = referencedEvidenceIds(unknown).every((id) => {
-      const record = recordsById.get(id);
-      return (
-        record?.subject?.digest.sha256 === sha256 ||
-        (mutationEvidenceIds.has(id) &&
-          record?.subject === null &&
-          record.predicate_type === "rea.residual-unknown-mutation")
-      );
+  const histories = new Map<string, ResidualUnknown[]>();
+  for (const unknown of bundle.unknowns) {
+    const history = histories.get(unknown.unknown_id) ?? [];
+    history.push(unknown);
+    histories.set(unknown.unknown_id, history);
+  }
+  const retained = new Set<string>();
+  const dependents = new Map<string, Set<string>>();
+  const relationships = new Map<string, Set<string>>();
+  for (const [id, history] of histories) {
+    const eligible = history.every((unknown) => {
+      if (unknown.scope_digest !== sha256) return false;
+      const mutationEvidenceIds = new Set(unknown.mutation_evidence_ids);
+      return referencedEvidenceIds(unknown).every((evidenceId) => {
+        const record = recordsById.get(evidenceId);
+        // Mutation subjects record the target active at the time of an edit,
+        // which need not be the question's immutable investigation scope.
+        return (
+          record?.subject?.digest.sha256 === sha256 ||
+          (mutationEvidenceIds.has(evidenceId) &&
+            record?.predicate_type === "rea.residual-unknown-mutation")
+        );
+      });
     });
-    if (!evidenceAvailable) continue;
-    retained.add(unknown);
-    revisionsById.set(
-      unknown.unknown_id,
-      (revisionsById.get(unknown.unknown_id) ?? 0) + 1,
+    if (!eligible) continue;
+    retained.add(id);
+    const relatedIds = new Set(
+      history.flatMap((unknown) =>
+        unknown.relationships.map(({ unknown_id }) => unknown_id),
+      ),
     );
-    for (const relatedId of new Set(
-      unknown.relationships.map(({ unknown_id: id }) => id),
-    )) {
-      const references =
-        dependents.get(relatedId) ?? new Set<ResidualUnknown>();
-      references.add(unknown);
+    relationships.set(id, relatedIds);
+    for (const relatedId of relatedIds) {
+      const references = dependents.get(relatedId) ?? new Set<string>();
+      references.add(id);
       dependents.set(relatedId, references);
     }
   }
-  const pending: ResidualUnknown[] = [];
-  for (const unknown of retained)
-    if (
-      unknown.relationships.some(({ unknown_id: id }) => !revisionsById.has(id))
-    )
-      pending.push(unknown);
+  const pending: string[] = [];
+  for (const [id, relatedIds] of relationships)
+    if ([...relatedIds].some((relatedId) => !retained.has(relatedId)))
+      pending.push(id);
   for (let index = 0; index < pending.length; index += 1) {
-    const unknown = pending[index];
-    if (unknown === undefined || !retained.delete(unknown)) continue;
-    const remaining = (revisionsById.get(unknown.unknown_id) ?? 1) - 1;
-    if (remaining > 0) {
-      revisionsById.set(unknown.unknown_id, remaining);
-      continue;
-    }
-    revisionsById.delete(unknown.unknown_id);
-    for (const dependent of dependents.get(unknown.unknown_id) ?? [])
-      pending.push(dependent);
+    const id = pending[index];
+    if (id === undefined || !retained.delete(id)) continue;
+    for (const dependent of dependents.get(id) ?? []) pending.push(dependent);
   }
-  const unknowns = candidates.filter((unknown) => retained.has(unknown));
+  const unknowns = bundle.unknowns.filter((unknown) =>
+    retained.has(unknown.unknown_id),
+  );
   const mutationIds = new Set(
     unknowns.flatMap(({ mutation_evidence_ids: ids }) => ids),
   );
@@ -243,7 +244,20 @@ export const parseEvidenceBundle = (input: unknown): EvidenceBundle => {
     throw new TypeError("Evidence bundle contains duplicate record IDs");
   validateUnknownGraph(parsed.unknowns, parsed.records);
   const canonical = createEvidenceBundle(
-    parsed.records.map(parseEvidence),
+    parsed.records.map((record, index) => {
+      try {
+        return parseEvidence(record);
+      } catch (cause: unknown) {
+        if (cause instanceof z.ZodError)
+          throw new z.ZodError(
+            cause.issues.map((issue) => ({
+              ...issue,
+              path: ["records", index, ...issue.path],
+            })),
+          );
+        throw cause;
+      }
+    }),
     parsed.unknowns,
   );
   if (JSON.stringify(parsed) !== JSON.stringify(canonical))
@@ -504,6 +518,6 @@ const uniqueSorted = <Value>(values: readonly Value[]): Value[] => {
   const unique = new Map<string, Value>();
   for (const value of values) unique.set(JSON.stringify(value), value);
   return [...unique.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([, value]) => value);
 };

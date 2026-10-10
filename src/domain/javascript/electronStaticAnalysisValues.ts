@@ -151,7 +151,11 @@ const literalValue = (
   if (
     t.isUnaryExpression(node, { operator: "-" }) &&
     t.isNumericLiteral(node.argument)
-  )
-    return { found: true, value: -node.argument.value };
+  ) {
+    const value = -node.argument.value;
+    return Number.isFinite(value) && !Object.is(value, -0)
+      ? { found: true, value }
+      : { found: false };
+  }
   return { found: false };
 };

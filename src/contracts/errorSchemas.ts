@@ -73,7 +73,9 @@ export const analysisCliErrorEnvelopeSchema = z
   .object({
     error: z.string().min(1),
     input_path: z.string().optional(),
-    input_reason: z.enum(["invalid-json", "read-failed"]).optional(),
+    input_reason: z
+      .enum(["invalid-json", "read-failed", "too-large"])
+      .optional(),
   })
   .passthrough()
   .superRefine((value, context) => {

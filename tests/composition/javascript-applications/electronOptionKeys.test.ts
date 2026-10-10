@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { reconstructJavaScriptArtifact } from "../../../src/application/javascript/JavaScriptArtifactReconstruction.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 
 const PRELOAD = '{ preload: "./preload.js", sandbox: true }';
 const EXPLICIT = `webPreferences: ${PRELOAD}`;
@@ -124,6 +125,28 @@ describe("Electron option keys in reconstructed application graphs", () => {
       evidence: { coverage: { status: "partial" } },
     });
   });
+
+  it.each([
+    ["-0", { status: "dynamic", value: null, expression: "-0" }],
+    ["-0.0", { status: "dynamic", value: null, expression: "-0.0" }],
+    ["-1e999", { status: "dynamic", value: null, expression: "-1e999" }],
+    ["-1", { status: "literal", value: -1, expression: null }],
+  ] as const)(
+    "preserves the JSON representation of BrowserWindow preference %s",
+    async (expression, value) => {
+      const result = await reconstructSource(
+        `new BrowserWindow({ webPreferences: { zoomFactor: ${expression} } });`,
+      );
+      const graph: unknown = JSON.parse(JSON.stringify(result.graph));
+      const transported = parseJavaScriptApplicationGraph(graph);
+      const window = transported.nodes.find(
+        ({ kind }) => kind === "browser-window",
+      );
+      expect(window?.observations[0]?.properties.web_preferences).toEqual([
+        { name: "zoomFactor", value },
+      ]);
+    },
+  );
 });
 
 type Reconstruction = Awaited<ReturnType<typeof reconstructJavaScriptArtifact>>;

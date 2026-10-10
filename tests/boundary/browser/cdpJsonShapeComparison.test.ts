@@ -64,6 +64,32 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
     );
 
     it.each([
+      { name: "scalar array types", before: "[123]", after: '["a"]' },
+      { name: "mixed array types", before: '[1,"a"]', after: "[1,true]" },
+      { name: "nested arrays", before: "[[1],null]", after: '[["a"],null]' },
+      {
+        name: "literal star properties",
+        before: '{"items":[{"*":1},[true]]}',
+        after: '{"items":[{"*":true},[1]]}',
+      },
+    ])("compares $name without retaining values", async ({ before, after }) => {
+      const length = Math.max(
+        Buffer.byteLength(before),
+        Buffer.byteLength(after),
+      );
+      const captures = comparableCaptures(
+        source,
+        before + " ".repeat(length - Buffer.byteLength(before)),
+        after + " ".repeat(length - Buffer.byteLength(after)),
+      );
+      const result = await compareCaptures(...captures);
+      expect(result.dimensions.network).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
+    });
+
+    it.each([
       { name: "a type change", after: '{"é":null,"e\u0301":null}' },
       { name: "a removed key", after: '{"e\u0301":null}' },
       {
@@ -93,6 +119,63 @@ describe.each<BodySource>(["request", "response", "base64 response"])(
     });
   },
 );
+
+describe("selected JSON body-shape coverage", () => {
+  it.each(["unavailable", "partial", "truncated"] as const)(
+    "keeps %s coverage unknown without reporting an availability change",
+    async (coverage) => {
+      const before = captureBody("request", "[123]");
+      const after = structuredClone(before);
+      for (const capture of [before, after])
+        capture.completeness.attach_limited_sections = [];
+      const request = after.network.requests[0];
+      if (request === undefined) throw new Error("Expected request");
+      if (coverage === "truncated")
+        after.completeness.truncated_sections.push("json_body_shapes");
+      else {
+        request.body_shapes.status = coverage;
+        request.body_shapes.response = null;
+        if (coverage === "unavailable") request.body_shapes.request = null;
+        after.completeness.unavailable_sections.push("json_body_shapes");
+      }
+      expect(
+        (await compareCaptures(before, after)).dimensions.network,
+      ).toMatchObject({ status: "unknown", total_changes: 0 });
+      expect(
+        (await compareCaptures(after, after)).dimensions.network.status,
+      ).toBe("unknown");
+      request.status = 503;
+      expect(
+        (await compareCaptures(before, after)).dimensions.network.status,
+      ).toBe("changed");
+    },
+  );
+
+  it("ignores shapes when either capture did not request them", async () => {
+    const before = captureBody("request", "[123]");
+    const after = structuredClone(before);
+    for (const capture of [before, after])
+      capture.completeness.attach_limited_sections = [];
+    after.completeness.excluded.push({
+      section: "json_body_shapes",
+      reason: "not_approved",
+      count: null,
+    });
+    after.completeness.policy_filtered_sections.push("json_body_shapes");
+    for (const request of after.network.requests)
+      request.body_shapes = {
+        status: "not_approved",
+        request: null,
+        response: null,
+      };
+    expect(
+      (await compareCaptures(before, after)).dimensions.network,
+    ).toMatchObject({ status: "unchanged", total_changes: 0 });
+    expect(
+      (await compareCaptures(after, after)).dimensions.network.status,
+    ).toBe("unchanged");
+  });
+});
 
 const comparableCaptures = (
   source: BodySource,

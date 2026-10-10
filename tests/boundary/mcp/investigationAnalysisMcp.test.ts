@@ -129,7 +129,15 @@ const dossierWithCallees = (addresses: readonly string[]) => {
       parameters: base.parameters,
       result: jsonValueSchema.parse({
         ...jsonObjectSchema.parse(base.normalized_result),
-        callees: addresses.map((address) => ({ address, name: "next" })),
+        callees: addresses.map((address) => ({
+          address,
+          name: "next",
+          classification: null,
+          body: {
+            available: false,
+            reason: "The fixture has no callee body-extent observation.",
+          },
+        })),
       }),
       rawResult: base.raw_result,
       confidence: base.confidence,
