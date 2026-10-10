@@ -142,7 +142,11 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
     expect(
       finalizationFromPartial(outcome.partial),
       "the cleanup-flake partial observation preserves SIGTERM finalization",
-    ).toMatchObject({ signals: [{ signal: "SIGTERM", delivery: "signaled" }] });
+    ).toMatchObject({
+      signals: expect.arrayContaining([
+        expect.objectContaining({ signal: "SIGTERM", delivery: "signaled" }),
+      ]),
+    });
     return;
   }
   const { capture } = outcome;

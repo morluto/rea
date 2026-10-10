@@ -859,3 +859,18 @@ it("does not read an identity when there is no finalization interval", async () 
     "an unretained identity stays unverified",
   ).toBe("unverified");
 });
+
+it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
+  "reports the identity-checked delivery result %s unchanged",
+  async (delivery) => {
+    const signalRoot = retainRootSignaller(4242, 500, {
+      observe: async () => ({ state: "readable", identity: "id-launch" }),
+      signal: async () => delivery,
+    });
+
+    expect(
+      await signalRoot("SIGKILL"),
+      "the signaller result is not coerced",
+    ).toBe(delivery);
+  },
+);

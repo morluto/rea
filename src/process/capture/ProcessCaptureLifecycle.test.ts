@@ -336,10 +336,15 @@ it("keeps an observed exit when a late kill delivery reports unverified", async 
 
 it("stops waiting when the escalation delivery never settles and no exit arrives", async () => {
   const fake = fakeTerminal({}, new Promise<void>(() => undefined));
+  const waitStarted = Date.now();
   const pending = start(fake, { timeout_ms: 100, finalization_ms: 100 });
 
   const result = await pending;
 
+  expect(
+    Date.now() - waitStarted,
+    "the wait is bounded by the one-second cleanup grace after the interval",
+  ).toBeLessThan(2_500);
   expect(result.unobserved, "no exit is invented").toBe(true);
   expect(
     result.finalization?.signals.at(-1),
