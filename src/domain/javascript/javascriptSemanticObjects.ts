@@ -179,7 +179,13 @@ const addObjectOperation = (
   output: JavaScriptSemanticObjectOperation[],
 ): void => {
   output.push({
-    objectOperationId: `object:${input.kind}:${String(input.node.start ?? -1)}:${String(input.node.end ?? -1)}`,
+    // These high-volume IDs must not retain intermediate concatenations.
+    objectOperationId: [
+      "object",
+      input.kind,
+      String(input.node.start ?? -1),
+      String(input.node.end ?? -1),
+    ].join(":"),
     kind: input.kind,
     location: range(input.node),
     ownerCallableId: input.ownerCallableId,
