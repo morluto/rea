@@ -93,6 +93,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           bytes.subarray(0, 10).toString("ascii") === "NIBArchive";
         let nib: ReturnType<typeof projectNibArchive> | null = null;
         let xmlText: string | undefined;
+        let binaryOmittedPrototypeKeys = 0;
         if (isNibArchive) {
           const documentBudget = new InterfaceBuilderDecodeBudget(
             decodeBudget.remainingBytes,
@@ -115,13 +116,14 @@ export const analyzeInterfaceBuilderBundle = async (input: {
             xmlText,
           );
           decodeBudget.reserve(
-            decodedReservation,
+            decodedReservation.estimatedBytes,
             "plist representation exceeds the aggregate Interface Builder decode budget",
           );
+          binaryOmittedPrototypeKeys = decodedReservation.omittedPrototypeKeys;
         }
         const { value: raw, omittedPrototypeKeys } =
           nib === null
-            ? decodePlist(bytes, xmlText)
+            ? decodePlist(bytes, xmlText, binaryOmittedPrototypeKeys)
             : { value: nib.raw, omittedPrototypeKeys: 0 };
         if (nib !== null && nib.omitted > 0)
           incompleteHierarchies.set(entry.path, nib.omitted);
@@ -642,10 +644,14 @@ const readEntry = async (
 const decodePlist = (
   bytes: Buffer,
   xmlText?: string,
+  binaryOmittedPrototypeKeys = 0,
 ): { readonly value: JsonValue; readonly omittedPrototypeKeys: number } => {
-  const { value, omittedPrototypeKeys } =
-    bytes.subarray(0, 8).toString("ascii") === "bplist00"
-      ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
-      : parseXmlPropertyList(xmlText ?? decodeXmlPlistText(bytes));
+  const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
+  const { value, omittedPrototypeKeys } = binary
+    ? {
+        value: parseBinary(bytes),
+        omittedPrototypeKeys: binaryOmittedPrototypeKeys,
+      }
+    : parseXmlPropertyList(xmlText ?? decodeXmlPlistText(bytes));
   return { value: projectPlistValue(value).value, omittedPrototypeKeys };
 };

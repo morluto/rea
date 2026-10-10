@@ -952,6 +952,46 @@ describe("bounded Interface Builder archive decoding", () => {
   );
 });
 
+describe("binary Interface Builder prototype keys", () => {
+  it("marks binary archive decoding partial when __proto__ entries are omitted", async () => {
+    const placeholder = "proto_key";
+    const encoded = Buffer.from(
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $objects: ["$null"],
+        $top: {},
+        [placeholder]: "hidden",
+      }),
+    );
+    const needle = Buffer.from(placeholder);
+    const start = encoded.indexOf(needle);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(encoded.indexOf(needle, start + needle.length)).toBe(-1);
+    Buffer.from("__proto__").copy(encoded, start);
+    const root = await createTestTempDirectory("rea-ib-test-");
+    const bundle = join(root, "Example.app");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Prototype.nib"), encoded);
+
+    const result = await analyzeInterfaceBuilderBundle({
+      bundlePath: bundle,
+      targetSha256: "a".repeat(64),
+    });
+
+    expect(result.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "archive_decode",
+        status: "partial",
+        reason: "dictionary_entries_omitted",
+      }),
+    );
+    expect(result.limitations).toContain(
+      "Contents/Resources/Prototype.nib: 1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+    );
+  });
+});
+
 describe("compiled UIKit NIB connections", () => {
   it("projects UIKit runtime outlet and event connections", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
