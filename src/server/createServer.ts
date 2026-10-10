@@ -468,6 +468,7 @@ const registerObservationTools = ({
   });
   registerElectronTools(server, {
     ...common,
+    evidenceById,
     electron: options.electronObservation,
     electronActive: options.electronActiveObservation,
     observationLoadFailure:

@@ -11,6 +11,9 @@ import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
 } from "../../domain/javascript/electronActiveObservation.js";
+import { z } from "zod";
+
+import { analysisViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
   analyzeJavaScriptApplicationInputSchema,
   javascriptApplicationAnalysisResultSchema,
@@ -23,8 +26,21 @@ import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "./javascriptRuntimeRe
 
 const listOutputSchema = evidenceResultOf(electronTargetListSchema);
 const inspectionOutputSchema = evidenceResultOf(electronPageInspectionSchema);
+/** Caller-selected delivery of a completed JavaScript application analysis. */
+export const analyzeJavaScriptApplicationRequestSchema =
+  analyzeJavaScriptApplicationInputSchema.extend({
+    detail: z
+      .enum(["complete", "summary"])
+      .default("complete")
+      .describe(
+        "complete returns the complete application analysis Evidence inline. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; page modules or select items from normalized_result.parent_evidence_id.",
+      ),
+  });
 const applicationOutputSchema = evidenceResultOf(
-  javascriptApplicationAnalysisResultSchema,
+  z.union([
+    javascriptApplicationAnalysisResultSchema,
+    analysisViewResultSchema,
+  ]),
 );
 const reconciliationOutputSchema = evidenceResultOf(
   javascriptRuntimeReconciliationResultSchema,
@@ -79,9 +95,9 @@ export const ELECTRON_TOOL_CONTRACTS = [
     name: "analyze_javascript_application",
     ...toolContractMetadata("analyze_javascript_application"),
     description:
-      "Reconstruct one local ASAR or extracted JavaScript application as an inline application graph without executing it. Returns recovered graph nodes, edges, semantic relations, integrity contradictions, limitations, and coverage. Integrity mismatches fail by default; record-and-continue retains observed bytes as untrusted and marks graph coverage partial.",
+      "Reconstruct one local ASAR or extracted JavaScript application as an inline application graph without executing it. Returns recovered graph nodes, edges, semantic relations, integrity contradictions, limitations, and coverage. Select detail summary to retain the complete analysis Evidence in this session and receive only its summary view, then inspect selected modules or pages with inspect_analysis_view. Integrity mismatches fail by default; record-and-continue retains observed bytes as untrusted and marks graph coverage partial.",
     kind: "electron-provider",
-    inputSchema: analyzeJavaScriptApplicationInputSchema,
+    inputSchema: analyzeJavaScriptApplicationRequestSchema,
     outputSchema: applicationOutputSchema,
     examples: [
       {
@@ -90,6 +106,13 @@ export const ELECTRON_TOOL_CONTRACTS = [
           input_path: "/Applications/Example.app/Contents/Resources/app.asar",
           format: "auto",
           integrity_policy: "fail",
+        },
+      },
+      {
+        title: "Retain the complete analysis and return its summary view",
+        input: {
+          input_path: "/Applications/Example.app/Contents/Resources/app.asar",
+          detail: "summary",
         },
       },
     ],

@@ -1,5 +1,7 @@
 import type { ToolResultDelivery } from "./toolResult.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   optionalProviderUnavailable,
@@ -36,6 +38,7 @@ interface ElectronToolRegistration {
   readonly electron: ElectronObservationPort | undefined;
   readonly electronActive: ElectronActiveObservationPort | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly evidenceById: EvidenceLookup | undefined;
 }
 
 interface ElectronToolContext {
@@ -95,8 +98,15 @@ export const registerElectronTools = (
         registration,
         analyzeContract,
         { input, context },
-        (parsed, { signal, progress }) =>
-          analyzeJavaScriptApplicationValidated(parsed, { signal, progress }),
+        async ({ detail, ...request }, { signal, progress }) => {
+          const analyzed = await analyzeJavaScriptApplicationValidated(
+            request,
+            { signal, progress },
+          );
+          return detail === "summary" && analyzed.ok
+            ? summarizeRetainedAnalysis(analyzed.value, options)
+            : analyzed;
+        },
       ),
   );
   server.registerTool(
