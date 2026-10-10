@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
+import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
 
 /**
  * Device serials as adb prints them: emulator-5554, USB identifiers, and
@@ -28,6 +29,9 @@ const packageNameSchema = z
     /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/u,
     "Package name must be dot-separated Java identifiers",
   );
+
+const keyStringSchema = z.string().min(1).max(256);
+const keyPattern = /^[A-Za-z0-9._\x2d]+$/u;
 
 /**
  * Caller intent for ADB-backed device inspection and acquisition.
@@ -174,14 +178,8 @@ export const adbInputSchemas = {
     namespace: z
       .enum(["system", "secure", "global"])
       .describe("Settings namespace to read"),
-    key: z
-      .string()
-      .min(1)
-      .max(256)
-      .regex(
-        /^[A-Za-z0-9._-]+$/u,
-        "Setting keys are restricted to identifiers",
-      )
+    key: keyStringSchema
+      .regex(keyPattern, "Setting keys are restricted to identifiers")
       .describe("Setting key to read"),
   }),
   collect_adb_bugreport: z.strictObject({
@@ -241,7 +239,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(256)
       .regex(
-        /^[A-Za-z][A-Za-z0-9._-]*$/u,
+        IDENTIFIER_PATTERN,
         "Intent action must be a dotted identifier such as android.intent.action.VIEW",
       )
       .describe("Intent action to start"),
@@ -257,7 +255,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(512)
       .regex(
-        /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]*)?$/u,
+        /^[A-Za-z0-9._\x2d]+(\/[A-Za-z0-9._\x2d]*)?$/u,
         "Component must be package/activity form",
       )
       .optional()
@@ -265,11 +263,8 @@ export const adbInputSchemas = {
     extras: z
       .array(
         z.strictObject({
-          key: z
-            .string()
-            .min(1)
-            .max(256)
-            .regex(/^[A-Za-z0-9._-]+$/u, "Extra keys are identifiers")
+          key: keyStringSchema
+            .regex(keyPattern, "Extra keys are identifiers")
             .describe("Extra key"),
           type: z
             .enum(["string", "boolean", "int", "long", "float"])
