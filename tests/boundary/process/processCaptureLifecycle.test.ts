@@ -12,6 +12,7 @@ import { captureProcessScenario } from "../../../src/process/capture/ProcessHarn
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { snapshotRoots } from "../../../src/process/capture/FilesystemSnapshot.js";
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
+import { expectUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 import {
   type ProcessCaptureCleanupHost,
   observeLaunchedExecutable,
@@ -36,32 +37,6 @@ type PartialCapture = Extract<
 >["capture"];
 const emptyFilesystemCoverage =
   emptyProcessCapture().truncation_details.filesystem_before;
-const expectUnverifiedHostCleanup = (error: ProcessCaptureError): void => {
-  const report = error.cleanupReport;
-  expect(error.reason, error.message).toBe("cleanup_incomplete");
-  expect(report?.owned_process_group.state).toBe("unverified");
-  const [summary, diagnostics] = (
-    report?.owned_process_group.reason ?? ""
-  ).split(": ");
-  expect(summary).toMatch(
-    /^process ownership token could not be read for [1-9][0-9]* live process\(es\)$/u,
-  );
-  const [breakdown, liveCandidates] =
-    diagnostics?.split("; live candidates ") ?? [];
-  const categories = breakdown?.split(", ") ?? [];
-  expect(categories.length).toBeGreaterThan(0);
-  const expectedCategory =
-    process.platform === "linux"
-      ? /^environment_errno_(?:EACCES|EPERM)=[1-9][0-9]*$/u
-      : /^environment_unavailable=[1-9][0-9]*$/u;
-  for (const category of categories) expect(category).toMatch(expectedCategory);
-  expect(liveCandidates).toMatch(
-    /^(?:[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))(?:, [1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM)))*$/u,
-  );
-  expect(report?.terminal_renderer.state).toBe("cleaned");
-  expect(report?.temporary_root.state).toBe("cleaned");
-};
-
 const captureObservations = (
   result: CaptureRun,
 ): {
