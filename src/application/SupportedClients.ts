@@ -168,12 +168,12 @@ const hermesDirectory = ({
             (match, variable: string) => env[variable] ?? match,
           )
         : expandedVariables;
-    if (expanded === "~") return home;
+    if (expanded === "~") return hermesProfileDirectory(home, platform);
     if (
       expanded.startsWith("~/") ||
       (platform === "win32" && expanded.startsWith("~\\"))
     )
-      return join(home, expanded.slice(2));
+      return hermesProfileDirectory(join(home, expanded.slice(2)), platform);
     return hermesProfileDirectory(resolve(expanded), platform);
   }
   const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
