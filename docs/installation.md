@@ -138,6 +138,7 @@ listed after the table because its connector is not one of these files:
 | VS Code            | `vscode`         |
 | Grok Build         | `grok_build`     |
 | OMP                | `omp`            |
+| Hermes             | `hermes`         |
 
 For OMP, setup writes a `type: "stdio"` entry to the user-level
 `~/.omp/agent/mcp.json`. It follows `PI_CONFIG_DIR`, an absolute
@@ -147,6 +148,12 @@ For OMP, setup writes a `type: "stdio"` entry to the user-level
 registration. Doctor treats an `enabled: false` entry as active when
 `enabledServers` lists `rea`, as OMP does, unless `disabledServers` also lists
 it. Run setup under each profile that should load REA.
+
+For Hermes, setup writes a `mcp_servers.rea` entry to `config.yaml`, preserving
+comments and unrelated settings. It resolves that file from `HERMES_HOME`, else
+from the platform default Hermes itself uses — `%LOCALAPPDATA%\hermes` on
+Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Hermes
+connects an entry unless `enabled` is false, so setup states `enabled: true`.
 
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
