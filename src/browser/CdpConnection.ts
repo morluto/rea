@@ -33,6 +33,7 @@ export class CdpConnection {
   >();
   #nextId = 1;
   #closed = false;
+  #closePromise: Promise<void> | undefined;
   #protocolFailed = false;
   #transportFailure: "disconnected" | "payload_limit" = "disconnected";
 
@@ -151,8 +152,15 @@ export class CdpConnection {
   }
 
   /** Close only REA's socket; never close the browser or selected page. */
-  async close(): Promise<void> {
-    if (this.#closed) return;
+  close(): Promise<void> {
+    this.#closePromise ??= this.#closeTransport().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
+    return this.#closePromise;
+  }
+
+  async #closeTransport(): Promise<void> {
     this.#closed = true;
     this.#failPending("disconnected");
     if (this.socket.readyState === WebSocket.CLOSED) return;

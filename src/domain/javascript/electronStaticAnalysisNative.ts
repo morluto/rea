@@ -15,7 +15,7 @@ import {
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   propertyName,
-  semanticStaticPropertyName,
+  semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import type { JavaScriptFindingContext } from "./javascriptStaticAnalysisState.js";
 
@@ -26,6 +26,8 @@ interface NativeBindingInput {
   readonly kind: ElectronNativeAddonBindingFinding["binding_kind"];
   readonly moduleKind: ElectronNativeAddonBindingFinding["module_kind"];
   readonly members: readonly string[];
+  readonly namespaceAccess: boolean;
+  readonly dynamicMemberAccess: boolean;
 }
 
 /** Inspect JavaScript-side imports and re-exports of native .node addons. */
@@ -45,10 +47,10 @@ const inspectImport = (
   context: JavaScriptFindingContext,
 ): void => {
   if (!isNativeSpecifier(node.source.value, "import")) return;
-  const members = node.specifiers.map((specifier) => {
-    if (t.isImportDefaultSpecifier(specifier)) return "default";
-    if (t.isImportNamespaceSpecifier(specifier)) return "*";
-    return propertyName(specifier.imported) || "[dynamic-import]";
+  const members = node.specifiers.flatMap((specifier) => {
+    if (t.isImportDefaultSpecifier(specifier)) return ["default"];
+    if (t.isImportNamespaceSpecifier(specifier)) return [];
+    return [propertyName(specifier.imported)];
   });
   addBinding({
     context,
@@ -57,6 +59,10 @@ const inspectImport = (
     kind: "import",
     moduleKind: "import",
     members,
+    namespaceAccess: node.specifiers.some((value) =>
+      t.isImportNamespaceSpecifier(value),
+    ),
+    dynamicMemberAccess: false,
   });
 };
 
@@ -70,9 +76,10 @@ const inspectNamedExport = (
     !isNativeSpecifier(node.source.value, "import")
   )
     return;
-  const members = node.specifiers.map((specifier) => {
-    if (t.isExportSpecifier(specifier)) return propertyName(specifier.local);
-    return "*";
+  const members = node.specifiers.flatMap((specifier) => {
+    if (t.isExportSpecifier(specifier)) return [propertyName(specifier.local)];
+    if (t.isExportDefaultSpecifier(specifier)) return ["default"];
+    return [];
   });
   addBinding({
     context,
@@ -81,6 +88,10 @@ const inspectNamedExport = (
     kind: "re-export",
     moduleKind: "import",
     members,
+    namespaceAccess: node.specifiers.some((value) =>
+      t.isExportNamespaceSpecifier(value),
+    ),
+    dynamicMemberAccess: false,
   });
 };
 
@@ -99,7 +110,9 @@ const inspectExportAll = (
     specifier: node.source.value,
     kind: "re-export",
     moduleKind: "import",
-    members: ["*"],
+    members: [],
+    namespaceAccess: true,
+    dynamicMemberAccess: false,
   });
 };
 
@@ -115,8 +128,7 @@ const inspectRequireBinding = (
     specifier: required.specifier,
     kind: "require",
     moduleKind: "require",
-    members:
-      required.member === null ? bindingMembers(node.id) : [required.member],
+    ...(required.hasMemberAccess ? required.access : bindingMembers(node.id)),
   });
 };
 
@@ -132,27 +144,33 @@ const inspectReExport = (
     specifier: required.specifier,
     kind: "re-export",
     moduleKind: "require",
-    members: [required.member ?? exportedMember(node.left) ?? "*"],
+    ...required.access,
   });
 };
 
 const addBinding = (input: NativeBindingInput): void => {
   const { context, node, specifier, kind } = input;
-  const unique = [
-    ...new Set(input.members.filter((member) => member !== "")),
-  ].sort(compareUnicodeCodePoints);
-  const members = unique.length === 0 ? ["*"] : unique;
+  const members = [...new Set(input.members)].sort(compareUnicodeCodePoints);
   addLocatedFinding(context, {
     collection: context.accumulator.nativeAddonBindings,
     // Members are a variable-length source-derived list: compositeKey keeps
     // ["a\0b"] distinct from ["a", "b"] instead of collapsing one binding.
-    key: compositeKey(["native-addon-binding", kind, specifier, members]),
+    key: compositeKey([
+      "native-addon-binding",
+      kind,
+      specifier,
+      members,
+      input.namespaceAccess,
+      input.dynamicMemberAccess,
+    ]),
     node,
     value: {
       specifier,
       binding_kind: kind,
       module_kind: input.moduleKind,
       members,
+      namespace_access: input.namespaceAccess,
+      dynamic_member_access: input.dynamicMemberAccess,
       module_key: null,
       location: range(node),
     },
@@ -162,13 +180,20 @@ const addBinding = (input: NativeBindingInput): void => {
 const nativeRequire = (
   node: t.Node | null | undefined,
 ):
-  | { readonly specifier: string; readonly member: string | null }
+  | {
+      readonly specifier: string;
+      readonly hasMemberAccess: boolean;
+      readonly access: NativeMemberAccess;
+    }
   | undefined => {
   let member: string | null = null;
+  let hasMemberAccess = false;
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     if (!t.isNode(node.object)) return undefined;
-    const property = semanticStaticPropertyName(node.property, node.computed);
-    if (member === null && property !== "") member = property;
+    const property = semanticStaticPropertyKey(node.property, node.computed);
+    // Walking inward leaves the first member consumed from the addon itself.
+    member = property;
+    hasMemberAccess = true;
     node = node.object;
   }
   if (!t.isCallExpression(node)) return undefined;
@@ -181,34 +206,52 @@ const nativeRequire = (
     return undefined;
   const specifier = stringValue(argumentNode(node.arguments[0]));
   return specifier !== undefined && isNativeSpecifier(specifier, "require")
-    ? { specifier, member }
+    ? {
+        specifier,
+        hasMemberAccess,
+        access: {
+          members: member === null ? [] : [member],
+          namespaceAccess: !hasMemberAccess,
+          dynamicMemberAccess: hasMemberAccess && member === null,
+        },
+      }
     : undefined;
 };
 
-const bindingMembers = (pattern: t.Node): string[] => {
-  if (t.isIdentifier(pattern)) return ["*"];
-  if (!t.isObjectPattern(pattern)) return ["*"];
-  return pattern.properties.map((property) => {
-    if (t.isRestElement(property)) return "*";
-    return propertyName(property.key) || "[dynamic-import]";
-  });
+interface NativeMemberAccess {
+  readonly members: readonly string[];
+  readonly namespaceAccess: boolean;
+  readonly dynamicMemberAccess: boolean;
+}
+
+const bindingMembers = (pattern: t.Node): NativeMemberAccess => {
+  if (!t.isObjectPattern(pattern))
+    return { members: [], namespaceAccess: true, dynamicMemberAccess: false };
+  const members: string[] = [];
+  let namespaceAccess = false;
+  let dynamicMemberAccess = false;
+  for (const property of pattern.properties) {
+    if (t.isRestElement(property)) {
+      namespaceAccess = true;
+      continue;
+    }
+    const key = semanticStaticPropertyKey(property.key, property.computed);
+    if (key === null) dynamicMemberAccess = true;
+    else members.push(key);
+  }
+  return { members, namespaceAccess, dynamicMemberAccess };
 };
 
 const isModuleExport = (node: t.Node): boolean => {
-  const name = calleeName(node);
-  return (
-    name === "module.exports" ||
-    name.startsWith("module.exports.") ||
-    name.startsWith("exports.")
-  );
-};
-
-const exportedMember = (node: t.Node): string | undefined => {
-  const name = calleeName(node);
-  if (name.startsWith("module.exports."))
-    return name.slice("module.exports.".length);
-  if (name.startsWith("exports.")) return name.slice("exports.".length);
-  return undefined;
+  const keys: (string | null)[] = [];
+  while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    keys.unshift(semanticStaticPropertyKey(node.property, node.computed));
+    node = node.object;
+  }
+  if (!t.isIdentifier(node)) return false;
+  return node.name === "exports"
+    ? keys.length > 0
+    : node.name === "module" && keys[0] === "exports";
 };
 
 const isNativeSpecifier = (

@@ -215,7 +215,10 @@ const materializeSelection = async ({
       const written = await output.write(
         path,
         stream,
-        selectedItem.node.sha256,
+        {
+          sha256: selectedItem.node.sha256,
+          bytes: selectedItem.node.size,
+        },
         signal,
       );
       extracted.push({

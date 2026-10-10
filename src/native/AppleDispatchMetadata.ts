@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { open } from "node:fs/promises";
-import { constants } from "node:fs";
 import {
   objcSwiftMetadataSchema,
   nativeDispatchMetadataResultSchema,
   type ObjcSwiftMetadata,
 } from "../domain/native/objcSwiftMetadata.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisResourceConstraintError,
+} from "../domain/analysisErrorCore.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
+import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixups } from "./AppleMachoFixups.js";
@@ -173,19 +176,25 @@ export const inspectAppleDispatchMetadata = async (
 ) => {
   if (target.kind !== "executable" || target.format !== "mach-o")
     throw new TypeError("Apple dispatch metadata requires a Mach-O target");
-  const handle = await open(
-    target.path,
-    constants.O_RDONLY | constants.O_NOFOLLOW,
-  );
+  const maximumBytes = 64 * 1024 * 1024;
+  const capacityError = () =>
+    new AnalysisResourceConstraintError(
+      "inspect_native_dispatch_metadata",
+      "memory",
+      "Apple static metadata input exceeds its 64 MiB snapshot budget",
+      { input_bytes: maximumBytes },
+    );
+  const handle = await openRegularFile(target.path, {
+    symlinks: "reject",
+    signal,
+  });
   try {
     const before = await handle.stat();
-    if (!before.isFile() || before.size > 64 * 1024 * 1024)
-      throw new RangeError(
-        "Apple metadata target must be a regular file no larger than 64 MiB",
-      );
+    if (before.size > maximumBytes) throw capacityError();
     if (signal?.aborted)
       throw new AnalysisCancelledError("inspect_native_dispatch_metadata");
-    const bytes = await handle.readFile({ signal });
+    const bytes = await readBoundedFileBytes(handle, maximumBytes, signal);
+    if (bytes === undefined) throw capacityError();
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== target.sha256)
       throw new EvidenceIntegrityError(

@@ -6,7 +6,7 @@ import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, type Result } from "../domain/result.js";
 import type { AnalysisExecution } from "./AnalysisProvider.js";
 import type { BinarySession } from "./binary/BinarySession.js";
-import { analysisErrorWithCleanupFailure } from "./binary/AnalysisClientCleanup.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
 export const withSessionCleanup = async <Value>(

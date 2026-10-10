@@ -41,29 +41,33 @@ export const registerJavaScriptRecoveryCommands = (
         ),
     }),
     run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(
-          logger,
-          CLI_COMMANDS.recoverJavaScriptSources,
-          async () => {
-            const result = await service.recover(
-              {
-                path: args.path,
-                output_directory: args.outputDirectory,
-                ...(options.extractionMode === undefined
-                  ? {}
-                  : { extraction_mode: options.extractionMode }),
-                ...(options.rewriteLevel === undefined
-                  ? {}
-                  : { rewrite_level: options.rewriteLevel }),
-              },
-              { signal },
-            );
-            return result.ok
-              ? result.value
-              : projectAnalysisError(result.error);
-          },
-        ),
-      ),
+      withCommandCancellation(async (signal) => {
+        try {
+          return await logCliCommand(
+            logger,
+            CLI_COMMANDS.recoverJavaScriptSources,
+            async () => {
+              const result = await service.recover(
+                {
+                  path: args.path,
+                  output_directory: args.outputDirectory,
+                  ...(options.extractionMode === undefined
+                    ? {}
+                    : { extraction_mode: options.extractionMode }),
+                  ...(options.rewriteLevel === undefined
+                    ? {}
+                    : { rewrite_level: options.rewriteLevel }),
+                },
+                { signal },
+              );
+              return result.ok
+                ? result.value
+                : projectAnalysisError(result.error);
+            },
+          );
+        } finally {
+          await service.close();
+        }
+      }),
   });
 };

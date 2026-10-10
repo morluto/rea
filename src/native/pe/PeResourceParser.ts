@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { jsonParts } from "../../domain/jsonSerialization.js";
 import type {
   InspectPeResourcesInput,
   PeResourceIdentity,
@@ -20,6 +21,15 @@ const METADATA_BYTES = 8 * 1024 * 1024;
 const limit = (message: string): never => {
   throw new ArtifactReaderFailure("limit", message);
 };
+/** Count bytes through the canonical bounded JSON writer. */
+const jsonBytes = (value: unknown, maximum: number): number => {
+  let size = 0;
+  for (const part of jsonParts(value)) {
+    size += Buffer.byteLength(part, "utf8");
+    if (size > maximum) return size;
+  }
+  return size;
+};
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
@@ -38,12 +48,26 @@ export const parsePeResources = async (
   const names = new Map<number, PeResourceIdentity>();
   let examined = 0;
   let metadataBytes = 0;
-  const account = (value: unknown): void => {
-    metadataBytes += Buffer.byteLength(JSON.stringify(value));
-    if (metadataBytes > METADATA_BYTES)
+  const ensureCapacity = (projectedBytes: number): void => {
+    if (metadataBytes + projectedBytes > METADATA_BYTES)
       limit(
         "PE resource metadata exceeds the 8 MiB complete-result allocation budget.",
       );
+  };
+  const accountBytes = (projectedBytes: number): void => {
+    ensureCapacity(projectedBytes);
+    metadataBytes += projectedBytes;
+  };
+  const account = (value: unknown): void => {
+    // Rows are retained in arrays; reserve a separator along with each row.
+    accountBytes(jsonBytes(value, METADATA_BYTES - metadataBytes - 1) + 1);
+  };
+  const reserveDecodedName = (utf16Units: number): void => {
+    // A JSON string can need six ASCII bytes per UTF-16 code unit (for example,
+    // a control character encoded as `\\u0000`). The original spelling and
+    // its hex form are both retained in the result.
+    const projectedBytes = 10 * utf16Units + 256;
+    ensureCapacity(projectedBytes);
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
   const relative = (at: number, length: number): number => {
@@ -70,7 +94,9 @@ export const parsePeResources = async (
     if (previous !== undefined) return previous;
     if (at % 2 !== 0) peFailure("Unaligned PE resource name.");
     const start = relative(at, 2);
-    const length = bytes.readUInt16LE(start) * 2;
+    const utf16Units = bytes.readUInt16LE(start);
+    reserveDecodedName(utf16Units);
+    const length = utf16Units * 2;
     relative(at, 2 + length);
     const raw = bytes.subarray(start + 2, start + 2 + length);
     const value: PeResourceIdentity = {
@@ -80,7 +106,6 @@ export const parsePeResources = async (
       location: recordRange(start, 2 + length, "name"),
     };
     names.set(at, value);
-    account(value);
     return value;
   };
   const visit = async (
@@ -110,8 +135,8 @@ export const parsePeResources = async (
       named_entries: named,
       id_entries: ids,
     };
-    directories.push(directory);
     account(directory);
+    directories.push(directory);
     const keys = new Set<string>();
     const nested = new Set([...ancestors, at]);
     for (let index = 0; index < count; index++) {
@@ -168,8 +193,8 @@ export const parsePeResources = async (
             sha256: "0".repeat(64),
           },
         };
-        resources.push(resource);
         account(resource);
+        resources.push(resource);
       }
     }
   };
@@ -197,7 +222,7 @@ export const parsePeResources = async (
     }
     resource.payload.sha256 = digest;
   }
-  const iconGroups = readIconGroups(bytes, resources, account);
+  const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
   const report: PeResources = {
     artifact,
     format: layout.format,
@@ -225,7 +250,7 @@ export const parsePeResources = async (
     ],
   };
   signal?.throwIfAborted();
-  if (Buffer.byteLength(JSON.stringify(report)) > METADATA_BYTES)
+  if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
     limit("PE resource result exceeds the 8 MiB allocation budget.");
   return report;
 };
@@ -252,6 +277,7 @@ const readIconGroups = (
   bytes: Buffer,
   resources: PeResources["resources"],
   account: (value: unknown) => void,
+  ensureCapacity: (projectedBytes: number) => void,
 ): PeResources["icon_groups"] => {
   const imagesById = new Map<number, PeResources["resources"]>();
   for (const resource of resources) {
@@ -289,6 +315,9 @@ const readIconGroups = (
           (resource) =>
             identityKey(resource.language) === identityKey(group.language),
         );
+        // Indices are uint32 values and each needs at most ten decimal digits
+        // plus a comma. Check the expanded candidate list before allocating it.
+        ensureCapacity(302 + candidates.length * 11);
         const declaredBytes = bytes.readUInt32LE(at + 8);
         const image = {
           location: { offset: at, bytes: 14 },
@@ -310,6 +339,7 @@ const readIconGroups = (
         account(image);
         images.push(image);
       }
+      account({ resource_index: group.index, images: [] });
       return { resource_index: group.index, images };
     });
 };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, readdir, writeFile } from "node:fs/promises";
+import { lstat, open, opendir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { TextDecoder } from "node:util";
 import {
@@ -138,18 +138,27 @@ export const inventoryRecoveryFiles = async (
         OPERATION,
         `Unsafe staging directory: ${directory}`,
       );
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const handle = await opendir(directory);
+    const children: string[] = [];
+    try {
+      for await (const entry of handle) {
+        checkRecoveryCancellation(signal);
+        entries++;
+        if (entries > RECOVERY_LIMITS.outputEntries)
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Recovery staging exceeds the 10000-entry resource limit",
+          );
+        children.push(entry.name);
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+    for (const name of children) {
       checkRecoveryCancellation(signal);
-      entries++;
-      const relativePath =
-        prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-      const path = join(directory, entry.name);
+      const relativePath = prefix === "" ? name : `${prefix}/${name}`;
+      const path = join(directory, name);
       const info = await lstat(path);
-      if (entries > RECOVERY_LIMITS.outputEntries)
-        throw new AnalysisOutputError(
-          OPERATION,
-          "Recovery staging exceeds the 10000-entry resource limit",
-        );
       if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile()))
         throw new AnalysisOutputError(
           OPERATION,

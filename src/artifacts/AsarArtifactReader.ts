@@ -27,6 +27,7 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
+import { admitAsarHeader } from "./AsarHeader.js";
 
 /**
  * Official Electron ASAR adapter with range-streamed member reads.
@@ -57,6 +58,17 @@ export class AsarArtifactReader implements ArtifactReader {
       const snapshotPath = this.#snapshotPath();
       this.#resetArchiveState();
       this.#entries.clear();
+      const headerHandle = await open(
+        snapshotPath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      try {
+        const admitted = await admitAsarHeader(headerHandle);
+        this.#archiveSize = admitted.archiveBytes;
+      } finally {
+        await headerHandle.close();
+      }
+      abortIfNeeded(signal);
       paths = listPackage(snapshotPath, { isPack: false }).sort((left, right) =>
         left.localeCompare(right, "en"),
       );

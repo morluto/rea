@@ -1,3 +1,4 @@
+import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
@@ -64,7 +65,7 @@ export const parseFields = (
         declaring_type: declared?.fullName ?? null,
         name,
         flags,
-        signature: signature(sig),
+        signature: budgetedSignature(sig, layout),
       });
       core.set(token, { token, name });
     }, issues);
@@ -129,7 +130,7 @@ export const parseMemberRefs = (
           layout.rowCounts,
         ),
         name,
-        signature: signature(sig),
+        signature: budgetedSignature(sig, layout),
       });
       core.set(token, { token, name });
     }, issues);
@@ -189,8 +190,14 @@ export const parseMethods = ({
         rva,
         impl_flags: implFlags,
         flags,
-        signature: signature(sig),
-        body: methodBody(bytes, pe, rva, { implFlags, flags }),
+        signature: budgetedSignature(sig, layout),
+        body: methodBody(
+          bytes,
+          pe,
+          rva,
+          { implFlags, flags },
+          managedDecodeBudget(layout),
+        ),
       });
       core.set(token, {
         token,
@@ -257,4 +264,12 @@ export const edges = (
     }
   }
   return { callEdges, fieldAccesses };
+};
+
+const budgetedSignature = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+): ReturnType<typeof signature> => {
+  managedDecodeBudget(layout).reserve(bytes.length * 256, layout.blob.offset);
+  return signature(bytes, managedDecodeBudget(layout).digest(bytes, "sha256"));
 };

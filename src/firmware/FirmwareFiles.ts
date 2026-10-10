@@ -3,8 +3,8 @@ import { constants, createReadStream, createWriteStream } from "node:fs";
 import {
   chmod,
   lstat,
+  opendir,
   open,
-  readdir,
   readlink,
   realpath,
 } from "node:fs/promises";
@@ -28,6 +28,13 @@ export interface FirmwareEntry {
   readonly kind: "file" | "symlink" | "special";
   readonly linkTarget: string | null;
 }
+
+const throwIfFirmwareInventoryCancelled = (
+  signal: AbortSignal | undefined,
+  operation: string,
+): void => {
+  if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+};
 
 /** Hash a regular tool or extracted file without retaining its bytes in memory. */
 export const hashFirmwareFile = async (
@@ -184,7 +191,7 @@ export const inventoryFirmwareOutput = async (
   let bytes = 0;
   let count = 0;
   while (pending.length > 0) {
-    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    throwIfFirmwareInventoryCancelled(signal, operation);
     const directory = pending.pop();
     if (directory === undefined) break;
     const directoryStat = await lstat(directory).catch((cause: unknown) => {
@@ -198,18 +205,28 @@ export const inventoryFirmwareOutput = async (
       directoryStat.isSymbolicLink()
     )
       continue;
-    const names = await readdir(directory).catch((cause: unknown) => {
+    const handle = await opendir(directory).catch((cause: unknown) => {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
-        return [];
+        return undefined;
       throw cause;
     });
+    if (handle === undefined) continue;
+    const names: string[] = [];
+    try {
+      for await (const entry of handle) {
+        throwIfFirmwareInventoryCancelled(signal, operation);
+        count++;
+        if (count > maxEntries)
+          throw new AnalysisOutputError(
+            operation,
+            `Staging entry budget exceeded (${maxEntries})`,
+          );
+        names.push(entry.name);
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
     for (const name of names.sort()) {
-      count++;
-      if (count > maxEntries)
-        throw new AnalysisOutputError(
-          operation,
-          `Staging entry budget exceeded (${maxEntries})`,
-        );
       const path = join(directory, name);
       const stat = await lstat(path).catch((cause: unknown) => {
         if (

@@ -6,6 +6,7 @@ import type { Result } from "../domain/result.js";
 
 /** Provider-neutral application boundary for controlled browser scenarios. */
 export interface BrowserScenarioCapturePort {
+  close?(): Promise<void>;
   identity(): ProviderIdentity;
   captureScenario(
     scenario: BrowserScenario,

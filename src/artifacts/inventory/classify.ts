@@ -5,6 +5,7 @@ import {
 } from "../../filesystem/RegularFile.js";
 import type { FileHandle } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../ArtifactHash.js";
@@ -17,18 +18,46 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { HashResult } from "../ArtifactHash.js";
 import { hashStableRootArtifactHandle } from "./hashStableRootArtifact.js";
 
+interface RootClassification {
+  readonly format: ArtifactOccurrence["artifact_format"];
+  readonly digest: HashResult | null;
+}
+
+type RootInventoryClassification = RootClassification & {
+  readonly zipSource: StableRegularFileDescriptor | undefined;
+};
+
 /** Classify and hash one file root through the same stable open descriptor. */
 export const classifyAndHashRoot = async (
   path: string,
   directory: boolean,
   expectedMetadata: Stats,
   signal?: AbortSignal,
-): Promise<{
-  readonly format: ArtifactOccurrence["artifact_format"];
-  readonly digest: HashResult | null;
-}> => {
-  if (directory) return { format: "directory", digest: null };
+): Promise<RootClassification> => {
+  const result = await classifyAndHashRootForInventory(
+    path,
+    directory,
+    expectedMetadata,
+    signal,
+  );
+  try {
+    return { format: result.format, digest: result.digest };
+  } finally {
+    await result.zipSource?.handle.close();
+  }
+};
+
+/** Classify a root and retain its admitted ZIP descriptor for child inventory. */
+export const classifyAndHashRootForInventory = async (
+  path: string,
+  directory: boolean,
+  expectedMetadata: Stats,
+  signal?: AbortSignal,
+): Promise<RootInventoryClassification> => {
+  if (directory)
+    return { format: "directory", digest: null, zipSource: undefined };
   const handle = await openRootFile(path, signal);
+  let transferHandle = false;
   try {
     const initial = await handle.stat();
     if (!sameRegularFileState(expectedMetadata, initial))
@@ -43,11 +72,24 @@ export const classifyAndHashRoot = async (
       initial,
       signal,
     );
-    return { format, digest };
+    const zipSource = isZipFormat(format);
+    if (zipSource) transferHandle = true;
+    return {
+      format,
+      digest,
+      zipSource: zipSource ? { handle, initial } : undefined,
+    };
   } finally {
-    await handle.close();
+    if (!transferHandle) await handle.close();
   }
 };
+
+const isZipFormat = (format: ArtifactOccurrence["artifact_format"]): boolean =>
+  format === "zip" ||
+  format === "ipa" ||
+  format === "apk" ||
+  format === "msix" ||
+  format === "appx";
 
 const openRootFile = async (
   path: string,

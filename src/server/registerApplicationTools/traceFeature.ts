@@ -1,4 +1,5 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
+import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 import { resolveApplicationEvidenceRequest } from "../../application/EvidenceInputResolver.js";
 import { recordSessionEvidenceSources } from "../sessionEvidence.js";
 
@@ -19,33 +20,41 @@ export const registerTraceFeatureTool = (
   server.registerTool(
     traceContract.name,
     toolRegistrationOptions(traceContract),
-    async (input) => {
-      const resolved = resolveApplicationEvidenceRequest(
-        input,
-        options.evidenceById,
-      );
-      if (!resolved.ok)
-        return server.delivery.toCallToolResult(resolved, traceContract);
-      const parsed = resolved.value;
-      const result = await logToolExecution(
-        options.logger,
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        options.withAdmittedAnalysis,
         traceContract.name,
-        () => Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
-      );
-      if (!result.ok)
-        return server.delivery.toCallToolResult(result, traceContract);
-      const sources = [parsed.application, ...parsed.native_observations];
-      const recorded = recordSessionEvidenceSources(
-        options.recordEvidence,
-        sources,
-      );
-      if (!recorded.ok)
-        return server.delivery.toCallToolResult(recorded, traceContract);
-      return recordResult(
-        { ...options, delivery: server.delivery },
-        traceContract,
-        result.value,
-      );
-    },
+        context.mcpReq.signal,
+        async () => {
+          const resolved = resolveApplicationEvidenceRequest(
+            input,
+            options.evidenceById,
+          );
+          if (!resolved.ok)
+            return server.delivery.toCallToolResult(resolved, traceContract);
+          const parsed = resolved.value;
+          const result = await logToolExecution(
+            options.logger,
+            traceContract.name,
+            () =>
+              Promise.resolve(traceApplicationFeatureEvidenceValidated(parsed)),
+          );
+          if (!result.ok)
+            return server.delivery.toCallToolResult(result, traceContract);
+          const sources = [parsed.application, ...parsed.native_observations];
+          const recorded = recordSessionEvidenceSources(
+            options.recordEvidence,
+            sources,
+          );
+          if (!recorded.ok)
+            return server.delivery.toCallToolResult(recorded, traceContract);
+          return recordResult(
+            { ...options, delivery: server.delivery },
+            traceContract,
+            result.value,
+          );
+        },
+      ),
   );
 };

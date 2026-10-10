@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { lstat, open, readdir, readlink } from "node:fs/promises";
+import { lstat, open, opendir, readlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import type { FileHandle } from "node:fs/promises";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
@@ -153,6 +153,7 @@ export const snapshotRoots = async (
   const entries: FileState[] = [];
   const completeRoots: string[] = [];
   let remainingBytes = scenario.limits.file_bytes;
+  let pendingNames = 0;
   let truncated = false;
   const enumerationReasons = new Set<
     FilesystemCoverage["enumeration_reasons"][number]
@@ -247,15 +248,40 @@ export const snapshotRoots = async (
       symlink_target: null,
     });
     if (type !== "directory") return true;
-    const children = await readdir(path);
+    const children: string[] = [];
+    let complete = true;
+    const remainingEntries =
+      scenario.limits.files - entries.length - pendingNames;
+    const directory = await opendir(path);
+    for await (const child of directory) {
+      signal?.throwIfAborted();
+      if (
+        children.length >= remainingEntries ||
+        depth >= scenario.limits.filesystem_depth
+      ) {
+        truncated = true;
+        complete = false;
+        if (children.length >= remainingEntries)
+          enumerationReasons.add("files_limit");
+        if (depth >= scenario.limits.filesystem_depth)
+          enumerationReasons.add("depth_limit");
+        break;
+      }
+      children.push(child.name);
+      pendingNames += 1;
+    }
     const afterRead = await lstat(path);
     if (!hasSameIdentity(stats, afterRead, "directory")) {
+      pendingNames -= children.length;
       truncated = true;
       enumerationReasons.add("identity_changed");
       return false;
     }
-    let complete = true;
-    for (const child of children.sort()) {
+    children.sort().reverse();
+    while (children.length > 0) {
+      const child = children.pop();
+      if (child === undefined) break;
+      pendingNames -= 1;
       if (!(await visit(root, rootAlias, join(path, child), depth + 1)))
         complete = false;
     }

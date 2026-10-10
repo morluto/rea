@@ -5,6 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createContractToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Bind ADB handlers to their exact named contracts through shared workflows. */
 export const registerAdbTools = (
@@ -12,12 +13,14 @@ export const registerAdbTools = (
   service: AdbDeviceAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const handler = createContractToolHandler(
     server,
     service,
     logger,
     recordEvidence,
+    withAdmittedAnalysis,
   );
   for (const contract of [
     toolContract("inspect_adb_client"),

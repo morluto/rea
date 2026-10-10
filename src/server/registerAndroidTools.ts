@@ -5,6 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createContractToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Bind Android handlers to their exact named contracts through shared workflows. */
 export const registerAndroidTools = (
@@ -12,12 +13,14 @@ export const registerAndroidTools = (
   service: AndroidAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const handler = createContractToolHandler(
     server,
     service,
     logger,
     recordEvidence,
+    withAdmittedAnalysis,
   );
   const packageContract = toolContract("inspect_android_package");
   server.registerTool(

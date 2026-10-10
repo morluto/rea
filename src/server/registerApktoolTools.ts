@@ -5,6 +5,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
 import { createContractToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 /** Bind Apktool handlers to their exact named contracts. */
 export const registerApktoolTools = (
@@ -12,12 +13,14 @@ export const registerApktoolTools = (
   service: ApktoolResourceAnalysisService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const handler = createContractToolHandler(
     server,
     service,
     logger,
     recordEvidence,
+    withAdmittedAnalysis,
   );
   for (const contract of [
     toolContract("inspect_apktool_client"),

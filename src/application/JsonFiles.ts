@@ -42,7 +42,7 @@ export const readJsonFile = async (
     if (!decoded.ok) {
       return err(
         new EvidenceFileError("read", "invalid-json", {
-          cause: decoded.cause,
+          cause: decoded.cause ?? new SyntaxError(decoded.error),
           path: requestedPath,
         }),
       );

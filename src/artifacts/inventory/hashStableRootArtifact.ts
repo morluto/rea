@@ -1,4 +1,5 @@
 import { lstat } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
@@ -45,11 +46,13 @@ export const hashStableRootArtifact = async (
 export const hashStableRootArtifactHandle = async (
   path: string,
   handle: FileHandle,
-  initial: Awaited<ReturnType<FileHandle["stat"]>>,
+  initial: Stats,
   signal?: AbortSignal,
 ): Promise<HashResult> => {
   const digest = await hashReadable(
-    handle.createReadStream({ autoClose: false }),
+    // Read at most the admitted extent plus one byte to detect growth without
+    // following an actively appended file indefinitely.
+    handle.createReadStream({ autoClose: false, start: 0, end: initial.size }),
     signal,
   );
   abortIfNeeded(signal);

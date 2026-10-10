@@ -27,7 +27,11 @@ export const readManagedValue = <Value>(
   try {
     return operation();
   } catch (cause: unknown) {
-    if (!(cause instanceof ManagedReaderFailure)) throw cause;
+    if (
+      !(cause instanceof ManagedReaderFailure) ||
+      cause.issue.code === "resource-limit"
+    )
+      throw cause;
     issues.push(cause.issue);
     return undefined;
   }

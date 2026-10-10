@@ -25,6 +25,12 @@ extraction have independent prerequisites; one does not require the other.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
 absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed.
 
+REA retains at most 8 MiB of combined stdout and stderr per command. Exceeding
+that diagnostic budget stops analysis with an explicit truncated-output error;
+child process limits do not bound parent-side pipe retention. Completed commands
+drain their output streams before recording diagnostics. Failed worker cleanup
+retains the worker and workspace for retry before another request or at shutdown.
+
 Unblob needs the external extractor for the selected format on its inherited
 `PATH`: for example, `debugfs` for ext2/ext3/ext4. Its default Landlock sandbox
 and skip rules stay enabled. Sandbox startup failures remain actionable errors;

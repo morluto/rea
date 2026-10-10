@@ -4,6 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 export const readBoundedFileBytes = async (
   handle: FileHandle,
   maxBytes: number,
+  signal?: AbortSignal,
 ): Promise<Buffer | undefined> => {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
     throw new RangeError("File byte limit must be a nonnegative safe integer");
@@ -11,6 +12,7 @@ export const readBoundedFileBytes = async (
   const buffer = Buffer.allocUnsafe(Math.min(64 * 1_024, maxBytes + 1));
   let total = 0;
   for (;;) {
+    signal?.throwIfAborted();
     const { bytesRead } = await handle.read(
       buffer,
       0,

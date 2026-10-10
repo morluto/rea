@@ -25,6 +25,8 @@ import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import { runDerivedOperation } from "./runDerivedOperation.js";
 import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import { withAdmittedAnalysis } from "./analysisAdmission.js";
+import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
 const PROCESS_CAPTURE_EVIDENCE = {
   operation: "capture_process_scenario",
@@ -94,72 +96,87 @@ export const registerProcessComparisonTool = (
   contract: ReturnType<typeof toolContract<"compare_process_captures">>,
   now: () => number = Date.now,
 ): void => {
+  const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input, context) => {
-      const left = parseCaptureSide(contract.name, "left", input.left);
-      if (!left.ok) return server.delivery.toCallToolResult(left, contract);
-      const right = parseCaptureSide(contract.name, "right", input.right);
-      if (!right.ok) return server.delivery.toCallToolResult(right, contract);
-      const { record: leftRecord, capture: leftCapture } = left.value;
-      const { record: rightRecord, capture: rightCapture } = right.value;
-      const computed = await runDerivedOperation(context, contract.name, () =>
-        compareProcessCaptures(leftCapture, rightCapture, {
-          ...(input.max_capture_age_ms === undefined
-            ? {}
-            : { maxCaptureAgeMs: input.max_capture_age_ms }),
-          ...(input.trace_spec === undefined
-            ? {}
-            : { traceSpecification: input.trace_spec }),
-          now,
-        }),
-      );
-      if (!computed.ok)
-        return server.delivery.toCallToolResult(computed, contract);
-      const comparison = computed.value;
-      const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
-        predicateType: "rea.process-comparison",
-        operation: contract.name,
-        parameters: {
-          left_evidence_id: leftRecord.evidence_id,
-          right_evidence_id: rightRecord.evidence_id,
-          left_normalization: leftCapture.normalization,
-          right_normalization: rightCapture.normalization,
-          ...(input.trace_spec === undefined
-            ? {}
-            : { trace_spec: jsonValueSchema.parse(input.trace_spec) }),
-        },
-        result: jsonValueSchema.parse(comparison),
-        confidence: "derived",
-        authority: "analyst-inference",
-        limitations: comparison.limitations,
-        locations: sourceLocations(leftRecord.locations, rightRecord.locations),
-        evidenceLinks: [leftRecord.evidence_id, rightRecord.evidence_id],
-      });
-      const recordedSources = recordSessionEvidenceSources(
-        (evidence) => session.recordEvidence(evidence),
-        [leftRecord, rightRecord],
-      );
-      if (!recordedSources.ok)
-        return server.delivery.toCallToolResult(recordedSources, contract);
-      return server.delivery.toEvidenceToolResult(
-        evidence,
-        contract,
-        recordDerivedEvidence(
-          session,
-          evidence,
-          comparisonUnknownInput(
-            {
+    async (input, context) =>
+      runAdmittedToolOperation(
+        server,
+        admission,
+        contract.name,
+        context.mcpReq.signal,
+        async () => {
+          const left = parseCaptureSide(contract.name, "left", input.left);
+          if (!left.ok) return server.delivery.toCallToolResult(left, contract);
+          const right = parseCaptureSide(contract.name, "right", input.right);
+          if (!right.ok)
+            return server.delivery.toCallToolResult(right, contract);
+          const { record: leftRecord, capture: leftCapture } = left.value;
+          const { record: rightRecord, capture: rightCapture } = right.value;
+          const computed = await runDerivedOperation(
+            context,
+            contract.name,
+            () =>
+              compareProcessCaptures(leftCapture, rightCapture, {
+                ...(input.max_capture_age_ms === undefined
+                  ? {}
+                  : { maxCaptureAgeMs: input.max_capture_age_ms }),
+                ...(input.trace_spec === undefined
+                  ? {}
+                  : { traceSpecification: input.trace_spec }),
+                now,
+              }),
+          );
+          if (!computed.ok)
+            return server.delivery.toCallToolResult(computed, contract);
+          const comparison = computed.value;
+          const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
+            predicateType: "rea.process-comparison",
+            operation: contract.name,
+            parameters: {
               left_evidence_id: leftRecord.evidence_id,
               right_evidence_id: rightRecord.evidence_id,
-              comparison_evidence_id: evidence.evidence_id,
+              left_normalization: leftCapture.normalization,
+              right_normalization: rightCapture.normalization,
+              ...(input.trace_spec === undefined
+                ? {}
+                : { trace_spec: jsonValueSchema.parse(input.trace_spec) }),
             },
-            comparison,
-          ),
-        ),
-      );
-    },
+            result: jsonValueSchema.parse(comparison),
+            confidence: "derived",
+            authority: "analyst-inference",
+            limitations: comparison.limitations,
+            locations: sourceLocations(
+              leftRecord.locations,
+              rightRecord.locations,
+            ),
+            evidenceLinks: [leftRecord.evidence_id, rightRecord.evidence_id],
+          });
+          const recordedSources = recordSessionEvidenceSources(
+            (evidence) => session.recordEvidence(evidence),
+            [leftRecord, rightRecord],
+          );
+          if (!recordedSources.ok)
+            return server.delivery.toCallToolResult(recordedSources, contract);
+          return server.delivery.toEvidenceToolResult(
+            evidence,
+            contract,
+            recordDerivedEvidence(
+              session,
+              evidence,
+              comparisonUnknownInput(
+                {
+                  left_evidence_id: leftRecord.evidence_id,
+                  right_evidence_id: rightRecord.evidence_id,
+                  comparison_evidence_id: evidence.evidence_id,
+                },
+                comparison,
+              ),
+            ),
+          );
+        },
+      ),
   );
 };
 

@@ -1,4 +1,4 @@
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -248,7 +248,7 @@ const isArchiveFormat = (
 const sha256Handle = async (
   handle: FileHandle,
   path: string,
-  initial: Awaited<ReturnType<FileHandle["stat"]>>,
+  initial: Stats,
   signal?: AbortSignal,
 ): Promise<string> => {
   const hash = createHash("sha256");
@@ -256,11 +256,18 @@ const sha256Handle = async (
   let position = 0;
   while (true) {
     throwIfTargetResolutionCancelled(signal);
-    const observed = await handle.read(chunk, 0, chunk.length, position);
+    const observed = await handle.read(
+      chunk,
+      0,
+      Math.min(chunk.length, initial.size - position + 1),
+      position,
+    );
     throwIfTargetResolutionCancelled(signal);
     if (observed.bytesRead === 0) break;
     hash.update(chunk.subarray(0, observed.bytesRead));
     position += observed.bytesRead;
+    if (position > initial.size)
+      throw new BinaryTargetError(path, "target grew while being read");
   }
   throwIfTargetResolutionCancelled(signal);
   const [opened, currentPath] = await Promise.all([handle.stat(), lstat(path)]);

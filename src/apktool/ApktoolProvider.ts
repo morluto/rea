@@ -1,18 +1,20 @@
-import { createHash } from "node:crypto";
-import { createReadStream, constants as fsConstants } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { createWriteStream, constants as fsConstants } from "node:fs";
 import {
   access,
   chmod,
-  copyFile,
   mkdir,
   mkdtemp,
+  opendir,
   open,
-  readdir,
   rm,
   stat,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Transform, type TransformCallback } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { FileHandle } from "node:fs/promises";
 
 import type {
   ExecutionOptions,
@@ -33,11 +35,19 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  execFileOutput,
-  execFileOutputFailure,
-} from "../process/ExecFileOutput.js";
+  openRegularFile,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
+import {
+  OwnedCommandFailure,
+  runOwnedCommand,
+} from "../process/OwnedCommand.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
@@ -64,20 +74,22 @@ const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
 const STRINGS_XML_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_STRINGS = 2_000;
-const MAX_DECODED_FILES_COUNTED = 100_000;
+const MAX_DECODED_ENTRIES_VISITED = 100_000;
 const STDERR_EXCERPT_BYTES = 512;
 
-/** Stream a local file digest without retaining large APKs in memory. */
-const sha256File = async (path: string): Promise<string> => {
-  const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest("hex");
+const throwIfCancelled = (
+  operation: string,
+  signal: AbortSignal | undefined,
+): void => {
+  if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
 };
 
 /** Read at most the byte budget plus one byte, before decoding UTF-8. */
 const readBoundedText = async (
   path: string,
   budget: number,
+  operation: string,
+  signal: AbortSignal | undefined,
 ): Promise<{ text: string | null; truncated: boolean }> => {
   const file = await open(path, "r").catch((cause: unknown) => {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -85,9 +97,11 @@ const readBoundedText = async (
   });
   if (file === null) return { text: null, truncated: false };
   try {
+    throwIfCancelled(operation, signal);
     const bytes = Buffer.alloc(budget + 1);
     let length = 0;
     while (length < bytes.length) {
+      throwIfCancelled(operation, signal);
       const result = await file.read(
         bytes,
         length,
@@ -97,6 +111,7 @@ const readBoundedText = async (
       if (result.bytesRead === 0) break;
       length += result.bytesRead;
     }
+    throwIfCancelled(operation, signal);
     const truncated = length > budget;
     // A prefix may end within a UTF-8 character; omit those trailing bytes.
     const decoder = new TextDecoder("utf-8");
@@ -125,97 +140,141 @@ const runApktool = async (
   arguments_: readonly string[],
   limits: DecodeLimits,
   signal: AbortSignal | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+  onCleanupOwner: (owner: ProviderProcessSupervisor) => void,
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation));
   try {
-    return ok(
-      await execFileOutput(command, arguments_, {
-        timeout: limits.timeoutMs,
-        maxBuffer: limits.maxOutputBytes,
-        stopSignal: "SIGTERM",
-        ...(signal === undefined ? {} : { signal }),
-      }),
+    const output = await runOwnedCommand(
+      {
+        command,
+        arguments: arguments_,
+        runId: randomUUID(),
+        hostEnvironment: { ...process.env, ...environment },
+      },
+      {
+        timeoutMs: limits.timeoutMs,
+        diagnosticBytes: limits.maxOutputBytes,
+      },
+      signal === undefined ? {} : { signal },
     );
+    return ok({ stdout: output.stdout.text, stderr: output.stderr.text });
   } catch (cause) {
-    if (signal?.aborted || execFileOutputFailure(cause)?.code === "ABORT_ERR")
-      return err(new AnalysisCancelledError(operation, { cause }));
-    const failure = execFileOutputFailure(cause);
-    if (failure === undefined)
+    if (!(cause instanceof OwnedCommandFailure))
       return err(
         new AnalysisProtocolError(`apktool failed for ${operation}`, { cause }),
       );
-    if (failure.outputTruncated)
+    if (cause.cleanupOwner !== undefined) onCleanupOwner(cause.cleanupOwner);
+    const output = cause.snapshot;
+    const capturedOutput =
+      output === null
+        ? undefined
+        : {
+            stdout: output.stdout.text,
+            stderr: output.stderr.text,
+            truncated: output.diagnosticTruncated === true,
+            stdout_bytes: output.stdout.bytes,
+            stderr_bytes: output.stderr.bytes,
+            exit_code: output.exitCode ?? null,
+            signal: output.signal ?? null,
+          };
+    const cleanup =
+      cause.cleanupFailure === null
+        ? undefined
+        : {
+            reason: cause.cleanupFailure,
+            resources: cause.resources,
+          };
+    if (cause.reason === "cancelled")
+      return err(
+        new AnalysisCancelledError(operation, {
+          cause,
+          ...(cleanup === undefined ? {} : { cleanup }),
+          ...(capturedOutput === undefined ? {} : { capturedOutput }),
+        }),
+      );
+    if (cause.reason === "timeout")
+      return err(
+        new AnalysisTimeoutError(operation, limits.timeoutMs, {
+          cause,
+          ...(cleanup === undefined ? {} : { cleanup }),
+          ...(capturedOutput === undefined ? {} : { capturedOutput }),
+        }),
+      );
+    if (cause.reason === "output-limit")
       return err(
         new AnalysisResourceConstraintError(
           operation,
           "memory",
           `apktool output exceeded the ${String(limits.maxOutputBytes)}-byte capture budget`,
           { max_output_bytes: limits.maxOutputBytes },
-          { cause },
+          {
+            cause,
+            ...(cleanup === undefined ? {} : { cleanup }),
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          },
         ),
-      );
-    const excerpt = failure.stderr.trim().slice(0, STDERR_EXCERPT_BYTES);
-    if (failure.killed)
-      return err(
-        new AnalysisTimeoutError(operation, limits.timeoutMs, { cause }),
       );
     return err(
       new AnalysisUnsupportedTargetError(
         operation,
         command,
-        excerpt === ""
-          ? `apktool exited with code ${String(failure.code)} for ${operation}`
-          : excerpt,
-        { cause },
+        output?.stderr.text.trim().slice(0, STDERR_EXCERPT_BYTES) ||
+          `apktool exited with code ${String(output?.exitCode ?? "unknown")} for ${operation}`,
+        {
+          cause,
+          ...(cleanup === undefined ? {} : { cleanup }),
+          ...(capturedOutput === undefined ? {} : { capturedOutput }),
+        },
       ),
     );
   }
 };
 
-/** Count files in the decoded workspace with a hard ceiling. */
+/** Count files while bounding streamed directory-entry traversal. */
 const countDecodedFiles = async (
   root: string,
-): Promise<{ count: number; capped: boolean }> => {
+  signal: AbortSignal | undefined,
+  operation: string,
+): Promise<{
+  count: number;
+  capped: boolean;
+  locales: readonly string[];
+}> => {
   let count = 0;
   let capped = false;
-  const walk = async (directory: string): Promise<void> => {
-    const entries = await readdir(directory, { withFileTypes: true });
-    for (const entry of entries) {
-      if (count >= MAX_DECODED_FILES_COUNTED) {
-        capped = true;
-        return;
-      }
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile()) count += 1;
-    }
-  };
-  await walk(root);
-  return { count, capped };
-};
-
-/** Locale codes present as res/values-<locale>/strings.xml. */
-const listStringLocales = async (
-  workspace: string,
-): Promise<readonly string[]> => {
-  const res = join(workspace, "res");
-  const entries = await readdir(res, { withFileTypes: true }).catch(() => []);
+  let visited = 0;
+  const directories = [root];
   const locales: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const match = /^values-(.+)$/u.exec(entry.name);
-    if (match === null) continue;
-    const strings = join(res, entry.name, "strings.xml");
-    if (
-      await access(strings).then(
-        () => true,
-        () => false,
-      )
-    )
-      locales.push(match[1]!);
+  while (directories.length > 0 && !capped) {
+    throwIfCancelled(operation, signal);
+    const directory = directories.pop()!;
+    for await (const entry of await opendir(directory)) {
+      throwIfCancelled(operation, signal);
+      if (visited >= MAX_DECODED_ENTRIES_VISITED) {
+        capped = true;
+        break;
+      }
+      visited += 1;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        directories.push(path);
+        if (directory === join(root, "res")) {
+          const match = /^values-(.+)$/u.exec(entry.name);
+          if (
+            match !== null &&
+            (await access(join(path, "strings.xml")).then(
+              () => true,
+              () => false,
+            ))
+          )
+            locales.push(match[1]!);
+        }
+      } else if (entry.isFile()) count += 1;
+    }
   }
-  return locales.sort();
+  return { count, capped, locales: locales.sort() };
 };
 
 export interface ApktoolProviderOptions {
@@ -235,9 +294,14 @@ export class ApktoolProvider {
 
   private readonly workspaces = new Set<string>();
   private readonly removeWorkspace: (path: string) => Promise<void>;
+  readonly #pendingCommandOwners = new Map<ProviderProcessSupervisor, string>();
+  readonly #shutdown = new AbortController();
+  readonly #active = new Set<Promise<void>>();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
-    this.environment = options.environment ?? process.env;
+    this.environment = snapshotEnvironment(options.environment ?? process.env);
     this.removeWorkspace =
       options.removeWorkspace ??
       ((path) => rm(path, { recursive: true, force: true }));
@@ -248,12 +312,25 @@ export class ApktoolProvider {
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
-  async inspectAvailability(
-    signal?: AbortSignal,
+  inspectAvailability(signal?: AbortSignal): Promise<ProviderAvailability> {
+    if (this.#closing)
+      return Promise.reject(
+        new AnalysisCancelledError("inspect_apktool_client"),
+      );
+    const operationSignal =
+      signal === undefined
+        ? this.#shutdown.signal
+        : AbortSignal.any([signal, this.#shutdown.signal]);
+    return this.#track(this.#inspectAvailability(operationSignal));
+  }
+
+  async #inspectAvailability(
+    signal: AbortSignal,
   ): Promise<ProviderAvailability> {
     const selection = this.selection();
     try {
-      await inspectApktoolClient(selection, signal);
+      await inspectApktoolClient(selection, signal, this.environment);
+      throwIfCancelled("inspect_apktool_client", signal);
       return {
         status: "available",
         code: null,
@@ -272,30 +349,44 @@ export class ApktoolProvider {
 
   /** Retain failed cleanup ownership and retry it on close. */
   async close(): Promise<void> {
-    const failures: unknown[] = [];
-    for (const path of this.workspaces) {
-      try {
-        await this.removeWorkspace(path);
-        this.workspaces.delete(path);
-      } catch (cause) {
-        failures.push(cause);
-      }
-    }
-    if (failures.length > 0)
-      throw new AggregateError(failures, "Apktool workspace cleanup failed");
+    this.#closing = true;
+    this.#shutdown.abort();
+    this.#closePromise ??= this.#drainAndClean().catch((cause: unknown) => {
+      this.#closePromise = undefined;
+      throw cause;
+    });
+    return this.#closePromise;
   }
 
-  async execute(
+  execute(
     request: ApktoolRequest,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const signal = options?.signal;
+    if (this.#closing)
+      return Promise.resolve(
+        err(new AnalysisCancelledError(request.operation)),
+      );
+    const signal =
+      options?.signal === undefined
+        ? this.#shutdown.signal
+        : AbortSignal.any([options.signal, this.#shutdown.signal]);
+    return this.#track(this.#execute(request, signal));
+  }
+
+  async #execute(
+    request: ApktoolRequest,
+    signal: AbortSignal,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError(request.operation));
     const selection = this.selection();
     let identity: ApktoolClientIdentity;
     try {
-      identity = await inspectApktoolClient(selection, signal);
+      identity = await inspectApktoolClient(
+        selection,
+        signal,
+        this.environment,
+      );
     } catch (cause) {
       if (cause instanceof AnalysisCancelledError) return err(cause);
       if (cause instanceof ApktoolConfigurationFailure)
@@ -316,6 +407,8 @@ export class ApktoolProvider {
         ),
       );
     }
+    if (signal.aborted)
+      return err(new AnalysisCancelledError(request.operation));
     const client = {
       command: selection.command,
       command_source: selection.commandSource,
@@ -337,6 +430,47 @@ export class ApktoolProvider {
     );
   }
 
+  #track<T>(operation: Promise<T>): Promise<T> {
+    const settled = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#active.add(settled);
+    void settled.then(() => this.#active.delete(settled));
+    return operation;
+  }
+
+  async #drainAndClean(): Promise<void> {
+    await Promise.all(this.#active);
+    const failures: unknown[] = [];
+    for (const [owner, root] of this.#pendingCommandOwners) {
+      try {
+        const stopped = await owner.stop();
+        if (stopped.status === "incomplete") throw new Error(stopped.reason);
+        this.#pendingCommandOwners.delete(owner);
+      } catch (cause) {
+        failures.push(
+          new Error(
+            `apktool process cleanup remains incomplete for ${root}: ${cause instanceof Error ? cause.message : String(cause)}`,
+            { cause },
+          ),
+        );
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Apktool process cleanup failed");
+    for (const path of this.workspaces) {
+      try {
+        await this.removeWorkspace(path);
+        this.workspaces.delete(path);
+      } catch (cause) {
+        failures.push(cause);
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError(failures, "Apktool workspace cleanup failed");
+  }
+
   private async decodeResources(
     operation: "decode_android_resources",
     selection: ApktoolCommandSelection,
@@ -353,28 +487,6 @@ export class ApktoolProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const info = await stat(input.path).then(
-      (value) => value,
-      () => null,
-    );
-    if (info === null || !info.isFile())
-      return err(
-        new AnalysisInputError(operation, {
-          cause: new Error(
-            `The selected APK is not a readable file: ${input.path}`,
-          ),
-        }),
-      );
-    const readable = await access(input.path, fsConstants.R_OK).then(
-      () => true,
-      () => false,
-    );
-    if (!readable)
-      return err(
-        new AnalysisInputError(operation, {
-          cause: new Error(`The selected APK is not readable: ${input.path}`),
-        }),
-      );
     const root = await mkdtemp(join(tmpdir(), "rea-apktool-"));
     this.workspaces.add(root);
     const workspace = join(root, "decoded");
@@ -384,6 +496,10 @@ export class ApktoolProvider {
     // The workspace is removed before the result is returned, so an
     // unremovable workspace is reported instead of silently abandoned.
     const removeWorkspace = async (): Promise<void> => {
+      if ([...this.#pendingCommandOwners.values()].includes(root)) {
+        cleanupFailure = `The decode workspace is retained until its apktool process stops: ${root}`;
+        return;
+      }
       try {
         await this.removeWorkspace(root);
         this.workspaces.delete(root);
@@ -394,20 +510,78 @@ export class ApktoolProvider {
     const failureWithCleanup = (failure: AnalysisError): AnalysisError =>
       cleanupFailure === null
         ? failure
-        : failure instanceof AnalysisCancelledError
-          ? new AnalysisCancelledError(operation, {
-              cause: failure,
-              cleanup: { reason: cleanupFailure, resources: [root] },
-            })
-          : new AnalysisProtocolError(failure.message, {
-              cause: failure,
-              cleanup: { reason: cleanupFailure, resources: [root] },
-            });
+        : analysisErrorWithCleanupFailure(
+            failure,
+            new ProviderCleanupError(
+              APKTOOL_PROVIDER_IDENTITY.id,
+              [root],
+              { reason: cleanupFailure },
+              { operation },
+            ),
+            operation,
+          );
+    let source: FileHandle | undefined;
+    let sourceAdmissionFailed = false;
     try {
-      await copyFile(input.path, snapshot, fsConstants.COPYFILE_EXCL);
+      throwIfCancelled(operation, signal);
+      sourceAdmissionFailed = true;
+      source = await openRegularFile(input.path, {
+        symlinks: "follow",
+        ...(signal === undefined ? {} : { signal }),
+      });
+      const sourceInfo = await source.stat();
+      sourceAdmissionFailed = false;
+      const sourceSize = sourceInfo.size;
+      let copiedBytes = 0;
+      const sourceHash = createHash("sha256");
+      const boundedSource = new Transform({
+        transform(
+          chunk: Buffer,
+          _encoding: BufferEncoding,
+          callback: TransformCallback,
+        ) {
+          copiedBytes += chunk.length;
+          if (copiedBytes > sourceSize) {
+            callback(
+              new AnalysisInputError(operation, {
+                cause: new Error(
+                  `The selected APK changed while being copied: ${input.path}`,
+                ),
+              }),
+            );
+            return;
+          }
+          sourceHash.update(chunk);
+          callback(null, chunk);
+        },
+      });
+      await pipeline(
+        source.createReadStream({
+          start: 0,
+          end: sourceSize,
+          autoClose: false,
+          ...(signal === undefined ? {} : { signal }),
+        }),
+        boundedSource,
+        createWriteStream(snapshot, { flags: "wx", mode: 0o600 }),
+        signal === undefined ? {} : { signal },
+      );
+      const finalSourceInfo = await source.stat();
+      if (
+        copiedBytes !== sourceSize ||
+        !sameRegularFileState(sourceInfo, finalSourceInfo)
+      )
+        throw new AnalysisInputError(operation, {
+          cause: new Error(
+            `The selected APK changed while being copied: ${input.path}`,
+          ),
+        });
+      const sha256 = sourceHash.digest("hex");
+      await source.close();
+      source = undefined;
       await chmod(snapshot, 0o400);
+      throwIfCancelled(operation, signal);
       const snapshotInfo = await stat(snapshot);
-      const sha256 = await sha256File(snapshot);
       await mkdir(workspace);
       await mkdir(framework);
       const decoded = await runApktool(
@@ -428,14 +602,19 @@ export class ApktoolProvider {
           maxOutputBytes: DECODE_MAX_OUTPUT_BYTES,
         },
         signal,
+        this.environment,
+        (owner) => this.#pendingCommandOwners.set(owner, root),
       );
       if (!decoded.ok) {
         await removeWorkspace();
         return err(failureWithCleanup(decoded.error));
       }
+      throwIfCancelled(operation, signal);
       const yml = await readBoundedText(
         join(workspace, "apktool.yml"),
         MANIFEST_MAX_BYTES,
+        operation,
+        signal,
       );
       if (yml.text === null || yml.truncated) {
         throw new AnalysisProtocolError(
@@ -446,11 +625,12 @@ export class ApktoolProvider {
       const manifestRead = await readBoundedText(
         join(workspace, "AndroidManifest.xml"),
         MANIFEST_MAX_BYTES,
+        operation,
+        signal,
       );
       const manifest = manifestRead.text;
       const packageName =
         manifest === null ? null : parseManifestPackage(manifest);
-      const locales = await listStringLocales(workspace);
       const stringsDirectory =
         input.locale === undefined
           ? "values"
@@ -459,6 +639,8 @@ export class ApktoolProvider {
         ? await readBoundedText(
             join(workspace, "res", stringsDirectory, "strings.xml"),
             STRINGS_XML_MAX_BYTES,
+            operation,
+            signal,
           )
         : { text: null, truncated: false };
       // Do not parse an incomplete XML document as though its projection were complete.
@@ -468,7 +650,8 @@ export class ApktoolProvider {
           ? { entries: [], unparsedCount: 0 }
           : parseDecodedStrings(stringsXml);
       const bounded = parsedStrings.entries.slice(0, MAX_STRINGS);
-      const files = await countDecodedFiles(workspace);
+      const files = await countDecodedFiles(workspace, signal, operation);
+      throwIfCancelled(operation, signal);
       const coverage =
         (stringsXml !== null && parsedStrings.entries.length > MAX_STRINGS) ||
         manifestRead.truncated ||
@@ -493,7 +676,7 @@ export class ApktoolProvider {
             manifest,
             strings: bounded,
             locale: input.locale ?? null,
-            locales,
+            locales: files.locales,
             decoded_file_count: files.count,
             coverage,
           },
@@ -535,7 +718,7 @@ export class ApktoolProvider {
                 : []),
               ...(files.capped
                 ? [
-                    `decoded_file_count is capped at ${String(MAX_DECODED_FILES_COUNTED)}`,
+                    `Decoded workspace enumeration stopped after ${String(MAX_DECODED_ENTRIES_VISITED)} entries; decoded_file_count and locales may be partial`,
                   ]
                 : []),
               ...(cleanupFailure === null ? [] : [cleanupFailure]),
@@ -547,14 +730,25 @@ export class ApktoolProvider {
       await removeWorkspace();
       return err(
         failureWithCleanup(
-          cause instanceof AnalysisCancelledError ||
-            cause instanceof AnalysisProtocolError
-            ? cause
-            : new AnalysisProtocolError("Apktool resource projection failed", {
-                cause,
-              }),
+          signal?.aborted === true
+            ? new AnalysisCancelledError(operation, { cause })
+            : sourceAdmissionFailed
+              ? new AnalysisInputError(operation, { cause })
+              : cause instanceof AnalysisInputError
+                ? cause
+                : cause instanceof AnalysisCancelledError ||
+                    cause instanceof AnalysisProtocolError
+                  ? cause
+                  : new AnalysisProtocolError(
+                      "Apktool resource projection failed",
+                      {
+                        cause,
+                      },
+                    ),
         ),
       );
+    } finally {
+      await source?.close().catch(() => undefined);
     }
   }
 }

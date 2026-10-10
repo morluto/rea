@@ -405,10 +405,13 @@ const callingConvention = (value: number): string => {
   return flags.length === 0 ? name : `${name} ${flags.join(" ")}`;
 };
 
-export const signature = (blob: Buffer): ManagedSignature => {
+export const signature = (
+  blob: Buffer,
+  rawSha256?: string,
+): ManagedSignature => {
   const raw = {
     raw_length: blob.length,
-    raw_sha256: sha256Bytes(blob),
+    raw_sha256: rawSha256 ?? sha256Bytes(blob),
   };
   try {
     if (blob.length === 0)

@@ -1,4 +1,4 @@
-import { open, type FileHandle } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
 
@@ -10,20 +10,57 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
+import {
+  NonRegularFileReadError,
+  openRegularFile,
+  sameRegularFileState,
+  type StableRegularFileDescriptor,
+} from "../filesystem/RegularFile.js";
 
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
+  #initPromise: Promise<void> | undefined;
+  readonly #ownsHandle: boolean;
 
   constructor(
     private readonly path: string,
     private readonly maximumReadBytes?: number,
+    private readonly admitted?: StableRegularFileDescriptor,
   ) {
     super(path);
+    this.#ownsHandle = admitted === undefined;
   }
 
-  override async init(): Promise<void> {
-    this.#handle = await open(this.path, "r");
-    this.size = (await this.#handle.stat()).size;
+  override init(): Promise<void> {
+    this.#initPromise ??= this.#initialize();
+    return this.#initPromise;
+  }
+
+  async #initialize(): Promise<void> {
+    try {
+      this.#handle =
+        this.admitted?.handle ??
+        (await openRegularFile(this.path, { symlinks: "reject" }));
+    } catch (cause: unknown) {
+      if (cause instanceof NonRegularFileReadError)
+        throw new ArtifactReaderFailure(
+          "format",
+          `ZIP source is not a regular file: ${this.path}`,
+          { cause },
+        );
+      throw cause;
+    }
+    const metadata = await this.#handle.stat();
+    if (
+      !metadata.isFile() ||
+      (this.admitted !== undefined &&
+        !sameRegularFileState(this.admitted.initial, metadata))
+    )
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ZIP source identity changed before reading: ${this.path}`,
+      );
+    this.size = metadata.size;
   }
 
   override async readUint8Array(
@@ -47,7 +84,10 @@ class NodeFileReader extends Reader<string> {
   }
 
   async closeHandle(): Promise<void> {
-    await this.#handle?.close();
+    if (!this.#ownsHandle) return;
+    await this.#initPromise?.catch(() => undefined);
+    if (this.#handle === undefined) return;
+    await this.#handle.close();
     this.#handle = undefined;
   }
 }
@@ -64,9 +104,10 @@ export class ZipArtifactReader implements ArtifactReader {
     path: string,
     format: ZipPackageFormat,
     maximumMetadataReadBytes?: number,
+    admitted?: StableRegularFileDescriptor,
   ) {
     this.format = format;
-    this.#source = new NodeFileReader(path, maximumMetadataReadBytes);
+    this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
     this.#reader = new ZipReader(this.#source, {
       checkSignature: true,
       checkOverlappingEntry: true,

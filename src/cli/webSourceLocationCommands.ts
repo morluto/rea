@@ -38,19 +38,32 @@ export const registerWebSourceLocationCommands = (
         .describe("Zero-based UTF-16 generated column"),
     }),
     run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.traceWebSourceLocation, async () => {
-          const result = await service.trace(
-            {
-              manifest_path: args.manifestPath,
-              script_index: args.scriptIndex,
-              source_map: { path: args.sourceMapPath, url: args.sourceMapUrl },
-              generated_position: { line: args.line, column: args.column },
+      withCommandCancellation(async (signal) => {
+        try {
+          return await logCliCommand(
+            logger,
+            CLI_COMMANDS.traceWebSourceLocation,
+            async () => {
+              const result = await service.trace(
+                {
+                  manifest_path: args.manifestPath,
+                  script_index: args.scriptIndex,
+                  source_map: {
+                    path: args.sourceMapPath,
+                    url: args.sourceMapUrl,
+                  },
+                  generated_position: { line: args.line, column: args.column },
+                },
+                { signal },
+              );
+              return result.ok
+                ? result.value
+                : projectAnalysisError(result.error);
             },
-            { signal },
           );
-          return result.ok ? result.value : projectAnalysisError(result.error);
-        }),
-      ),
+        } finally {
+          await service.close();
+        }
+      }),
   });
 };

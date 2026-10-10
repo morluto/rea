@@ -282,6 +282,7 @@ const managedFieldAccessSchema = z.object({
 
 const managedParseIssueSchema = z.object({
   code: z.enum([
+    "resource-limit",
     "invalid-cli-header",
     "invalid-directory",
     "invalid-metadata-root",

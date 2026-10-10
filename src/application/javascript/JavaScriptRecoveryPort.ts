@@ -8,6 +8,7 @@ import type {
 
 /** Typed boundary for upstream source recovery without exposing its protocol. */
 export interface JavaScriptRecoveryPort {
+  close?(): Promise<void>;
   recover(
     input: JavaScriptRecoveryInput,
     options?: ExecutionOptions,

@@ -50,7 +50,12 @@ export const publishWakaruArtifacts = async (
   const { tree, source, parsed, staging, signal } = context;
   const write = async (path: string, bytes: Buffer) => {
     const sha256 = recoveryDigest(bytes);
-    const file = await tree.write(path, Readable.from([bytes]), sha256, signal);
+    const file = await tree.write(
+      path,
+      Readable.from([bytes]),
+      { sha256, bytes: bytes.byteLength },
+      signal,
+    );
     return {
       path: join(tree.outputRoot, file.relativePath),
       sha256: file.sha256,

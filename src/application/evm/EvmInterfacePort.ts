@@ -8,6 +8,7 @@ import type { Result } from "../../domain/result.js";
 
 /** Replaceable offline interface-recovery engine, independent of wallets and chain clients. */
 export interface EvmInterfacePort {
+  close?(): Promise<void>;
   inspect(
     input: InspectEvmInterfaceInput,
     options?: ExecutionOptions,

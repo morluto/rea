@@ -59,6 +59,10 @@ export class WebSourceLocationService {
     readonly decoder: WebSourceMapPort,
   ) {}
 
+  close(): Promise<void> {
+    return this.decoder.close?.() ?? Promise.resolve();
+  }
+
   /** Shared CLI/MCP workflow preserves raw declarations and every equal-position match. */
   async trace(
     rawInput: unknown,

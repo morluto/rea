@@ -4,7 +4,8 @@ import type { WebModuleTraceService } from "../application/WebModuleTraceService
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
-import { logToolExecution } from "./toolLogging.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { createEvidenceToolHandler } from "./contractToolHandler.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 
 /** Bind the module relationship workflow to its exact canonical contract. */
@@ -13,22 +14,19 @@ export const registerWebModuleTool = (
   service: WebModuleTraceService,
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
+  withAdmittedAnalysis?: WithAdmittedAnalysis,
 ): void => {
   const contract = toolContract("trace_web_module_imports");
+  const handler = createEvidenceToolHandler(
+    server,
+    (input, options) => service.trace(input, options),
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),
-    async (input, context) => {
-      const result = await logToolExecution(logger, contract.name, () =>
-        service.trace(input, { signal: context.mcpReq.signal }),
-      );
-      if (!result.ok) return server.delivery.toCallToolResult(result, contract);
-      const recorded = recordEvidence?.(result.value);
-      return server.delivery.toEvidenceToolResult(
-        result.value,
-        contract,
-        recorded,
-      );
-    },
+    handler(contract),
   );
 };

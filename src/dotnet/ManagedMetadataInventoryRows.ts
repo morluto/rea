@@ -1,3 +1,5 @@
+import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
+
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
@@ -14,8 +16,6 @@ import {
   readMetadataBlob,
   readMetadataGuid,
   readMetadataString,
-  sha256Bytes,
-  strongNameToken,
 } from "./ManagedMetadataHeaps.js";
 import { managedFailure } from "./ManagedReaderFailure.js";
 import type { ManagedResourceDirectory } from "./ManagedMetadataInventory.js";
@@ -29,15 +29,22 @@ type CustomAttribute = ManagedArtifactInspection["attributes"][number];
 const publicKeyIdentity = (
   bytes: Buffer,
   kind: "public-key" | "public-key-token",
+  layout: ManagedMetadataLayout,
 ): AssemblyIdentity["public_key"] => ({
   kind: bytes.length === 0 ? "none" : kind,
   byte_length: bytes.length,
-  sha256: bytes.length === 0 ? null : sha256Bytes(bytes),
+  sha256:
+    bytes.length === 0
+      ? null
+      : managedDecodeBudget(layout).digest(bytes, "sha256"),
   token:
     bytes.length === 0
       ? null
       : kind === "public-key"
-        ? strongNameToken(bytes)
+        ? Buffer.from(managedDecodeBudget(layout).digest(bytes, "sha1"), "hex")
+            .subarray(-8)
+            .reverse()
+            .toString("hex")
         : bytes.length === 8
           ? bytes.toString("hex")
           : null,
@@ -127,6 +134,7 @@ export const readAssembly = (
     public_key: publicKeyIdentity(
       key,
       (flags & 1) === 0 ? "public-key-token" : "public-key",
+      layout,
     ),
     token: metadataToken(32, 1),
     row_offset: table.offset,
@@ -179,8 +187,12 @@ export const readAssemblyReference = (
     public_key_or_token: publicKeyIdentity(
       keyOrToken,
       (flags & 1) === 0 ? "public-key-token" : "public-key",
+      layout,
     ),
-    hash_value_sha256: hashValue.length === 0 ? null : sha256Bytes(hashValue),
+    hash_value_sha256:
+      hashValue.length === 0
+        ? null
+        : managedDecodeBudget(layout).digest(hashValue, "sha256"),
     hash_value_length: hashValue.length,
     token: metadataToken(35, row),
     row_offset: metadataRowOffset(layout, 35, row),
@@ -338,13 +350,17 @@ const decodeCompressedLength = (
   return undefined;
 };
 
-const decodeFixedString = (blob: Buffer): string | null => {
+const decodeFixedString = (
+  blob: Buffer,
+  layout: ManagedMetadataLayout,
+): string | null => {
   if (blob.length < 3 || blob.readUInt16LE(0) !== 1 || blob[2] === 0xff)
     return null;
   const length = decodeCompressedLength(blob, 2);
   if (length === undefined) return null;
   const start = 2 + length.prefix;
   if (start > blob.length - length.length) return null;
+  managedDecodeBudget(layout).reserveString(length.length, layout.blob.offset);
   try {
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       blob.subarray(start, start + length.length),
@@ -427,10 +443,10 @@ export const readCustomAttribute = (
     ),
     type_name: typeName,
     value_length: value.length,
-    value_sha256: sha256Bytes(value),
+    value_sha256: managedDecodeBudget(layout).digest(value, "sha256"),
     decoded_fixed_string:
       typeName === "System.Runtime.Versioning.TargetFrameworkAttribute"
-        ? decodeFixedString(value)
+        ? decodeFixedString(value, layout)
         : null,
     token: metadataToken(12, row),
     row_offset: cursor.start,
@@ -505,8 +521,9 @@ export const readResource = ({
           detail: "Embedded resource length leaves the CLI resources directory",
         });
       } else {
-        dataSha256 = sha256Bytes(
+        dataSha256 = managedDecodeBudget(layout).digest(
           bytes.subarray(start + 4, start + 4 + dataLength),
+          "sha256",
         );
       }
     }

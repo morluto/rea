@@ -6,12 +6,14 @@ import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import { ZIP_NON_ENTRY_TAIL_LIMITATION } from "../../domain/zipPackageFormat.js";
+import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
 
 export const createReader = async (
   path: string,
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
   signal?: AbortSignal,
+  zipSource?: StableRegularFileDescriptor,
 ): Promise<ArtifactReader | undefined> => {
   switch (format) {
     case "directory":
@@ -21,7 +23,7 @@ export const createReader = async (
     case "apk":
     case "msix":
     case "appx":
-      return new ZipArtifactReader(path, format);
+      return new ZipArtifactReader(path, format, undefined, zipSource);
     case "asar":
       return new AsarArtifactReader(path);
     case "mach-o-universal":

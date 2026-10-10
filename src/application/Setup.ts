@@ -30,6 +30,49 @@ export const runSetup = async (
   host: SetupHost = systemSetupHost(),
   confirm?: SetupConfirmation,
 ): Promise<SetupResult> => {
+  let result: SetupResult | undefined;
+  let primaryFailure: unknown;
+  let threw = false;
+  try {
+    result = await runSetupWorkflow(options, host, confirm);
+  } catch (cause: unknown) {
+    threw = true;
+    primaryFailure = cause;
+  }
+
+  let cleanupFailure: string | undefined;
+  try {
+    cleanupFailure = await host.close?.();
+  } catch (cause: unknown) {
+    cleanupFailure = `Setup resource cleanup failed: ${failureMessage(cause)}`;
+  }
+
+  if (threw) {
+    if (cleanupFailure !== undefined)
+      throw new AggregateError(
+        [primaryFailure, new Error(cleanupFailure)],
+        "Setup and resource cleanup failed.",
+        { cause: primaryFailure },
+      );
+    throw primaryFailure;
+  }
+  if (result === undefined) throw new Error("Setup returned no result.");
+  if (cleanupFailure === undefined) return result;
+  return {
+    ...result,
+    status: "needs_human",
+    code: result.code ?? "cleanup_failed",
+    remediation: result.remediation
+      ? `${result.remediation} ${cleanupFailure}`
+      : cleanupFailure,
+  };
+};
+
+const runSetupWorkflow = async (
+  options: SetupOptions,
+  host: SetupHost,
+  confirm?: SetupConfirmation,
+): Promise<SetupResult> => {
   const appliedActions: string[] = [];
   let plannedActions: readonly SetupAction[] = [];
   const clients: Record<string, ClientConfigurationResult> = {};
@@ -59,6 +102,7 @@ export const runSetup = async (
     options.readinessScope?.clients === undefined &&
     options.allDetectedClients !== true &&
     options.installHopper !== true &&
+    options.skillClientIds === undefined &&
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
@@ -67,10 +111,12 @@ export const runSetup = async (
     : (options.clientIds ??
       options.readinessScope?.clients ??
       discovery.defaultClientIds);
-  let skillNeedsInstall = await host.skillNeedsInstall(selectedClientIds);
+  let selectedSkillClientIds = options.skillClientIds ?? selectedClientIds;
+  let skillNeedsInstall = await host.skillNeedsInstall(selectedSkillClientIds);
   let skillSelected =
     options.installSkill === true ||
-    (options.installSkill !== false && selectedClientIds.length > 0);
+    (options.installSkill !== false &&
+      (selectedClientIds.length > 0 || selectedSkillClientIds.length > 0));
   let installSkill = skillSelected && skillNeedsInstall;
   let planDiscovery = discovery;
   if (interactiveSelection) {
@@ -138,6 +184,7 @@ export const runSetup = async (
         selectedClientIds.length === 0) ||
       (options.installSkill !== false && selectedClientIds.length > 0);
     installSkill = skillSelected && skillNeedsInstall;
+    selectedSkillClientIds = selectedClientIds;
   }
   const planned = await planSetupActions({
     discovery: planDiscovery,
@@ -145,7 +192,7 @@ export const runSetup = async (
     providerEnvironment,
     command: host.registrationCommand,
     clientIds: selectedClientIds,
-    skillClientIds: selectedClientIds,
+    skillClientIds: selectedSkillClientIds,
     installSkill,
   });
   plannedActions = planned.plannedActions;
@@ -256,7 +303,7 @@ export const runSetup = async (
       host,
       options,
       appliedActions,
-      selectedClientIds,
+      selectedSkillClientIds,
     ))
   )
     return fail(
@@ -325,8 +372,11 @@ const installHopperAction = async (input: {
   emitProgress(input.options, {
     actionId: "install_hopper",
     label,
-    state: "completed",
-    detail: installed.launcherPath,
+    state: installed.cleanupFailure === undefined ? "completed" : "warning",
+    detail:
+      installed.cleanupFailure === undefined
+        ? installed.launcherPath
+        : `${installed.launcherPath}; ${installed.cleanupFailure}`,
   });
   const providerEnvironment = {
     ...input.providerEnvironment,
@@ -492,3 +542,6 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
         },
       }),
 });
+
+const failureMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);

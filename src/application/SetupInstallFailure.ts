@@ -10,10 +10,15 @@ export type SetupFailureCode =
   | "destination_exists"
   | "mount_failed"
   | "bundle_invalid"
-  | "copy_failed";
+  | "copy_failed"
+  | "cleanup_failed";
 
 export type SetupHopperInstallResult =
-  | { readonly status: "installed"; readonly launcherPath: string }
+  | {
+      readonly status: "installed";
+      readonly launcherPath: string;
+      readonly cleanupFailure?: string;
+    }
   | {
       readonly status: "failed";
       readonly code: SetupFailureCode;

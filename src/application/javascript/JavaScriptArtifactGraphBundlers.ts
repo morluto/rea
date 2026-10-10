@@ -1,6 +1,7 @@
 import type { ApplicationNode } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import type { JavaScriptBundlerRegistration } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
   addAstContainsEdge,
   artifactLocalIdentity,
@@ -80,7 +81,11 @@ const createBundlerChunkNode = (
   const chunkKey = `${registration.runtime}:${registration.chunk_keys.join(",")}`;
   return context.accumulator.addNode({
     kind: "javascript-chunk",
-    identity: artifactLocalIdentity(file.sha256, "bundler-chunk", chunkKey),
+    identity: artifactLocalIdentity(
+      file.sha256,
+      "bundler-chunk",
+      compositeKey([registration.runtime, registration.chunk_keys]),
+    ),
     observations: [
       {
         label: chunkKey,

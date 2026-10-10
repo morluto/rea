@@ -31,6 +31,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   evmInterfaceFailure,
   capturedEvmOutput,
@@ -75,6 +76,16 @@ type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Run unchanged EVMole/WASM in an owned worker; no target, chain or network execution. */
 export class EvmoleInterfaceProvider implements EvmInterfacePort {
+  #tail: Promise<void> = Promise.resolve();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  #pendingCleanup:
+    | {
+        root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
+        process: ProviderProcessSupervisor | undefined;
+      }
+    | undefined;
+
   constructor(
     readonly environment: Readonly<NodeJS.ProcessEnv> = process.env,
     readonly launcher?: Launcher,
@@ -84,11 +95,29 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
   ) {}
 
   /** Bind recovered interface candidates to both original carrier and decoded byte identity. */
-  async inspect(
+  inspect(
     input: InspectEvmInterfaceInput,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#closing) return Promise.resolve(err(this.#closedError()));
+    const operation = this.#tail.then(() =>
+      this.#closing ? err(this.#closedError()) : this.#inspect(input, options),
+    );
+    this.#tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #inspect(
+    input: InspectEvmInterfaceInput,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const pending = await this.#retire();
+    if (pending !== undefined) return err(pending);
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
+    let processOwner: ProviderProcessSupervisor | undefined;
     let retainedOutput: AnalysisCapturedOutput | undefined;
     let phase: "configuration" | "artifact-read" | "worker" = "configuration";
     let workerLimits: EvmWorkerLimits | undefined;
@@ -321,6 +350,8 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         }),
       );
     } catch (cause: unknown) {
+      if (cause instanceof OwnedCommandFailure)
+        processOwner = cause.cleanupOwner;
       let fileFailure: EvmFileSizeFailureEvidence | undefined;
       if (
         cause instanceof OwnedCommandFailure &&
@@ -368,14 +399,42 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
             ),
       );
     }
+    if (processOwner !== undefined) {
+      this.#pendingCleanup = { root, process: processOwner };
+      root = undefined;
+      return err(
+        new ProviderCleanupError(
+          EVMOLE_PROVIDER_IDENTITY.id,
+          [
+            processOwner.launch.ownership?.runId ?? "owned-worker",
+            ...(this.#pendingCleanup.root === undefined
+              ? []
+              : [this.#pendingCleanup.root.path]),
+          ],
+          {
+            reason: "Owned EVM worker cleanup could not be confirmed",
+            previous_error: result.ok
+              ? null
+              : projectAnalysisError(result.error),
+            ...(retainedOutput === undefined
+              ? {}
+              : { captured_output: { ...retainedOutput } }),
+          },
+          { operation: OPERATION },
+        ),
+      );
+    }
     if (root !== undefined) {
       try {
         await root.close();
       } catch (cause: unknown) {
+        const retainedRoot = root;
+        this.#pendingCleanup = { root: retainedRoot, process: undefined };
+        root = undefined;
         return err(
           new ProviderCleanupError(
             EVMOLE_PROVIDER_IDENTITY.id,
-            [root.path],
+            [retainedRoot.path],
             {
               reason: cause instanceof Error ? cause.message : String(cause),
               previous_error: result.ok
@@ -400,5 +459,60 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
           ),
         )
       : result;
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    this.#closePromise ??= this.#tail
+      .then(async () => {
+        const failure = await this.#retire();
+        if (failure !== undefined) throw failure;
+      })
+      .catch((cause: unknown) => {
+        this.#closePromise = undefined;
+        throw cause;
+      });
+    return this.#closePromise;
+  }
+
+  #closedError(): ProviderCleanupError {
+    return new ProviderCleanupError(
+      EVMOLE_PROVIDER_IDENTITY.id,
+      [],
+      { reason: "Provider is closing" },
+      { operation: OPERATION },
+    );
+  }
+
+  async #retire(): Promise<ProviderCleanupError | undefined> {
+    const pending = this.#pendingCleanup;
+    if (pending === undefined) return undefined;
+    if (pending.process !== undefined) {
+      const stopped = await pending.process.stop();
+      if (stopped.status === "incomplete")
+        return new ProviderCleanupError(
+          EVMOLE_PROVIDER_IDENTITY.id,
+          [pending.process.launch.ownership?.runId ?? "owned-worker"],
+          { reason: stopped.reason },
+          { operation: OPERATION },
+        );
+      pending.process = undefined;
+    }
+    if (pending.root !== undefined) {
+      const root = pending.root;
+      try {
+        await root.close();
+        pending.root = undefined;
+      } catch (cause: unknown) {
+        return new ProviderCleanupError(
+          EVMOLE_PROVIDER_IDENTITY.id,
+          [root.path],
+          { reason: cause instanceof Error ? cause.message : String(cause) },
+          { operation: OPERATION, cause },
+        );
+      }
+    }
+    this.#pendingCleanup = undefined;
+    return undefined;
   }
 }

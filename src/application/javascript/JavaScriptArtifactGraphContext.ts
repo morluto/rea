@@ -1,4 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import {
   completeApplicationCoverage,
   partialApplicationCoverage,
@@ -330,7 +331,7 @@ export const chunkLookupKey = (
   path: string,
   runtime: string,
   chunkKey: string,
-): string => `${path}\0${runtime}\0${chunkKey}`;
+): string => compositeKey([path, runtime, chunkKey]);
 
 /** Resolve a relative static specifier without escaping the artifact root. */
 export const resolveArtifactPath = (

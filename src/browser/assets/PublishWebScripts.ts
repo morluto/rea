@@ -76,7 +76,12 @@ export const publishWebScripts = async (
         bytes: bytes.length,
       },
     });
-    await tree.write("manifest.json", Readable.from([bytes]), digest, signal);
+    await tree.write(
+      "manifest.json",
+      Readable.from([bytes]),
+      { sha256: digest, bytes: bytes.byteLength },
+      signal,
+    );
     signal?.throwIfAborted();
     await tree.commit();
     return result;
@@ -109,7 +114,7 @@ const publishPlannedScript = async (
     tree.write(
       `files/${relativePath}`,
       Readable.from([content.bytes]),
-      content.sha256,
+      { sha256: content.sha256, bytes: content.bytes.byteLength },
       signal,
     );
   try {

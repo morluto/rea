@@ -18,19 +18,64 @@ import {
   sourceMapCodecReplySchema,
 } from "./SourceMapCodecProtocol.js";
 import {
+  SourceMapCleanupFailure,
   runSourceMapCommand,
+  type SourceMapCleanupOwner,
   type SourceMapDecoderDependencies,
 } from "./SourceMapCommand.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { jsonParts } from "../../domain/jsonSerialization.js";
 const OPERATION = "trace_web_source_location";
 
 /** Integrate the pinned upstream codec through an independently bounded owned process. */
 export class SourceMapDecoder implements WebSourceMapPort {
+  #tail: Promise<void> = Promise.resolve();
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  #pendingCleanup: SourceMapCleanupOwner | undefined;
+
   constructor(readonly dependencies: SourceMapDecoderDependencies = {}) {}
   /** Return complete point evidence after process and private-root cleanup. */
-  async trace(
+  trace(
     input: Parameters<WebSourceMapPort["trace"]>[0],
     options?: ExecutionOptions,
   ): Promise<Result<WebSourceMapReport, AnalysisError>> {
+    if (this.#closing)
+      return Promise.resolve(
+        err(
+          new ProviderCleanupError(
+            "source-map-decoder",
+            [],
+            { reason: "Provider is closing" },
+            { operation: OPERATION },
+          ),
+        ),
+      );
+    const operation = this.#tail.then(() =>
+      this.#closing
+        ? err(
+            new ProviderCleanupError(
+              "source-map-decoder",
+              [],
+              { reason: "Provider is closing" },
+              { operation: OPERATION },
+            ),
+          )
+        : this.#trace(input, options),
+    );
+    this.#tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #trace(
+    input: Parameters<WebSourceMapPort["trace"]>[0],
+    options?: ExecutionOptions,
+  ): Promise<Result<WebSourceMapReport, AnalysisError>> {
+    const cleanupFailure = await this.#retryCleanup();
+    if (cleanupFailure !== undefined) return err(cleanupFailure);
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
     const request = sourceMapCodecInputSchema.safeParse({
@@ -40,26 +85,38 @@ export class SourceMapDecoder implements WebSourceMapPort {
     });
     if (!request.success)
       return err(new AnalysisInputError(OPERATION, { cause: request.error }));
-    const serialized = JSON.stringify(request.data);
-    if (
-      Buffer.byteLength(input.text) > WEB_SOURCE_MAP_LIMITS.mapBytes ||
-      Buffer.byteLength(serialized) > WEB_SOURCE_MAP_LIMITS.outputBytes
-    )
-      return err(
-        new ArtifactOperationError(
-          OPERATION,
-          "limit",
-          undefined,
-          `${input.path}: Source-map input exceeds the 4 MiB map or 32 MiB encoded request budget.`,
-        ),
+    const capacityFailure = () =>
+      new ArtifactOperationError(
+        OPERATION,
+        "limit",
+        undefined,
+        `${input.path}: Source-map input exceeds the 4 MiB map or 32 MiB encoded request budget.`,
       );
+    if (Buffer.byteLength(input.text) > WEB_SOURCE_MAP_LIMITS.mapBytes)
+      return err(capacityFailure());
+    const encoded: string[] = [];
+    let encodedBytes = 0;
+    for (const part of jsonParts(request.data)) {
+      const bytes = Buffer.byteLength(part);
+      if (bytes > WEB_SOURCE_MAP_LIMITS.outputBytes - encodedBytes)
+        return err(capacityFailure());
+      encoded.push(part);
+      encodedBytes += bytes;
+    }
+    if (options?.signal?.aborted)
+      return err(new AnalysisCancelledError(OPERATION));
+    const serialized = encoded.join("");
     const response = await runSourceMapCommand(
       serialized,
       input.path,
       options,
       this.dependencies,
     );
-    if (!response.ok) return response;
+    if (!response.ok) {
+      if (response.error instanceof SourceMapCleanupFailure)
+        this.#pendingCleanup = response.error.cleanupOwner;
+      return response;
+    }
     let value: unknown;
     try {
       value = JSON.parse(response.value);
@@ -91,6 +148,29 @@ export class SourceMapDecoder implements WebSourceMapPort {
         ),
       );
     return ok(reply.data.report);
+  }
+
+  async close(): Promise<void> {
+    this.#closing = true;
+    this.#closePromise ??= this.#tail
+      .then(async () => {
+        const failure = await this.#retryCleanup();
+        if (failure !== undefined) throw failure;
+      })
+      .catch((cause: unknown) => {
+        this.#closePromise = undefined;
+        throw cause;
+      });
+    return this.#closePromise;
+  }
+
+  async #retryCleanup(): Promise<AnalysisError | undefined> {
+    const pending = this.#pendingCleanup;
+    if (pending === undefined) return undefined;
+    const failure = await pending.close(null);
+    if (failure !== undefined) return failure;
+    this.#pendingCleanup = undefined;
+    return undefined;
   }
 }
 const codecFailure = (

@@ -1,4 +1,4 @@
-import { analysisErrorWithCleanupFailure } from "../application/binary/AnalysisClientCleanup.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { fileURLToPath } from "node:url";
 
 import {

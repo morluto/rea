@@ -31,6 +31,7 @@ export type ReferenceSourceEntry =
       readonly status: "read";
       readonly kind: "symlink";
       readonly path: string;
+      /** Internal and relative missing targets are resolved from the inventory root. */
       readonly target: string;
       readonly targetState: "internal" | "external" | "missing";
     }

@@ -1,3 +1,7 @@
+import {
+  admitManagedProjection,
+  managedDecodeBudget,
+} from "./ManagedDecodeBudget.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   managedMemberInspectionSchema,
@@ -31,40 +35,47 @@ const unavailable = (
   bytes: Buffer,
   issue: ManagedParseIssue | null,
 ): ManagedMemberInspection =>
-  managedMemberInspectionSchema.parse({
-    artifact: {
-      path: target.path,
-      sha256: target.sha256,
-      byte_length: bytes.length,
-      format: "pe",
-    },
-    module: null,
-    metadata: {
-      status: issue === null ? "absent" : "malformed",
-      version: null,
-      table_row_counts: {},
-    },
-    identity_scope: {
-      token_identity: "build-local",
-      requires_artifact_sha256: target.sha256,
-      requires_mvid: null,
-    },
-    types: [],
-    fields: [],
-    methods: [],
-    member_refs: [],
-    call_edges: [],
-    field_accesses: [],
-    coverage: {
-      state: "unavailable",
-      issues: issue === null ? [] : [issue],
-    },
-    limitations: [
-      issue === null
-        ? "The PE has no admitted CLI metadata; managed member inspection is unavailable."
-        : "The CLI metadata could not be admitted; managed member inspection is unavailable.",
-    ],
-  });
+  managedMemberInspectionSchema.parse(
+    admitManagedProjection({
+      artifact: {
+        path: target.path,
+        sha256: target.sha256,
+        byte_length: bytes.length,
+        format: "pe",
+      },
+      module: null,
+      metadata: {
+        status:
+          issue === null
+            ? "absent"
+            : issue.code === "resource-limit"
+              ? "partial"
+              : "malformed",
+        version: null,
+        table_row_counts: {},
+      },
+      identity_scope: {
+        token_identity: "build-local",
+        requires_artifact_sha256: target.sha256,
+        requires_mvid: null,
+      },
+      types: [],
+      fields: [],
+      methods: [],
+      member_refs: [],
+      call_edges: [],
+      field_accesses: [],
+      coverage: {
+        state: "unavailable",
+        issues: issue === null ? [] : [issue],
+      },
+      limitations: [
+        issue === null
+          ? "The PE has no admitted CLI metadata; managed member inspection is unavailable."
+          : "The CLI metadata could not be admitted; managed member inspection is unavailable.",
+      ],
+    }),
+  );
 
 const readMemberInventory = (
   bytes: Buffer,
@@ -132,41 +143,48 @@ export const inspectManagedMembersBytes = (
       fields.core,
       memberRefs.core,
     );
-    return managedMemberInspectionSchema.parse({
-      artifact: {
-        path: target.path,
-        sha256: target.sha256,
-        byte_length: bytes.length,
-        format: "pe",
-      },
-      module: inventory.module,
-      metadata: {
-        status: issues.length === 0 ? "complete" : "partial",
-        version: layout.version,
-        table_row_counts: managedTableRowCounts(layout),
-      },
-      identity_scope: {
-        token_identity: "build-local",
-        requires_artifact_sha256: target.sha256,
-        requires_mvid: inventory.module?.mvid ?? null,
-      },
-      types: parsedTypes.types,
-      fields: fields.fields,
-      methods: methods.methods,
-      member_refs: memberRefs.refs,
-      call_edges: related.callEdges,
-      field_accesses: related.fieldAccesses,
-      coverage: {
-        state:
-          issues.length === 0 && !incompleteMembers ? "complete" : "partial",
-        issues: coverageIssues,
-      },
-      limitations: [
-        "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
-        "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
-        "Signatures are decoded for common ECMA-335 primitive, class, valuetype, pointer, byref, array, and generic variable forms; unsupported forms retain raw signature hashes.",
-      ],
-    });
+    return managedMemberInspectionSchema.parse(
+      admitManagedProjection(
+        {
+          artifact: {
+            path: target.path,
+            sha256: target.sha256,
+            byte_length: bytes.length,
+            format: "pe",
+          },
+          module: inventory.module,
+          metadata: {
+            status: issues.length === 0 ? "complete" : "partial",
+            version: layout.version,
+            table_row_counts: managedTableRowCounts(layout),
+          },
+          identity_scope: {
+            token_identity: "build-local",
+            requires_artifact_sha256: target.sha256,
+            requires_mvid: inventory.module?.mvid ?? null,
+          },
+          types: parsedTypes.types,
+          fields: fields.fields,
+          methods: methods.methods,
+          member_refs: memberRefs.refs,
+          call_edges: related.callEdges,
+          field_accesses: related.fieldAccesses,
+          coverage: {
+            state:
+              issues.length === 0 && !incompleteMembers
+                ? "complete"
+                : "partial",
+            issues: coverageIssues,
+          },
+          limitations: [
+            "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
+            "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
+            "Signatures are decoded for common ECMA-335 primitive, class, valuetype, pointer, byref, array, and generic variable forms; unsupported forms retain raw signature hashes.",
+          ],
+        },
+        managedDecodeBudget(layout),
+      ),
+    );
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure)
       return unavailable(target, bytes, cause.issue);

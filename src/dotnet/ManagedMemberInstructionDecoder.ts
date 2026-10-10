@@ -1,3 +1,4 @@
+import type { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type {
   ManagedExceptionRegion,
   ManagedInstructionAnchor,
@@ -434,6 +435,7 @@ export const parseExceptionRegions = (
   bytes: Buffer,
   offset: number,
   methodEnd: number,
+  budget?: ManagedDecodeBudget,
 ): ExceptionRegionParseResult => {
   const regions: ManagedExceptionRegion[] = [];
   let sectionOffset = offset;
@@ -487,7 +489,14 @@ export const parseExceptionRegions = (
       );
 
     const count = (size - 4) / clauseSize;
-    regions.push(...readExceptionClauses(bytes, sectionOffset + 4, count, fat));
+    budget?.reserve(count * 256, sectionOffset);
+    for (const region of readExceptionClauses(
+      bytes,
+      sectionOffset + 4,
+      count,
+      fat,
+    ))
+      regions.push(region);
 
     hasMoreSections = (kind & 0x80) !== 0;
     sectionOffset += size;

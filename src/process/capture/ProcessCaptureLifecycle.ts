@@ -806,7 +806,7 @@ const releaseCapturedProcessGroup = async (
       };
 };
 
-export const releaseProcessResources = async (options: {
+export interface ProcessCaptureResourceCleanupOptions {
   readonly timers: ReadonlySet<ProcessTimer>;
   readonly terminal: Pick<IPty, "pid"> | undefined;
   readonly renderer: TerminalRenderer | undefined;
@@ -815,63 +815,197 @@ export const releaseProcessResources = async (options: {
   readonly captureBaseline?: ProcessOwnershipBaseline;
   readonly sampledProcessGroupIds?: readonly number[];
   readonly host?: ProcessCaptureCleanupHost;
-}): Promise<ProcessCaptureCleanupReport> => {
-  const host = options.host ?? processCaptureCleanupHost;
-  for (const timer of options.timers) timer.cancel();
-  let terminalRenderer: ProcessCaptureCleanupReport["terminal_renderer"] = {
-    state: options.renderer === undefined ? "not_required" : "cleaned",
-    reason: null,
-  };
-  try {
-    await options.renderer?.dispose();
-  } catch (cause: unknown) {
-    terminalRenderer = {
-      state: "failed",
-      reason:
-        cause instanceof Error
-          ? cause.message || cause.name || "renderer dispose failed"
-          : "renderer dispose failed",
+}
+
+/** One capture's exact resource owner, with completion tracked per resource. */
+class ProcessCaptureResourceOwner {
+  readonly #host: ProcessCaptureCleanupHost;
+  #terminalRenderer:
+    | ProcessCaptureCleanupReport["terminal_renderer"]
+    | undefined;
+  #ownedProcessGroup:
+    | ProcessCaptureCleanupReport["owned_process_group"]
+    | undefined;
+  #temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] | undefined;
+
+  constructor(private readonly options: ProcessCaptureResourceCleanupOptions) {
+    this.#host = options.host ?? processCaptureCleanupHost;
+    if (options.renderer === undefined)
+      this.#terminalRenderer = { state: "not_required", reason: null };
+    if (options.terminal === undefined)
+      this.#ownedProcessGroup = { state: "not_required", reason: null };
+  }
+
+  async close(): Promise<ProcessCaptureCleanupReport> {
+    for (const timer of this.options.timers) timer.cancel();
+    await this.#releaseRenderer();
+    await this.#releaseOwnedProcessGroup();
+    await this.#releaseTemporaryRoot();
+    return {
+      owned_process_group: this.#ownedProcessGroup ?? {
+        state: "unverified",
+        reason: "owned process cleanup was not attempted",
+      },
+      terminal_renderer: this.#terminalRenderer ?? {
+        state: "unverified",
+        reason: "terminal renderer cleanup was not attempted",
+      },
+      temporary_root: this.#temporaryRoot ?? {
+        state: "unverified",
+        reason: "temporary root cleanup was not attempted",
+      },
     };
   }
-  const ownedProcessGroup =
-    options.terminal === undefined
-      ? { state: "not_required" as const, reason: null }
-      : await releaseCapturedProcessGroup(
-          {
-            runId: options.runId,
-            leaderPid: options.terminal.pid,
-            processGroupId: options.terminal.pid,
-            sweepTokenOwnedProcesses: true,
-            ...(options.sampledProcessGroupIds === undefined
-              ? {}
-              : { sampledProcessGroupIds: options.sampledProcessGroupIds }),
-            ...(options.captureBaseline === undefined
-              ? {}
-              : { captureBaseline: options.captureBaseline }),
-          },
-          host,
+
+  async #releaseRenderer(): Promise<void> {
+    if (
+      this.options.renderer === undefined ||
+      this.#terminalRenderer?.state === "cleaned" ||
+      this.#terminalRenderer?.state === "not_required"
+    )
+      return;
+    try {
+      await this.options.renderer.dispose();
+      this.#terminalRenderer = { state: "cleaned", reason: null };
+    } catch (cause: unknown) {
+      this.#terminalRenderer = {
+        state: "failed",
+        reason: cleanupFailureMessage(cause, "renderer dispose failed"),
+      };
+    }
+  }
+
+  async #releaseOwnedProcessGroup(): Promise<void> {
+    if (
+      this.options.terminal === undefined ||
+      this.#ownedProcessGroup?.state === "cleaned" ||
+      this.#ownedProcessGroup?.state === "not_required"
+    )
+      return;
+    this.#ownedProcessGroup = await releaseCapturedProcessGroup(
+      {
+        runId: this.options.runId,
+        leaderPid: this.options.terminal.pid,
+        processGroupId: this.options.terminal.pid,
+        sweepTokenOwnedProcesses: true,
+        ...(this.options.sampledProcessGroupIds === undefined
+          ? {}
+          : { sampledProcessGroupIds: this.options.sampledProcessGroupIds }),
+        ...(this.options.captureBaseline === undefined
+          ? {}
+          : { captureBaseline: this.options.captureBaseline }),
+      },
+      this.#host,
+    );
+  }
+
+  async #releaseTemporaryRoot(): Promise<void> {
+    if (this.#temporaryRoot?.state === "cleaned") return;
+    const owned = this.#ownedProcessGroup;
+    if (owned?.state === "failed" || owned?.state === "unverified") {
+      this.#temporaryRoot = {
+        state: "unverified",
+        reason: `temporary root retained because owned process cleanup is ${owned.state}: ${owned.reason ?? "ownership could not be verified"}`,
+      };
+      return;
+    }
+    try {
+      await this.#host.removeTemporaryRoot(this.options.temporaryRoot);
+      this.#temporaryRoot = { state: "cleaned", reason: null };
+    } catch (cause: unknown) {
+      this.#temporaryRoot = {
+        state: "failed",
+        reason: cleanupFailureMessage(cause, "temporary root removal failed"),
+      };
+    }
+  }
+}
+
+const cleanupFailureMessage = (cause: unknown, fallback: string): string =>
+  cause instanceof Error ? cause.message || cause.name || fallback : fallback;
+
+/** Release one capture's resources, retaining the exact owner for scoped retry. */
+export const releaseProcessResources = async (
+  options: ProcessCaptureResourceCleanupOptions,
+): Promise<ProcessCaptureCleanupReport> =>
+  new ProcessCaptureResourceOwner(options).close();
+
+/** Run-local owner collection for resources whose first cleanup did not finish. */
+export class ProcessCaptureResourceScope {
+  readonly #pending = new Set<ProcessCaptureResourceOwner>();
+  readonly #active = new Set<Promise<unknown>>();
+  #draining: Promise<void> | undefined;
+  #closed = false;
+
+  /** Admit one capture before it starts acquiring resources. */
+  async run<T>(operation: () => Promise<T>): Promise<T> {
+    while (true) {
+      while (this.#draining !== undefined) await this.#draining;
+      if (this.#closed)
+        throw new ProcessCaptureError(
+          "process capture lifecycle is closing; start a new server session before capturing again",
         );
-  let temporaryRoot: ProcessCaptureCleanupReport["temporary_root"] = {
-    state: "cleaned",
-    reason: null,
-  };
-  try {
-    await host.removeTemporaryRoot(options.temporaryRoot);
-  } catch (cause: unknown) {
-    temporaryRoot = {
-      state: "failed",
-      reason:
-        cause instanceof Error
-          ? cause.message || cause.name || "temporary root removal failed"
-          : "temporary root removal failed",
-    };
+      if (this.#pending.size === 0) break;
+      await this.retryCleanup();
+    }
+    const running = Promise.resolve().then(operation);
+    this.#active.add(running);
+    try {
+      return await running;
+    } finally {
+      this.#active.delete(running);
+    }
   }
-  return {
-    owned_process_group: ownedProcessGroup,
-    terminal_renderer: terminalRenderer,
-    temporary_root: temporaryRoot,
-  };
-};
+
+  async release(
+    options: ProcessCaptureResourceCleanupOptions,
+  ): Promise<ProcessCaptureCleanupReport> {
+    const owner = new ProcessCaptureResourceOwner(options);
+    const report = await owner.close();
+    if (cleanupReportFailure(report) !== undefined) {
+      this.#pending.add(owner);
+    }
+    return report;
+  }
+
+  /** Drain active captures, then retry their retained resources without closing admission. */
+  retryCleanup(): Promise<void> {
+    if (this.#draining !== undefined) return this.#draining;
+    this.#draining = this.#drainAndRetry().finally(() => {
+      this.#draining = undefined;
+    });
+    return this.#draining;
+  }
+
+  /** Stop admitting new captures, drain active runs, and retry all retained owners. */
+  close(): Promise<void> {
+    this.#closed = true;
+    return this.retryCleanup();
+  }
+
+  async #drainAndRetry(): Promise<void> {
+    while (this.#active.size > 0) await Promise.allSettled(this.#active);
+    const failures: string[] = [];
+    for (const owner of this.#pending) {
+      try {
+        const report = await owner.close();
+        if (cleanupReportFailure(report) === undefined)
+          this.#pending.delete(owner);
+        else
+          failures.push(cleanupReportFailure(report) ?? "cleanup incomplete");
+      } catch (cause: unknown) {
+        failures.push(
+          cause instanceof Error ? cause.message || cause.name : String(cause),
+        );
+      }
+    }
+    if (failures.length > 0)
+      throw new AggregateError(
+        failures,
+        `Process capture cleanup remains incomplete: ${failures.join("; ")}`,
+      );
+  }
+}
 
 export const cleanupReportFailure = (
   report: ProcessCaptureCleanupReport,
@@ -1093,6 +1227,7 @@ export const prepareProcessCapture = async (
   signal: AbortSignal | undefined,
   captureSnapshot: typeof snapshotRoots = snapshotRoots,
   host: ProcessPreparationHost = systemProcessPreparationHost,
+  resourceScope?: ProcessCaptureResourceScope,
 ): Promise<{
   readonly temporaryRoot: string;
   readonly runId: string;
@@ -1112,14 +1247,18 @@ export const prepareProcessCapture = async (
     assertNotCancelled(signal);
     return { temporaryRoot, runId, ownershipBaseline, before };
   } catch (cause: unknown) {
-    const cleanup = await releaseProcessResources({
+    const cleanupOptions: ProcessCaptureResourceCleanupOptions = {
       timers: new Set(),
       terminal: undefined,
       renderer: undefined,
       runId,
       temporaryRoot,
       host: { ...processCaptureCleanupHost, removeTemporaryRoot: host.cleanup },
-    });
+    };
+    const cleanup =
+      resourceScope === undefined
+        ? await releaseProcessResources(cleanupOptions)
+        : await resourceScope.release(cleanupOptions);
     resolveProcessResult(
       undefined,
       normalizeCaptureFailure(cause, signal),
