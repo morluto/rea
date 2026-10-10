@@ -195,6 +195,14 @@ outside-memory and undecodable addresses have separate outcomes. Effective
 memory base/index/displacement roles and per-instruction context mode remain
 unavailable; `mode` is the program language variant.
 
+Compact instruction references and call-target references preserve the source
+address, operand index, DATA/READ/WRITE classification, primary status, provider
+`provenance`, and reference `source` (for Ghidra: `analysis`, `default`, `imported`
+or `user_defined`). Primary status reports the provider's chosen reference; it
+does not establish literal addressing. Analyzer-inferred indexed targets remain
+static references, not observed runtime reads or writes. Older evidence may omit
+the additive fields, and null or omitted facts mean unavailable rather than false.
+
 Ghidra distinguishes a return using decoded instruction p-code's `RETURN`
 operation. `flow.classification_evidence` preserves the Listing flow type and
 the observed return evidence; mnemonic spelling alone is not the classifier.

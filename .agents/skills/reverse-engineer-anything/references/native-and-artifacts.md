@@ -37,8 +37,9 @@ unknown rather than false.
 For a completed `analyze_function` dossier, use `inspect_analysis_view` with
 `view: {kind: "native", facet: "value_flow_operations", offset: 0, limit: 32}`
 and the exact retained Evidence ID to read selected facts without reanalysis.
-Native facets also include procedure, pseudocode, assembly, callers/callees,
-references, and value-flow summaries. Pseudocode offsets and limits count UTF-16
+Native facets also include procedure, pseudocode, assembly, basic blocks,
+comments, callers/callees, references, unresolved calls, referenced strings and
+names, the native API record, and value-flow summaries. Pseudocode offsets and limits count UTF-16
 code units; use the returned `next_offset` for continuation. Provider limitations
 and unavailable facts remain explicit; the complete parent Evidence is retained.
 

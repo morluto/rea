@@ -75,6 +75,7 @@ interface TerminalExitOptions {
   readonly interactions: InteractionEvent[];
   readonly dispatchedEventIndexes: ReadonlySet<number>;
   readonly recordEvent: RecordProcessCaptureEvent;
+  readonly onLiveProgress?: () => void;
 }
 
 interface CaptureResultOptions {
@@ -601,8 +602,10 @@ export const observeSettlement = async (
   recordEvent: RecordProcessCaptureEvent = () => undefined,
   platform: NodeJS.Platform = process.platform,
   signal?: AbortSignal,
+  onLiveProgress?: () => void,
 ): Promise<ObservedProcessSettlement> => {
   assertNotCancelled(signal);
+  onLiveProgress?.();
   if (platform === "win32") {
     recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };
@@ -611,6 +614,7 @@ export const observeSettlement = async (
   let consecutiveEmpty = 0;
   let deadlineReached = false;
   while (!deadlineReached) {
+    onLiveProgress?.();
     assertNotCancelled(signal);
     const observations = await Promise.all(
       [...new Set(processGroupIds)].map((processGroupId) =>
@@ -651,6 +655,7 @@ export const awaitTerminalExit = async ({
   interactions,
   dispatchedEventIndexes,
   recordEvent,
+  onLiveProgress,
 }: TerminalExitOptions): Promise<{
   exitCode: number;
   signal?: number;
@@ -661,6 +666,7 @@ export const awaitTerminalExit = async ({
     // Keep the initiating lifecycle reason so comparisons distinguish a target
     // exit from harness-owned timeout, idle-timeout, and cancellation cleanup.
     let reason: "exited" | "timeout" | "idle_timeout" | "cancelled" = "exited";
+    onLiveProgress?.();
     terminal.onExit((exit) => {
       recordEvent("lifecycle", 0);
       for (const [eventIndex, event] of scenario.events.entries()) {
@@ -688,6 +694,7 @@ export const awaitTerminalExit = async ({
       resolveExit({ ...exit, reason });
     });
     const timeout = scheduleProcessInterval(() => {
+      onLiveProgress?.();
       if (signal?.aborted === true) {
         reason = "cancelled";
         terminal.kill("SIGKILL");

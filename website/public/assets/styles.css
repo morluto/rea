@@ -163,10 +163,12 @@ section[id] {
   white-space: nowrap;
 }
 .navigation a:hover,
-.navigation a[aria-current="page"] {
+.navigation a[aria-current="page"],
+.navigation a[aria-current="true"] {
   color: var(--ink);
 }
-.navigation a[aria-current="page"] {
+.navigation a[aria-current="page"],
+.navigation a[aria-current="true"] {
   text-decoration: underline;
 }
 .navigation .nav-start {
@@ -677,6 +679,199 @@ pre code {
 }
 .article .stats dd {
   color: var(--muted);
+}
+.blog-takeaway {
+  max-width: 730px;
+  margin-top: 1.8rem;
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--accent);
+}
+.blog-takeaway .eyebrow {
+  color: var(--accent);
+}
+.blog-takeaway p:last-child {
+  margin-bottom: 0;
+}
+.blog-takeaway ul {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+.blog-takeaway li + li {
+  margin-top: 0.75rem;
+}
+.reconstruction-flywheel {
+  max-width: 880px;
+  margin: 0 auto 4rem;
+  padding-block: 1.5rem 1.75rem;
+  border-block: 1px solid var(--line);
+}
+.flywheel-heading {
+  text-align: center;
+}
+.flywheel-heading .eyebrow {
+  margin-bottom: 0.6rem;
+  color: var(--accent);
+}
+.flywheel-heading > p:last-child {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.flywheel-diagram {
+  position: relative;
+  max-width: 760px;
+  height: 440px;
+  margin-inline: auto;
+}
+.flywheel-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.flywheel-path-mobile {
+  display: none;
+}
+.flywheel-node {
+  position: absolute;
+  width: 30%;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+.flywheel-node p {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.flywheel-node .flywheel-kicker {
+  margin: 0 0 0.4rem;
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.flywheel-node h3 {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+.flywheel-agent {
+  top: 15%;
+  left: 50%;
+  width: 38%;
+}
+.flywheel-oracle {
+  top: 58%;
+  left: 79%;
+}
+.flywheel-memory {
+  top: 58%;
+  left: 21%;
+}
+.flywheel-retry,
+.flywheel-center,
+.flywheel-reuse,
+.flywheel-pass {
+  position: absolute;
+  margin: 0;
+  padding: 0.25rem;
+  background: var(--page);
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+.flywheel-retry {
+  top: 36%;
+  left: 68%;
+  width: 23%;
+}
+.flywheel-center {
+  top: 57%;
+  left: 50%;
+  width: 20%;
+  color: var(--accent);
+  font-size: 0.9375rem;
+}
+.flywheel-reuse {
+  top: 33%;
+  left: 23%;
+  color: var(--accent);
+}
+.flywheel-pass {
+  top: 94%;
+  left: 50%;
+  width: 75%;
+  color: var(--accent);
+  font-size: 0.8125rem;
+}
+.flywheel-projects {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1.4rem;
+  margin-top: 0.3rem;
+}
+.flywheel-projects a {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+.flywheel-projects span {
+  color: var(--muted);
+}
+.reconstruction-flywheel figcaption {
+  margin: 1rem auto 0;
+  max-width: 600px;
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-align: center;
+}
+@media (max-width: 640px) {
+  .reconstruction-flywheel {
+    margin-bottom: 2.75rem;
+  }
+  .flywheel-diagram {
+    height: 405px;
+  }
+  .flywheel-agent {
+    width: 52%;
+  }
+  .flywheel-path-desktop {
+    display: none;
+  }
+  .flywheel-path-mobile {
+    display: initial;
+  }
+  .flywheel-node h3 {
+    font-size: 1.125rem;
+  }
+  .flywheel-node p {
+    font-size: 0.75rem;
+  }
+  .flywheel-node .flywheel-kicker {
+    font-size: 0.6rem;
+    letter-spacing: 0.05em;
+  }
+  .flywheel-center {
+    font-size: 0.75rem;
+  }
+  .flywheel-retry {
+    font-size: 0.625rem;
+  }
+  .flywheel-projects {
+    gap: 1rem;
+  }
+}
+.blog-article blockquote {
+  margin: 1.6rem 0;
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--line);
+  font-size: 1.05rem;
+}
+.blog-article blockquote p {
+  color: var(--ink);
 }
 .caption {
   font-size: 0.875rem;
@@ -1374,6 +1569,9 @@ pre code {
 }
 .home-expert-shortcut a {
   white-space: nowrap;
+}
+.home-expert-shortcut + .home-expert-shortcut {
+  margin-top: 0.5rem;
 }
 @media (min-width: 1440px) {
   .home-page-nav {

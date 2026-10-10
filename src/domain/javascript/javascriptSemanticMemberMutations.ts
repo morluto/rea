@@ -15,6 +15,8 @@ import {
   semanticSlotAtPath,
 } from "./javascriptSemanticSlots.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
+import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticArrayIndex,
@@ -23,7 +25,7 @@ import {
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -32,18 +34,19 @@ import {
 type PropertyPath = JavaScriptSemanticPropertyPath;
 type ValueEffect = "write" | "escape";
 
-/** Preserve uncertainty from property writes and references exposed to calls. */
-export const collectSemanticMemberMutations = (
+/** Preserve uncertainty from property writes and references exposed to calls, yielding during traversal and fixpoint iteration. */
+export function* collectSemanticMemberMutationsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-): void => {
+): Generator<void, void> {
   const parents = state.parentsByNode;
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       if (parent !== null) parents.set(node, parent);
     },
   });
   const normalizePath = observableMutationPaths(state);
+  const returnedReferences = createSemanticReturnedReferences(state);
   const recordedEffects = new Set<string>();
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
@@ -248,19 +251,9 @@ export const collectSemanticMemberMutations = (
           originAt: current.originAt,
         });
       } else {
-        if (
-          t.isArrayExpression(expression) &&
-          ((current.path[0] === "__proto__" &&
-            (effect === "escape" || current.path.length > 1)) ||
-            (current.path[0] === "constructor" &&
-              current.path[1] === "prototype"))
-        )
-          arrayIterationUnknown = true;
-        for (const value of referencedValues(
-          expression,
-          current.path,
-          effect,
-        )) {
+        for (const value of effect === "escape"
+          ? escapedReferenceLeaves(expression, current.path)
+          : expandedValues(expression, current.path, effect)) {
           if (value.iterableFallbackPath !== undefined)
             deferIterable({
               node: value.node,
@@ -287,6 +280,78 @@ export const collectSemanticMemberMutations = (
     mutation: t.Node,
     path: PropertyPath = [],
   ): void => markValue(node, path, new Set(), "escape", mutation);
+  function expandedValues(
+    expression: t.Node,
+    path: PropertyPath,
+    effect: ValueEffect,
+  ): readonly ReferencedValue[] {
+    if (
+      t.isArrayExpression(expression) &&
+      ((path[0] === "__proto__" && (effect === "escape" || path.length > 1)) ||
+        (path[0] === "constructor" && path[1] === "prototype"))
+    )
+      arrayIterationUnknown = true;
+    return referencedValues(expression, path, effect);
+  }
+  // Expanding a value below its references depends only on syntax, not on the
+  // escape site. Escaping an object reaches every method's results, so
+  // re-expanding it at each call through that object made N calls over N
+  // methods quadratic. Identifiers that resolve to the same binding and path
+  // are processed identically, so one stands for all of them.
+  const escapedLeaves = new WeakMap<
+    t.Node,
+    Map<string, readonly ReferencedValue[]>
+  >();
+  function escapedReferenceLeaves(
+    root: t.Node,
+    rootPath: PropertyPath,
+  ): readonly ReferencedValue[] {
+    // Parser recovery can leave an argument hole, which expands to nothing.
+    if (!t.isNode(root)) return [];
+    const rootKey = JSON.stringify(rootPath);
+    const cached = escapedLeaves.get(root)?.get(rootKey);
+    if (cached !== undefined) return cached;
+    const leaves: ReferencedValue[] = [];
+    const leafIdentities = new Set<string>();
+    const expanded = new WeakMap<t.Node, Set<string>>();
+    const pending = [...expandedValues(root, rootPath, "escape")];
+    for (let cursor = 0; cursor < pending.length; cursor++) {
+      const value = pending[cursor];
+      if (value === undefined) break;
+      const node = unwrapJavaScriptExpression(value.node).node;
+      if (!t.isNode(node)) continue;
+      const pathKey = JSON.stringify(value.path);
+      if (t.isIdentifier(node) && value.iterableFallbackPath === undefined) {
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        const identity = JSON.stringify([
+          binding === undefined ? null : binding.bindingId,
+          binding === undefined ? node.name : null,
+          pathKey,
+        ]);
+        if (leafIdentities.has(identity)) continue;
+        leafIdentities.add(identity);
+        leaves.push(value);
+      } else if (
+        value.iterableFallbackPath !== undefined ||
+        t.isIdentifier(node) ||
+        t.isMemberExpression(node) ||
+        t.isOptionalMemberExpression(node)
+      )
+        leaves.push(value);
+      else {
+        const paths = expanded.get(node) ?? new Set<string>();
+        if (paths.has(pathKey)) continue;
+        paths.add(pathKey);
+        expanded.set(node, paths);
+        for (const reference of expandedValues(node, value.path, "escape"))
+          pending.push(reference);
+      }
+    }
+    const byPath = escapedLeaves.get(root) ?? new Map();
+    byPath.set(rootKey, leaves);
+    escapedLeaves.set(root, byPath);
+    return leaves;
+  }
   const markReceiver = (callee: t.Node, mutation: t.Node): void => {
     const expression = unwrapJavaScriptExpression(callee).node;
     if (
@@ -317,7 +382,7 @@ export const collectSemanticMemberMutations = (
         );
     }
   };
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent) => {
       for (const source of semanticIterationSources(node, parent))
         deferIterable({
@@ -340,6 +405,8 @@ export const collectSemanticMemberMutations = (
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       ) {
+        for (const source of returnedReferences(node.callee))
+          markEscaped(source.node, node, source.projection);
         for (const argument of node.arguments)
           if (t.isSpreadElement(argument))
             deferIterable({
@@ -368,7 +435,8 @@ export const collectSemanticMemberMutations = (
     const effectsBefore = recordedEffects.size;
     const iterablesBefore = iterableReferences.length;
     const iterationBefore: boolean = arrayIterationUnknown;
-    for (const reference of pendingReferences.splice(0)) {
+    for (const [index, reference] of pendingReferences.splice(0).entries()) {
+      if (index % 64 === 0) yield;
       const { initializer } = reference;
       if (referenceSourcesInactive(initializer, state))
         pendingReferences.push(reference);
@@ -413,7 +481,8 @@ export const collectSemanticMemberMutations = (
           reference.originAt,
         );
     }
-    for (const reference of [...iterableReferences]) {
+    for (const [index, reference] of [...iterableReferences].entries()) {
+      if (index % 64 === 0) yield;
       if (referenceSourcesInactive(reference, state)) continue;
       if (reference.iterationOnly) {
         const expanded = expandedIterationReferences(reference, state);
@@ -451,7 +520,7 @@ export const collectSemanticMemberMutations = (
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticPrimitiveBindingValues(state);
-};
+}
 
 interface ReferencedValue {
   readonly node: t.Node;
@@ -555,6 +624,11 @@ const referencedValues = (
   path: PropertyPath,
   effect: ValueEffect,
 ): readonly ReferencedValue[] => {
+  if (effect === "escape" && t.isFunction(node))
+    return semanticCallableResultExpressions(node).flatMap(
+      ({ node, delegated }) =>
+        node === null ? [] : [{ node, path: delegated ? [null] : [] }],
+    );
   // An initializer owns its slots; only deeper writes can affect shared children.
   if (t.isObjectExpression(node) || t.isArrayExpression(node)) {
     if (effect === "write" && path.length < 2) return [];
@@ -855,11 +929,11 @@ const objectReferencedValues = (
     }
     const name = semanticStaticPropertyKey(property.key, property.computed);
     if (name !== null && overwritten.has(name)) continue;
-    if (
-      t.isObjectProperty(property) &&
-      (name === null || semanticPropertyPathKeyMatches(key ?? null, name))
-    )
-      references.push({ node: property.value, path: remaining });
+    if (name === null || semanticPropertyPathKeyMatches(key ?? null, name))
+      references.push({
+        node: t.isObjectProperty(property) ? property.value : property,
+        path: remaining,
+      });
     // A prototype setter does not replace an own property from a spread.
     if (
       name !== null &&

@@ -126,8 +126,17 @@ also stops target hashing before provider admission.
 
 These operations do not execute the APK or provide split APK/AAB handling,
 signature validation, full resource-table semantics, native-library analysis or
-Android runtime capture. Existing artifact inventory/extraction tools can supply
-archive evidence. Project that Evidence with the execution-free inventory tool:
+Android runtime capture. An `.aab` suffix is a ZIP archive, not an APK, so
+Android tools and the application graph do not treat it as a standalone APK.
+Existing artifact inventory/extraction tools can supply archive evidence.
+Inventory records an APK root only for ZIP bytes whose name ends in `.apk`.
+The projection adds a limitation when no root `AndroidManifest.xml` was
+observed, because such a ZIP may not be an APK. Nested members take a ZIP or
+ASAR family from their bytes; an unread member keeps an unknown format.
+Inventory keeps ZIP names that differ only in case and records that a
+case-insensitive destination cannot store both spellings. Extraction fails
+only when that destination directory cannot keep both names. Project that
+Evidence with the execution-free inventory tool:
 
 ```sh
 rea project-android-application-graph '{"inventory_evidence":[<inventory_artifact Evidence>]}'
@@ -144,7 +153,12 @@ rea project-android-application-graph '{"inventory_evidence":[<inventory_artifac
 
 The projection reports exact component paths and hashes, runtime-family hints,
 and path-based bridge hypotheses. It does not decode DEX or claim observed
-runtime calls. Bridge hypotheses form a DEX/JVM-class by native-library
+runtime calls. Framework hints match complete native library names, such as
+`libreactnativejni.so`, `libreactnative.so`, `libhermes.so`,
+`libhermes_executor.so`, `libflutter.so`, and `libunity.so`; unrelated names
+such as `libcommunity.so` and `libreactivity.so` do not identify those families.
+The bridge basis is inferred from the native path and repeated for each managed
+component, so it does not identify a specific JNI binding. Bridge hypotheses form a DEX/JVM-class by native-library
 Cartesian product. The projection computes the product and exact serialized
 candidate-array size before creating candidate objects, then retains a
 deterministic prefix within a 2 MiB UTF-8 JSON budget. If candidates are omitted,

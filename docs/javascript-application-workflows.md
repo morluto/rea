@@ -186,7 +186,10 @@ keys, and parser recovery remain partial or unknown.
 Objects and arrays passed to calls, constructors, or tagged templates, used
 as method receivers, or stored through property targets are not assumed
 unchanged afterward. Property stores conservatively retain reference escape
-uncertainty rather than pretending to execute later writes. Aliases
+uncertainty rather than pretending to execute later writes. References
+handed back by local functions, methods, constructors, async functions, and
+generators also retain escape uncertainty, including when the call is read-only;
+this does not establish that a mutation occurred. Aliases
 and shared children in spread and rest copies retain that uncertainty; copied
 primitive slots and unrelated containing properties remain known. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known
@@ -230,7 +233,7 @@ or process workflows.
 
 ## CLI and verification
 
-All five CLI commands accept inline JSON or a path to a JSON file. The CLI
+All six CLI commands accept inline JSON or a path to a JSON file. The CLI
 returns an Evidence record directly. Put the full records in a later CLI input;
 a separate CLI process has no retained MCP connection state.
 

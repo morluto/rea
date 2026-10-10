@@ -3,11 +3,21 @@ import type { Browser } from "playwright-core";
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import {
+  attachedScenarioLeaseKey,
   openPlaywrightScenarioBrowser,
   PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
 
 afterEach(() => vi.unstubAllEnvs());
+
+it("locks one attached browser for spellings that discover the same endpoint", () => {
+  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).toBe(
+    attachedScenarioLeaseKey("http://127.0.0.1:9222/", "page-1"),
+  );
+  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
+    attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-2"),
+  );
+});
 
 const deferred = <Value>() => {
   let resolve: (value: Value | PromiseLike<Value>) => void = () => undefined;

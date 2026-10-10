@@ -17,6 +17,11 @@ import {
   type ToolResultDelivery,
 } from "./toolResult.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
+import {
+  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+  parseMcpInputSchemaProfile,
+} from "../config/mcpInputSchemaProfile.js";
+import type { CompactInputSchemaPresentation } from "./EvidenceMcpServer.js";
 import { isAbsolute } from "node:path";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -150,6 +155,7 @@ const installSessionToolAvailability = (
 const createMcpServer = (
   session: BinarySessionPort | undefined,
   delivery: ToolResultDelivery,
+  compactPresentation: CompactInputSchemaPresentation | undefined,
 ): EvidenceMcpServer =>
   new EvidenceMcpServer(
     {
@@ -167,6 +173,7 @@ const createMcpServer = (
       ? undefined
       : (evidence) => session.recordEvidence(evidence),
     delivery,
+    compactPresentation,
   );
 
 /**
@@ -185,7 +192,11 @@ export const createServer = (
   const selectedOptions = { ...options, environment, delivery };
   const startedAt = new Date().toISOString();
   const logger = options.logger ?? silentLogger;
-  const server = createMcpServer(session, delivery);
+  const server = createMcpServer(
+    session,
+    delivery,
+    selectCompactInputSchemaPresentation(environment),
+  );
   const android =
     options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
   const availability = installSessionToolAvailability(
@@ -256,6 +267,18 @@ const selectToolResultDelivery = (
   );
   if (!configured.ok) throw configured.error;
   return createToolResultDelivery(configured.value);
+};
+
+const selectCompactInputSchemaPresentation = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): CompactInputSchemaPresentation | undefined => {
+  const configured = parseMcpInputSchemaProfile(
+    environment.REA_MCP_INPUT_SCHEMA_PROFILE,
+  );
+  if (!configured.ok) throw configured.error;
+  return configured.value === "compact"
+    ? { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES }
+    : undefined;
 };
 
 const registerConfiguredAnalysisTools = (

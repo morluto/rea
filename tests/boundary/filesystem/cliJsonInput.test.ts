@@ -9,6 +9,7 @@ import { createCli } from "../../../src/cli.js";
 import { parseCliJsonInput } from "../../../src/cliJsonInput.js";
 import { readCliJsonFile } from "../../../src/cliJsonFile.js";
 import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -155,6 +156,21 @@ describe("CLI JSON streamed input", () => {
           code: "invalid_request",
           input_path: path,
           input_reason: "invalid-json",
+        },
+      });
+    }
+  });
+
+  it("names a leading byte-order mark in small and streamed files", async () => {
+    const root = await createTestTempDirectory("rea-json-input-bom-");
+    const path = join(root, "input.json");
+    for (const body of ["{}", `${" ".repeat(9 * 1024 * 1024)}{}`]) {
+      await writeFile(path, `\uFEFF${body}`);
+      expect(await parseCliJsonInput(path, "test-input")).toMatchObject({
+        ok: false,
+        error: {
+          input_reason: "invalid-json",
+          details: { issues: [{ message: JSON_BYTE_ORDER_MARK_MESSAGE }] },
         },
       });
     }
