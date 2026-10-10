@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,10 +6,7 @@ import { parse as parseJsonc } from "jsonc-parser";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import {
-  skillDestinations,
-  qwenCodeSkillsDirectory,
-} from "../../../src/application/SetupSkill.js";
+import { systemSetupHost } from "../../../src/application/SetupHost.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
@@ -45,6 +42,28 @@ describe("Qwen Code configuration paths", () => {
     expect(qwenPath("/Users/a", "darwin")?.configPath).toBe(
       join("/Users/a", ".qwen", "settings.json"),
     );
+  });
+
+  it.each([
+    ["", join("/home/a", ".qwen")],
+    ["~", "/home/a"],
+    ["~/profiles/work", join("/home/a", "profiles", "work")],
+    ["~\\profiles\\work", join("/home/a", "profiles", "work")],
+    ["profiles/work", resolve("profiles/work")],
+    [" profile ", resolve(" profile ")],
+    ["$PROFILE", resolve("$PROFILE")],
+  ])("matches Qwen's QWEN_HOME resolution for %j", (override, directory) => {
+    vi.stubEnv("QWEN_HOME", override);
+    const client = qwenPath("/home/a", process.platform, {
+      QWEN_HOME: override,
+    });
+    expect(
+      supportedClients("/home/a").find(({ name }) => name === "qwen_code"),
+    ).toEqual(client);
+    expect(client).toMatchObject({
+      configPath: join(directory, "settings.json"),
+      markerPath: directory,
+    });
   });
 });
 
@@ -87,12 +106,13 @@ describe("Qwen Code client lifecycle", () => {
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
     );
-    const removed = parseJsonc(await readFile(client.configPath, "utf8"));
+    const removedText = await readFile(client.configPath, "utf8");
+    const removed = parseJsonc(removedText);
     expect(removed).toEqual({
       model: { name: "qwen3-coder-plus" },
       mcpServers: { other: { command: "other-server" } },
     });
-    expect(text).toContain("// Keep this note.");
+    expect(removedText).toContain("// Keep this note.");
   });
 
   it("reports a package-runner registration as aligned", async () => {
@@ -108,42 +128,56 @@ describe("Qwen Code client lifecycle", () => {
   });
 });
 
-describe("Qwen Code skill destinations", () => {
-  it("installs to Qwen Code's personal skill directory without the shared root", () => {
-    const home = "/home/a";
-    expect(skillDestinations(home, ["qwen_code"])).toEqual([
-      {
-        client: "qwen_code",
-        path: join(qwenCodeSkillsDirectory(home), PRODUCT_IDENTITY.skillName),
-      },
-    ]);
-  });
-
-  it("plans both personal roots for a mixed Claude Code and Qwen Code selection", () => {
-    const home = "/home/a";
-    expect(
-      skillDestinations(home, ["claude_code", "qwen_code"]).map(
-        ({ client }) => client,
-      ),
-    ).toEqual(["claude_code", "qwen_code"]);
-  });
-
-  it("keeps the shared root for other non-Claude clients", () => {
-    expect(
-      skillDestinations("/home/a", ["qwen_code", "codex"]).map(
-        ({ client }) => client,
-      ),
-    ).toEqual(["shared", "qwen_code"]);
-    expect(
-      skillDestinations("/home/a", ["claude_code", "codex"]).map(
-        ({ client }) => client,
-      ),
-    ).toEqual(["shared", "claude_code"]);
-  });
-
-  it("includes the Qwen Code root when auditing every owned location", () => {
-    expect(
-      skillDestinations("/home/a", undefined).map(({ client }) => client),
-    ).toEqual(["shared", "claude_code", "qwen_code"]);
-  });
+describe("Qwen Code profile setup", () => {
+  it.each([false, true])(
+    "installs and removes the shared skill with a custom home: %s",
+    async (customHome) => {
+      const home = await createTestTempDirectory("rea-qwen-profile-");
+      const profile = join(home, customHome ? "qwen-profile" : ".qwen");
+      const environment = {
+        HOME: home,
+        USERPROFILE: home,
+        ...(customHome ? { QWEN_HOME: profile } : {}),
+      };
+      await mkdir(profile);
+      const setup = systemSetupHost(undefined, environment);
+      const client = (await setup.detectedClients()).find(
+        ({ name }) => name === "qwen_code",
+      );
+      if (client === undefined) throw new Error("missing Qwen Code client");
+      expect(client.configPath).toBe(join(profile, "settings.json"));
+      expect(await setup.configureClient(client, {}, command)).toEqual({
+        status: "configured",
+      });
+      expect(await setup.installSkill([client.name])).toBe("installed");
+      const skill = join(home, ".agents", "skills", PRODUCT_IDENTITY.skillName);
+      expect(await readFile(join(skill, "SKILL.md"), "utf8")).toContain(
+        "reverse-engineer-anything",
+      );
+      expect(await setup.clientNeedsConfigure(client, {}, command)).toBe(false);
+      expect(await setup.skillNeedsInstall([client.name])).toBe(false);
+      expect(await setup.installSkill([client.name])).toBe("unchanged");
+      expect(
+        (
+          await readClientRegistrationStatuses(
+            home,
+            resolve("scripts/rea.mjs"),
+            { environment },
+          )
+        ).find(({ client: name }) => name === "qwen_code"),
+      ).toMatchObject({ state: "aligned" });
+      const uninstall = systemUninstallHost(home, undefined, environment);
+      const registered = (await uninstall.clients()).find(
+        ({ name }) => name === "qwen_code",
+      );
+      expect(registered).toEqual(client);
+      expect((await uninstall.removeClient(client)).status).toBe("removed");
+      expect((await uninstall.removeSkill()).status).toBe("removed");
+      await expect(access(skill)).rejects.toMatchObject({ code: "ENOENT" });
+      if (customHome)
+        await expect(access(join(home, ".qwen"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+    },
+  );
 });

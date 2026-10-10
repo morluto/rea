@@ -21,7 +21,7 @@ interface CanonicalSkillFile {
 
 /** Managed skill location selected for a client family. */
 export interface SkillDestination {
-  readonly client: "shared" | "claude_code" | "qwen_code";
+  readonly client: "shared" | "claude_code";
   readonly path: string;
 }
 
@@ -39,14 +39,6 @@ export const claudeCodeSkillsDirectory = (
 ): string =>
   join(environment.CLAUDE_CONFIG_DIR ?? join(home, ".claude"), "skills");
 
-/**
- * Resolve Qwen Code personal skills. Qwen Code discovers project
- * `.qwen/skills/`, user `~/.qwen/skills/`, and its `skills.directories`
- * setting; it does not read the shared `~/.agents/skills` root.
- */
-export const qwenCodeSkillsDirectory = (home: string): string =>
-  join(home, ".qwen", "skills");
-
 /** Resolve the skill roots required by a client selection, or all owned roots. */
 export const skillDestinations = (
   home: string,
@@ -55,14 +47,10 @@ export const skillDestinations = (
 ): readonly SkillDestination[] => {
   const includeClaude =
     clientIds === undefined || clientIds.includes("claude_code");
-  const includeQwen =
-    clientIds === undefined || clientIds.includes("qwen_code");
   const includeShared =
     clientIds === undefined ||
     clientIds.length === 0 ||
-    clientIds.some(
-      (clientId) => clientId !== "claude_code" && clientId !== "qwen_code",
-    );
+    clientIds.some((clientId) => clientId !== "claude_code");
   return [
     ...(includeShared
       ? [
@@ -77,17 +65,6 @@ export const skillDestinations = (
           {
             client: "claude_code" as const,
             path: join(claudeSkillsDirectory, PRODUCT_IDENTITY.skillName),
-          },
-        ]
-      : []),
-    ...(includeQwen
-      ? [
-          {
-            client: "qwen_code" as const,
-            path: join(
-              qwenCodeSkillsDirectory(home),
-              PRODUCT_IDENTITY.skillName,
-            ),
           },
         ]
       : []),

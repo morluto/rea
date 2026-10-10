@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { lstatSync } from "node:fs";
 
 /** One supported client configuration location. */
@@ -35,6 +35,7 @@ interface ClientPathContext {
     readonly PI_CODING_AGENT_DIR?: string | undefined;
     readonly PI_CONFIG_DIR?: string | undefined;
     readonly PI_PROFILE?: string | undefined;
+    readonly QWEN_HOME?: string | undefined;
     readonly SAND_DATA_ROOT?: string | undefined;
     readonly XDG_CONFIG_HOME?: string | undefined;
   };
@@ -84,6 +85,25 @@ const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
 
 const codexDirectory = ({ home, env }: ClientPathContext): string =>
   env.CODEX_HOME ?? join(home, ".codex");
+
+/** Match Qwen Code's home override, including tilde and cwd-relative paths. */
+const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
+  const override = env.QWEN_HOME;
+  if (!override) return join(home, ".qwen");
+  const expanded =
+    override === "~"
+      ? home
+      : override.startsWith("~/") || override.startsWith("~\\")
+        ? join(
+            home,
+            ...override
+              .slice(2)
+              .split(/[/\\]+/)
+              .filter(Boolean),
+          )
+        : override;
+  return isAbsolute(expanded) ? expanded : resolve(expanded);
+};
 
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME ?? join(home, ".grok");
@@ -275,8 +295,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
   {
     name: "qwen_code",
     displayName: "Qwen Code",
-    configPath: [".qwen", "settings.json"],
-    markerPath: [".qwen"],
+    configPath: (context: ClientPathContext) =>
+      join(qwenCodeDirectory(context), "settings.json"),
+    markerPath: qwenCodeDirectory,
     format: "json",
   },
   {
@@ -330,6 +351,7 @@ export const supportedClients = (
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
     PI_CONFIG_DIR: process.env.PI_CONFIG_DIR,
     PI_PROFILE: process.env.PI_PROFILE,
+    QWEN_HOME: process.env.QWEN_HOME,
     SAND_DATA_ROOT: process.env.SAND_DATA_ROOT,
     XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   },
