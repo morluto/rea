@@ -714,10 +714,20 @@ itWithCaptureCapability(
         finalization: { requested_ms: 20_000, outcome: "forced_kill" },
       },
     });
-    expect(
-      result.error.message,
-      "cancellation wins over finalization",
-    ).toContain("cancelled");
+    if (result.error.cleanupIncomplete) {
+      expectUnverifiedHostCleanup(result.error);
+      expect(
+        result.error.executionFailure,
+        "the host cleanup error wraps the cancellation",
+      ).toBe("process capture was cancelled");
+    }
+    const cancellation = result.error.cleanupIncomplete
+      ? result.error.cause
+      : result.error;
+    expect(cancellation, "cancellation wins over finalization").toMatchObject({
+      reason: "cancelled",
+      userCategory: "cancelled",
+    });
     expect(
       Date.now() - started,
       "cancellation does not wait for the finalization interval",
