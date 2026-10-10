@@ -180,7 +180,12 @@ describe("existing REA integration maintenance", () => {
     ).resolves.toEqual({
       clients: [],
       skill: true,
-      skillDestinations: [{ client: "shared", path: dirname(path) }],
+      skillDestinations: [
+        {
+          client: "shared",
+          path: join(home, ".agents", "skills", PRODUCT_IDENTITY.skillName),
+        },
+      ],
     });
     expect(await readFile(path, "utf8")).toBe(original);
   });
