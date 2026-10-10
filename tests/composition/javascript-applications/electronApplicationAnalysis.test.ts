@@ -89,6 +89,26 @@ describe("static Electron application analysis", () => {
     expect(requestedMembers).toEqual(["*"]);
   });
 
+  it("roots the graph at the application manifest, not a dependency", async () => {
+    const root = await dependencyFixtureDirectory();
+
+    const result = await reconstructJavaScriptArtifact({ input_path: root });
+    const graph = parseJavaScriptApplicationGraph(result.graph);
+    const rootLabels = graph.nodes.flatMap(({ node_id, observations }) =>
+      graph.root_node_ids.includes(node_id)
+        ? observations.map(({ label }) => label)
+        : [],
+    );
+    const mainEntries = graph.nodes.flatMap(({ kind, observations }) =>
+      kind === "electron-main"
+        ? observations.map(({ properties }) => properties.declared_path)
+        : [],
+    );
+
+    expect(rootLabels).toEqual(["app"]);
+    expect(mainEntries).toEqual(["main.js"]);
+  });
+
   it("returns a tagged cancellation without executing application code", async () => {
     const root = await fixtureDirectory();
     const controller = new AbortController();
@@ -296,6 +316,25 @@ const expectElectronBoundaries = (graph: ApplicationGraph): void => {
 const fixtureDirectory = async (): Promise<string> => {
   const root = await createTestTempDirectory("rea-electron-boundaries-");
   await writeElectronBoundaryFixture(root);
+  return root;
+};
+
+const dependencyFixtureDirectory = async (): Promise<string> => {
+  const root = await createTestTempDirectory("rea-electron-dependency-");
+  const dependency = join(root, "node_modules", "dep");
+  await mkdir(dependency, { recursive: true });
+  await Promise.all([
+    writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ name: "app", main: "main.js" }),
+    ),
+    writeFile(join(root, "main.js"), "module.exports = {};"),
+    writeFile(
+      join(dependency, "package.json"),
+      JSON.stringify({ name: "dep", main: "index.js" }),
+    ),
+    writeFile(join(dependency, "index.js"), "module.exports = {};"),
+  ]);
   return root;
 };
 
