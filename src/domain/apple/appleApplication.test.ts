@@ -629,4 +629,23 @@ describe("Apple path conventions", () => {
       ]),
     );
   });
+
+  it("recognizes framework segments and does not treat a bare dylib as Swift", () => {
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist" },
+        macho("Payload/Fixture.app/Fixture"),
+        macho("Payload/Fixture.app/Frameworks/Flutter.framework/Flutter"),
+        macho(
+          "Payload/Fixture.app/Frameworks/UnityFramework.framework/UnityFramework",
+        ),
+        macho("Payload/Fixture.app/Frameworks/hermes.framework/hermes"),
+        macho("Payload/Fixture.app/Frameworks/libfoo.dylib"),
+      ]),
+    );
+    expect(result.runtime_families).toEqual(
+      expect.arrayContaining(["flutter", "unity", "react-native", "native"]),
+    );
+    expect(result.runtime_families).not.toContain("swift-objective-c");
+  });
 });
