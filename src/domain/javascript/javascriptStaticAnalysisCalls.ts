@@ -307,11 +307,25 @@ export const addSourceMapDirectives = (
     )
       continue;
     const commentSource = source.slice(start, end);
-    const prefix = /^(?:\/\/|\/\*)[#@]\s*sourceMappingURL\s*=\s*/u.exec(
-      commentSource,
-    );
-    if (prefix === null) continue;
-    const declaredStart = prefix[0].length;
+    if (
+      !(commentSource.startsWith("//") || commentSource.startsWith("/*")) ||
+      !(commentSource[2] === "#" || commentSource[2] === "@")
+    )
+      continue;
+    // Single-class searches avoid regex backtracking over unbounded whitespace
+    // or inline URLs, which can exhaust the engine stack on two-byte strings.
+    const nameOffset = commentSource.slice(3).search(/\S/u);
+    if (nameOffset === -1) continue;
+    const nameStart = 3 + nameOffset;
+    if (!commentSource.startsWith("sourceMappingURL", nameStart)) continue;
+    const nameEnd = nameStart + "sourceMappingURL".length;
+    const equalsOffset = commentSource.slice(nameEnd).search(/\S/u);
+    if (equalsOffset === -1) continue;
+    const equalsStart = nameEnd + equalsOffset;
+    if (!commentSource.startsWith("=", equalsStart)) continue;
+    const urlOffset = commentSource.slice(equalsStart + 1).search(/\S/u);
+    if (urlOffset === -1) continue;
+    const declaredStart = equalsStart + 1 + urlOffset;
     const terminator = commentSource.slice(declaredStart).search(/[\s*]/u);
     const declaredEnd =
       terminator === -1 ? commentSource.length : declaredStart + terminator;
