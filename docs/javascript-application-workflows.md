@@ -90,6 +90,18 @@ keep the result ambiguous. Runtime Evidence can later corroborate an exact
 mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
+Semantic literal nodes keep their complete value in `properties.value`; literal
+queries match that field. String labels read `string literal` rather than
+repeating the payload. A literal's `identity.role_key` commits its canonical
+JSON value as `value-sha256:<digest>`, together with its binding and property
+role. This keeps large values out of identity and display metadata without
+truncating their Evidence.
+
+New analyses therefore produce different literal node IDs from the earlier
+payload-bearing role keys. Use IDs returned by the selected parent graph and
+read literal values from `properties.value`, rather than decoding role keys or
+labels. Previously stored graphs and their original IDs remain valid inputs.
+
 ## Version comparison
 
 REA pairs entities only when a tier produces one unique candidate on each side.

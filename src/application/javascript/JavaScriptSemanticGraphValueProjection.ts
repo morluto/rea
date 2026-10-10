@@ -2,6 +2,7 @@ import {
   semanticContainer,
   semanticPropertyPointer,
 } from "../../domain/javascript/javascriptSemanticSlots.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import type { JavaScriptSemanticBinding } from "../../domain/javascript/javascriptSemanticIr.js";
 import type {
   JavaScriptSemanticProperty,
@@ -156,9 +157,11 @@ const addLiteralNode = (
 ) =>
   retainSemanticGraphNode(context.state, context.file, {
     kind: "literal",
-    roleKey: `literal:${binding.bindingId}:${role}:${JSON.stringify(value)}`,
+    // Identity needs an exact value commitment, not another payload copy.
+    // Keep the complete literal in properties for queries and Evidence export.
+    roleKey: `literal:${binding.bindingId}:${role}:value-sha256:${digestCanonicalValue(value, "Semantic literal")}`,
     location: binding.definitions[0]?.location ?? null,
-    label: JSON.stringify(value),
+    label: typeof value === "string" ? "string literal" : JSON.stringify(value),
     functionNodeId:
       context.bindingNodes.get(binding.bindingId)?.function_node_id ?? null,
     properties: { value },
