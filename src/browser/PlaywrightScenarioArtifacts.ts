@@ -72,7 +72,7 @@ const captureDom = async (input: {
 }) => {
   const { page, secrets } = input;
   try {
-    return textArtifact(secrets.redact(await page.content()));
+    return textArtifact(secrets.redactArtifactText(await page.content()));
   } catch (cause: unknown) {
     void cause;
     return missing("DOM capture failed");
@@ -86,7 +86,7 @@ const captureAccessibility = async (input: {
   const { page, secrets } = input;
   try {
     const text = await page.locator("html").ariaSnapshot();
-    return textArtifact(secrets.redact(text));
+    return textArtifact(secrets.redactArtifactText(text));
   } catch (cause: unknown) {
     void cause;
     return missing("accessibility capture failed");

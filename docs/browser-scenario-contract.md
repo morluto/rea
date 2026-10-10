@@ -150,6 +150,19 @@ storage value still needs a declaration. Ordinary query values
 and fragments remain intact. Durable results replace resolved secret values
 with their secret references.
 
+DOM and accessibility text artifacts also replace declared secrets in browser
+HTML text/attribute spellings and standard URI/component/form spellings,
+including URI spellings serialized into HTML attributes. Percent-escape hex
+digits may use either case; literal characters remain case-sensitive. The
+capture replaces matching original spans without decoding or rewriting the
+surrounding evidence. If a replacement marker and its neighbors reconstruct a
+declared spelling, the artifact retains empty text rather than that secret;
+its byte count and SHA-256 describe the empty retained representation. This is
+bounded spelling matching, not general-purpose
+sanitization: arbitrary entity encodings, repeated encoding, base64, and other
+page-defined transformations or accessibility quoting/whitespace normalization
+are not covered.
+
 The exact `start_url`, navigation destinations, and storage-seed origins define
 the inputs to a scenario; ordinary page requests are handled by the browser.
 Storage cookies are scoped to the page URL at each capture. Unsupported action
