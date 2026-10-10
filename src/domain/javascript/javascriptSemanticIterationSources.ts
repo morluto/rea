@@ -8,8 +8,9 @@ interface IterationSourceValue {
   readonly projection: readonly (string | number | null)[];
 }
 
-/** An implicit iterator receiver, with guards for destructuring defaults. */
+/** An iterator receiver or yielded reference store, with default guards. */
 export interface SemanticIterationSource extends IterationSourceValue {
+  readonly kind: "iteration" | "reference-store";
   readonly mutation: t.Node;
   readonly fallbackSources?: readonly IterationSourceValue[];
   readonly requiredSources?: readonly IterationSourceValue[];
@@ -30,8 +31,10 @@ const add = (
   source: IterationSourceValue,
   mutation: t.Node,
   guards: SourceGuards,
+  kind: SemanticIterationSource["kind"] = "iteration",
 ): void => {
   sources.push({
+    kind,
     node: source.node,
     projection: source.projection,
     mutation,
@@ -66,6 +69,13 @@ const visit = (
   guards: SourceGuards = {},
 ): void => {
   const { sources, mutation } = context;
+  if (t.isForOfStatement(mutation) && t.isMemberExpression(pattern)) {
+    // Storing a yielded reference in a property has no lexical loop binding.
+    // Preserve its escape rather than assuming later writes cannot reach it.
+    if (source !== undefined)
+      add(sources, source, mutation, guards, "reference-store");
+    return;
+  }
   if (t.isTSParameterProperty(pattern)) {
     visit(context, pattern.parameter, source, guards);
     return;
