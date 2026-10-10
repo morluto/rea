@@ -428,7 +428,8 @@ export const clientSkillDirectories = (
           });
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client: definition?.skillPath === undefined ? "shared" : client,
+        client:
+          directory === join(home, ".agents", "skills") ? "shared" : client,
         directory,
       });
   }
