@@ -48,6 +48,11 @@ export const toolFamilyCatalog = (sources) => {
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
     },
     {
+      id: "adb",
+      surface: "adb-provider",
+      contracts: sources.adbContracts.ADB_TOOL_CONTRACTS,
+    },
+    {
       id: "browser",
       surface: "browser-provider",
       contracts: [
@@ -187,6 +192,10 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.androidProvider.JADX_PROVIDER_IDENTITY,
       contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.adbProvider.ADB_PROVIDER_IDENTITY,
+      contracts: sources.adbContracts.ADB_TOOL_CONTRACTS,
     },
     {
       identity: sources.webNetworkCaptureProvider.HAR_CAPTURE_PROVIDER_IDENTITY,

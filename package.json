@@ -146,6 +146,7 @@
     "verify:macos-bundle": "npm run build:cached && node scripts/verify/apple/macos-bundle.mjs",
     "verify:legacy-simulator": "npm run build:cached && node scripts/verify/apple/legacy-simulator.mjs",
     "verify:architecture-guards": "node scripts/verify/architecture-guards.mjs",
+    "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",

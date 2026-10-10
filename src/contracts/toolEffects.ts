@@ -97,6 +97,32 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     writesFilesystem: true,
   }),
+  inspect_adb_client: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+  }),
+  list_adb_devices: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  inspect_adb_device: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  list_adb_packages: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+  }),
+  pull_adb_package: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
   search_android_classes: effects({
     mutatesSession: true,
     launchesProcess: true,

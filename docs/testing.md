@@ -431,6 +431,26 @@ Synthetic producer regressions run independently:
 npm run test:focused -- tests/boundary/process/jadxIntegration.test.ts tests/boundary/process/androidAnalysisMcp.test.ts
 ```
 
+## ADB device acquisition
+
+`npm run verify:adb` exercises the five ADB operations against a live device
+or emulator through the caller's adb binary (`REA_ADB_PATH` or PATH). No SDK
+installation, emulator management, or device mutation is involved; `--pull`
+acquires a real package and re-digests the pulled files on disk against the
+returned SHA-256 values. `--serial` selects a device when several are
+attached.
+
+Record: adb 34.0.5-debian on Linux against an Android 14 (API 34) x86_64
+emulator. The lane covered the full third-party inventory (224 packages),
+an installed two-APK split set (`base.apk` plus `split_probe.apk`, built and
+installed through `install-multiple`), role classification from file names,
+and byte-exact digest agreement for both artifacts. System-package pulls
+whose APKs keep non-`base.apk` names report the `unknown` role with the
+file-name basis, verified with `com.android.settings` (single 73.9 MB APK).
+Parser goldens for `adb devices -l`, `getprop`, `pm list packages -f`, and
+`pm path` come from the same device. See
+[ADB device analysis](adb-device-analysis.md) for boundaries and budgets.
+
 ## Optional NativeAOT Ghidra analysis
 
 This lane is separate from the default native lane. `build:fixtures:nativeaot`

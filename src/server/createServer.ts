@@ -62,9 +62,13 @@ import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysi
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { registerAndroidTools } from "./registerAndroidTools.js";
+import { registerAdbTools } from "./registerAdbTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import { createAndroidAnalysisProvider } from "../composition/android.js";
+import { createAdbDeviceAnalysisProvider } from "../composition/adb.js";
 import { registerManagedWorkflowTools } from "./registerManagedWorkflowTools.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
@@ -99,6 +103,7 @@ export interface CreateServerOptions {
   readonly webRuntime?: WebRuntimeService;
   readonly webNetworkCapture?: WebNetworkCaptureService;
   readonly androidAnalysis?: AndroidAnalysisPort;
+  readonly adbDeviceAnalysis?: AdbDeviceAnalysisPort;
   readonly browserObservation?: BrowserObservationPort;
   readonly browserScenarioCapture?: BrowserScenarioCapturePort;
   readonly electronObservation?: ElectronObservationPort;
@@ -197,6 +202,8 @@ export const createServer = (
   );
   const android =
     options.androidAnalysis ?? createAndroidAnalysisProvider(environment);
+  const adbDevice =
+    options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment);
   const availability = installSessionToolAvailability(
     session,
     selectedOptions,
@@ -239,6 +246,12 @@ export const createServer = (
       if (result.status === "rejected") throw result.reason;
   };
   registerConfiguredAnalysisTools(toolContext, android);
+  registerAdbTools(
+    server,
+    new AdbDeviceAnalysisService(adbDevice),
+    toolLogger,
+    recordEvidence,
+  );
   registerObservationTools(toolContext);
   registerGuidedPrompts(server, analysis, session);
   if (session !== undefined) {
