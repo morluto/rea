@@ -98,9 +98,15 @@ export class TerminalRenderer {
 
   /** Release addon and terminal resources after all writes settle. */
   async dispose(): Promise<void> {
-    await this.#pending;
-    this.#serializeAddon.dispose();
-    this.#terminal.dispose();
+    try {
+      await this.#pending;
+    } finally {
+      try {
+        this.#serializeAddon.dispose();
+      } finally {
+        this.#terminal.dispose();
+      }
+    }
   }
 
   #capture(atMs: number): void {
