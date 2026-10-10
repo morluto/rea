@@ -99,14 +99,16 @@ describe("static Electron application analysis", () => {
         ? observations.map(({ label }) => label)
         : [],
     );
-    const mainEntries = graph.nodes.flatMap(({ kind, observations }) =>
-      kind === "electron-main"
-        ? observations.map(({ properties }) => properties.declared_path)
-        : [],
-    );
+    const entries = (role: string) =>
+      graph.nodes.flatMap(({ kind, observations }) =>
+        kind === role
+          ? observations.map(({ properties }) => properties.declared_path)
+          : [],
+      );
 
     expect(rootLabels).toEqual(["app"]);
-    expect(mainEntries).toEqual(["main.js"]);
+    expect(entries("electron-main")).toEqual(["main.js"]);
+    expect(entries("electron-renderer")).toEqual([]);
   });
 
   it("returns a tagged cancellation without executing application code", async () => {
@@ -331,7 +333,7 @@ const dependencyFixtureDirectory = async (): Promise<string> => {
     writeFile(join(root, "main.js"), "module.exports = {};"),
     writeFile(
       join(dependency, "package.json"),
-      JSON.stringify({ name: "dep", main: "index.js" }),
+      JSON.stringify({ name: "dep", main: "index.js", browser: "browser.js" }),
     ),
     writeFile(join(dependency, "index.js"), "module.exports = {};"),
   ]);
