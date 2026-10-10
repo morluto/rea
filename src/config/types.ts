@@ -4,6 +4,7 @@ import type { AnalysisProviderSelector } from "../contracts/providerSelection.js
 
 export interface AppConfig {
   readonly mcpMaxResponseBytes?: number;
+  readonly mcpInputSchemaProfile?: "full" | "compact";
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;

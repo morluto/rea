@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
-const schemaMaps = new Set([
+export const schemaMaps = new Set([
   "$defs",
   "definitions",
   "properties",
@@ -8,8 +8,8 @@ const schemaMaps = new Set([
   "dependentSchemas",
   "dependencies",
 ]);
-const schemaArrays = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildren = new Set([
+export const schemaArrays = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+export const schemaChildren = new Set([
   "items",
   "additionalItems",
   "contains",

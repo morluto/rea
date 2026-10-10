@@ -36,6 +36,41 @@ after SDK conversion and check advertised validation and actual calls.
 Individual model APIs can impose additional nesting limits; complete producer
 captures can exceed ten structural levels.
 
+### Compact input schema profile
+
+Some function-calling providers reject a request while any single tool's
+`parameters` schema exceeds a literal serialized size cap; Moonshot clients
+such as kimi-cli fail every request while the default catalog is attached
+([#1484](https://github.com/morluto/rea/issues/1484)). Setting the server's
+`REA_MCP_INPUT_SCHEMA_PROFILE` environment variable to `compact` renders every
+advertised input schema within a 13,312-byte budget, measured to sit below
+Moonshot's observed cap (community measurements: a 13.7 KB schema is accepted
+while a ~15 KB one is rejected). The setting is read at startup; restart the
+server to apply changes, as with `REA_MCP_MAX_RESPONSE_BYTES`. The default
+value `full` keeps the complete advertisement unchanged.
+
+The compact profile renders the same tool set, output schemas, annotations,
+and canonical server-side validation. It changes only the advertised input
+JSON Schema:
+
+- Annotation prose leaves the advertised form: nested property descriptions,
+  literal examples, defaults, and titles are dropped. The root keeps its
+  description because it states the accepted input groups.
+- Repeated annotation-free subschemas are shared through schema-local
+  `$defs`/`$ref`, which those providers validate without expansion.
+- The few schemas whose validation structure alone exceeds the budget
+  (`compare_web_captures`, `build_reconstruction_obligation_ledger`,
+  `evaluate_reconstruction_coverage`) are advertised in a reduced form:
+  property names, detected types, first-level guidance, and the root's
+  required-field constraints, with nested validation detail elided. The
+  canonical schema still rejects malformed calls server-side, so callers
+  following the reduced advertisement receive the canonical typed error
+  instead of silent acceptance.
+
+Boundary tests pin every advertised compact schema to the budget, keep them
+valid JSON Schema that still accepts every canonical example, and hold the
+number of reduced presentations at three or fewer as contracts evolve.
+
 Self-contained output schemas advertise a content-bound `$id`, including their
 declared dialect. SDK validators can reuse compiled schemas across complete
 catalog refreshes and equivalent tool outputs; changing the schema changes its
