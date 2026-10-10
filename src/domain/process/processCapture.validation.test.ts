@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 
 import { digestProcessCommitment } from "./processScenario.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
+import { partialProcessCaptureObservationSchema } from "./processCapture.js";
 import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
 import {
   compareUnverifiedProcessCaptures as compareProcessCaptures,
@@ -247,6 +248,68 @@ it("ties finalization evidence to the observed exit and to a committed interval"
     finalizationConsistencyIssue({ reason: "timeout", signal: 9 }, {}),
     "a scenario without an interval needs no record",
   ).toBeUndefined();
+});
+
+it("validates finalization evidence in partial captures and rejects malformed records", () => {
+  const { cleanup: _cleanup, ...completed } = emptyCapture();
+  const partial = (exit: Record<string, unknown>) =>
+    partialProcessCaptureObservationSchema.safeParse({
+      capture: { ...completed, exit },
+      cleanup: {
+        owned_process_group: { state: "cleaned", reason: null },
+        terminal_renderer: { state: "cleaned", reason: null },
+        temporary_root: { state: "cleaned", reason: null },
+      },
+      execution_failure: "capture ended after a fixture error",
+    });
+  const finalization = {
+    requested_ms: 500,
+    signal: "SIGTERM",
+    outcome: "target_exited",
+    elapsed_ms: 10,
+  };
+
+  expect(
+    partial({ code: null, signal: null, reason: "timeout" }).success,
+    "a partial exit without finalization stays valid",
+  ).toBe(true);
+  expect(
+    partial({ code: 0, signal: null, reason: "exited", finalization }).success,
+    "a partial exit cannot finalize without a deadline",
+  ).toBe(false);
+  expect(
+    partial({
+      code: null,
+      signal: null,
+      reason: "timeout",
+      finalization: { ...finalization, requested_ms: 700 },
+    }).success,
+    "a partial record must match the committed interval",
+  ).toBe(false);
+  expect(
+    () =>
+      parseProcessCapture(
+        withCommittedFinalization(500, {
+          code: null,
+          signal: null,
+          reason: "timeout",
+          finalization: { ...finalization, signal: "SIGINT" },
+        }),
+      ),
+    "only SIGTERM can start finalization",
+  ).toThrow();
+  expect(
+    () =>
+      parseProcessCapture(
+        withCommittedFinalization(500, {
+          code: null,
+          signal: null,
+          reason: "timeout",
+          finalization: { ...finalization, elapsed_ms: -1 },
+        }),
+      ),
+    "elapsed time cannot be negative",
+  ).toThrow();
 });
 
 it("requires an explicit journal and validates complete journals", () => {
