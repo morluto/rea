@@ -106,6 +106,42 @@ const validateEventJournal = (
     expectedSize, "event_journal", "nonempty journal must reference every captured observation");
 };
 
+/**
+ * Cross-field rule for `exit.finalization`, shared by complete and partial
+ * captures. Returns the violated rule, or undefined when the record is
+ * consistent. Only a cancelled exit may end the interval early.
+ */
+export const finalizationConsistencyIssue = (
+  exit: {
+    readonly reason: string;
+    readonly finalization?:
+      | {
+          readonly requested_ms: number;
+          readonly outcome: "target_exited" | "forced_kill";
+          readonly elapsed_ms: number;
+        }
+      | undefined;
+  },
+  committedScenario?: Readonly<Record<string, unknown>>,
+): string | undefined => {
+  const { finalization } = exit;
+  if (finalization === undefined) return undefined;
+  if (exit.reason === "exited")
+    return "finalization requires a deadline exit reason";
+  if (
+    finalization.outcome === "forced_kill" &&
+    exit.reason !== "cancelled" &&
+    finalization.elapsed_ms < finalization.requested_ms
+  )
+    return "forced finalization cannot precede the requested interval";
+  if (
+    committedScenario !== undefined &&
+    committedScenario["finalization_ms"] !== finalization.requested_ms
+  )
+    return "finalization must match the committed finalization_ms";
+  return undefined;
+};
+
 const validateLifecycle = (
   capture: UnverifiedProcessCapture,
   require: RequireInvariant,
@@ -120,14 +156,11 @@ const validateLifecycle = (
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");
-  const { finalization } = capture.exit;
-  require(finalization === undefined ||
-    capture.exit.reason !==
-      "exited", "exit", "finalization requires a deadline exit reason");
-  require(finalization === undefined ||
-    finalization.outcome !== "forced_kill" ||
-    finalization.elapsed_ms >=
-      finalization.requested_ms, "exit", "forced finalization cannot precede the requested interval");
+  const finalizationIssue = finalizationConsistencyIssue(
+    capture.exit,
+    capture.manifest.scenario,
+  );
+  require(finalizationIssue === undefined, "exit", finalizationIssue ?? "");
 };
 
 const validateCoverage = (

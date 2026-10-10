@@ -2,7 +2,10 @@ import { z } from "zod";
 import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
-import { collectProcessCaptureIssues } from "./processCaptureValidation.js";
+import {
+  collectProcessCaptureIssues,
+  finalizationConsistencyIssue,
+} from "./processCaptureValidation.js";
 import {
   filesystemCoverageSchema,
   processCaptureTruncationDetailsSchema,
@@ -623,6 +626,29 @@ export const partialProcessCaptureObservationSchema = z
         path: ["execution_failure"],
         message:
           "partial observations require incomplete cleanup or an execution failure",
+      });
+
+    const observedExit =
+      "capture" in partial
+        ? partial.capture.exit
+        : partial.observations.exit.state === "available"
+          ? partial.observations.exit.value
+          : undefined;
+    const committedScenario =
+      "capture" in partial
+        ? partial.capture.manifest.scenario
+        : partial.observations.manifest.state === "available"
+          ? partial.observations.manifest.value.scenario
+          : undefined;
+    const finalizationIssue =
+      observedExit === undefined
+        ? undefined
+        : finalizationConsistencyIssue(observedExit, committedScenario);
+    if (finalizationIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["exit"],
+        message: finalizationIssue,
       });
 
     if ("observations" in partial) {

@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { digestProcessCommitment } from "./processScenario.js";
 import { parseProcessCapture } from "./processCaptureParsing.js";
-import { finalizationConsistencyIssue } from "./processCapture.js";
+import { finalizationConsistencyIssue } from "./processCaptureValidation.js";
 import {
   compareUnverifiedProcessCaptures as compareProcessCaptures,
   emptyUnverifiedProcessCapture as emptyCapture,
