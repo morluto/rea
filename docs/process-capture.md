@@ -193,16 +193,21 @@ immediately, also during finalization, and ends the run as cancelled.
 }
 ```
 
-Both signals go to the captured root after its launch-time start identity is
+Both finalization signals go to the captured root after its start identity is
 checked immediately before the call, so a process that replaced the root is not
 signalled; the check and the signal are separate operations, not one atomic
-step. REA does not fall back to a bare PID kill. Descendants are not signalled during
-finalization; owned-process cleanup handles them afterwards. On a host where the
-start identity cannot be read, each attempt is recorded as `unverified`.
+step. The identity is read right after the process starts, not at the instant
+of the spawn: a root that exits and whose PID is reused before that first read
+is indistinguishable by this check. REA does not fall back to a bare PID kill
+for either finalization signal; where the identity cannot be read, the attempt
+is recorded as `unverified`. Cancellation before any deadline is unchanged and
+keeps the existing terminal kill. Descendants are not signalled during
+finalization; owned-process cleanup handles them afterwards.
 
-`exit.reason` keeps the initiating deadline (`timeout` or `idle_timeout`) and
-`exit.code` stays `null`, as for every deadline exit. `exit.finalization` records
-what was observed and is absent when no finalization was attempted:
+`exit.reason` keeps the initiating deadline (`timeout` or `idle_timeout`).
+`exit.code` is `null` for every deadline exit: it is not the target's observed
+exit code, and the observed signal stays in `exit.signal`. `exit.finalization`
+records what was observed and is absent when no finalization was attempted:
 
 ```json
 {
@@ -229,7 +234,9 @@ what was observed and is absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound.
+  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  that bound can still complete later; it stays identity-checked, and its late
+  result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
   finalization, or `null` when no exit was observed. The PTY layer can deliver the
   exit slightly after the operating system ended the process.
@@ -239,6 +246,9 @@ what was observed and is absent when no finalization was attempted:
 - If the `SIGKILL` cannot be delivered, REA stops waiting for an exit, keeps every
   observation collected so far with the delivery results, and releases the run
   through owned-process cleanup.
+- The `SIGKILL` is not sequenced after the `SIGTERM` delivery result: the two
+  deliveries are independent, because cancellation must not wait for a slow
+  identity check.
 
 `timeout_ms + finalization_ms + settle_ms` must stay at or below
 `Number.MAX_SAFE_INTEGER` (9007199254740991), the largest total exactly

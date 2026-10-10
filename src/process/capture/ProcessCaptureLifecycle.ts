@@ -691,6 +691,18 @@ export const observeSettlement = async (
   return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };
 };
 
+/**
+ * Wait for the captured terminal to exit and report how it ended.
+ *
+ * A timeout or idle deadline kills the root at once when `finalization_ms` is
+ * 0. With a positive interval it sends SIGTERM through `signalTarget`, keeps
+ * observing, and sends SIGKILL once if the interval ends first; cancellation
+ * during the interval sends that SIGKILL at once. Every attempt is recorded
+ * with its delivery result before the delivery is awaited, and each wait is
+ * bounded by the cleanup verification grace. If the SIGKILL cannot be
+ * delivered the wait ends with `unobserved: true` and no invented exit, so the
+ * caller can keep its observations and release the run through cleanup.
+ */
 export const awaitTerminalExit = async ({
   terminal,
   scenario,
