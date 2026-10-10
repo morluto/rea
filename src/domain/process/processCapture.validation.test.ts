@@ -123,18 +123,27 @@ it("rejects finalization evidence that no deadline could have produced", () => {
 const withCommittedFinalization = (
   committed: number | undefined,
   exit: Record<string, unknown>,
+  comparisonCommitted: number | undefined = committed,
 ) => {
   const capture = emptyCapture();
   const scenario = {
     ...capture.manifest.scenario,
     ...(committed === undefined ? {} : { finalization_ms: committed }),
   };
+  const comparisonContract = {
+    ...capture.manifest.comparison_contract,
+    ...(comparisonCommitted === undefined
+      ? {}
+      : { finalization_ms: comparisonCommitted }),
+  };
   return {
     ...capture,
     manifest: {
       ...capture.manifest,
       scenario,
+      comparison_contract: comparisonContract,
       full_scenario_sha256: digestProcessCommitment(scenario),
+      comparison_contract_sha256: digestProcessCommitment(comparisonContract),
     },
     exit,
   };
@@ -310,6 +319,100 @@ it("validates finalization evidence in partial captures and rejects malformed re
       ),
     "elapsed time cannot be negative",
   ).toThrow();
+});
+
+it("binds the comparison contract to the committed finalization interval", () => {
+  const exit = { code: 0, signal: null, reason: "exited" };
+
+  expect(
+    () => parseProcessCapture(withCommittedFinalization(500, exit, undefined)),
+    "a scenario interval missing from the comparison contract is contradictory",
+  ).toThrow("comparison_contract");
+  expect(
+    () => parseProcessCapture(withCommittedFinalization(500, exit, 900)),
+    "a different comparison interval is contradictory",
+  ).toThrow("comparison_contract");
+  expect(
+    () => parseProcessCapture(withCommittedFinalization(undefined, exit, 500)),
+    "a comparison interval the scenario never committed is contradictory",
+  ).toThrow("comparison_contract");
+});
+
+it("validates finalization evidence in incomplete observations", () => {
+  const finalization = {
+    requested_ms: 500,
+    signal: "SIGTERM",
+    outcome: "target_exited",
+    elapsed_ms: 10,
+  };
+  const unavailable = { state: "unavailable", reason: "not observed" };
+  const incomplete = (
+    exit: Record<string, unknown>,
+    manifest: ReturnType<typeof withCommittedFinalization>["manifest"],
+  ) =>
+    partialProcessCaptureObservationSchema.safeParse({
+      observations: {
+        target_pid: unavailable,
+        frames: { state: "available", value: [] },
+        rendered_frames: unavailable,
+        interaction_events: unavailable,
+        exit: { state: "available", value: exit },
+        settlement: unavailable,
+        process_samples: unavailable,
+        filesystem_snapshots: { before: unavailable, after: unavailable },
+        event_journal: unavailable,
+        manifest: { state: "available", value: manifest },
+      },
+      cleanup: {
+        owned_process_group: { state: "cleaned", reason: null },
+        terminal_renderer: { state: "cleaned", reason: null },
+        temporary_root: { state: "cleaned", reason: null },
+      },
+      execution_failure: "capture ended after a fixture error",
+    });
+  const timeout = { code: null, signal: null, reason: "timeout" };
+  const committed = withCommittedFinalization(500, timeout).manifest;
+
+  expect(
+    incomplete({ ...timeout, finalization }, committed).success,
+    "a consistent incomplete record is accepted",
+  ).toBe(true);
+  expect(
+    incomplete(
+      { code: 0, signal: null, reason: "exited", finalization },
+      committed,
+    ).success,
+    "an incomplete exit cannot finalize without a deadline",
+  ).toBe(false);
+  expect(
+    incomplete(
+      { ...timeout, finalization: { ...finalization, requested_ms: 700 } },
+      committed,
+    ).success,
+    "an incomplete record must match the committed interval",
+  ).toBe(false);
+  expect(
+    incomplete(
+      {
+        ...timeout,
+        signal: 15,
+        finalization: {
+          ...finalization,
+          outcome: "forced_kill",
+          elapsed_ms: 500,
+        },
+      },
+      committed,
+    ).success,
+    "an incomplete forced kill needs an observed SIGKILL",
+  ).toBe(false);
+  expect(
+    incomplete(
+      { ...timeout, finalization },
+      withCommittedFinalization(500, timeout, 900).manifest,
+    ).success,
+    "a contradictory comparison contract is rejected in incomplete observations",
+  ).toBe(false);
 });
 
 it("requires an explicit journal and validates complete journals", () => {
