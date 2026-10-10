@@ -691,6 +691,15 @@ export const observeSettlement = async (
   return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };
 };
 
+/** Name why an attempt is unverified; a blank message never reaches the capture schema. */
+export const describeUnverifiedCause = (
+  cause: unknown,
+  fallback: string,
+): string => {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return message.trim() === "" ? fallback : message;
+};
+
 /**
  * Wait for the captured terminal to exit and report how it ended.
  *
@@ -798,8 +807,10 @@ export const awaitTerminalExit = async ({
             },
             (cause: unknown) => {
               record.delivery = "unverified";
-              record.reason =
-                cause instanceof Error ? cause.message : String(cause);
+              record.reason = describeUnverifiedCause(
+                cause,
+                "signal delivery failed without a message",
+              );
             },
           )
           .then(() => {

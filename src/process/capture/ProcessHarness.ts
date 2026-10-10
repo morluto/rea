@@ -43,6 +43,7 @@ import {
   type ProcessCaptureCleanupHost,
   type ProcessCaptureObservationBuffer,
   type PendingProcessCapture,
+  describeUnverifiedCause,
 } from "./ProcessCaptureLifecycle.js";
 import {
   assertNotCancelled,
@@ -112,12 +113,18 @@ export const retainRootSignaller = (
                   } as const)
                 : ({
                     state: "unverified",
-                    reason: observation.reason,
+                    reason:
+                      observation.reason.trim() === ""
+                        ? "start identity is unavailable without a diagnostic"
+                        : observation.reason,
                   } as const),
           (cause: unknown) =>
             ({
               state: "unverified",
-              reason: cause instanceof Error ? cause.message : String(cause),
+              reason: describeUnverifiedCause(
+                cause,
+                "start identity inspection failed without a message",
+              ),
             }) as const,
         )
       : undefined;
