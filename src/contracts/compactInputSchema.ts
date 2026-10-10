@@ -4,22 +4,27 @@ import {
   schemaMaps,
 } from "./inputSchemaPresentation.js";
 
-// Function-calling APIs such as Moonshot's validate the literal serialized
-// size of each tool's parameters schema without expanding references. The
-// compact profile renders the same validation rules within that budget by
-// dropping annotation prose and sharing repeated subschemas through
-// schema-local references, which those validators do not expand.
+// Kimi expands schema-local references before sending tools to Moonshot.
+// Compact advertisements must fit after expansion, independently of client
+// reference handling. Canonical server-side validation remains unchanged.
 
 /** Annotation keys that carry guidance but no validation semantics. */
 const annotationKeys = new Set(["description", "examples", "default", "title"]);
 
 /** Keys whose values are literal data, never nested schemas to rewrite. */
 const dataKeys = new Set(["const", "enum", "examples", "default"]);
+const definitionKeys = new Set(["$defs", "definitions"]);
+// An empty schema accepts every JSON value. Kimi otherwise infers string.
+const jsonValueTypes = [
+  "null",
+  "boolean",
+  "object",
+  "array",
+  "number",
+  "string",
+];
 
-/** Subschemas smaller than this cost more as a reference than inline. */
-const minimumSharedBytes = 256;
-
-export type AdvertisedInputSchemaPresentation = "shared" | "reduced";
+export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
 export interface CompactedInputSchema {
   readonly schema: Record<string, unknown>;
@@ -96,127 +101,129 @@ const stripChildAnnotations = (child: unknown): unknown => {
   return kept;
 };
 
-const isShareCandidate = (node: Record<string, unknown>): boolean =>
-  !("$ref" in node) && serializedBytes(node) >= minimumSharedBytes;
-
-/**
- * Replace repeated annotation-free subschemas with schema-local references.
- * Definitions are named in deterministic first-replacement order, reuse
- * existing equivalent definitions, and can never form reference cycles
- * because a new definition is only referenced from positions that already
- * existed when it was created.
- */
-const shareRepeatedSubschemas = (
-  schema: Record<string, unknown>,
-): Record<string, unknown> => {
-  const occurrences = new Map<string, number>();
-  const count = (node: unknown, isRoot: boolean): void => {
-    if (isSchemaObject(node) && !isRoot && isShareCandidate(node)) {
-      const key = JSON.stringify(node);
-      occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
-    }
-    rebuildSchemaPositions(node, (child) => {
-      count(child, false);
-      return child;
-    });
-  };
-  count(schema, true);
-  const repeated = new Set(
-    [...occurrences]
-      .filter(([, occurrenceCount]) => occurrenceCount >= 2)
-      .map(([key]) => key),
-  );
-  if (repeated.size === 0) return schema;
-
-  const existingDefinitions = new Map(
-    Object.entries(
-      isSchemaObject(schema.$defs)
-        ? (schema.$defs as Record<string, unknown>)
-        : {},
-    )
-      .filter(([, value]) => isSchemaObject(value))
-      .map(([name, value]) => [JSON.stringify(value), name]),
-  );
-  const sharedDefinitions: Record<string, unknown> = {};
-  const namesByKey = new Map<string, string>();
-  // `node` is a schema or scalar, never a property/definition map: maps are
-  // only ever traversed through their parent's recognized schema keys.
-  const rebuildWithSharing = (
-    node: unknown,
-    protectedDefinition: boolean,
-  ): unknown => {
-    const rebuilt = rebuildSchemaPositions(node, (child) =>
-      rebuildWithSharing(child, false),
-    );
-    if (
-      !protectedDefinition &&
-      isSchemaObject(rebuilt) &&
-      isShareCandidate(rebuilt) &&
-      repeated.has(JSON.stringify(rebuilt))
-    ) {
-      const key = JSON.stringify(rebuilt);
-      const existing = existingDefinitions.get(key);
-      if (existing !== undefined) return { $ref: `#/$defs/${existing}` };
-      let name = namesByKey.get(key);
-      if (name === undefined) {
-        name = `shared${namesByKey.size}`;
-        namesByKey.set(key, name);
-        sharedDefinitions[name] = rebuilt;
-      }
-      return { $ref: `#/$defs/${name}` };
-    }
-    return rebuilt;
-  };
-  // Direct root definition values are the shared targets other positions
-  // reference; replacing one with a reference to itself would recurse.
-  const rebuiltRoot: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (schemaMaps.has(key) && isSchemaObject(value)) {
-      rebuiltRoot[key] = Object.fromEntries(
-        Object.entries(value).map(([name, child]) => [
-          name,
-          rebuildWithSharing(child, key === "$defs"),
-        ]),
-      );
-      continue;
-    }
-    if (schemaArrays.has(key) && Array.isArray(value)) {
-      rebuiltRoot[key] = value.map((child) => rebuildWithSharing(child, false));
-      continue;
-    }
-    if (schemaChildren.has(key)) {
-      rebuiltRoot[key] = Array.isArray(value)
-        ? value.map((child) => rebuildWithSharing(child, false))
-        : rebuildWithSharing(value, false);
-      continue;
-    }
-    rebuiltRoot[key] = value;
+const resolveLocalReference = (
+  root: Record<string, unknown>,
+  reference: string,
+): unknown => {
+  if (reference === "#") return root;
+  if (!reference.startsWith("#/")) return undefined;
+  let value: unknown = root;
+  for (const token of reference.slice(2).split("/")) {
+    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!isSchemaObject(value) || !Object.hasOwn(value, key)) return undefined;
+    value = value[key];
   }
-  if (Object.keys(sharedDefinitions).length === 0) return rebuiltRoot;
-  return {
-    ...rebuiltRoot,
-    $defs: {
-      ...(isSchemaObject(rebuiltRoot.$defs)
-        ? (rebuiltRoot.$defs as Record<string, unknown>)
-        : {}),
-      ...sharedDefinitions,
-    },
-  };
+  return value;
 };
 
-const detectedType = (schema: unknown): string | undefined => {
+/** Stop serialization at the budget before allocating an expanded schema. */
+const inlineWithinBudget = (
+  root: Record<string, unknown>,
+  budgetBytes: number,
+): Record<string, unknown> | undefined => {
+  let resolved = true;
+  function* serialize(
+    value: unknown,
+    position: "schema" | "map" | "data",
+    active: ReadonlySet<string>,
+  ): Generator<string> {
+    if (Array.isArray(value)) {
+      yield "[";
+      for (const [index, child] of value.entries()) {
+        if (index > 0) yield ",";
+        yield* serialize(child, position, active);
+      }
+      yield "]";
+    } else if (isSchemaObject(value)) {
+      if (position === "schema" && Object.keys(value).length === 0) {
+        yield JSON.stringify({ type: jsonValueTypes });
+        return;
+      }
+      if (position === "schema" && typeof value.$ref === "string") {
+        const target = resolveLocalReference(root, value.$ref);
+        if (target === undefined || active.has(value.$ref)) {
+          resolved = false;
+          return;
+        }
+        const { $ref, ...siblings } = value;
+        // Reference siblings are independent constraints in draft 2020-12.
+        // Merging their keys into the target would overwrite validation rules.
+        yield* serialize(
+          Object.keys(siblings).length === 0
+            ? target
+            : { allOf: [target, siblings] },
+          "schema",
+          new Set([...active, $ref]),
+        );
+        return;
+      }
+      yield "{";
+      let first = true;
+      for (const [key, child] of Object.entries(value)) {
+        if (position === "schema" && definitionKeys.has(key)) continue;
+        if (!first) yield ",";
+        first = false;
+        yield JSON.stringify(key) + ":";
+        const childPosition =
+          position === "map"
+            ? "schema"
+            : position === "schema" && schemaMaps.has(key)
+              ? "map"
+              : position === "schema" &&
+                  (schemaArrays.has(key) || schemaChildren.has(key))
+                ? "schema"
+                : "data";
+        yield* serialize(child, childPosition, active);
+      }
+      yield "}";
+    } else {
+      yield JSON.stringify(value);
+    }
+  }
+  const chunks: string[] = [];
+  let bytes = 0;
+  for (const chunk of serialize(root, "schema", new Set())) {
+    bytes += Buffer.byteLength(chunk, "utf8");
+    if (bytes > budgetBytes || !resolved) return undefined;
+    chunks.push(chunk);
+  }
+  return resolved
+    ? (JSON.parse(chunks.join("")) as Record<string, unknown>)
+    : undefined;
+};
+
+/** Preserve every possible type, including referenced and nullable unions. */
+const detectedTypes = (
+  schema: unknown,
+  root: Record<string, unknown>,
+  active: ReadonlySet<string> = new Set(),
+): readonly string[] | undefined => {
   if (!isSchemaObject(schema)) return undefined;
-  if (typeof schema.type === "string") return schema.type;
+  if (typeof schema.$ref === "string") {
+    if (active.has(schema.$ref)) return undefined;
+    return detectedTypes(
+      resolveLocalReference(root, schema.$ref),
+      root,
+      new Set([...active, schema.$ref]),
+    );
+  }
+  if (typeof schema.type === "string") return [schema.type];
+  if (
+    Array.isArray(schema.type) &&
+    schema.type.every((type) => typeof type === "string")
+  )
+    return schema.type;
   const alternatives = Array.isArray(schema.anyOf)
     ? schema.anyOf
     : Array.isArray(schema.oneOf)
       ? schema.oneOf
       : [];
-  for (const branch of alternatives) {
-    if (isSchemaObject(branch) && typeof branch.type === "string")
-      return branch.type;
-  }
-  return undefined;
+  if (alternatives.length === 0) return undefined;
+  const types = alternatives.map((branch) =>
+    detectedTypes(branch, root, active),
+  );
+  if (types.some((type) => type === undefined)) return undefined;
+  return [...new Set(types.flatMap((type) => type ?? []))];
 };
 
 const REDUCED_ANNOTATION =
@@ -241,7 +248,8 @@ const reduceToShallowProperties = (
     typeof schema.$schema === "string" ? { $schema: schema.$schema } : {};
   const shallow = Object.fromEntries(
     Object.entries(properties).map(([name, value]) => {
-      const type = detectedType(value);
+      const types = detectedTypes(value, schema);
+      const type = types?.length === 1 ? types[0] : types;
       const description =
         isSchemaObject(value) && typeof value.description === "string"
           ? { description: value.description }
@@ -275,7 +283,7 @@ const reduceToShallowProperties = (
 /**
  * Render an advertised input schema within a per-schema byte budget for
  * providers that validate the literal serialized schema size. Validation
- * keywords, references, and the canonical contract are preserved; only
+ * keywords and the canonical contract are preserved; only
  * annotation prose and, for structurally oversized schemas, nested
  * validation detail leave the advertised form.
  */
@@ -283,9 +291,8 @@ export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedInputSchema => {
-  const shared = shareRepeatedSubschemas(stripAnnotations(schema));
-  if (serializedBytes(shared) <= budgetBytes)
-    return { schema: shared, presentation: "shared" };
+  const inline = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  if (inline !== undefined) return { schema: inline, presentation: "inline" };
   const reduced = reduceToShallowProperties(schema);
   if (serializedBytes(reduced) <= budgetBytes)
     return { schema: reduced, presentation: "reduced" };

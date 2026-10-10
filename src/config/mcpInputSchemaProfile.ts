@@ -20,7 +20,7 @@ export type McpInputSchemaProfile = z.infer<typeof mcpInputSchemaProfileSchema>;
 /** Parse the advertised input schema presentation selection. */
 export const parseMcpInputSchemaProfile = (
   value: string | undefined,
-): Result<"full" | "compact" | undefined, ConfigurationError> => {
+): Result<McpInputSchemaProfile | undefined, ConfigurationError> => {
   if (value === undefined) return ok(undefined);
   const parsed = mcpInputSchemaProfileSchema.safeParse(value);
   return parsed.success

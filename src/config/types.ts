@@ -2,9 +2,11 @@ import type { LogLevel } from "../logger.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
 import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
 
+import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
+
 export interface AppConfig {
   readonly mcpMaxResponseBytes?: number;
-  readonly mcpInputSchemaProfile?: "full" | "compact";
+  readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;

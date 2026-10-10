@@ -113,9 +113,11 @@ describe("MCP compact input schema profile", () => {
         `${tool.name}: ${ajv.errorsText(ajv.errors)}`,
       ).toBe(true);
       const contract = contractsByName.get(tool.name);
-      const example = contract?.examples[0]?.input;
-      if (example === undefined) continue;
-      expect(ajv.compile(tool.inputSchema)(example), tool.name).toBe(true);
+      const validate = ajv.compile(tool.inputSchema);
+      for (const example of contract?.examples ?? [])
+        expect(validate(example.input), `${tool.name}: ${example.title}`).toBe(
+          true,
+        );
     }
   });
 
@@ -131,8 +133,56 @@ describe("MCP compact input schema profile", () => {
       );
       if (presentation === "reduced") reduced.push(tool.name);
     }
-    expect(reduced.length).toBeLessThanOrEqual(3);
+    expect(reduced.sort()).toEqual([
+      "build_reconstruction_obligation_ledger",
+      "capture_browser_scenario",
+      "compare_application_versions",
+      "compare_web_captures",
+      "evaluate_reconstruction_coverage",
+      "project_managed_application_graph",
+    ]);
     expect(tools.length).toBe(TOOL_CONTRACTS.length);
+  });
+
+  it("retains parameter types and avoids client-side reference expansion", async () => {
+    const server = compactServer();
+    registerCatalog(server);
+    const tools = await listToolsThroughTransport(server);
+    for (const tool of tools) {
+      // Kimi Code 2.1.1 expands references and defaults description-only
+      // properties to string. Inline schemas with explicit shallow types
+      // avoid both conversions for the structurally oversized tools.
+      expect(JSON.stringify(tool.inputSchema), tool.name).not.toContain(
+        '"$ref":',
+      );
+    }
+    const comparison = tools.find(
+      ({ name }) => name === "compare_managed_members",
+    );
+    expect(comparison?.inputSchema.properties).toMatchObject({
+      left: {
+        properties: {
+          normalized_result: {
+            type: ["null", "boolean", "object", "array", "number", "string"],
+          },
+        },
+      },
+    });
+    const ledger = tools.find(
+      ({ name }) => name === "build_reconstruction_obligation_ledger",
+    );
+    expect(ledger?.inputSchema.properties).toMatchObject({
+      evidence_bundle: { type: "object" },
+      reviewed_obligations: { type: "array" },
+      manifest: { type: "object" },
+    });
+    const coverage = tools.find(
+      ({ name }) => name === "evaluate_reconstruction_coverage",
+    );
+    expect(coverage?.inputSchema.properties).toMatchObject({
+      coverage: { type: "object" },
+      boundary_id: { type: "string" },
+    });
   });
 
   it("parses the profile selection the server startup reads", () => {

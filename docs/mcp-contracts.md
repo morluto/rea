@@ -56,20 +56,28 @@ JSON Schema:
 - Annotation prose leaves the advertised form: nested property descriptions,
   literal examples, defaults, and titles are dropped. The root keeps its
   description because it states the accepted input groups.
-- Repeated annotation-free subschemas are shared through schema-local
-  `$defs`/`$ref`, which those providers validate without expansion.
+- Schema-local references are inlined within the budget. Kimi Code expands
+  references before sending provider requests, so sharing definitions cannot
+  establish the provider-facing size. Expansion stops at the budget before
+  allocating an oversized presentation. Unconstrained JSON fields advertise
+  all JSON value types explicitly so Kimi cannot infer string for Evidence
+  objects or arrays.
 - The few schemas whose validation structure alone exceeds the budget
   (`compare_web_captures`, `build_reconstruction_obligation_ledger`,
-  `evaluate_reconstruction_coverage`) are advertised in a reduced form:
-  property names, detected types, first-level guidance, and the root's
-  required-field constraints, with nested validation detail elided. The
+  `evaluate_reconstruction_coverage`, `project_managed_application_graph`,
+  `compare_application_versions`, `capture_browser_scenario`) are advertised
+  in a reduced form: property names, reference-resolved types (including union
+  alternatives), first-level guidance, and the root's required-field constraints,
+  with nested validation detail elided. The
   canonical schema still rejects malformed calls server-side, so callers
   following the reduced advertisement receive the canonical typed error
   instead of silent acceptance.
 
 Boundary tests pin every advertised compact schema to the budget, keep them
 valid JSON Schema that still accepts every canonical example, and hold the
-number of reduced presentations at three or fewer as contracts evolve.
+set of six reduced presentations as contracts evolve. Client verification
+also checks provider-facing sizes and canonical examples after conversion by
+the actual Kimi Code CLI; local captures do not establish Moonshot acceptance.
 
 Self-contained output schemas advertise a content-bound `$id`, including their
 declared dialect. SDK validators can reuse compiled schemas across complete

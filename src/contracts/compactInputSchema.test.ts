@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
@@ -80,44 +81,13 @@ const oversizedPairSchema = (): Record<string, unknown> => {
   };
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const collectReferences = (
-  node: unknown,
-  found: readonly string[] = [],
-): readonly string[] => {
-  if (Array.isArray(node))
-    return node.flatMap((child) => collectReferences(child, found));
-  if (!isRecord(node)) return found;
-  const extended =
-    typeof node.$ref === "string" ? [...found, node.$ref] : found;
-  return Object.values(node).flatMap((child) =>
-    collectReferences(child, extended),
-  );
-};
-
-const resolveReference = (
-  root: Record<string, unknown>,
-  reference: string,
-): unknown => {
-  if (!reference.startsWith("#/")) return undefined;
-  let value: unknown = root;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!isRecord(value) || !Object.hasOwn(value, key)) return undefined;
-    value = value[key];
-  }
-  return value;
-};
-
 describe("compact advertised input schema", () => {
   it("drops nested annotation prose while keeping validation keywords", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       structuredClone(annotatedSchema),
       13 * 1024,
     );
-    expect(presentation).toBe("shared");
+    expect(presentation).toBe("inline");
     expect(schema.description).toBe("Root group guidance stays.");
     const query = (schema.properties as Record<string, unknown>)
       .query as Record<string, unknown>;
@@ -154,48 +124,138 @@ describe("compact advertised input schema", () => {
     });
   });
 
-  it("shares repeated annotation-free subschemas through schema-local references", () => {
-    const { schema } = compactAdvertisedInputSchema(
-      {
-        type: "object",
-        properties: {
-          before: structuredClone(repeatedObservation),
-          after: structuredClone(repeatedObservation),
-        },
-        required: ["before", "after"],
-        additionalProperties: false,
+  it("inlines local references without changing validation or literal data", () => {
+    const original = {
+      type: "object",
+      $defs: { "observation/~": structuredClone(repeatedObservation) },
+      properties: {
+        before: { $ref: "#/$defs/observation~1~0" },
+        after: { $ref: "#/$defs/observation~1~0" },
+        literal: { const: { $ref: "saved data", $defs: { keep: true } } },
       },
-      13 * 1024,
+      required: ["before", "after"],
+      additionalProperties: false,
+    };
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      original,
+      13312,
     );
-    const properties = schema.properties as Record<string, unknown>;
-    expect(properties.before).toEqual({ $ref: "#/$defs/shared0" });
-    expect(properties.after).toEqual({ $ref: "#/$defs/shared0" });
-    const definitions = schema.$defs as Record<string, unknown>;
-    expect(definitions.shared0).toEqual(repeatedObservation);
-    expect(serializedBytes(schema)).toBeLessThan(
-      serializedBytes({ ...repeatedObservation, second: repeatedObservation }),
-    );
-    for (const reference of collectReferences(schema))
-      expect(resolveReference(schema, reference)).toBeDefined();
+    expect(presentation).toBe("inline");
+    expect(schema.$defs).toBeUndefined();
+    const ajv = new Ajv2020({ strict: false });
+    const canonical = ajv.compile(original);
+    const compact = ajv.compile(schema);
+    const observation = {
+      captured_url: "https://example.com",
+      captured_at: "now",
+      status_code: 200,
+    };
+    for (const input of [
+      { before: observation, after: observation },
+      { before: observation, after: { ...observation, status_code: 99 } },
+      {
+        before: observation,
+        after: observation,
+        literal: original.properties.literal.const,
+      },
+    ])
+      expect(compact(input)).toBe(canonical(input));
   });
 
-  it("reuses an existing equivalent definition instead of adding one", () => {
+  it("keeps unconstrained JSON values explicit for client type inference", () => {
     const { schema } = compactAdvertisedInputSchema(
       {
         type: "object",
-        $defs: { observation: structuredClone(repeatedObservation) },
-        properties: {
-          before: { $ref: "#/$defs/observation" },
-          after: structuredClone(repeatedObservation),
-        },
+        properties: { normalized_result: {}, literal: { const: {} } },
       },
-      13 * 1024,
+      13312,
     );
     const properties = schema.properties as Record<string, unknown>;
-    expect(properties.before).toEqual({ $ref: "#/$defs/observation" });
-    expect(properties.after).toEqual({ $ref: "#/$defs/observation" });
-    const definitions = schema.$defs as Record<string, unknown>;
-    expect(Object.keys(definitions)).toEqual(["observation"]);
+    expect(properties.normalized_result).toEqual({
+      type: ["null", "boolean", "object", "array", "number", "string"],
+    });
+    expect(properties.literal).toEqual({ const: {} });
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const normalized_result of [null, true, {}, [], 42, "result"])
+      expect(validate({ normalized_result })).toBe(true);
+  });
+
+  it("preserves independent validation constraints on reference siblings", () => {
+    const original = {
+      type: "object",
+      $defs: { text: { type: "string", minLength: 3 } },
+      properties: {
+        query: { $ref: "#/$defs/text", minLength: 1, maxLength: 5 },
+      },
+    };
+    const { schema } = compactAdvertisedInputSchema(original, 13312);
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ query: "a" })).toBe(false);
+    expect(validate({ query: "abc" })).toBe(true);
+    expect(validate({ query: "abcdef" })).toBe(false);
+  });
+});
+
+describe("compact input schema budget and reduction", () => {
+  it("budgets repeated-reference expansion before materializing it", () => {
+    const definitions: Record<string, unknown> = {
+      leaf: structuredClone(repeatedObservation),
+    };
+    for (let index = 0; index < 30; index++) {
+      const $ref = `#/$defs/${index === 0 ? "leaf" : `level${index - 1}`}`;
+      definitions[`level${index}`] = {
+        type: "object",
+        properties: { left: { $ref }, right: { $ref } },
+      };
+    }
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      {
+        type: "object",
+        $defs: definitions,
+        properties: { tree: { $ref: "#/$defs/level29" } },
+      },
+      1024,
+    );
+    expect(presentation).toBe("reduced");
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(1024);
+    expect(schema.properties).toEqual({ tree: { type: "object" } });
+  });
+
+  it("retains referenced object, array and nullable types in reduced inputs", () => {
+    const original = {
+      type: "object",
+      $defs: {
+        pair: oversizedPairSchema(),
+        observations: {
+          type: "array",
+          items: structuredClone(repeatedObservation),
+        },
+        nullable: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+      properties: {
+        capture: { $ref: "#/$defs/pair", description: "Complete capture." },
+        observations: { $ref: "#/$defs/observations" },
+        label: { $ref: "#/$defs/nullable" },
+      },
+    };
+    const { schema, presentation } = compactAdvertisedInputSchema(
+      original,
+      1024,
+    );
+    expect(presentation).toBe("reduced");
+    expect(schema.properties).toEqual({
+      capture: { type: "object", description: "Complete capture." },
+      observations: { type: "array" },
+      label: { type: ["string", "null"] },
+    });
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ capture: {}, observations: [], label: null })).toBe(true);
+    expect(validate({ capture: {}, observations: [], label: "capture" })).toBe(
+      true,
+    );
+    expect(validate({ capture: "{}", observations: [], label: null })).toBe(
+      false,
+    );
   });
 
   it("reduces structurally oversized schemas to the shallow property presentation", () => {
@@ -231,7 +291,7 @@ describe("compact advertised input schema", () => {
     );
   });
 
-  it("keeps shared presentations under the measured provider budget", () => {
+  it("keeps inline presentations under the measured provider budget", () => {
     const { schema, presentation } = compactAdvertisedInputSchema(
       {
         type: "object",
@@ -248,9 +308,7 @@ describe("compact advertised input schema", () => {
       },
       13312,
     );
-    expect(presentation).toBe("shared");
+    expect(presentation).toBe("inline");
     expect(serializedBytes(schema)).toBeLessThanOrEqual(13312);
-    for (const reference of collectReferences(schema))
-      expect(resolveReference(schema, reference)).toBeDefined();
   });
 });
