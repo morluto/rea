@@ -1,4 +1,9 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import {
+  parse as parseYaml,
+  parseDocument as parseYamlDocument,
+  stringify as stringifyYaml,
+} from "yaml";
 import { isDeepStrictEqual } from "node:util";
 import {
   applyEdits,
@@ -70,6 +75,7 @@ export const clientConfigurationServersKey = (
   switch (format) {
     case "toml":
     case "grok":
+    case "hermes":
       return "mcp_servers";
     case "opencode":
       return "mcp";
@@ -93,6 +99,8 @@ const parseDocument = (
 ): Record<string, unknown> => {
   if (format === "toml" || format === "grok")
     return objectSchema.parse(parseToml(text));
+  // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
+  if (format === "hermes") return objectSchema.parse(parseYaml(text));
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
   if (isEmptyClientConfigurationText(text)) return {};
@@ -1265,6 +1273,8 @@ export const serializeClientConfiguration = (
     return serializeCodexConfiguration(document, originalText);
   if (format === "grok")
     return serializeGrokConfiguration(document, originalText);
+  if (format === "hermes")
+    return serializeHermesConfiguration(document, originalText);
   // An empty original holds no comments or settings to preserve. Writing a
   // fresh document also keeps a lone BOM from shifting past the closing brace.
   if (
@@ -1302,6 +1312,34 @@ export const legacyClientServerPath = (
   Object.hasOwn(parsed.legacyServers, name)
     ? [parsed.serversPath[0] ?? "mcp", name]
     : undefined;
+
+/**
+ * Keep an existing Hermes `config.yaml` intact aside from the REA server entry.
+ * Hermes config files carry user comments and unrelated settings, so the rea
+ * entry is upserted into the parsed YAML document (which retains formatting and
+ * comments) rather than re-serializing the whole object.
+ */
+const serializeHermesConfiguration = (
+  document: Record<string, unknown>,
+  originalText: string | undefined,
+): string => {
+  if (
+    originalText === undefined ||
+    isEmptyClientConfigurationText(originalText)
+  )
+    return stringifyYaml(document);
+  const serversKey = clientConfigurationServersKey("hermes");
+  const servers = document[serversKey];
+  const entry =
+    typeof servers === "object" && servers !== null
+      ? (servers as Record<string, unknown>)[PRODUCT_IDENTITY.mcpServerKey]
+      : undefined;
+  const yamlDocument = parseYamlDocument(originalText);
+  if (entry === undefined)
+    yamlDocument.deleteIn([serversKey, PRODUCT_IDENTITY.mcpServerKey]);
+  else yamlDocument.setIn([serversKey, PRODUCT_IDENTITY.mcpServerKey], entry);
+  return yamlDocument.toString();
+};
 
 /** Build the stdio entry shape expected by one client's configuration dialect. */
 export const clientRegistrationEntry = (
@@ -1352,6 +1390,15 @@ export const clientRegistrationEntry = (
         command: executable,
         args,
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+      };
+    case "hermes":
+      // Hermes reads stdio servers from `mcp_servers.<name>` and connects them
+      // unless `enabled` is false, so the entry states it explicitly.
+      return {
+        command: executable,
+        args,
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+        enabled: true,
       };
     default:
       return {

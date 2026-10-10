@@ -16,6 +16,7 @@ export interface SetupClient {
     | "commandcode"
     | "grok"
     | "omp"
+    | "hermes"
     | "unsupported";
 }
 
@@ -30,6 +31,9 @@ interface ClientPathContext {
     readonly CODEX_HOME?: string | undefined;
     readonly COPILOT_HOME?: string | undefined;
     readonly GROK_HOME?: string | undefined;
+    readonly HERMES_DATA_DIR_SUFFIX?: string | undefined;
+    readonly HERMES_HOME?: string | undefined;
+    readonly LOCALAPPDATA?: string | undefined;
     readonly OMP_PROFILE?: string | undefined;
     readonly OPENCODE_CONFIG?: string | undefined;
     readonly PI_CODING_AGENT_DIR?: string | undefined;
@@ -87,6 +91,28 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME ?? join(home, ".grok");
+
+/**
+ * Hermes Agent home. `HERMES_HOME` wins; otherwise the platform default mirrors
+ * Hermes's own resolver (`%LOCALAPPDATA%\\hermes` on Windows, `~/.hermes`
+ * elsewhere), including the optional `HERMES_DATA_DIR_SUFFIX` that is appended
+ * to the literal `hermes`/`.hermes` directory name.
+ */
+const hermesDirectory = ({
+  home,
+  platform,
+  env,
+}: ClientPathContext): string => {
+  const override = env.HERMES_HOME;
+  if (override !== undefined && override.trim() !== "") return override;
+  const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
+  return platform === "win32"
+    ? join(
+        env.LOCALAPPDATA ?? join(home, "AppData", "Local"),
+        `hermes${suffix}`,
+      )
+    : join(home, `.hermes${suffix}`);
+};
 
 /** Grok Bot uses an absolute SAND_DATA_ROOT; anything else stays ~/.grokbot. */
 const grokBotDirectory = ({ home, env }: ClientPathContext): string => {
@@ -297,6 +323,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "omp",
   },
   {
+    name: "hermes",
+    displayName: "Hermes",
+    configPath: (context: ClientPathContext) =>
+      join(hermesDirectory(context), "config.yaml"),
+    markerPath: hermesDirectory,
+    format: "hermes",
+  },
+  {
     name: "grok_bot",
     displayName: "Grok Bot",
     configPath: grokBotDirectory,
@@ -318,6 +352,9 @@ export const supportedClients = (
     CODEX_HOME: process.env.CODEX_HOME,
     COPILOT_HOME: process.env.COPILOT_HOME,
     GROK_HOME: process.env.GROK_HOME,
+    HERMES_DATA_DIR_SUFFIX: process.env.HERMES_DATA_DIR_SUFFIX,
+    HERMES_HOME: process.env.HERMES_HOME,
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
     OMP_PROFILE: process.env.OMP_PROFILE,
     OPENCODE_CONFIG: process.env.OPENCODE_CONFIG,
     PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
