@@ -179,7 +179,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(256)
       .regex(
-        /^[A-Za-z0-9._-]+$/u,
+        /^[A-Za-z0-9._\-]+$/u,
         "Setting keys are restricted to identifiers",
       )
       .describe("Setting key to read"),
@@ -241,7 +241,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(256)
       .regex(
-        /^[A-Za-z][A-Za-z0-9._-]*$/u,
+        /^[A-Za-z][A-Za-z0-9._\-]*$/u,
         "Intent action must be a dotted identifier such as android.intent.action.VIEW",
       )
       .describe("Intent action to start"),
@@ -257,7 +257,7 @@ export const adbInputSchemas = {
       .min(1)
       .max(512)
       .regex(
-        /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]*)?$/u,
+        /^[A-Za-z0-9._\-]+(\/[A-Za-z0-9._\-]*)?$/u,
         "Component must be package/activity form",
       )
       .optional()
@@ -269,7 +269,7 @@ export const adbInputSchemas = {
             .string()
             .min(1)
             .max(256)
-            .regex(/^[A-Za-z0-9._-]+$/u, "Extra keys are identifiers")
+            .regex(/^[A-Za-z0-9._\-]+$/u, "Extra keys are identifiers")
             .describe("Extra key"),
           type: z
             .enum(["string", "boolean", "int", "long", "float"])
