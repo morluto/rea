@@ -426,3 +426,24 @@ it("cancels the bounded-wait timer once deliveries settle after an exit", async 
     "no one-second grace timer outlives the finalized exit",
   ).toBeLessThanOrEqual(before);
 });
+
+it("keeps a non-empty reason when a signal delivery throws without a message", async () => {
+  const fake = fakeTerminal();
+  const throwing = {
+    ...fake,
+    signalTarget: async (): Promise<never> => {
+      throw new Error();
+    },
+  };
+  const pending = start(throwing, { timeout_ms: 100, finalization_ms: 5_000 });
+  await waitFor(() => throwing.signals.length >= 0);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  throwing.deliverExit({ exitCode: 0, signal: 0 });
+
+  const exit = observed(await pending);
+
+  expect(
+    exit.finalization?.signals[0]?.reason?.length,
+    "a thrown error without a message still leaves a named reason",
+  ).toBeGreaterThan(0);
+});

@@ -918,3 +918,34 @@ it("seeds a finalization observation only for a scenario with an interval", () =
     "a scenario with an interval carries the finalization observation",
   ).toContain("finalization");
 });
+
+it("keeps a non-empty reason when the identity inspection fails without a message", async () => {
+  const signalRoot = retainRootSignaller(4242, 500, {
+    observe: async () => {
+      throw new Error();
+    },
+    signal: vi.fn(async () => "signaled" as const),
+  });
+
+  const result = await signalRoot("SIGTERM");
+
+  expect(result.delivery, "the attempt is unverified").toBe("unverified");
+  expect(
+    result.reason?.length,
+    "the reason is never empty, which the capture schema would reject",
+  ).toBeGreaterThan(0);
+});
+
+it("keeps a non-empty reason when the identity diagnostic is empty", async () => {
+  const signalRoot = retainRootSignaller(4242, 500, {
+    observe: async () => ({ state: "unavailable" as const, reason: "" }),
+    signal: vi.fn(async () => "signaled" as const),
+  });
+
+  const result = await signalRoot("SIGTERM");
+
+  expect(
+    result.reason?.length,
+    "an empty diagnostic is replaced by a named fallback",
+  ).toBeGreaterThan(0);
+});
