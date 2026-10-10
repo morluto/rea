@@ -187,6 +187,30 @@ The loopback OpenAI completions/SSE custom model declares a one-million-token
 context and synthetic usage. Live xAI APIs, native Windows and default OS-home
 skill discovery remain unverified.
 
+`verify:commandcode-client` requires installed Command Code (verified with npm
+1.79.2); select it with `REA_VERIFY_COMMANDCODE_COMMAND`. Auth, MCP tokens and
+sessions use the actual OS home, so provision a disposable POSIX account rather
+than overriding `HOME`. Set `REA_VERIFY_COMMANDCODE_ACCOUNT_HOME` to that account's
+actual home and create `.rea-client-verification` there with exactly
+`Disposable REA client verification account` followed by a newline. The lane
+owns that account's `.commandcode` configuration and shared REA skill. Build the
+runtime as the checkout owner, then run `node scripts/verify-commandcode-client.mjs`
+as the disposable account; the npm shortcut also needs a writable checkout.
+The verifier does not create accounts or install clients. It guards setup
+targets, preserves an unrelated registration and backups, checks idempotence,
+and verifies native default shared-skill discovery and complete activation.
+Default deferred-schema delivery stays enabled: the native prompt advertises
+every REA tool, exact-name `search_tools` returns every input schema, and a native
+shell query recovers the saved catalog's count and digest when the client spills
+it. Actual analysis of a Unicode-path fixture delivers full named-schema Evidence
+to the next model request. Use `-- chat` for ordinary chat or
+`REA_VERIFY_RUNTIME_ROOT` for a production-only installed package. The loopback
+OpenAI completions/SSE model is a keyless BYOK endpoint declaring a million-token
+context with synthetic usage. A synthetic account-key value satisfies the
+client's print-mode gate; native local-only mode refuses hosted API calls.
+Updates, telemetry and cron are disabled. Hosted authentication, live models
+and Windows remain unverified.
+
 `verify:omp-client` requires installed OMP (verified with the official Linux x64
 18.8.7 binary); select it with `REA_VERIFY_OMP_COMMAND`. This optional POSIX lane
 isolates the default agent, global config and XDG roots, guards setup targets,

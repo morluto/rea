@@ -188,6 +188,7 @@
     "verify:gemini-client": "npm run build:cached && node scripts/verify-gemini-client.mjs",
     "verify:opencode-client": "npm run build:cached && node scripts/verify-opencode-client.mjs",
     "verify:grok-client": "npm run build:cached && node scripts/verify-grok-client.mjs",
+    "verify:commandcode-client": "npm run build:cached && node scripts/verify-commandcode-client.mjs",
     "verify:omp-client": "npm run build:cached && node scripts/verify-omp-client.mjs",
     "verify:copilot-client": "npm run build:cached && node scripts/verify-copilot-client.mjs",
     "verify:claude-client": "npm run build:cached && node scripts/verify-claude-client.mjs",
