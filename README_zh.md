@@ -131,21 +131,21 @@ npx rea-agents@latest setup
 
 REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。额外工具和主机支持取决于分析目标：
 
-| 目标                  | REA 返回的内容                                                            | 要求与指南                                                                                                             |
-| --------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                    | Hopper、Ghidra 或 IDA；[原生分析](https://rea.tools/guides/native/)                                                    |
-| 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                           | Linux x64 上由调用方提供的 pwntools；[二进制诊断](docs/binary-diagnostics.md)                                          |
-| EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                              | 本地原始字节/十六进制输入载体；[离线 EVM 指南](docs/evm-bytecode.md)                                                   |
-| 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项             | 调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](docs/recorded-crashes.md)                                       |
-| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系                          | Node.js 和 npm；[应用分析](https://rea.tools/guides/javascript/)                                                       |
-| 网站                  | 页面结构、脚本、网络观察结果和按请求获取的截图                            | Chrome 系浏览器；[浏览器分析](https://rea.tools/guides/browser/)                                                       |
-| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                                        | HAR；原生 mitmproxy 捕获需要 Linux 上的 mitmdump；[捕获指南](docs/web-network-captures.md)                             |
-| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                | 静态检查；[托管代码指南](docs/managed-code-analysis.md)                                                                |
-| Android APK           | 清单声明、类、反编译的方法和引用                                          | Linux/macOS 上的无界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                                       |
-| JEB projects          | Engine-backed project units, artifact digests and type/method pseudo-code | A caller-started JEB client serving MCP, selected with REA_JEB_MCP_URL; [JEB guide](docs/jeb-analysis.md)              |
-| 固件                  | 区域、提取结果和转交原生分析的内容                                        | Linux 上的 Binwalk / Unblob；[固件指南](docs/firmware-analysis.md)                                                     |
-| 软件包与资源          | 文件清单、摘要、plist、Apple bundle 结构和提取的资源                      | [制品与 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 应用](docs/apple-application-analysis.md) |
-| 进程行为              | 终端输出、交互、退出和文件系统观察结果，以及运行对比                      | 支持原生 PTY 的 Linux/macOS；[进程捕获](docs/process-capture.md)                                                       |
+| 目标                  | REA 返回的内容                                                | 要求与指南                                                                                                             |
+| --------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                        | Hopper、Ghidra 或 IDA；[原生分析](https://rea.tools/guides/native/)                                                    |
+| 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项               | Linux x64 上由调用方提供的 pwntools；[二进制诊断](docs/binary-diagnostics.md)                                          |
+| EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                  | 本地原始字节/十六进制输入载体；[离线 EVM 指南](docs/evm-bytecode.md)                                                   |
+| 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项 | 调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](docs/recorded-crashes.md)                                       |
+| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系              | Node.js 和 npm；[应用分析](https://rea.tools/guides/javascript/)                                                       |
+| 网站                  | 页面结构、脚本、网络观察结果和按请求获取的截图                | Chrome 系浏览器；[浏览器分析](https://rea.tools/guides/browser/)                                                       |
+| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                            | HAR；原生 mitmproxy 捕获需要 Linux 上的 mitmdump；[捕获指南](docs/web-network-captures.md)                             |
+| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                    | 静态检查；[托管代码指南](docs/managed-code-analysis.md)                                                                |
+| Android APK           | 清单声明、类、反编译的方法和引用                              | Linux/macOS 上的无界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                                       |
+| JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码               | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](docs/jeb-analysis.md)                      |
+| 固件                  | 区域、提取结果和转交原生分析的内容                            | Linux 上的 Binwalk / Unblob；[固件指南](docs/firmware-analysis.md)                                                     |
+| 软件包与资源          | 文件清单、摘要、plist、Apple bundle 结构和提取的资源          | [制品与 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 应用](docs/apple-application-analysis.md) |
+| 进程行为              | 终端输出、交互、退出和文件系统观察结果，以及运行对比          | 支持原生 PTY 的 Linux/macOS；[进程捕获](docs/process-capture.md)                                                       |
 
 静态 JavaScript 和 .NET 检查读取提供的文件，不运行应用。运行时捕获会以你的用户权限运行目标或与之交互；各运行时指南说明了具体影响。
 
