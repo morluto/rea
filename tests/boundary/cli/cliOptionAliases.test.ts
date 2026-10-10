@@ -56,6 +56,19 @@ describe("CLI option aliases", () => {
     expect(invalid).toEqual([]);
   });
 
+  it("describe every advertised command option", async () => {
+    const cli = createCli({});
+    const undescribed: string[] = [];
+    for (const command of createCliInventory(cli).primary) {
+      const help = await serve(cli, [command, "--help"]);
+      const options = /^Options:\n((?: {2}.*\n?)*)/mu.exec(help.stdout)?.[1];
+      for (const line of options?.split("\n") ?? [])
+        if (/^ {2}--\S+(?: <[^>]+>)?\s*$/u.test(line))
+          undescribed.push(`${command} ${line.trim()}`);
+    }
+    expect(undescribed).toEqual([]);
+  });
+
   it("accepts kebab-case long options without registered aliases", async () => {
     const cli = createCli({});
     const result = await serve(cli, [

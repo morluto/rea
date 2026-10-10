@@ -165,7 +165,7 @@ const registerNativeCommands = (
         .string()
         .optional()
         .describe(
-          "Plist path relative to the app root (default: Contents/Info.plist)",
+          "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
     }),
     run: ({ args, options }) =>
