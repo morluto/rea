@@ -179,7 +179,10 @@ user permissions; consult the chosen guide for host requirements and effects.
 ## Output and exit status
 
 The default terminal format is TOON. Use `--json` when saving results for a
-JSON consumer. Output selection and formatting do not change operation status.
+JSON consumer. `--json` is indented on a terminal and compact when piped or
+redirected, which keeps large results smaller for agents and scripts; pipe
+through `jq .` for indented files. Output selection and formatting do not change
+operation status.
 
 | Status    | Meaning                                                                                                                                              |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

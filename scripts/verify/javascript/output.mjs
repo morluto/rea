@@ -54,15 +54,15 @@ try {
     data: { ...evidence, normalized_result: { payload: [marker] } },
     meta: metadata,
   };
-  const skeleton = JSON.stringify(template, null, format === "json" ? 2 : 0);
+  // The destination is a redirected file, so both formats are compact.
+  const skeleton = JSON.stringify(template);
   const encodedMarker = JSON.stringify(marker);
   const markerIndex = skeleton.indexOf(encodedMarker);
   assert.ok(markerIndex >= 0);
   assert.equal(markerIndex, skeleton.lastIndexOf(encodedMarker));
   const prefix = skeleton.slice(0, markerIndex);
   const suffix = `${skeleton.slice(markerIndex + encodedMarker.length)}\n`;
-  const indentation = prefix.slice(prefix.lastIndexOf("\n") + 1);
-  const separator = format === "json" ? `,\n${indentation}` : ",";
+  const separator = ",";
   const expectedHash = createHash("sha256");
   expectedHash.update(prefix);
   for (let index = 0; index < count; index += 1) {

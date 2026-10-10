@@ -154,18 +154,27 @@ const addLiteralNode = (
   binding: JavaScriptSemanticBinding,
   value: string | number | boolean | null,
   role: string,
-) =>
-  retainSemanticGraphNode(context.state, context.file, {
+) => {
+  const encodedValue = JSON.stringify(value);
+  const valueDigest = `value-sha256:${digestCanonicalValue(value, "Semantic literal")}`;
+  const valueKey =
+    encodedValue.length <= valueDigest.length ? encodedValue : valueDigest;
+  const stringLabel = "string literal";
+  return retainSemanticGraphNode(context.state, context.file, {
     kind: "literal",
     // Identity needs an exact value commitment, not another payload copy.
     // Keep the complete literal in properties for queries and Evidence export.
-    roleKey: `literal:${binding.bindingId}:${role}:value-sha256:${digestCanonicalValue(value, "Semantic literal")}`,
+    roleKey: `literal:${binding.bindingId}:${role}:${valueKey}`,
     location: binding.definitions[0]?.location ?? null,
-    label: typeof value === "string" ? "string literal" : JSON.stringify(value),
+    label:
+      typeof value === "string" && encodedValue.length > stringLabel.length
+        ? stringLabel
+        : encodedValue,
     functionNodeId:
       context.bindingNodes.get(binding.bindingId)?.function_node_id ?? null,
     properties: { value },
   });
+};
 
 /** Create one canonical slot for a root binding and exact static property path. */
 export const semanticPropertySlot = (
