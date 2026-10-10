@@ -773,6 +773,7 @@ export const awaitTerminalExit = async ({
         signal: finalizationSignal,
         sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
         delivery: "unverified" as FinalizationDelivery,
+        reason: "delivery had not settled when the record was published",
       };
       finalizationSignals.push(record);
       recordFinalization(snapshot(null));
@@ -804,6 +805,7 @@ export const awaitTerminalExit = async ({
             ({ delivery, reason: deliveryReason }) => {
               record.delivery = delivery;
               if (deliveryReason !== undefined) record.reason = deliveryReason;
+              else delete record.reason;
             },
             (cause: unknown) => {
               record.delivery = "unverified";
