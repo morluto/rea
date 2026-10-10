@@ -233,7 +233,7 @@ or process workflows.
 
 ## CLI and verification
 
-All five CLI commands accept inline JSON or a path to a JSON file. The CLI
+All six CLI commands accept inline JSON or a path to a JSON file. The CLI
 returns an Evidence record directly. Put the full records in a later CLI input;
 a separate CLI process has no retained MCP connection state.
 

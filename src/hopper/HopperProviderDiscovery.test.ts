@@ -1,3 +1,5 @@
+import { dirname } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { parseConfig } from "../config/parseConfig.js";
@@ -25,6 +27,19 @@ describe("Hopper provider discovery", () => {
       reason: `Hopper launcher is missing or not executable: ${missingPath}`,
       diagnostics: {
         launcher_path: missingPath,
+        platform: process.platform,
+      },
+    });
+  });
+
+  it("reports a directory launcher path as missing", () => {
+    const directory = dirname(process.execPath);
+    expect(provider(directory).inspectAvailability()).toEqual({
+      status: "unavailable",
+      code: "executable_missing",
+      reason: `Hopper launcher is missing or not executable: ${directory}`,
+      diagnostics: {
+        launcher_path: directory,
         platform: process.platform,
       },
     });
