@@ -267,3 +267,95 @@ describe("browserScenarioSchema secret declarations", () => {
     ).toBe(false);
   });
 });
+
+describe("browser scenario artifact secret spellings", () => {
+  const resolve = (values: Record<string, string>) => {
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: "/opt/chromium" },
+      start_url: { url: "https://app.example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+      secrets: Object.keys(values).map((id) => ({
+        secret_id: id,
+        environment_variable: id,
+      })),
+    });
+    const secrets = BrowserScenarioSecrets.resolve(scenario, values);
+    if (secrets === undefined) throw new Error("Expected resolved secrets");
+    return secrets;
+  };
+
+  it.each([
+    ["raw", "SYN-&<>\"'\u00a0-end", "SYN-&<>\"'\u00a0-end"],
+    ["HTML text", "SYN-&<>\"'\u00a0-end", "SYN-&amp;&lt;&gt;\"'&nbsp;-end"],
+    ["HTML attribute", "SYN-&<>\"'\u00a0-end", "SYN-&amp;<>&quot;'&nbsp;-end"],
+    [
+      "escaped HTML attribute",
+      "SYN-&<>\"'\u00a0-end",
+      "SYN-&amp;&lt;&gt;&quot;'&nbsp;-end",
+    ],
+    ["serialized literal entity", "SYN-&amp;-end", "SYN-&amp;amp;-end"],
+    ["URI component", "SYN-a/b &c-end", "SYN-a%2Fb%20%26c-end"],
+    ["URI", "SYN-a/b &c-end", "SYN-a/b%20&c-end"],
+    ["URI in HTML", "SYN-a/b &c-end", "SYN-a/b%20&amp;c-end"],
+    ["form", "SYN-a/b &c-end", "SYN-a%2Fb+%26c-end"],
+    [
+      "Unicode and mixed percent case",
+      "SYN-雪/🚀-end",
+      "SYN-%e9%9B%aa%2f%F0%9f%9A%80-end",
+    ],
+    ["raw newline", "SYN-line\nend", "SYN-line\nend"],
+    ["encoded newline", "SYN-line\nend", "SYN-line%0aend"],
+    [
+      "regular expression characters",
+      "SYN-a.b+$[x](y){z}?\\q^end",
+      "SYN-a.b+$[x](y){z}?\\q^end",
+    ],
+    ["lone surrogate", "SYN-\ud800-end", "SYN-\ud800-end"],
+  ])(
+    "redacts the %s spelling without rewriting surrounding evidence",
+    (_kind, secret, spelling) => {
+      const secrets = resolve({ token: secret });
+      expect(
+        secrets.redactArtifactText(`before &lt; ${spelling} after &amp;`),
+      ).toBe("before &lt; [REDACTED:token] after &amp;");
+    },
+  );
+
+  it("uses the longest original span and stable IDs for colliding spellings", () => {
+    const secrets = resolve({
+      short: "SYN-a",
+      z_raw: "SYN-a%20b",
+      a_encoded: "SYN-a b",
+    });
+    expect(secrets.redactArtifactText("SYN-a%20b SYN-a b SYN-a")).toBe(
+      "[REDACTED:a_encoded] [REDACTED:a_encoded] [REDACTED:short]",
+    );
+  });
+
+  it("fails closed without reprocessing markers that reconstruct a secret", () => {
+    const secrets = resolve({ foo: "X", collision: "a[REDACTED:foo]b" });
+    expect(secrets.redactArtifactText("aXb")).toBe("");
+    const encoded = resolve({ foo: "X", collision: "a[REDACTED:foo]b &" });
+    expect(encoded.redactArtifactText("aXb &amp;")).toBe("");
+  });
+
+  it("does not normalize a matched spelling into a different secret", () => {
+    const secrets = resolve({ a: "SYNTH-A/B", z: "SYNTH-A/B%20C" });
+    expect(secrets.redactArtifactText("SYNTH-A%2FB%20C")).toBe(
+      "[REDACTED:a]%20C",
+    );
+  });
+
+  it("preserves ordinary text, literal case and unsupported representations", () => {
+    const secrets = resolve({ token: "SYN-a&b", uri: "SYN-a/b", empty: "" });
+    const text =
+      "SYN-a&amp;amp;b SYN-a&#38;b syn-a%2Fb SYN-a%2Fc &lt; ordinary\ntext";
+    expect(secrets.redactArtifactText(text)).toBe(text);
+    expect(
+      resolve({}).redactArtifactText("<a href='SYN-a%2Fb'>&amp;</a>"),
+    ).toBe("<a href='SYN-a%2Fb'>&amp;</a>");
+    expect(resolve({ empty: "" }).redactArtifactText(text)).toBe(text);
+  });
+});
