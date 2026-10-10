@@ -148,8 +148,20 @@ export const inspectBundleKeyedArchive = async (input: {
     // Match inventory spelling while retaining the raw path for I/O and evidence.
     const wanted = selected.path.normalize("NFC");
     const matches: ArtifactEntry[] = [];
-    for await (const entry of reader.entries(input.signal)) {
+    for await (const entry of reader.entries(input.signal, (directory) =>
+      wanted.startsWith(`${directory.normalize("NFC")}/`),
+    )) {
       if (entry.path.normalize("NFC") !== wanted) continue;
+      if (entry.kind !== "file")
+        throw archivePathError(
+          "invalid_value",
+          `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
+        );
+      if ((entry.declaredSize ?? 0) > MAX_BYTES)
+        throw new ArtifactReaderFailure(
+          "limit",
+          "Keyed archive exceeds 64 MiB",
+        );
       matches.push(entry);
     }
     if (matches.length > 1)
@@ -163,13 +175,6 @@ export const inspectBundleKeyedArchive = async (input: {
         "invalid_value",
         `No regular file exists at ${selected.path} in the active app bundle.`,
       );
-    if (entry.kind !== "file")
-      throw archivePathError(
-        "invalid_value",
-        `Archive path selects a ${entry.kind}, not a regular file: ${selected.path}`,
-      );
-    if ((entry.declaredSize ?? 0) > MAX_BYTES)
-      throw new ArtifactReaderFailure("limit", "Keyed archive exceeds 64 MiB");
     const stream = await reader.open(entry, input.signal);
     const chunks: Buffer[] = [];
     let size = 0;
