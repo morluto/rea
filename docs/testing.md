@@ -430,12 +430,17 @@ and method decompilation. The script records the engine's exact response to
 `open_jeb_project`; JEB 5.48.0 headless instances do not advertise that tool.
 REA does not install or launch JEB; see [JEB analysis](jeb-analysis.md) for
 the bring-your-own boundary. Verified against JEB 5.48.0 serving
-`jeb-mcp-server` 1.3.0 at three scales: a compiled Java class fixture, a
+`jeb-mcp-server` 1.3.0 at four scales: a compiled Java class fixture, a
 locally built signed probe APK with a launcher activity (manifest, v1/v2/v3
-certificates, dex bytecode, filtered and paginated listing), and the published
+certificates, dex bytecode, filtered and paginated listing), the published
 Signal 8.30.3 universal release APK (109 MB, R8-processed Kotlin/Compose,
 four signature schemes, native arm64 ELF units) with MainActivity method
-decompilation through both CLI and MCP.
+decompilation through both CLI and MCP, and the official Flutter Gallery
+2.9.2 release APK (112 MB): per-ABI `libapp.so` Dart AOT snapshot images
+analyzed as native code (75k methods on arm64) and decompiled through both
+CLI and MCP with explicit unit selection, plus the thin Java wrapper and
+decoded manifest. The dedicated Dart snapshot processor and `run_script`
+remain GUI-only surfaces in JEB 5.48.0 headless.
 Authenticated IPA and macOS application inventory projection is documented in
 [Apple application analysis](apple-application-analysis.md).
 
