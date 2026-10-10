@@ -1,3 +1,4 @@
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { isAbsolute } from "node:path";
 
 import {
@@ -81,12 +82,15 @@ export const inspectApktoolClient = async (
   try {
     const { stdout } = await execFileOutput(selection.command, ["--version"], {
       timeout: VERSION_TIMEOUT_MS,
+      stopSignal: "SIGTERM",
       maxBuffer: VERSION_MAX_OUTPUT_BYTES,
       ...(signal === undefined ? {} : { signal }),
     });
     return parseApktoolVersionOutput(stdout);
   } catch (cause) {
     const failure = execFileOutputFailure(cause);
+    if (signal?.aborted || failure?.code === "ABORT_ERR")
+      throw new AnalysisCancelledError("inspect_apktool_client", { cause });
     if (failure?.code === "ENOENT")
       throw new ApktoolConfigurationFailure(
         "command_missing",

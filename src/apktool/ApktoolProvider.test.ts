@@ -275,3 +275,79 @@ if [ "$1" = "--version" ]; then ${VERSION_BLOCK}; exit 0; fi`,
     ),
   ).toBe(false);
 });
+
+it("uses an owned APK snapshot and framework cache and resolves regional locales", async () => {
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub()(root).replace(
+      'if [ "$1" = "d" ]; then',
+      `if [ "$1" = "d" ]; then
+    [ "$6" = "--frame-path" ] || exit 7
+    [ -d "$7" ] || exit 8
+    printf 'changed original' > "${join(root, "probe.apk")}"
+    cat "$8" > "${join(root, "snapshot-bytes")}"
+    mkdir -p "$5/res/values-pt-rBR"
+    printf '<resources><string name="greeting">Olá</string></resources>' > "$5/res/values-pt-rBR/strings.xml"`,
+    ),
+  );
+  const apk = await apkFixture(root);
+  const result = await evidenceResult(providerOver(command), {
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: true, locale: "pt-BR" },
+  });
+  expect(result.target).toMatchObject({
+    sha256: apk.sha256,
+    bytes: apk.bytes,
+    path: apk.path,
+  });
+  expect(await readFile(join(root, "snapshot-bytes"), "utf8")).toBe(
+    "apk-bytes-for-apktool",
+  );
+  expect(result.strings).toEqual([{ name: "greeting", value: "Olá" }]);
+});
+
+it("marks an oversized strings document partial without claiming it is missing", async () => {
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub()(root).replace(
+      "  printf 'I: Using Apktool on stub",
+      '  dd if=/dev/zero of="$5/res/values/strings.xml" bs=1048576 count=9 2>/dev/null\n  printf \'I: Using Apktool on stub',
+    ),
+  );
+  const apk = await apkFixture(root);
+  const result = await providerOver(command).execute({
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: true },
+  });
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.value.result).toMatchObject({
+    coverage: "partial",
+    strings: [],
+  });
+  expect(result.value.limitations.join(" ")).toContain("exceeds");
+  expect(result.value.limitations.join(" ")).not.toContain("No default");
+});
+
+it("retains failed workspace cleanup and retries it on close", async () => {
+  const { command, root } = await writeApktoolStub(
+    decodeStub({ failDecode: true }),
+  );
+  const apk = await apkFixture(root);
+  let attempts = 0;
+  let owned: string | undefined;
+  const provider = new ApktoolProvider({
+    environment: { REA_APKTOOL_COMMAND: command },
+    removeWorkspace: async (path) => {
+      owned = path;
+      if (++attempts === 1) throw new Error("busy");
+      await rm(path, { recursive: true, force: true });
+    },
+  });
+  const result = await provider.execute({
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: true },
+  });
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.cleanup?.resources).toContain(owned);
+  await provider.close();
+  expect(attempts).toBe(2);
+});

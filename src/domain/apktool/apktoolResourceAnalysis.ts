@@ -26,8 +26,8 @@ export const apktoolInputSchemas = {
       .min(2)
       .max(16)
       .regex(
-        /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/u,
-        "Locale must look like de, pt-BR, or b+values variants' language part",
+        /^(?:[a-z]{2,3}(?:-(?:r?[A-Z]{2}|r?[0-9]{3}))?|b\+[a-z]{2,3}(?:\+[A-Za-z0-9]{2,8})*)$/u,
+        "Locale must look like de, pt-BR, pt-rBR, or b+zh+Hans+CN",
       )
       .optional()
       .describe(
