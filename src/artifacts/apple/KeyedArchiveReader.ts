@@ -28,8 +28,11 @@ import { ArtifactReaderFailure } from "../ArtifactReader.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
+import { estimateBinaryPlistExpansion } from "./InterfaceBuilderDecodeBudget.js";
 
 const MAX_BYTES = 64 * 1024 * 1024;
+/** Decoded representation budget, the same 8:1 ratio Interface Builder uses. */
+const MAX_DECODE_BYTES = 8 * MAX_BYTES;
 
 /** Parse inert plist bytes, preserving data and dates with explicit typed values. */
 export const decodeKeyedArchiveBytes = (
@@ -45,6 +48,20 @@ export const decodeKeyedArchiveBytes = (
     );
   const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
   const xmlText = binary ? undefined : decodeXmlPlistText(bytes);
+  // plist.parseBinary recurses on every object reference and copies shared
+  // containers, so a few hundred bytes can exhaust memory or the stack.
+  // RangeError reports a resource limit; a reference cycle is malformed.
+  if (binary)
+    estimateBinaryPlistExpansion(bytes, MAX_DECODE_BYTES, {
+      budget: "the keyed archive decode budget",
+      fail: (kind, message) =>
+        kind === "cycle"
+          ? new TypeError(
+              "binary plist object references form a cycle, which a property list cannot represent",
+            )
+          : new RangeError(message),
+      bounds: "decoder",
+    });
   const parsed = binary
     ? { value: parseBinary(bytes), omittedPrototypeKeys: 0 }
     : parseXmlPropertyList(xmlText ?? "");

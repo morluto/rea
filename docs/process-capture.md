@@ -119,6 +119,14 @@ selected normalization. Original admitted PTY chunks are available through
 comparison contract, so a capture whose lines were padded to full width does not
 compare as the same contract.
 
+Custom `normalization.patterns` replace literal text with the caller's literal
+replacement, including dollar sequences such as `$&` and `$$`. An empty pattern
+also matches the first and last string positions. Captures with custom patterns
+commit `pattern_normalization_version: "literal-replacements-v1"`. Legacy captures
+remain readable. Cross-version comparison is rejected; capture both sides with
+the same replacement semantics. Captures without custom patterns keep their
+existing comparison contract.
+
 Port normalization recognizes explicit `port`, `tcp_port`, `udp_port`, and
 `listen` fields, URL authorities, IP endpoints, and `localhost` endpoints, with
 ports from 0 through 65535. A port may end a sentence, as in `port: 8080.`;

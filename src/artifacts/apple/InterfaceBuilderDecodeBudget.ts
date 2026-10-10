@@ -147,10 +147,45 @@ const estimateXmlPlistExpansion = (
   return decodedSourceBytes * 2 + elementCount * 128;
 };
 
-/** Count every expanded binary-plist reference before calling plist.parseBinary. */
-const estimateBinaryPlistExpansion = (
+/** Resource a binary plist preflight found over its budget, or a malformed reference cycle. */
+export type BinaryPlistExpansionFailure = "cycle" | "depth" | "expansion";
+
+const interfaceBuilderBudgetFailure = (
+  _kind: BinaryPlistExpansionFailure,
+  message: string,
+): Error =>
+  new InterfaceBuilderDecodeBudgetExceeded(
+    "aggregate_decode_budget_exhausted",
+    message,
+  );
+
+/** How a caller names and reports binary plist expansion failures. */
+export interface BinaryPlistExpansionOptions {
+  /** Budget named in failure messages. */
+  readonly budget?: string;
+  /** Error for budget, depth, and reference-cycle failures. */
+  readonly fail?: (kind: BinaryPlistExpansionFailure, message: string) => Error;
+  /**
+   * Structural bounds: "strict" keeps objects and the offset table before the
+   * trailer; "decoder" admits exactly what plist.parseBinary can read, so
+   * expansion is bounded without rejecting archives that decoder accepts.
+   */
+  readonly bounds?: "strict" | "decoder";
+}
+
+/**
+ * Count every expanded binary-plist reference before calling plist.parseBinary,
+ * which recurses on each reference and copies shared containers. Malformed
+ * structure throws TypeError; budget, depth, and cycle failures use `fail`.
+ */
+export const estimateBinaryPlistExpansion = (
   bytes: Buffer,
   maxBytes: number,
+  {
+    budget = "the aggregate Interface Builder decode budget",
+    fail = interfaceBuilderBudgetFailure,
+    bounds = "strict",
+  }: BinaryPlistExpansionOptions = {},
 ): number => {
   if (bytes.length < 40)
     throw new TypeError("binary plist trailer is truncated");
@@ -172,20 +207,19 @@ const estimateBinaryPlistExpansion = (
   const objectCount = readInteger(trailer + 8, 8);
   const topObject = readInteger(trailer + 16, 8);
   const offsetTable = readInteger(trailer + 24, 8);
+  const tableEnd = bounds === "strict" ? trailer : bytes.length;
+  const objectsEnd = bounds === "strict" ? offsetTable : bytes.length;
   if (
     objectCount < 1 ||
     topObject < 0 ||
     topObject >= objectCount ||
     offsetTable < 8 ||
-    offsetTable + objectCount * offsetSize > trailer
+    offsetTable + objectCount * offsetSize > tableEnd
   )
     throw new TypeError("binary plist trailer or object table is invalid");
   let estimate = bytes.length * 2 + objectCount * 16;
   if (estimate > maxBytes)
-    throw new InterfaceBuilderDecodeBudgetExceeded(
-      "aggregate_decode_budget_exhausted",
-      "binary plist object table exceeds the aggregate Interface Builder decode budget",
-    );
+    throw fail("expansion", `binary plist object table exceeds ${budget}`);
 
   const active = new Set<number>();
   const pending: Array<{ object: number; depth: number; exit: boolean }> = [
@@ -201,26 +235,20 @@ const estimateBinaryPlistExpansion = (
     }
     pendingObjectCount -= 1;
     if (entry.depth > 128)
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
-        "binary plist nesting exceeds the aggregate Interface Builder decode budget",
-      );
+      throw fail("depth", `binary plist nesting exceeds ${budget}`);
     if (active.has(entry.object))
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
-        "binary plist reference cycle exceeds the aggregate Interface Builder decode budget",
-      );
+      throw fail("cycle", `binary plist reference cycle exceeds ${budget}`);
     estimate += 96;
     if (estimate > maxBytes)
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
-        "binary plist reference expansion exceeds the aggregate Interface Builder decode budget",
+      throw fail(
+        "expansion",
+        `binary plist reference expansion exceeds ${budget}`,
       );
     const offset = readInteger(
       offsetTable + entry.object * offsetSize,
       offsetSize,
     );
-    if (offset < 8 || offset >= offsetTable)
+    if (offset < 8 || offset >= objectsEnd)
       throw new TypeError("binary plist object offset is invalid");
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
@@ -234,31 +262,31 @@ const estimateBinaryPlistExpansion = (
       const integerSize = 1 << (extMarker & 0x0f);
       size = readInteger(cursor, integerSize);
       cursor += integerSize;
-      if (size < 0 || cursor > offsetTable)
+      if (size < 0 || cursor > objectsEnd)
         throw new TypeError("binary plist extended object size is invalid");
     }
     if (type === 4 || type === 5 || type === 6) {
       const byteLength = type === 6 ? size * 2 : size;
-      if (cursor + byteLength > offsetTable)
+      if (cursor + byteLength > objectsEnd)
         throw new TypeError("binary plist scalar object is truncated");
       estimate += type === 4 ? size + 4 * Math.ceil(size / 3) : byteLength * 2;
       if (estimate > maxBytes)
-        throw new InterfaceBuilderDecodeBudgetExceeded(
-          "aggregate_decode_budget_exhausted",
-          "binary plist scalar expansion exceeds the aggregate Interface Builder decode budget",
+        throw fail(
+          "expansion",
+          `binary plist scalar expansion exceeds ${budget}`,
         );
       continue;
     }
     if (type !== 10 && type !== 13) continue;
     const childCount = type === 13 ? size * 2 : size;
     const refsEnd = cursor + childCount * referenceSize;
-    if (!Number.isSafeInteger(refsEnd) || refsEnd > offsetTable)
+    if (!Number.isSafeInteger(refsEnd) || refsEnd > objectsEnd)
       throw new TypeError("binary plist reference table is truncated");
     const availableNodes = Math.floor((maxBytes - estimate) / 96);
     if (childCount > availableNodes - pendingObjectCount)
-      throw new InterfaceBuilderDecodeBudgetExceeded(
-        "aggregate_decode_budget_exhausted",
-        "binary plist reference expansion exceeds the aggregate Interface Builder decode budget",
+      throw fail(
+        "expansion",
+        `binary plist reference expansion exceeds ${budget}`,
       );
     active.add(entry.object);
     pending.push({ object: entry.object, depth: entry.depth, exit: true });

@@ -104,17 +104,22 @@ const nativeRows = (
   dossier: FunctionDossier,
   facet: Exclude<
     Extract<AnalysisViewRequest, { readonly kind: "native" }>["facet"],
-    "procedure" | "pseudocode" | "value_flow_summary"
+    "procedure" | "pseudocode" | "native_api" | "value_flow_summary"
   >,
-) => {
+): readonly unknown[] | undefined => {
   const sourceFlow = dossier.native_value_flow;
   const flow = sourceFlow?.available ? sourceFlow : undefined;
   return {
     assembly: dossier.assembly,
+    basic_blocks: dossier.basic_blocks,
+    comments: dossier.comments,
     callers: dossier.callers,
     callees: dossier.callees,
     incoming_references: dossier.incoming_references,
     outgoing_references: dossier.outgoing_references,
+    unresolved_calls: dossier.unresolved_calls,
+    referenced_strings: dossier.referenced_strings,
+    referenced_names: dossier.referenced_names,
     value_flow_operations: flow?.operations,
     value_flow_def_use: flow?.def_use,
     value_flow_effects: flow?.effects,
@@ -152,10 +157,20 @@ export const projectNativeFunctionView = (
     ...common,
   });
   const flow = dossier.native_value_flow;
-  if (view.facet === "procedure" || view.facet === "value_flow_summary") {
+  if (
+    view.facet === "procedure" ||
+    view.facet === "native_api" ||
+    view.facet === "value_flow_summary"
+  ) {
     if (view.offset !== 0)
       return err(viewError("Singleton native facets require offset 0."));
     if (view.facet === "procedure") return ok(singleton(dossier.procedure));
+    if (view.facet === "native_api")
+      return ok(
+        singleton(
+          dossier.native_api ?? { available: false, reason: "not recorded" },
+        ),
+      );
     const status =
       flow === null
         ? { available: false, reason: "not recorded" }
@@ -188,7 +203,12 @@ export const projectNativeFunctionView = (
     return ok(
       singleton({
         available: false,
-        reason: flow?.available === false ? flow.reason : "not recorded",
+        // Only value-flow facets inherit the value-flow failure reason; an
+        // older dossier simply has no unresolved_calls record.
+        reason:
+          view.facet.startsWith("value_flow_") && flow?.available === false
+            ? flow.reason
+            : "not recorded",
       }),
     );
   const items = rows.slice(view.offset, view.offset + view.limit);

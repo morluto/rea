@@ -8,6 +8,7 @@ import streamValues from "stream-json/streamers/stream-values.js";
 
 import { withRegularFile } from "./application/RegularFileRead.js";
 import {
+  JSON_BYTE_ORDER_MARK_MESSAGE,
   JSON_INPUT_RESOURCE_REMEDIATION,
   parseUtf8Json,
 } from "./application/Utf8JsonInput.js";
@@ -211,12 +212,22 @@ async function* decodedChunks(
   prefix?: Uint8Array,
 ): AsyncGenerator<string> {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  let leading = true;
+  const checked = (text: string): string => {
+    if (leading && text.length > 0) {
+      leading = false;
+      if (text.startsWith("\uFEFF")) throw new JsonByteOrderMarkError();
+    }
+    return text;
+  };
   if (prefix !== undefined)
     for (let offset = 0; offset < prefix.length; offset += READ_CHUNK_BYTES) {
       signal?.throwIfAborted();
-      yield decoder.decode(prefix.subarray(offset, offset + READ_CHUNK_BYTES), {
-        stream: true,
-      });
+      yield checked(
+        decoder.decode(prefix.subarray(offset, offset + READ_CHUNK_BYTES), {
+          stream: true,
+        }),
+      );
     }
   const bytes = Buffer.allocUnsafe(READ_CHUNK_BYTES);
   while (true) {
@@ -224,9 +235,18 @@ async function* decodedChunks(
     const read = await handle.read(bytes, 0, bytes.length, null);
     signal?.throwIfAborted();
     if (read.bytesRead === 0) break;
-    yield decoder.decode(bytes.subarray(0, read.bytesRead), { stream: true });
+    yield checked(
+      decoder.decode(bytes.subarray(0, read.bytesRead), { stream: true }),
+    );
   }
-  yield decoder.decode();
+  yield checked(decoder.decode());
+}
+
+/** A streamed JSON file begins with a byte-order mark; reported as invalid JSON. */
+class JsonByteOrderMarkError extends SyntaxError {
+  constructor() {
+    super(JSON_BYTE_ORDER_MARK_MESSAGE);
+  }
 }
 
 const readPrefix = async (

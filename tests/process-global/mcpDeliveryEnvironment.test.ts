@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { afterEach, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { AnalysisInputError } from "../../src/domain/analysisErrorCore.js";
@@ -73,16 +74,19 @@ it("keeps independent server budgets for successful results and oversized errors
     Math.ceil((smallBudget + 65536) / 17),
   );
   for (const server of [small, large])
-    server.registerTool("selected_failure", { inputSchema: {} }, async () =>
-      server.delivery.toErrorToolResult(
-        new AnalysisInputError("fixture", undefined, [
-          {
-            path: ["procedure"],
-            reason: "invalid_value",
-            message: diagnostic,
-          },
-        ]),
-      ),
+    server.registerTool(
+      "selected_failure",
+      { inputSchema: z.object({}) },
+      async () =>
+        server.delivery.toErrorToolResult(
+          new AnalysisInputError("fixture", undefined, [
+            {
+              path: ["procedure"],
+              reason: "invalid_value",
+              message: diagnostic,
+            },
+          ]),
+        ),
     );
 
   const [smallClient, largeClient] = await Promise.all([
