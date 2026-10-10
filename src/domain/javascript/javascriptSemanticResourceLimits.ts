@@ -9,6 +9,16 @@ export const SEMANTIC_PRIMITIVE_CANDIDATE_LIMIT = 256;
 export const SEMANTIC_EXPRESSION_DEPTH_LIMIT = 256;
 /** Bound normalized strings and transient keys independently of transport limits. */
 export const SEMANTIC_PRIMITIVE_JSON_BYTES_LIMIT = 1_048_576;
+/**
+ * Maximum single-module source payload admitted to deep semantic analysis.
+ * Minified bundled modules expand superlinearly across the parsed AST, the
+ * semantic state and the retained IR: the 4.76 MB `chunk-kasbfbhj.js` member
+ * of the public Claude Code 2.1.296 package needs more than a 768 MiB old
+ * space and terminates the whole CLI/MCP process at default bounds. Modules
+ * above this payload budget degrade to an explicit resource-limit result
+ * instead of allocating inside the host heap.
+ */
+export const SEMANTIC_MODULE_SOURCE_BYTES_LIMIT = 2_097_152;
 
 const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
   "primitive-candidates":
@@ -17,6 +27,8 @@ const RESOURCE_LIMIT_REASON: Record<JavaScriptSemanticResourceLimit, string> = {
     "Primitive string-byte budget exceeded (maximum 1048576 estimated JSON bytes).",
   "expression-depth":
     "Semantic expression depth budget exceeded (maximum 256 nested expressions).",
+  "module-source-bytes":
+    "Module source-payload budget exceeded (maximum 2097152 bytes); deep semantic analysis was skipped for this module.",
 };
 
 /** Check UTF-16 length against worst-case JSON escaping without flattening. */
@@ -67,6 +79,11 @@ export const exceedsSemanticTemplateByteBudget = (
   }
   return false;
 };
+
+/** Check one module's source payload against the deep-semantics budget. */
+export const exceedsSemanticModuleSourceBytesBudget = (
+  source: string,
+): boolean => Buffer.byteLength(source) > SEMANTIC_MODULE_SOURCE_BYTES_LIMIT;
 
 /** Make an explicit unknown value tagged with the semantic resource bound. */
 export const semanticResourceLimitUnknown = (

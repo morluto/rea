@@ -4,6 +4,7 @@ import type {
   JavaScriptSemanticCoverage,
   JavaScriptSemanticReturnCoverage,
 } from "./javascriptSemanticCoverage.js";
+import { SEMANTIC_MODULE_SOURCE_BYTES_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
@@ -436,7 +437,36 @@ export interface JavaScriptSemanticIr {
 }
 
 /** Fail-closed result when Babel cannot produce an inert syntax tree. */
-export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
+export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr =>
+  emptyJavaScriptSemanticIr({ status: "failed", omittedCount: null }, [
+    "JavaScript parsing failed; no semantic absence claim is available.",
+    "No JavaScript was executed.",
+  ]);
+
+/**
+ * Explicit resource-limit result when one module's source payload exceeds the
+ * deep-semantics budget: static facts stand, semantic facts are skipped
+ * without any absence claim, and the named bound stays caller-visible instead
+ * of expanding the module inside the host CLI/MCP heap.
+ */
+export const moduleSourceBudgetJavaScriptSemanticIr =
+  (): JavaScriptSemanticIr =>
+    emptyJavaScriptSemanticIr(
+      {
+        status: "failed",
+        omittedCount: null,
+        resourceLimits: ["module-source-bytes"],
+      },
+      [
+        `The module source exceeds the ${SEMANTIC_MODULE_SOURCE_BYTES_LIMIT}-byte semantic payload budget; deep semantic analysis was skipped and no semantic absence claim is available for this module.`,
+        "No JavaScript was executed.",
+      ],
+    );
+
+const emptyJavaScriptSemanticIr = (
+  coverage: JavaScriptSemanticCoverage,
+  limitations: readonly string[],
+): JavaScriptSemanticIr => ({
   schema: "JavaScriptSemanticIR",
   scopes: [],
   bindings: [],
@@ -460,9 +490,6 @@ export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   objectOperations: [],
   functionFingerprints: [],
   frontiers: [],
-  coverage: { status: "failed", omittedCount: null },
-  limitations: [
-    "JavaScript parsing failed; no semantic absence claim is available.",
-    "No JavaScript was executed.",
-  ],
+  coverage,
+  limitations,
 });

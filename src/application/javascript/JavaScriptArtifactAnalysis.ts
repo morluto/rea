@@ -7,7 +7,11 @@ import {
   analyzeParsedJavaScriptSemanticsSteps,
   classifyParsedJavaScriptOpenReceiversSteps,
 } from "../../domain/javascript/javascriptSemanticAnalysis.js";
-import type { JavaScriptSemanticIr } from "../../domain/javascript/javascriptSemanticIr.js";
+import {
+  moduleSourceBudgetJavaScriptSemanticIr,
+  type JavaScriptSemanticIr,
+} from "../../domain/javascript/javascriptSemanticIr.js";
+import { exceedsSemanticModuleSourceBytesBudget } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import { parseJavaScriptSource } from "../../domain/javascript/javascriptSourceParser.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
 import { flattenSourceMapLeaves } from "../../domain/sourceMapEnvelope.js";
@@ -197,9 +201,13 @@ function* analyzeArtifactFileSteps<
   );
   const staticFindings = findingCount(analysis);
   yield;
+  // Deep semantics of one oversized payload can exceed the whole host heap
+  // (issue #1563); degrade that module instead of terminating the process.
   const semantics =
     analysis.parse_status === "complete" || analysis.parse_status === "partial"
-      ? yield* analyzeParsedJavaScriptSemanticsSteps(parsed)
+      ? exceedsSemanticModuleSourceBytesBudget(file.text.value)
+        ? moduleSourceBudgetJavaScriptSemanticIr()
+        : yield* analyzeParsedJavaScriptSemanticsSteps(parsed)
       : null;
   const projected =
     semantics === null
