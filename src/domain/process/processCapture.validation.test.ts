@@ -500,6 +500,22 @@ it("validates finalization evidence in incomplete observations", () => {
       `${label} is rejected for the comparison contract`,
     ).toContain("comparison_contract");
   }
+  const earlyKill = {
+    requested_ms: 500,
+    elapsed_ms: null,
+    signals: [
+      { signal: "SIGTERM", sent_at_ms: 0, delivery: "signaled" },
+      { signal: "SIGKILL", sent_at_ms: 40, delivery: "unverified" },
+    ],
+  };
+  expect(
+    incomplete(undefined, committed, earlyKill).success,
+    "an unobserved exit may still keep a cancellation's early SIGKILL attempt",
+  ).toBe(true);
+  expect(
+    incomplete({ ...timeout }, committed, earlyKill).success,
+    "a deadline exit cannot carry a SIGKILL before the requested interval",
+  ).toBe(false);
   expect(
     incomplete(undefined, differing).success,
     "an unavailable exit still cannot hide a contradictory manifest",

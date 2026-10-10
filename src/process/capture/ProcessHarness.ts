@@ -63,6 +63,10 @@ import {
   type ProcessCaptureProgressTracker,
 } from "./ProcessCaptureProgress.js";
 import type { ProcessOwnershipBaseline } from "../ProcessOwnership.js";
+import {
+  observeProcessStartIdentity,
+  signalProcessWithStartIdentity,
+} from "../ProcessOwnershipObservation.js";
 
 interface StartedCaptureRuntime {
   readonly renderer: TerminalRenderer;
@@ -73,7 +77,40 @@ interface StartedCaptureRuntime {
   readonly lastOutput: () => number;
   readonly rawTerminalRetention: () => TerminalRetention;
   readonly stopSampler: ReturnType<typeof startProcessSampler>;
+  /** Signals the captured root only while its launch-time start identity still matches. */
+  readonly signalRoot: (
+    signal: "SIGTERM" | "SIGKILL",
+  ) => Promise<"signaled" | "gone" | "identity-changed" | "unverified">;
 }
+
+/** Retain the root's start identity right after spawn, only when finalization can need it. */
+const retainRootSignaller = (
+  pid: number,
+  finalizationMs: number,
+): StartedCaptureRuntime["signalRoot"] => {
+  const retained =
+    finalizationMs > 0
+      ? observeProcessStartIdentity(pid).then(
+          (observation) =>
+            observation === undefined
+              ? ({ state: "gone" } as const)
+              : observation.state === "readable"
+                ? ({
+                    state: "identity",
+                    identity: observation.identity,
+                  } as const)
+                : ({ state: "unverified" } as const),
+          () => ({ state: "unverified" }) as const,
+        )
+      : undefined;
+  return async (signal) => {
+    const identity = await retained;
+    if (identity === undefined || identity.state === "unverified")
+      return "unverified";
+    if (identity.state === "gone") return "gone";
+    return signalProcessWithStartIdentity(pid, identity.identity, signal);
+  };
+};
 
 const cleanupFailedStartup = async (options: {
   readonly cause: unknown;
@@ -236,6 +273,7 @@ const startCaptureRuntime = async (
       lastOutput: () => lastOutput,
       rawTerminalRetention,
       stopSampler,
+      signalRoot: retainRootSignaller(terminal.pid, scenario.finalization_ms),
     };
   } catch (cause: unknown) {
     return cleanupFailedStartup({
@@ -354,7 +392,10 @@ const completeCapture = async (options: {
   readonly frames: readonly TerminalFrame[];
   readonly samples: readonly ProcessSample[];
   readonly interactions: readonly InteractionEvent[];
-  readonly exit: Awaited<ReturnType<typeof awaitTerminalExit>>;
+  readonly exit: Extract<
+    Awaited<ReturnType<typeof awaitTerminalExit>>,
+    { readonly unobserved?: false }
+  >;
   readonly signal?: AbortSignal;
   readonly captureSnapshot: typeof snapshotRoots;
   readonly eventJournal: readonly ProcessCaptureEventJournalEntry[];
@@ -596,12 +637,36 @@ const runProcessScenario = async (
       started: runtime.started,
       lastOutput: runtime.lastOutput,
       signal,
+      signalTarget: runtime.signalRoot,
+      recordFinalization: (finalization) => {
+        observations.finalization = { state: "available", value: finalization };
+      },
       timers,
       interactions,
       dispatchedEventIndexes,
       recordEvent,
       ...(progress === undefined ? {} : { onLiveProgress: reportRunning }),
     });
+    if (exit.unobserved === true) {
+      observations.finalization = {
+        state: "available",
+        value: exit.finalization,
+      };
+      observations.exit = {
+        state: "unavailable",
+        reason:
+          "The captured process exit was not observed because the finalization SIGKILL could not be delivered.",
+      };
+      if (exit.reason === "cancelled") throw processCaptureCancelled();
+      throw new Error(
+        "The captured process exit was not observed because the finalization SIGKILL could not be delivered.",
+      );
+    }
+    if (exit.finalization !== undefined)
+      observations.finalization = {
+        state: "available",
+        value: exit.finalization,
+      };
     observations.exit = {
       state: "available",
       value: {

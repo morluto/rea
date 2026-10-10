@@ -195,7 +195,8 @@ export const finalizationConsistencyIssue = (
   if (
     kill !== undefined &&
     kill.sent_at_ms < finalization.requested_ms &&
-    exit?.reason !== "cancelled"
+    exit !== undefined &&
+    exit.reason !== "cancelled"
   )
     return "finalization SIGKILL cannot precede the requested interval";
   if (finalization.elapsed_ms === null && options?.allowNullElapsedMs !== true)

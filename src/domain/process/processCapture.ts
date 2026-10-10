@@ -685,7 +685,9 @@ export const partialProcessCaptureObservationSchema = z
       (observedFinalization === undefined
         ? undefined
         : finalizationConsistencyIssue(
-            undefined,
+            observedExit === undefined
+              ? undefined
+              : { reason: observedExit.reason },
             committedManifest?.scenario,
             committedManifest?.comparison_contract,
             { finalization: observedFinalization, allowNullElapsedMs: true },

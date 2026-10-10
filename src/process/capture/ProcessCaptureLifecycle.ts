@@ -72,12 +72,40 @@ interface TerminalExitOptions {
   readonly started: number;
   readonly lastOutput: () => number;
   readonly signal: AbortSignal | undefined;
+  /** Identity-checked signal to the captured root, used only during finalization. */
+  readonly signalTarget: (
+    signal: FinalizationSignal,
+  ) => Promise<FinalizationDelivery>;
+  /** Receives the attempts so far, so a later failure keeps them. */
+  readonly recordFinalization: (
+    finalization: ProcessCaptureFinalization,
+  ) => void;
   readonly timers: Set<ProcessTimer>;
   readonly interactions: InteractionEvent[];
   readonly dispatchedEventIndexes: ReadonlySet<number>;
   readonly recordEvent: RecordProcessCaptureEvent;
   readonly onLiveProgress?: () => void;
 }
+
+type FinalizationSignal =
+  ProcessCaptureFinalization["signals"][number]["signal"];
+type FinalizationDelivery =
+  ProcessCaptureFinalization["signals"][number]["delivery"];
+
+/** The capture's exit, or the facts known when no exit could be observed. */
+export type TerminalExitResult =
+  | {
+      readonly unobserved?: false;
+      readonly exitCode: number;
+      readonly signal?: number;
+      readonly reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
+      readonly finalization?: ProcessCaptureFinalization;
+    }
+  | {
+      readonly unobserved: true;
+      readonly reason: "timeout" | "idle_timeout" | "cancelled";
+      readonly finalization: ProcessCaptureFinalization;
+    };
 
 interface CaptureResultOptions {
   readonly frames: readonly TerminalFrame[];
@@ -661,17 +689,14 @@ export const awaitTerminalExit = async ({
   started,
   lastOutput,
   signal,
+  signalTarget,
+  recordFinalization,
   timers,
   interactions,
   dispatchedEventIndexes,
   recordEvent,
   onLiveProgress,
-}: TerminalExitOptions): Promise<{
-  exitCode: number;
-  signal?: number;
-  reason: "exited" | "timeout" | "idle_timeout" | "cancelled";
-  finalization?: ProcessCaptureFinalization;
-}> =>
+}: TerminalExitOptions): Promise<TerminalExitResult> =>
   new Promise((resolveExit) => {
     // The kill caused by a deadline is observed later as an ordinary PTY exit.
     // Keep the initiating lifecycle reason so comparisons distinguish a target
@@ -680,25 +705,73 @@ export const awaitTerminalExit = async ({
     onLiveProgress?.();
     // A deadline with a finalization interval sends SIGTERM first and keeps
     // observing; SIGKILL follows only when the interval elapses or the request
-    // is cancelled.
+    // is cancelled. Both go through the identity-checked signaller.
     // The interval is measured on the monotonic clock so a wall-clock change
     // cannot shorten it or produce a negative elapsed time.
     let finalizationStartedAt: number | undefined;
     let escalationSent = false;
+    let settled = false;
     const finalizationSignals: {
-      signal: "SIGTERM" | "SIGKILL";
+      signal: FinalizationSignal;
       sent_at_ms: number;
-      delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+      delivery: FinalizationDelivery;
     }[] = [];
+    const pendingDeliveries: Promise<void>[] = [];
+    const snapshot = (elapsed: number | null): ProcessCaptureFinalization => ({
+      requested_ms: scenario.finalization_ms,
+      elapsed_ms: elapsed,
+      signals: finalizationSignals.map((attempt) => ({ ...attempt })),
+    });
+    const unobservedExit = (): void => {
+      if (settled || finalizationStartedAt === undefined) return;
+      settled = true;
+      for (const timer of timers) timer.cancel();
+      timers.clear();
+      resolveExit({
+        unobserved: true,
+        reason: reason === "exited" ? "timeout" : reason,
+        finalization: snapshot(null),
+      });
+    };
+    // An attempt is recorded before its delivery is awaited, so a hung or
+    // failed delivery still leaves the attempt in the observations.
+    const attempt = (finalizationSignal: FinalizationSignal): void => {
+      if (finalizationStartedAt === undefined) return;
+      const record = {
+        signal: finalizationSignal,
+        sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
+        delivery: "unverified" as FinalizationDelivery,
+      };
+      finalizationSignals.push(record);
+      recordFinalization(snapshot(null));
+      pendingDeliveries.push(
+        signalTarget(finalizationSignal)
+          .then(
+            (delivery) => {
+              record.delivery = delivery;
+            },
+            () => {
+              record.delivery = "unverified";
+            },
+          )
+          .then(() => {
+            recordFinalization(snapshot(null));
+            // A kill that cannot reach the root leaves no exit to wait for.
+            if (
+              finalizationSignal === "SIGKILL" &&
+              record.delivery !== "signaled" &&
+              record.delivery !== "gone"
+            )
+              unobservedExit();
+          }),
+      );
+    };
     const forceKill = (): void => {
       if (finalizationStartedAt !== undefined) {
         if (escalationSent) return;
         escalationSent = true;
-        finalizationSignals.push({
-          signal: "SIGKILL",
-          sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
-          delivery: "signaled",
-        });
+        attempt("SIGKILL");
+        return;
       }
       terminal.kill("SIGKILL");
     };
@@ -708,14 +781,10 @@ export const awaitTerminalExit = async ({
         return;
       }
       finalizationStartedAt = performance.now();
-      finalizationSignals.push({
-        signal: "SIGTERM",
-        sent_at_ms: 0,
-        delivery: "signaled",
-      });
-      terminal.kill("SIGTERM");
+      attempt("SIGTERM");
     };
     terminal.onExit((exit) => {
+      if (settled) return;
       // Measures when the exit was observed, not when the operating system
       // ended the process; the PTY layer can deliver the notification late.
       const finalizationElapsedMs =
@@ -745,18 +814,16 @@ export const awaitTerminalExit = async ({
         timer.cancel();
       }
       timers.clear();
-      resolveExit({
-        ...exit,
-        reason,
-        ...(finalizationElapsedMs === undefined
-          ? {}
-          : {
-              finalization: {
-                requested_ms: scenario.finalization_ms,
-                signals: finalizationSignals,
-                elapsed_ms: finalizationElapsedMs,
-              },
-            }),
+      void Promise.allSettled(pendingDeliveries).then(() => {
+        if (settled) return;
+        settled = true;
+        resolveExit({
+          ...exit,
+          reason,
+          ...(finalizationElapsedMs === undefined
+            ? {}
+            : { finalization: snapshot(finalizationElapsedMs) }),
+        });
       });
     });
     const timeout = scheduleProcessInterval(() => {
