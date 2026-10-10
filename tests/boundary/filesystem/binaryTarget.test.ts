@@ -726,6 +726,35 @@ describe("binary Info.plist app bundle targets", () => {
       }
     },
   );
+
+  it.each([
+    [
+      "XML",
+      "<plist><dict><key>__proto__</key><dict><key>CFBundleExecutable</key><string>Forged</string></dict></dict></plist>",
+    ],
+    [
+      "binary",
+      buildBinary(JSON.parse('{"__proto__":{"CFBundleExecutable":"Forged"}}')),
+    ],
+  ])(
+    "ignores CFBundleExecutable nested under __proto__ in %s Info.plist files",
+    async (_encoding, contents) => {
+      const directory = await createTestTempDirectory("rea-app-proto-only-");
+      const app = join(directory, "Proto.app");
+      await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
+      await writeFile(join(app, "Contents", "Info.plist"), contents);
+      await writeFile(
+        join(app, "Contents", "MacOS", "Forged"),
+        thinMach(0xfeedfacf, 0x0100000c),
+      );
+      expect(await resolveAppBundleExecutable(app)).toMatchObject({
+        ok: false,
+        error: {
+          reason: expect.stringContaining("CFBundleExecutable is missing"),
+        },
+      });
+    },
+  );
 });
 
 describe("DOS binary target I/O", () => {

@@ -7,7 +7,10 @@ import { z } from "zod";
 import { estimatePropertyListDecodeBytes } from "../artifacts/apple/InterfaceBuilderDecodeBudget.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { isPathWithinRoot } from "../domain/localPath.js";
-import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import {
+  omitPrototypeKeys,
+  parseXmlPropertyList,
+} from "../domain/propertyListKeys.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { err, ok, type Result } from "../domain/result.js";
 
@@ -261,7 +264,9 @@ const executableEntrySchema = z.looseObject({ CFBundleExecutable: z.string() });
 /** Decode a binary plist in-process, so no host plist tool is required. */
 const parseBinaryPlistExecutable = (plist: Buffer): string => {
   estimatePropertyListDecodeBytes(plist, BINARY_PLIST_DECODE_BYTES);
-  return executableName(parseBinary(plist));
+  // `plist` assigns a `__proto__` key as the prototype; copying drops it, as
+  // the XML path does.
+  return executableName(omitPrototypeKeys(parseBinary(plist)).value);
 };
 
 const isSafeExecutableName = (name: string): boolean =>
