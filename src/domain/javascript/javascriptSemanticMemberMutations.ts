@@ -343,7 +343,8 @@ export const collectSemanticMemberMutations = (
         if (paths.has(pathKey)) continue;
         paths.add(pathKey);
         expanded.set(node, paths);
-        pending.push(...expandedValues(node, value.path, "escape"));
+        for (const reference of expandedValues(node, value.path, "escape"))
+          pending.push(reference);
       }
     }
     const byPath = escapedLeaves.get(root) ?? new Map();

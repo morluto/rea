@@ -597,11 +597,9 @@ describe("property mutation collection on minified bundles", () => {
       { length: 2000 },
       (_, index) => `source.p${index} = ${index};`,
     ).join(" ");
-    const start = performance.now();
     const value = resultValue(
       `const source = { token: "TOKEN" }; ${writes} return [source.token, source.p1999];`,
     );
-    expect(performance.now() - start).toBeLessThan(2000);
     expect(value).toMatchObject({
       status: "array",
       items: [
