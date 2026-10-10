@@ -680,28 +680,26 @@ pre code {
 .article .stats dd {
   color: var(--muted);
 }
-.blog-thesis {
+.blog-takeaway {
   max-width: 730px;
-  padding-left: 1rem;
+  margin-top: 1.8rem;
+  padding-left: 1.25rem;
   border-left: 2px solid var(--accent);
+}
+.blog-takeaway .eyebrow {
   color: var(--accent);
 }
-.blog-timeline {
-  padding: 0;
-  margin-block: 1.5rem;
-  list-style: none;
+.blog-takeaway p:last-child {
+  margin-bottom: 0;
 }
-.blog-timeline li {
-  display: grid;
-  grid-template-columns: 4.5rem minmax(0, 1fr);
-  gap: 1rem;
-  padding-block: 0.65rem;
-  border-bottom: 1px solid var(--line);
+.blog-article blockquote {
+  margin: 1.6rem 0;
+  padding-left: 1.25rem;
+  border-left: 2px solid var(--line);
+  font-size: 1.05rem;
 }
-.blog-timeline time {
-  color: var(--accent);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
+.blog-article blockquote p {
+  color: var(--ink);
 }
 .caption {
   font-size: 0.875rem;

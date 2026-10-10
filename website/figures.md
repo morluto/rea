@@ -94,13 +94,12 @@ APK's selected Java and an explanatory summary.
 APK, methods, source attribution and reconstruction checks. Keep the block
 formula, default settings, slider outputs and reference cases consistent.
 
-## Touhou reconstruction article outline
+## Touhou reconstruction essay
 
-The proposed opening figure is a semantic HTML flow using the shared components:
-inspect/reconstruct → compile/compare/run → code/evidence/next task. Its caption
-names the human, agent, analysis and verification roles. A failed check returns
-the batch to investigation; recorded lessons feed later work. The project
-timelines use HTML dates and pinned public milestones, documented in
+The essay opens with a takeaway and develops its argument in prose. It has no
+opening flow figure. Project dates and the attributed README excerpt support
+the narrative; detailed milestone references are available in a native
+disclosure. Their provenance is documented in
 [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
 
 ## Original image generation prompts

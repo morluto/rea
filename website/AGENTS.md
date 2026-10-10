@@ -15,8 +15,10 @@ for asset notes and the source of case-study claims.
 - Show what REA returns and how the agent uses it. Preserve source attribution,
   target identity and verification scope.
 - Blog articles teach methods, decisions and workflows through concrete cases.
-  Keep the thesis and overview figure clear, and use engine details only when
-  they explain a decision. Label working outlines and mark them `noindex`.
+  Lead with the takeaway. Essays can develop a personal argument through
+  experience; figures are optional and should add an explanation the prose
+  needs. Use engine details only when they explain a decision. Label working
+  outlines and mark them `noindex`.
 - Keep personal paths, account data, credentials and raw captures outside the
   public assets. Use generic inputs and label shortened display paths.
 - Follow the same clear writing standard in search titles and descriptions.

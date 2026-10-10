@@ -43,7 +43,7 @@ HTML files. No URL list needs to be maintained.
 - `public/first-investigation/index.html`: a guided Notes export investigation, from setup to a checked CSV prediction.
 - `public/showcase/index.html`: the case-study index.
 - `public/blog/index.html`: articles about reconstruction methods, ports, mods and reverse engineering.
-- `public/blog/touhou-reconstruction/index.html`: the working English outline for a Touhou reconstruction article, with TH08, TH095 and TH04 timelines.
+- `public/blog/touhou-reconstruction/index.html`: a personal essay about agent-driven reconstruction, knowledge that compounds across TH08 and TH095, and the workflow's applicability to PC-98 TH04.
 - `public/showcase/aegis/index.html`: Aegis's Android login-code calculation, with an adjustable clock and reference checks.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
 - `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
@@ -123,14 +123,18 @@ and Cloudflare's [managed robots behavior](https://developers.cloudflare.com/bot
 
 ## Content
 
-Blog articles explain methods and decisions across a project. Use a clear thesis,
-an overview figure, a practical workflow and a few cases that test the method.
-Case studies remain focused on one inspected behavior. Keep engine details in
-supporting references unless they explain a decision the reader needs to make.
+Blog articles explain methods, decisions and ideas through project experience.
+Lead with a takeaway, then develop the argument through concrete examples.
+An essay can explore a change in perspective without becoming a step-by-step
+guide. Add a figure when it contributes a useful explanation; an opening flow
+is optional. Case studies remain focused on one inspected behavior. Keep engine
+details in supporting references unless they explain a relevant decision.
 
-The Touhou article is currently a working outline, marked `noindex`. Replace it
-with the finished article before removing that directive. Its timeline provenance
-and counting rules are in [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
+The Touhou article is a full English draft for local review. Its provenance,
+quoted README passage and milestone counting rules are in
+[evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
+The completed text has normal search metadata and is included in the generated
+sitemap. Its visible review label can be removed when the draft is finalized.
 
 Keep the copy direct and specific. Explain the task and the result before listing
 tool names. Setup commands and runtime requirements should match the released

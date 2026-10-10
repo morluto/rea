@@ -146,9 +146,12 @@ purposes, and immutable commit links for checkpoint-dependent facts.
 
 ### Method articles in the Blog
 
-Use longer articles to explain how to approach a problem, choose a workflow and
-learn from project outcomes. Open with the reader's goal and one clear thesis.
-Use an overview figure to show the method before expanding its steps.
+Use longer articles to explain methods, choices and ideas through project
+experience. Open with a clear takeaway. A personal essay can follow how the
+author's understanding changed, using concrete episodes to develop a deeper
+argument. Keep the reasoning easy to follow; a Blog article does not need to
+become a tutorial. Figures are optional. Add one when it explains something
+useful rather than repeating a familiar opening flow.
 
 Choose cases that teach different decisions. For example, TH08 illustrates
 continuing existing work, TH095 illustrates reusing an established method in a
@@ -158,12 +161,18 @@ beside the milestone they measure, with pinned evidence links in supporting
 details. Calendar time, source presence, exact comparison, build success and
 runtime checks each describe a different result.
 
-Make an analogy concrete and use it briefly. The industrial analogy can connect
-agent execution, tools, quality checks and durable knowledge; the actual workflow
-should remain clear without the metaphor. Explain necessary terms in plain
-language and leave engine inventories in references. Finish with a bounded first
-task the reader can try. Working outlines should be visibly labeled and marked
-`noindex` until they become finished articles.
+Make an analogy concrete. The industrial analogy can connect agent execution,
+quality checks, durable knowledge and a change in how work is organized. Explain
+what changes and support the argument with experience. Keep necessary terms
+plain and leave engine inventories in references. A method guide can finish with
+a first task; an essay can finish with the implications of its argument.
+
+When discussing another project's approach, preserve its credit and contribution
+history. Attribute quotations, link their context and distinguish the author's
+interpretation from the other project's stated position. Describe the technical
+or contribution-model disagreement without assigning motives to its authors.
+Working outlines should be visibly labeled and marked `noindex` until they
+become finished articles.
 
 ## Make figures explain a relationship
 

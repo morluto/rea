@@ -1,6 +1,6 @@
 # Touhou reconstruction method: evidence notes
 
-Checked on 10 October 2026. This document supports the working article outline
+Checked on 10 October 2026. This document supports the full English essay
 at `public/blog/touhou-reconstruction/index.html`.
 
 ## Method sources
@@ -13,7 +13,7 @@ and [cross-game knowledge](https://github.com/N0zoM1z0/touhou-reconstruction-fac
 documents for the underlying method: autonomous investigation, bounded changes,
 empirical feedback, durable checkpoints and reusable lessons.
 
-The proposed industrial-age analogy explains that method. The Factory's
+The industrial-age analogy explains that method. The Factory's
 software architecture also uses the Abstract Factory pattern; the article's
 analogy should focus on the working process rather than that implementation.
 
@@ -46,6 +46,9 @@ Read each pinned progress document's definitions. Avoid a cross-game function
 rate or an executable-wide completion percentage.
 
 ## Public history snapshot
+
+This is the initial 10 October research snapshot. The later TH04 phase update
+below uses its own pinned checkpoint; it does not change these earlier counts.
 
 | Project | Default-branch commits | Commits whose subject begins `gpt-web:` | Public head                                |
 | ------- | ---------------------: | --------------------------------------: | ------------------------------------------ |
@@ -119,8 +122,54 @@ perfectly from the beginning.
 
 ## Editorial scope
 
-The working article teaches goals, task design, feedback loops, project memory,
-handoffs and cross-game reuse. Engine APIs, compiler flags, addresses and ledger
-schemas belong in linked supporting documentation. Planned port/mod examples
-must be backed by their own source and checks before becoming finished claims.
-The outline is labeled and `noindex`; the shared sitemap therefore excludes it.
+The article follows the author's change in perspective: previous manual RE,
+starting agent-driven work in August 2026, TH08's continuation, TH095's reuse of
+experience, and TH04's application of the method to another architecture. The
+manual-RE background and August starting point are author-provided experience.
+The industrial-era conclusion and the interpretation of the two contribution
+models are the author's argument, supported by the described project record.
+They are not a measured agent-versus-human performance ratio.
+
+Engine APIs, compiler flags, addresses and ledger schemas remain in references.
+The full draft replaces the outline and removes its `noindex` directive; the
+generated sitemap includes the article. Its visible draft label identifies
+the current local review state. No production publication was requested.
+
+## GensokyoClub quotation and policy
+
+The public README was read with `gh api` on 10 October 2026. Its latest
+README-changing commit is
+[`e874b98e`](https://github.com/GensokyoClub/th08/blob/e874b98e210b3be1ed21c5e03d54b883eac5069c/README.md#important-notice),
+dated 6 September. The notice announces a decision effective 5 September and
+describes concerns about AI decompilations, ports, attribution and their effect
+on the maintainers. Its stated plan is private development until completion.
+
+The article quotes 23 words from the passage's opening clause, followed by an
+ellipsis; it paraphrases the remaining point about the psychological toll.
+The excerpt was checked against the retrieved original, with whitespace
+normalized for display. The linked notice supplies its context.
+
+The current public head is
+[`f345c7de`](https://github.com/GensokyoClub/th08/tree/f345c7dee07b849f2ff93a0029ab5ede126bf12c).
+Its [contribution policy](https://github.com/GensokyoClub/th08/blob/f345c7dee07b849f2ff93a0029ab5ede126bf12c/CODE_OF_CONDUCT.md)
+excludes PRs created primarily using AI. The article paraphrases this policy
+and discusses the different contribution models. It preserves GensokyoClub's
+credit, describes the author's own manual and agent workflows, and does not
+assign motives beyond what the public notice states.
+
+## TH04's current DOS and 64-bit phases
+
+The latest public main checkpoint checked for this revision is
+[`bb9faca5`](https://github.com/N0zoM1z0/th04/blob/bb9faca54e2eb3c0d6c757c75d59ac29d2cd5e93/docs/RE_HANDOFF.md),
+dated 10 October 2026. Its handoff records the standalone DOS products,
+repaired normal and invincible variants, and the user's manual Windows
+observations of complete Normal routes, endings and saves. It identifies
+resumed x64 work as the current phase on the separate `port/modern-64` branch.
+That branch was publicly present at `1ffc53a61e1e82409adb40c7658d4ee2f3a21916`
+when inspected with `gh`.
+
+The essay's first-person DOS testing statement describes those maintainer
+observations, also confirmed by the author in this revision request. It is
+not attributed to a new automated website test or a fresh runtime replay.
+The 64-bit port is described as in development. The earlier four-product build
+and function-count milestones retain their historical scopes.
