@@ -94,4 +94,29 @@ describe("Electron file scope", () => {
 
     await expect(authorizedElectronFile(value)).resolves.toBe(path);
   });
+  it("resolves an archive beneath an ASAR-named directory and rejects oversized declared headers", async () => {
+    const root = await createTestTempDirectory("rea-electron-header-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "index.html"), "page");
+    const parent = join(root, "parent.asar");
+    await mkdir(parent);
+    const archive = join(parent, "app.asar");
+    await createPackageWithOptions(source, archive, {});
+    expect(
+      await authorizedElectronFile(
+        pathToFileURL(join(archive, "index.html")).href,
+      ),
+    ).toBe(join(await realpath(archive), "index.html"));
+    const malformed = join(root, "bad.asar");
+    const header = Buffer.alloc(16);
+    header.writeUInt32LE(4, 0);
+    header.writeUInt32LE(0x40000000, 4);
+    await writeFile(malformed, header);
+    expect(
+      await authorizedElectronFile(
+        pathToFileURL(join(malformed, "index.html")).href,
+      ),
+    ).toBeUndefined();
+  });
 });

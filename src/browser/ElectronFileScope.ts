@@ -1,9 +1,7 @@
 import type { Stats } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { getRawHeader } from "@electron/asar";
 
 /** Resolve one local file URL while rejecting remote hosts and encoded separators. */
 export const authorizedElectronFile = async (
@@ -61,9 +59,9 @@ const authorizedAsarMember = async (
       return undefined;
     try {
       const metadata = await stat(archive);
-      if (!metadata.isFile()) return undefined;
+      if (!metadata.isFile()) continue;
       const canonical = await realpath(archive);
-      const files = asarFiles(canonical, metadata);
+      const files = await asarFiles(canonical, metadata);
       return isAsarRegularFile(files, member)
         ? join(canonical, ...member)
         : undefined;
@@ -78,21 +76,83 @@ const authorizedAsarMember = async (
 
 type ArchiveIdentity = Pick<Stats, "dev" | "ino" | "size" | "mtimeMs">;
 
+// This is a retained-memory budget for JSON headers, shared across all archives.
+const MAX_HEADER_BYTES = 16 * 1024 * 1024;
 const MAX_CACHED_HEADERS = 8;
 const headerCache = new Map<
   string,
-  { readonly identity: string; readonly files: unknown }
+  {
+    readonly identity: string;
+    readonly files: unknown;
+    readonly bytes: number;
+  }
 >();
+const archiveIdentity = (metadata: ArchiveIdentity): string =>
+  `${String(metadata.dev)}:${String(metadata.ino)}:${String(metadata.size)}:${String(metadata.mtimeMs)}`;
 
-/** Parse each archive header once per observed file identity. */
-const asarFiles = (archive: string, metadata: ArchiveIdentity): unknown => {
-  const identity = `${String(metadata.dev)}:${String(metadata.ino)}:${String(metadata.size)}:${String(metadata.mtimeMs)}`;
+/** Read the two Chromium pickle headers on one handle before allocating JSON. */
+const asarFiles = async (
+  archive: string,
+  metadata: ArchiveIdentity,
+): Promise<unknown> => {
+  const identity = archiveIdentity(metadata);
   const cached = headerCache.get(archive);
   if (cached?.identity === identity) return cached.files;
-  const files: unknown = getRawHeader(archive).header.files;
+  const handle = await open(archive, "r");
+  let files: unknown;
+  let jsonBytes: number;
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || archiveIdentity(opened) !== identity)
+      throw new Error("ASAR identity changed before header read");
+    const prefix = Buffer.alloc(16);
+    const read = await handle.read(prefix, 0, prefix.length, 0);
+    if (read.bytesRead !== prefix.length || prefix.readUInt32LE(0) !== 4)
+      throw new Error("Truncated or invalid ASAR size pickle");
+    const headerBytes = prefix.readUInt32LE(4);
+    const payloadBytes = prefix.readUInt32LE(8);
+    jsonBytes = prefix.readUInt32LE(12);
+    if (
+      headerBytes < 8 ||
+      headerBytes > opened.size - 8 ||
+      payloadBytes !== headerBytes - 4 ||
+      jsonBytes > payloadBytes - 4 ||
+      jsonBytes > MAX_HEADER_BYTES
+    )
+      throw new Error(
+        "ASAR JSON header leaves the file or exceeds its memory budget",
+      );
+    const json = Buffer.alloc(jsonBytes);
+    let offset = 0;
+    while (offset < json.length) {
+      const part = await handle.read(
+        json,
+        offset,
+        json.length - offset,
+        16 + offset,
+      );
+      if (part.bytesRead === 0) throw new Error("Truncated ASAR JSON header");
+      offset += part.bytesRead;
+    }
+    if (archiveIdentity(await handle.stat()) !== identity)
+      throw new Error("ASAR identity changed during header read");
+    const parsed: unknown = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(json),
+    );
+    if (!isRecord(parsed) || !isRecord(parsed.files))
+      throw new Error("ASAR header has no file tree");
+    files = parsed.files;
+  } finally {
+    await handle.close();
+  }
   headerCache.delete(archive);
-  headerCache.set(archive, { identity, files });
-  if (headerCache.size > MAX_CACHED_HEADERS)
+  headerCache.set(archive, { identity, files, bytes: jsonBytes });
+  const retainedBytes = () =>
+    [...headerCache.values()].reduce((sum, entry) => sum + entry.bytes, 0);
+  while (
+    headerCache.size > MAX_CACHED_HEADERS ||
+    retainedBytes() > MAX_HEADER_BYTES
+  )
     headerCache.delete(headerCache.keys().next().value ?? archive);
   return files;
 };
