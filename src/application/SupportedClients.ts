@@ -254,9 +254,23 @@ const copilotDirectory = ({ home, env }: ClientPathContext): string =>
 const commandCodeDirectory = ({ home }: ClientPathContext): string =>
   join(home, ".commandcode");
 
-const opencodeDirectory = ({ home, env }: ClientPathContext): string =>
-  env.OPENCODE_CONFIG_DIR ??
-  join(env.XDG_CONFIG_HOME ?? join(home, ".config"), "opencode");
+/**
+ * OpenCode appends `OPENCODE_CONFIG_DIR` only when the value is non-empty.
+ * An empty variable is the same as unset and leaves the XDG directory in place.
+ */
+const openCodeOverrideDirectory = (
+  env: ClientPathContext["env"],
+): string | undefined => {
+  const directory = env.OPENCODE_CONFIG_DIR;
+  return directory === undefined || directory === "" ? undefined : directory;
+};
+
+const opencodeDirectory = (context: ClientPathContext): string =>
+  openCodeOverrideDirectory(context.env) ??
+  join(
+    context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
+    "opencode",
+  );
 
 /** OpenCode loads global JSON before JSONC, then explicit file and directory overrides. */
 const openCodeConfigurationPaths = (
@@ -266,7 +280,7 @@ const openCodeConfigurationPaths = (
     context.env.XDG_CONFIG_HOME ?? join(context.home, ".config"),
     "opencode",
   );
-  const overrideDirectory = context.env.OPENCODE_CONFIG_DIR;
+  const overrideDirectory = openCodeOverrideDirectory(context.env);
   const paths = [
     join(directory, "config.json"),
     join(directory, "opencode.json"),
@@ -285,7 +299,7 @@ const openCodeConfigurationPaths = (
 
 const existingOpenCodeConfigPath = (context: ClientPathContext): string => {
   // The selected directory is loaded after an explicit file by OpenCode V1.
-  const overrideDirectory = context.env.OPENCODE_CONFIG_DIR;
+  const overrideDirectory = openCodeOverrideDirectory(context.env);
   const candidates =
     overrideDirectory !== undefined
       ? [
@@ -513,6 +527,23 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "unsupported",
   },
 ] as const satisfies readonly ClientDefinition[];
+
+/**
+ * Paths whose presence means doctor and setup should inspect the client.
+ * Layered sources count: OpenCode still loads its XDG files when a custom
+ * directory override does not exist.
+ */
+export const clientEvidencePaths = (
+  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+): readonly string[] => [
+  ...new Set(
+    [
+      client.configPath,
+      ...(client.configPaths ?? []),
+      client.markerPath,
+    ].filter((path): path is string => path !== undefined && path.length > 0),
+  ),
+];
 
 const resolvePath = (path: ClientPath, context: ClientPathContext): string =>
   typeof path === "function" ? path(context) : join(context.home, ...path);

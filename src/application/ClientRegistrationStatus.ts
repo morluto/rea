@@ -20,6 +20,7 @@ import {
   npxRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
+  clientEvidencePaths,
   manualRegistrationRemediation,
   supportedClients,
 } from "./SupportedClients.js";
@@ -94,11 +95,7 @@ export const readClientRegistrationStatuses = async (
       });
       continue;
     }
-    if (
-      !(await exists(client.markerPath)) &&
-      !(await exists(client.configPath))
-    )
-      continue;
+    if (!(await clientEvidencePresent(client))) continue;
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
@@ -316,6 +313,12 @@ const unavailableStatus = (
   state,
   remediation,
 });
+
+const clientEvidencePresent = async (client: SetupClient): Promise<boolean> => {
+  for (const path of clientEvidencePaths(client))
+    if (await exists(path)) return true;
+  return false;
+};
 
 const exists = async (path: string | undefined): Promise<boolean> => {
   if (path === undefined) return false;

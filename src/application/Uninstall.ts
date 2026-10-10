@@ -124,11 +124,12 @@ export const runUninstall = async (
     status: "retained",
     detail: "Hopper is not owned by REA uninstall.",
   });
+  const reported = collapseUninstallItems(items);
   return {
-    status: items.some(({ status }) => status === "failed")
+    status: reported.some(({ status }) => status === "failed")
       ? "failed"
       : "complete",
-    items,
+    items: reported,
   };
 };
 
@@ -461,6 +462,68 @@ const item = (
   status: UninstallItem["status"],
   detail: string,
 ): UninstallItem => ({ name, status, detail });
+
+/**
+ * Layered clients are removed file by file, but callers look up one status by
+ * client name. A missing earlier file must not hide a later removal.
+ */
+const collapseUninstallItems = (
+  items: readonly UninstallItem[],
+): UninstallItem[] => {
+  const collapsed: UninstallItem[] = [];
+  for (const next of items) {
+    const index = collapsed.findIndex(({ name }) => name === next.name);
+    const current = collapsed[index];
+    if (current === undefined) {
+      collapsed.push(next);
+      continue;
+    }
+    collapsed[index] = mergeUninstallItems(current, next);
+  }
+  return collapsed;
+};
+
+const mergeUninstallItems = (
+  current: UninstallItem,
+  next: UninstallItem,
+): UninstallItem => {
+  const status = preferredUninstallStatus(current.status, next.status);
+  const details = [current, next]
+    .filter(
+      (entry) =>
+        entry.status === status ||
+        (status === "removed" && entry.status === "retained"),
+    )
+    .map(({ detail }) => detail);
+  return item(current.name, status, [...new Set(details)].join(" "));
+};
+
+const preferredUninstallStatus = (
+  current: UninstallItem["status"],
+  next: UninstallItem["status"],
+): UninstallItem["status"] =>
+  uninstallStatusPriority(next) > uninstallStatusPriority(current)
+    ? next
+    : current;
+
+const uninstallStatusPriority = (status: UninstallItem["status"]): number => {
+  switch (status) {
+    case "failed":
+      return 3;
+    case "removed":
+      return 2;
+    case "retained":
+      return 1;
+    case "skipped":
+      return 0;
+    default: {
+      const exhaustive: never = status;
+      throw new TypeError(
+        `Unhandled uninstall item status: ${String(exhaustive)}`,
+      );
+    }
+  }
+};
 const registrationSchema = z
   .object({ command: z.string(), args: z.array(z.string()) })
   .passthrough();

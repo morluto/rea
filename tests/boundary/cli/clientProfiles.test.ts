@@ -22,7 +22,7 @@ const cases = [
   {
     client: "opencode",
     env: { OPENCODE_CONFIG_DIR: "" },
-    config: "opencode.json",
+    config: ".config/opencode/opencode.json",
     skill: ".agents/skills",
   },
   {
@@ -281,6 +281,15 @@ cliTest(
     ).toBe(0);
     const uninstall = await run(["uninstall", "--json"]);
     expect(uninstall.exitCode).toBe(0);
+    const report = uninstall.json as {
+      items?: readonly { name: string; status: string }[];
+    };
+    const opencodeItems = report.items?.filter(
+      ({ name }) => name === "opencode",
+    );
+    expect(opencodeItems).toEqual([
+      expect.objectContaining({ status: "removed" }),
+    ]);
     expect(parse(await readFile(lower, "utf8"))).toEqual({
       mcp: { other: { type: "local", command: ["other"] } },
     });
@@ -405,6 +414,68 @@ cliTest(
     const empty = await run();
     expect(empty.exitCode).toBe(0);
     expect(empty.json).toMatchObject({ status: "ready", appliedActions: [] });
+  },
+);
+
+cliTest(
+  "OpenCode doctor sees a global registration when the custom directory is absent",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-opencode-absent-custom-");
+    const global = join(home, ".config/opencode/opencode.json");
+    const custom = join(home, "missing-custom");
+    await mkdir(dirname(global), { recursive: true });
+    await writeFile(
+      global,
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [
+              "npx",
+              "-y",
+              PRODUCT_IDENTITY.registrationPackageSpecifier,
+              "mcp",
+            ],
+            enabled: true,
+          },
+        },
+      }),
+    );
+    const run = (args: readonly string[]) =>
+      cli.run({
+        arguments: args,
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          OPENCODE_CONFIG_DIR: custom,
+        },
+      });
+    const doctor = await run(["doctor", "--client", "opencode", "--json"]);
+    expect(doctor.exitCode).toBe(0);
+    expect(doctor.json).toMatchObject({
+      identity: {
+        registrations: expect.arrayContaining([
+          expect.objectContaining({ client: "opencode", state: "aligned" }),
+        ]),
+      },
+    });
+    const planned = await run([
+      "setup",
+      "--client",
+      "opencode",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(planned.json).toMatchObject({
+      clientStates: expect.arrayContaining([
+        expect.objectContaining({
+          client: expect.objectContaining({ name: "opencode" }),
+          detected: true,
+        }),
+      ]),
+    });
+    await expect(access(custom)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
