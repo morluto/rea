@@ -4,6 +4,7 @@ import { jsonValueSchema } from "../jsonValue.js";
 import { normalizationSchema } from "./processScenario.js";
 import {
   collectProcessCaptureIssues,
+  finalizationAgreementIssue,
   finalizationConsistencyIssue,
   finalizationManifestIssue,
 } from "./processCaptureValidation.js";
@@ -54,6 +55,8 @@ export interface ProcessCaptureFinalization {
     readonly signal: "SIGTERM" | "SIGKILL";
     readonly sent_at_ms: number;
     readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+    /** Why delivery could not be verified; present only for unverified attempts. */
+    readonly reason?: string | undefined;
   }[];
 }
 
@@ -405,24 +408,36 @@ const unverifiedCleanupProcessesSchema = z.array(
   z.strictObject({ pid: z.number().int().positive(), reason: z.string() }),
 );
 
-const processCaptureFinalizationSchema = z.strictObject({
-  requested_ms: z.number().int().safe().positive(),
-  elapsed_ms: z.number().int().nonnegative().nullable(),
-  signals: z
-    .array(
-      z.strictObject({
-        signal: z.enum(["SIGTERM", "SIGKILL"]),
-        sent_at_ms: z.number().int().nonnegative(),
-        delivery: z.enum([
-          "signaled",
-          "gone",
-          "identity-changed",
-          "unverified",
-        ]),
-      }),
-    )
-    .min(1),
-});
+const processCaptureFinalizationSchema = z
+  .strictObject({
+    requested_ms: z.number().int().safe().positive(),
+    elapsed_ms: z.number().int().nonnegative().nullable(),
+    signals: z
+      .array(
+        z.strictObject({
+          signal: z.enum(["SIGTERM", "SIGKILL"]),
+          sent_at_ms: z.number().int().nonnegative(),
+          delivery: z.enum([
+            "signaled",
+            "gone",
+            "identity-changed",
+            "unverified",
+          ]),
+          reason: z.string().min(1).optional(),
+        }),
+      )
+      .min(1),
+  })
+  .superRefine((finalization, context) => {
+    for (const [index, attempt] of finalization.signals.entries())
+      if (attempt.reason !== undefined && attempt.delivery !== "unverified")
+        context.addIssue({
+          code: "custom",
+          path: ["signals", index, "reason"],
+          message:
+            "finalization reason is only allowed for an unverified delivery",
+        });
+  });
 
 const processCaptureShapeSchema = z.strictObject({
   manifest: z.strictObject({
@@ -703,6 +718,29 @@ export const partialProcessCaptureObservationSchema = z
         code: "custom",
         path: ["finalization"],
         message: incompleteFinalizationIssue,
+      });
+
+    const agreementIssue = finalizationAgreementIssue(
+      observedExit?.finalization,
+      observedFinalization,
+    );
+    if (agreementIssue !== undefined)
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message: agreementIssue,
+      });
+    if (
+      "observations" in partial &&
+      partial.observations.exit.state === "unavailable" &&
+      observedFinalization !== undefined &&
+      observedFinalization?.elapsed_ms !== null
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["finalization"],
+        message:
+          "finalization elapsed_ms must be null when the exit observation is unavailable",
       });
 
     if ("observations" in partial) {

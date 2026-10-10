@@ -227,6 +227,9 @@ what was observed and is absent when no finalization was attempted:
   different process, which was not signalled) or `unverified` (the identity could
   not be established or the call failed). None of them proves the process
   exited.
+  An `unverified` attempt may carry a `reason` string naming why: an unavailable
+  identity and its reason, an inspection or signal error, or delivery that did
+  not settle within the bound.
 - `elapsed_ms` is when REA observed the exit, relative to the start of
   finalization, or `null` when no exit was observed. The PTY layer can deliver the
   exit slightly after the operating system ended the process.

@@ -135,6 +135,17 @@ type FinalizationAttempts = Pick<
   >[];
 };
 
+/** Ensure incomplete exit and sibling finalization observations preserve one fact. */
+export const finalizationAgreementIssue = (
+  exitFinalization: ProcessCaptureFinalization | undefined,
+  observedFinalization: ProcessCaptureFinalization | undefined,
+): string | undefined =>
+  exitFinalization !== undefined &&
+  observedFinalization !== undefined &&
+  JSON.stringify(exitFinalization) !== JSON.stringify(observedFinalization)
+    ? "exit finalization and finalization observation must agree"
+    : undefined;
+
 /**
  * Cross-field rule for `exit.finalization`, shared by complete and partial
  * captures. Returns the violated rule, or undefined when the record is

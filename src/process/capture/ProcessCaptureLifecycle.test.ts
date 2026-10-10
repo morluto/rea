@@ -21,6 +21,7 @@ interface FakeExit {
 const fakeTerminal = (
   deliveries: Partial<Record<"SIGTERM" | "SIGKILL", Delivery>> = {},
   hold?: Promise<void>,
+  signalFailure?: Error,
 ) => {
   let listener: ((exit: FakeExit) => void) | undefined;
   const signals: string[] = [];
@@ -35,10 +36,11 @@ const fakeTerminal = (
   };
   const signalTarget = async (
     signal: "SIGTERM" | "SIGKILL",
-  ): Promise<Delivery> => {
+  ): Promise<{ readonly delivery: Delivery }> => {
     signals.push(signal);
     await hold;
-    return deliveries[signal] ?? "signaled";
+    if (signalFailure !== undefined) throw signalFailure;
+    return { delivery: deliveries[signal] ?? "signaled" };
   };
   return {
     signals,
@@ -308,9 +310,39 @@ it("stops waiting for a hung delivery once the exit is observed", async () => {
   expect(
     exit.finalization?.signals,
     "an undelivered attempt stays recorded as unverified",
-  ).toMatchObject([{ signal: "SIGTERM", delivery: "unverified" }]);
+  ).toMatchObject([
+    {
+      signal: "SIGTERM",
+      delivery: "unverified",
+      reason: "delivery did not settle within 1000 ms",
+    },
+  ]);
   expect(exit.signal, "the observed exit is kept").toBe(0);
 }, 10_000);
+
+it("retains a thrown signal error as an unverified delivery reason", async () => {
+  const fake = fakeTerminal(
+    {},
+    undefined,
+    new Error("signal transport failed"),
+  );
+  const pending = start(fake, { timeout_ms: 100, finalization_ms: 5_000 });
+  await waitFor(() => fake.signals.includes("SIGTERM"));
+  fake.deliverExit({ exitCode: 0, signal: 0 });
+
+  const exit = observed(await pending);
+
+  expect(
+    exit.finalization?.signals,
+    "a rejected signal retains its error message",
+  ).toMatchObject([
+    {
+      signal: "SIGTERM",
+      delivery: "unverified",
+      reason: "signal transport failed",
+    },
+  ]);
+});
 
 it("keeps an observed exit when a late kill delivery reports unverified", async () => {
   let release: () => void = () => undefined;
@@ -349,7 +381,11 @@ it("stops waiting when the escalation delivery never settles and no exit arrives
   expect(
     result.finalization?.signals.at(-1),
     "the undelivered escalation stays recorded as unverified",
-  ).toMatchObject({ signal: "SIGKILL", delivery: "unverified" });
+  ).toMatchObject({
+    signal: "SIGKILL",
+    delivery: "unverified",
+    reason: "delivery did not settle within 1000 ms",
+  });
   expect(result.finalization?.elapsed_ms, "no exit was observed").toBeNull();
 }, 10_000);
 

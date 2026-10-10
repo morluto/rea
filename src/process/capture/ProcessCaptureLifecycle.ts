@@ -73,9 +73,10 @@ interface TerminalExitOptions {
   readonly lastOutput: () => number;
   readonly signal: AbortSignal | undefined;
   /** Identity-checked signal to the captured root, used only during finalization. */
-  readonly signalTarget: (
-    signal: FinalizationSignal,
-  ) => Promise<FinalizationDelivery>;
+  readonly signalTarget: (signal: FinalizationSignal) => Promise<{
+    readonly delivery: FinalizationDelivery;
+    readonly reason?: string | undefined;
+  }>;
   /** Receives the attempts so far, so a later failure keeps them. */
   readonly recordFinalization: (
     finalization: ProcessCaptureFinalization,
@@ -723,6 +724,7 @@ export const awaitTerminalExit = async ({
       signal: FinalizationSignal;
       sent_at_ms: number;
       delivery: FinalizationDelivery;
+      reason?: string | undefined;
     }[] = [];
     const pendingDeliveries: Promise<void>[] = [];
     const snapshot = (elapsed: number | null): ProcessCaptureFinalization => ({
@@ -746,7 +748,7 @@ export const awaitTerminalExit = async ({
     // failed delivery still leaves the attempt in the observations.
     const attempt = (finalizationSignal: FinalizationSignal): void => {
       if (finalizationStartedAt === undefined) return;
-      const record = {
+      const record: (typeof finalizationSignals)[number] = {
         signal: finalizationSignal,
         sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
         delivery: "unverified" as FinalizationDelivery,
@@ -759,20 +761,33 @@ export const awaitTerminalExit = async ({
       pendingDeliveries.push(
         Promise.race([
           signalTarget(finalizationSignal),
-          delay(PROCESS_CLEANUP_VERIFICATION_GRACE_MS, "unverified" as const, {
-            ref: false,
-            signal: deliveryBound.signal,
-          }).catch(() => "unverified" as const),
+          delay(
+            PROCESS_CLEANUP_VERIFICATION_GRACE_MS,
+            {
+              delivery: "unverified" as const,
+              reason: `delivery did not settle within ${String(PROCESS_CLEANUP_VERIFICATION_GRACE_MS)} ms`,
+            },
+            {
+              ref: false,
+              signal: deliveryBound.signal,
+            },
+          ).catch(() => ({
+            delivery: "unverified" as const,
+            reason: "delivery wait was interrupted",
+          })),
         ])
           .finally(() => {
             deliveryBound.abort();
           })
           .then(
-            (delivery) => {
+            ({ delivery, reason: deliveryReason }) => {
               record.delivery = delivery;
+              if (deliveryReason !== undefined) record.reason = deliveryReason;
             },
-            () => {
+            (cause: unknown) => {
               record.delivery = "unverified";
+              record.reason =
+                cause instanceof Error ? cause.message : String(cause);
             },
           )
           .then(() => {

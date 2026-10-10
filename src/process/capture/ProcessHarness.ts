@@ -78,9 +78,10 @@ interface StartedCaptureRuntime {
   readonly rawTerminalRetention: () => TerminalRetention;
   readonly stopSampler: ReturnType<typeof startProcessSampler>;
   /** Signals the captured root only while its launch-time start identity still matches. */
-  readonly signalRoot: (
-    signal: "SIGTERM" | "SIGKILL",
-  ) => Promise<"signaled" | "gone" | "identity-changed" | "unverified">;
+  readonly signalRoot: (signal: "SIGTERM" | "SIGKILL") => Promise<{
+    readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
+    readonly reason?: string | undefined;
+  }>;
 }
 
 /** Retain the root's start identity right after spawn, only when finalization can need it. */
@@ -106,16 +107,35 @@ export const retainRootSignaller = (
                     state: "identity",
                     identity: observation.identity,
                   } as const)
-                : ({ state: "unverified" } as const),
-          () => ({ state: "unverified" }) as const,
+                : ({
+                    state: "unverified",
+                    reason: observation.reason,
+                  } as const),
+          (cause: unknown) =>
+            ({
+              state: "unverified",
+              reason: cause instanceof Error ? cause.message : String(cause),
+            }) as const,
         )
       : undefined;
   return async (signal) => {
     const identity = await retained;
-    if (identity === undefined || identity.state === "unverified")
-      return "unverified";
-    if (identity.state === "gone") return "gone";
-    return host.signal(pid, identity.identity, signal);
+    if (identity === undefined)
+      return {
+        delivery: "unverified",
+        reason: "root identity was not retained",
+      };
+    if (identity.state === "unverified")
+      return { delivery: "unverified", reason: identity.reason };
+    if (identity.state === "gone") return { delivery: "gone" };
+    const delivery = await host.signal(pid, identity.identity, signal);
+    return delivery === "unverified"
+      ? {
+          delivery,
+          reason:
+            "start identity could not be verified or the signal call failed",
+        }
+      : { delivery };
   };
 };
 

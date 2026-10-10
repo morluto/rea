@@ -795,9 +795,12 @@ it("retains the root start identity once at launch and signals only with it", as
     observe,
     "the identity is read at launch, before any signal",
   ).toHaveBeenCalledTimes(1);
-  expect(await signalRoot("SIGTERM"), "a matching identity is signalled").toBe(
-    "signaled",
-  );
+  expect(
+    await signalRoot("SIGTERM"),
+    "a matching identity is signalled",
+  ).toEqual({
+    delivery: "signaled",
+  });
   await signalRoot("SIGKILL");
 
   expect(
@@ -814,18 +817,18 @@ it("retains the root start identity once at launch and signals only with it", as
 });
 
 it.each([
-  ["a vanished root", async () => undefined, "gone"],
+  ["a vanished root", async () => undefined, { delivery: "gone" }],
   [
     "an unreadable identity",
     async () => ({ state: "unavailable" as const, reason: "unsupported" }),
-    "unverified",
+    { delivery: "unverified", reason: "unsupported" },
   ],
   [
     "a failed identity read",
     async () => {
       throw new Error("ps failed");
     },
-    "unverified",
+    { delivery: "unverified", reason: "ps failed" },
   ],
 ])(
   "never signals without a retained identity: %s",
@@ -836,9 +839,10 @@ it.each([
       signal,
     });
 
-    expect(await signalRoot("SIGTERM"), "the delivery result is recorded").toBe(
-      delivery,
-    );
+    expect(
+      await signalRoot("SIGTERM"),
+      "the delivery result is recorded",
+    ).toEqual(delivery);
     expect(signal, "no identity means no signal at all").not.toHaveBeenCalled();
   },
 );
@@ -857,7 +861,10 @@ it("does not read an identity when there is no finalization interval", async () 
   expect(
     await signalRoot("SIGKILL"),
     "an unretained identity stays unverified",
-  ).toBe("unverified");
+  ).toEqual({
+    delivery: "unverified",
+    reason: "root identity was not retained",
+  });
 });
 
 it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
@@ -871,7 +878,15 @@ it.each(["signaled", "gone", "identity-changed", "unverified"] as const)(
     expect(
       await signalRoot("SIGKILL"),
       "the signaller result is not coerced",
-    ).toBe(delivery);
+    ).toEqual(
+      delivery === "unverified"
+        ? {
+            delivery,
+            reason:
+              "start identity could not be verified or the signal call failed",
+          }
+        : { delivery },
+    );
   },
 );
 
