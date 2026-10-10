@@ -20,6 +20,76 @@ const encodedSecretValues = (secret: string): ReadonlySet<string> =>
     new URLSearchParams([["value", secret]]).toString().slice("value=".length),
   ]);
 
+type SecretSpellings = "raw" | "url" | "bytes";
+
+const secretSpellings = (
+  secret: string,
+  spellings: SecretSpellings,
+): readonly string[] => {
+  if (secret === "") return [];
+  if (spellings === "raw") return [secret];
+  const values = [...encodedSecretValues(secret)];
+  if (spellings === "bytes") values.push(JSON.stringify(secret).slice(1, -1));
+  return [...new Set(values)].filter((value) => value !== "");
+};
+
+const declaredLiterals = (
+  values: ReadonlyMap<string, string>,
+  spellings: SecretSpellings,
+): readonly string[] => [
+  ...new Set(
+    [...values.values()].flatMap((secret) =>
+      secretSpellings(secret, spellings),
+    ),
+  ),
+];
+
+/** Pick a marker that does not itself contain a declared secret spelling. */
+const redactionMarker = (id: string, literals: readonly string[]): string =>
+  [`${REDACTION_PREFIX}${id}]`, "[REDACTED]", "…", ""].find((candidate) =>
+    literals.every((literal) => !candidate.includes(literal)),
+  ) ?? "";
+
+const replaceSecretLiterals = (
+  value: string,
+  values: ReadonlyMap<string, string>,
+  spellings: SecretSpellings,
+  literals: readonly string[],
+): string => {
+  const replacements = [...values]
+    .flatMap(([id, secret]) =>
+      secretSpellings(secret, spellings).map((text) => ({ id, text })),
+    )
+    .sort(
+      (left, right) =>
+        right.text.length - left.text.length ||
+        (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    );
+  let output = value;
+  for (const replacement of replacements)
+    output = output.replaceAll(
+      replacement.text,
+      redactionMarker(replacement.id, literals),
+    );
+  return output;
+};
+
+const secretNeedles = (
+  values: ReadonlyMap<string, string>,
+  literals: readonly string[],
+): Array<{
+  readonly id: string;
+  readonly needle: Buffer;
+  readonly marker: Buffer;
+}> =>
+  [...values].flatMap(([id, secret]) =>
+    secretSpellings(secret, "bytes").map((text) => ({
+      id,
+      needle: Buffer.from(text),
+      marker: Buffer.from(redactionMarker(id, literals)),
+    })),
+  );
+
 /** Resolved secret values kept only for one in-memory scenario session. */
 export class BrowserScenarioSecrets {
   private constructor(private readonly values: ReadonlyMap<string, string>) {}
@@ -57,38 +127,19 @@ export class BrowserScenarioSecrets {
   }
 
   redact(value: string): string {
-    let output = value;
-    const replacements = [...this.values].sort(
-      ([leftId, left], [rightId, right]) =>
-        right.length - left.length ||
-        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
-    );
-    for (const [id, secret] of replacements)
-      if (secret !== "")
-        output = output.replaceAll(secret, `${REDACTION_PREFIX}${id}]`);
-    return output;
+    const literals = declaredLiterals(this.values, "raw");
+    const output = replaceSecretLiterals(value, this.values, "raw", literals);
+    return literals.some((literal) => output.includes(literal)) ? "" : output;
   }
 
   /** Replace declared UTF-8, URI/form, and JSON-escaped secrets without decoding binary data. */
   redactBytes(value: Buffer): Buffer {
-    const candidates = [...this.values]
-      .flatMap(([id, secret]) => {
-        if (secret === "") return [];
-        return [
-          ...new Set([
-            ...encodedSecretValues(secret),
-            JSON.stringify(secret).slice(1, -1),
-          ]),
-        ].map((text) => {
-          const needle = Buffer.from(text);
-          return {
-            id,
-            needle,
-            marker: Buffer.from(`${REDACTION_PREFIX}${id}]`),
-            index: value.indexOf(needle),
-          };
-        });
-      })
+    const literals = declaredLiterals(this.values, "bytes");
+    const candidates = secretNeedles(this.values, literals)
+      .map((candidate) => ({
+        ...candidate,
+        index: value.indexOf(candidate.needle),
+      }))
       .sort(
         (left, right) =>
           right.needle.length - left.needle.length ||
@@ -113,23 +164,23 @@ export class BrowserScenarioSecrets {
     }
     if (parts.length === 0) return value;
     parts.push(value.subarray(offset));
-    return Buffer.concat(parts);
+    const redacted = Buffer.concat(parts);
+    return literals.some((literal) => redacted.includes(Buffer.from(literal)))
+      ? Buffer.alloc(0)
+      : redacted;
   }
 
   /** Remove only declared secret values from one URL and report that action. */
   sanitizeUrl(value: string): SanitizedBrowserUrl {
-    let output = value;
-    const replacements = [...this.values].sort(
-      ([leftId, left], [rightId, right]) =>
-        right.length - left.length ||
-        (leftId < rightId ? -1 : leftId > rightId ? 1 : 0),
-    );
-    for (const [id, secret] of replacements) {
-      if (secret === "") continue;
-      const marker = `${REDACTION_PREFIX}${id}]`;
-      for (const candidate of encodedSecretValues(secret))
-        output = output.replaceAll(candidate, marker);
-    }
+    const literals = declaredLiterals(this.values, "url");
+    const output = replaceSecretLiterals(value, this.values, "url", literals);
+    if (literals.some((literal) => output.includes(literal)))
+      return {
+        url: "",
+        origin: null,
+        query_parameter_names: [],
+        redacted: true,
+      };
     const sanitized = sanitizeBrowserUrl(output);
     return {
       ...sanitized,

@@ -110,3 +110,61 @@ it("redacts declared secrets from current and historical URL artifacts", async (
     },
   });
 });
+
+it("redacts a declared secret used as a cookie or storage name", async () => {
+  const secretValue = "session-token";
+  const scenarioWithSecret = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    secrets: [
+      { secret_id: "storage_key", environment_variable: "REA_STORAGE_KEY" },
+    ],
+  });
+  const scenarioSecrets = BrowserScenarioSecrets.resolve(scenarioWithSecret, {
+    REA_STORAGE_KEY: secretValue,
+  });
+  if (scenarioSecrets === undefined)
+    throw new Error("Expected resolved storage secret");
+  const page = {
+    url: () => "https://app.example.test/",
+    evaluate: async () => ({
+      local_storage: [[secretValue, "kept-value"]],
+      session_storage: [["theme", secretValue]],
+    }),
+  } as unknown as Page;
+  const context = {
+    cookies: async () => [
+      {
+        name: secretValue,
+        value: "ordinary",
+        domain: "app.example.test",
+        path: "/",
+        secure: true,
+        httpOnly: false,
+        sameSite: "Lax" as const,
+      },
+    ],
+  } as unknown as BrowserContext;
+
+  const result = await capturePlaywrightStepArtifacts({
+    context,
+    page,
+    secrets: scenarioSecrets,
+    requested: new Set(["storage"]),
+  });
+
+  expect(JSON.stringify(result.storage)).not.toContain(secretValue);
+  expect(result.storage).toMatchObject({
+    state: "captured",
+    value: {
+      cookies: [{ name: "[REDACTED:storage_key]", value_state: "hashed" }],
+      local_storage: [
+        { name: "[REDACTED:storage_key]", value_state: "hashed" },
+      ],
+      session_storage: [
+        { name: "theme", value_state: "redacted-secret", value_sha256: null },
+      ],
+    },
+  });
+});

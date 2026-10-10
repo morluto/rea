@@ -155,20 +155,20 @@ const captureStorage = async (input: {
     );
     const value = {
       cookies: cookies.map((cookie) => ({
-        name: cookie.name,
-        domain: cookie.domain,
-        path: cookie.path,
+        name: secrets.redact(cookie.name),
+        domain: secrets.redact(cookie.domain),
+        path: secrets.redact(cookie.path),
         secure: cookie.secure,
         http_only: cookie.httpOnly,
         same_site: cookie.sameSite,
         ...secrets.fingerprint(cookie.value),
       })),
       local_storage: pageStorage.local_storage.map(([name, value]) => ({
-        name,
+        name: secrets.redact(name),
         ...secrets.fingerprint(value),
       })),
       session_storage: pageStorage.session_storage.map(([name, value]) => ({
-        name,
+        name: secrets.redact(name),
         ...secrets.fingerprint(value),
       })),
     };
