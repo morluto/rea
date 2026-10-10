@@ -125,10 +125,12 @@ const mapRva = (mapping: RvaMapping): number => {
   const { bytes, sections, rva, size, scope } = mapping;
   if (rva === 0 && size === 0) return 0;
   for (const section of sections) {
-    const mappedSize = Math.max(section.virtualSize, section.rawSize);
+    // A section addresses [virtualAddress, virtualAddress + virtualSize).
+    // Raw bytes past VirtualSize are file-alignment padding.
     if (rva < section.virtualAddress) continue;
     const within = rva - section.virtualAddress;
-    if (within > mappedSize || size > mappedSize - within) continue;
+    if (within >= section.virtualSize || size > section.virtualSize - within)
+      continue;
     if (within > section.rawSize || size > section.rawSize - within)
       throw managedFailure(
         "invalid-directory",
@@ -361,11 +363,13 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
       for (const section of sections) {
         if (rva < section.virtualAddress) continue;
         const within = rva - section.virtualAddress;
-        if (within < section.rawSize)
-          return Math.min(
-            section.rawSize - within,
-            bytes.length - section.rawOffset - within,
-          );
+        if (within >= section.virtualSize || within >= section.rawSize)
+          continue;
+        return Math.min(
+          section.virtualSize - within,
+          section.rawSize - within,
+          bytes.length - section.rawOffset - within,
+        );
       }
       throw managedFailure(
         "invalid-directory",

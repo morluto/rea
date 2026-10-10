@@ -240,6 +240,46 @@ describe("managed member reference bounds", () => {
     expect(result.methods[0]?.body.status).toBe("present");
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
+
+  it("reports a method past section virtual size as malformed while the raw bytes still hold it", () => {
+    const bytes = buildManagedPeFixture({ virtualSectionSize: 0x800 });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.methods[0]).toMatchObject({
+      rva: 0x2800,
+      body: {
+        status: "malformed",
+        file_offset: null,
+        normalized_il_sha256: null,
+        issue: expect.stringContaining(
+          "method.body RVA is not covered by a PE section",
+        ),
+      },
+    });
+    expect(result.coverage.state).toBe("partial");
+  });
+
+  it("does not map a section whose virtual size is zero through its raw bytes", () => {
+    const bytes = buildManagedPeFixture({ virtualSectionSize: 0 });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.methods).toEqual([]);
+    expect(result.metadata.status).toBe("malformed");
+    expect(result.coverage).toMatchObject({
+      state: "unavailable",
+      issues: [
+        expect.objectContaining({
+          detail: expect.stringContaining("not covered by a PE section"),
+        }),
+      ],
+    });
+  });
 });
 
 it.each([
