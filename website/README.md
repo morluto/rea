@@ -7,8 +7,9 @@
 An English static website with explanatory figures, worked guides and Aegis, DX-Ball, Notion, TH04 and CTF investigations.
 The public files are in `website/public/`. The site uses HTML, CSS and small
 scripts for copying code, following code comparisons and playing the dinosaur
-speed reconstruction. Python prepares the example ZIP, sitemap and sharing
-image; there is no frontend bundler or npm dependency.
+speed reconstruction. Small Python commands maintain shared HTML, prepare
+downloads and check the site. There is no frontend framework, bundler or npm
+dependency. The checked-in HTML works as ordinary static files.
 
 [style-guide.md](style-guide.md) explains the writing, page structure, figures,
 visual system and review process. Read it before adding or revising a page.
@@ -21,8 +22,7 @@ From the repository root:
 python3 -m venv website/.venv
 source website/.venv/bin/activate
 python3 -m pip install -r website/requirements.txt
-python3 scripts/prepare-website.py
-python3 -m http.server 4173 --bind 127.0.0.1 --directory website/public
+python3 scripts/website.py serve
 ```
 
 Open <http://127.0.0.1:4173/>. Refresh the browser after editing a file.
@@ -32,9 +32,77 @@ install them with `sudo apt-get install libcairo2 fonts-dejavu-core`. For other
 systems, see [CairoSVG's installation instructions](https://cairosvg.org/documentation/#installation).
 CI installs both packages explicitly before rendering the card.
 
-After adding, moving or removing a page, or changing its indexing policy, rerun
-`python3 scripts/prepare-website.py`. It regenerates the sitemap from the current
-HTML files. No URL list needs to be maintained.
+To test the GitHub Pages prefix, use
+`python3 scripts/website.py serve --port 4174 --base-path /rea/` and open
+<http://127.0.0.1:4174/rea/>.
+
+## Contribute a page or correction
+
+Edit the page's HTML in `public/`. Keep the question, evidence and result easy to
+follow. The writing and design guidance in [style-guide.md](style-guide.md)
+applies to every page.
+
+| Change                         | Edit                                                        | Then run                                        |
+| ------------------------------ | ----------------------------------------------------------- | ----------------------------------------------- |
+| Page text, examples or figures | The page's HTML outside the marked shared regions           | `python3 scripts/website.py check`              |
+| Search title or description    | The page's `<title>` and first description meta tag         | `python3 scripts/website.py sync`, then `check` |
+| Main navigation                | `NAVIGATION` in `scripts/website.py`                        | `sync`, then `check`                            |
+| Header, social links or footer | `templates/header.html` or `templates/footer.html`          | `sync`, then `check`                            |
+| Shared link previews           | `templates/sharing.html` or `public/assets/social-card.svg` | `sync`, then `check`                            |
+
+Create a reading page with:
+
+```sh
+python3 scripts/website.py new-page blog/my-article \
+  --title "My article title" \
+  --description "One sentence explaining the article."
+```
+
+The command creates `public/blog/my-article/index.html` with the correct relative
+paths, navigation and sharing metadata. It starts as a visible draft with
+`noindex`. Write the article, add its link to the Blog index, then remove the
+Draft label and robots meta tag when it is ready. The same command accepts
+routes under `guides/` and `showcase/`. New pages still need their own content;
+the scaffold supplies the common structure.
+
+The regions marked `website:sharing`, `website:header` and `website:footer` are
+generated from the templates. Edit the template rather than a generated copy.
+`sync` updates only those regions; page bodies, figures and scripts remain
+authored HTML. Commit the updated pages alongside the template. Titles and
+descriptions are written once per page; their sharing fields are derived from
+them. Routes come from file paths, including the sitemap, so there is no second
+page list to register.
+
+Before opening a PR:
+
+```sh
+python3 scripts/website.py check
+```
+
+This checks shared HTML without rewriting it, prepares generated assets, and
+checks page links, copied-text targets, repository documentation links, SEO
+metadata and the publishing configuration. It also runs the maintenance
+regressions. A stale shared region fails with the command needed to fix it.
+PR checks and the manual publisher run this same command. The checks work
+offline after the Python dependencies are installed.
+
+For an optional external-link audit, with GitHub CLI available:
+
+```sh
+python3 scripts/website.py links --report /tmp/rea-website-links.json
+```
+
+GitHub source links are checked through `gh`, including pinned commits and
+branch names containing slashes. Other external links use HTTP. Missing targets
+fail the command; access denials, timeouts and GitHub UI routes are reported as
+unknown and need manual verification. External fragment IDs are not checked.
+This network audit runs separately so third-party uptime does not block every PR.
+Keep its report outside public assets.
+
+Links are only part of a content review. When updating setup or support claims,
+compare them with [installation.md](../docs/installation.md), the relevant
+provider guide and the released package. A case study's pinned version and date
+describe its recorded investigation; update them only when repeating that work.
 
 ## Pages
 
@@ -67,11 +135,11 @@ navigation and asset references remain relative so both hosts and local previews
 keep working.
 
 Maintain a descriptive `<title>` and a short meta description in each page's
-`<head>`. The title names the page's subject; visible headings keep the wording
-that best explains it to a reader. Open Graph and Twitter titles/descriptions
-match those fields. `og:url` matches the canonical, and sharing images use
-absolute rea.tools URLs. Search results and link previews should follow the same
-clear, concise writing standard as the page.
+`<head>`, then run `sync`. The title names the page's subject; visible headings
+keep the wording that best explains it to a reader. The script derives Open
+Graph and Twitter fields and the canonical from those inputs and the file's
+route. Search results and link previews should follow the same clear, concise
+writing standard as the page.
 
 `scripts/prepare-website.py` scans `public/**/*.html` and generates
 `public/sitemap.xml` with absolute rea.tools URLs. An `index.html` maps to its
@@ -101,8 +169,7 @@ canonicals, lost fixture exclusions, stale sitemap entries and missing previews.
 Run it after preparing assets:
 
 ```sh
-python3 scripts/verify-website.py
-python3 scripts/test-website.py
+python3 scripts/website.py check
 ```
 
 ### After publishing an SEO change
@@ -404,8 +471,7 @@ dependencies. The same asset preparation and verification run before each manual
 deployment. With the preview environment active, run them locally:
 
 ```sh
-python3 scripts/prepare-website.py
-python3 scripts/verify-website.py
+python3 scripts/website.py check
 ```
 
 `.github/workflows/pages.yml` is a separate, manual-only VitePress build. It
