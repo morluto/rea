@@ -1,4 +1,4 @@
-import { inflateSync } from "node:zlib";
+import { crc32, inflateSync } from "node:zlib";
 
 import type {
   CompareWebScreenshotsInput,
@@ -81,6 +81,8 @@ const decodePng = (artifact: WebScreenshotArtifact): DecodedPng => {
   let header: ReturnType<typeof parseHeader> | undefined;
   const compressed: Buffer[] = [];
   let sawEnd = false;
+  let sawPalette = false;
+  let imageDataEnded = false;
   let transparentColor: readonly number[] | undefined;
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length) throw new TypeError("Truncated PNG chunk");
@@ -90,20 +92,47 @@ const decodePng = (artifact: WebScreenshotArtifact): DecodedPng => {
     const dataEnd = dataStart + length;
     if (dataEnd + 4 > bytes.length) throw new TypeError("Truncated PNG data");
     const data = bytes.subarray(dataStart, dataEnd);
-    if (type === "IHDR") header = parseHeader(data);
+    if (
+      crc32(bytes.subarray(offset + 4, dataEnd)) !== bytes.readUInt32BE(dataEnd)
+    )
+      throw new TypeError("Invalid PNG chunk checksum");
+    if (type !== "IDAT" && compressed.length > 0) imageDataEnded = true;
+    if (type === "IHDR") {
+      if (offset !== 8 || header !== undefined)
+        throw new TypeError("Invalid PNG header order");
+      header = parseHeader(data);
+    } else if (header === undefined)
+      throw new TypeError("Invalid PNG header order");
     else if (type === "tRNS") {
       if (header?.channels !== 3 || data.length !== 6)
         throw new TypeError("Unsupported PNG transparency");
+      if (transparentColor !== undefined || compressed.length > 0)
+        throw new TypeError("Invalid PNG transparency order");
       transparentColor = [
         data.readUInt16BE(0),
         data.readUInt16BE(2),
         data.readUInt16BE(4),
       ];
-    } else if (type === "IDAT") compressed.push(data);
-    else if (type === "IEND") {
+    } else if (type === "PLTE") {
+      if (
+        sawPalette ||
+        transparentColor !== undefined ||
+        compressed.length > 0 ||
+        length === 0 ||
+        length > 768 ||
+        length % 3 !== 0
+      )
+        throw new TypeError("Invalid PNG palette");
+      sawPalette = true;
+    } else if (type === "IDAT") {
+      if (imageDataEnded) throw new TypeError("Nonconsecutive PNG image data");
+      compressed.push(data);
+    } else if (type === "IEND") {
+      if (length !== 0) throw new TypeError("Invalid PNG end chunk");
       sawEnd = true;
       break;
-    }
+    } else if (/^[A-Z]/u.test(type))
+      throw new TypeError("Unsupported critical PNG chunk");
     offset = dataEnd + 4;
   }
   if (header === undefined || !sawEnd || compressed.length === 0)

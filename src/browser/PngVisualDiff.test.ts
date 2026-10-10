@@ -149,6 +149,143 @@ describe("PNG visual diff", () => {
   });
 });
 
+describe("PNG chunk integrity", () => {
+  it.each(["IHDR", "IDAT", "IEND"])(
+    "rejects a corrupt %s chunk checksum",
+    (type) => {
+      const bytes = png(1, 1, [0, 0, 0, 255]);
+      let offset = 8;
+      while (offset < bytes.length) {
+        const length = bytes.readUInt32BE(offset);
+        if (bytes.subarray(offset + 4, offset + 8).toString("ascii") === type) {
+          bytes[offset + 8 + length] = (bytes[offset + 8 + length] ?? 0) ^ 1;
+          break;
+        }
+        offset += length + 12;
+      }
+      const image = createWebScreenshotArtifact(bytes);
+      expect(() =>
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: image,
+            after: image,
+          }),
+        ),
+      ).toThrow("Invalid PNG chunk checksum");
+    },
+  );
+
+  it("rejects duplicate image headers and unknown critical chunks while preserving ancillary chunks", () => {
+    const bytes = png(1, 1, [0, 0, 0, 255]);
+    const duplicate = Buffer.concat([
+      bytes.subarray(0, 33),
+      bytes.subarray(8, 33),
+      bytes.subarray(33),
+    ]);
+    const unknown = Buffer.concat([
+      bytes.subarray(0, 33),
+      chunk("ABCD", Buffer.alloc(0)),
+      bytes.subarray(33),
+    ]);
+    for (const malformed of [duplicate, unknown]) {
+      const image = createWebScreenshotArtifact(malformed);
+      expect(() =>
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: image,
+            after: image,
+          }),
+        ),
+      ).toThrow(/Invalid PNG header order|Unsupported critical PNG chunk/u);
+    }
+    const ancillary = createWebScreenshotArtifact(
+      Buffer.concat([
+        bytes.subarray(0, 33),
+        chunk("tEXt", Buffer.from("Comment\0original capture")),
+        bytes.subarray(33),
+      ]),
+    );
+    expect(
+      comparePngScreenshots(
+        compareWebScreenshotsInputSchema.parse({
+          before: ancillary,
+          after: createWebScreenshotArtifact(bytes),
+        }),
+      ).status,
+    ).toBe("identical");
+  });
+});
+
+describe("PNG chunk ordering", () => {
+  it("rejects malformed palettes, interrupted data and misplaced transparency while retaining valid chunks", () => {
+    const header = Buffer.from(png(1, 1, [10, 20, 30, 255]).subarray(16, 29));
+    header[9] = 2;
+    const ihdr = chunk("IHDR", header);
+    const compressed = deflateSync(Buffer.from([0, 10, 20, 30]));
+    const idat = chunk("IDAT", compressed);
+    const iend = chunk("IEND", Buffer.alloc(0));
+    const palette = chunk("PLTE", Buffer.from([10, 20, 30]));
+    const transparency = chunk("tRNS", Buffer.from([0, 10, 0, 20, 0, 30]));
+    const ancillary = chunk("tEXt", Buffer.from("Comment\0retained"));
+    const image = (...chunks: readonly Buffer[]) =>
+      createWebScreenshotArtifact(
+        Buffer.concat([
+          Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+          ...chunks,
+        ]),
+      );
+    const original = image(ihdr, idat, iend);
+    const cases = [
+      [ihdr, chunk("PLTE", Buffer.alloc(1)), idat, iend],
+      [ihdr, palette, palette, idat, iend],
+      [ihdr, idat, palette, iend],
+      [ihdr, transparency, palette, idat, iend],
+      [ihdr, transparency, transparency, idat, iend],
+      [ihdr, idat, transparency, iend],
+      [
+        ihdr,
+        chunk("IDAT", compressed.subarray(0, 6)),
+        ancillary,
+        chunk("IDAT", compressed.subarray(6)),
+        iend,
+      ],
+      [ihdr, idat, chunk("IEND", Buffer.from([1]))],
+    ];
+    for (const chunks of cases) {
+      const malformed = image(...chunks);
+      expect(() =>
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: malformed,
+            after: original,
+          }),
+        ),
+      ).toThrow(
+        /Invalid PNG palette|Invalid PNG transparency order|Nonconsecutive PNG image data|Invalid PNG end chunk/u,
+      );
+    }
+    for (const valid of [
+      image(ihdr, palette, idat, iend),
+      image(ihdr, ancillary, idat, iend),
+      image(
+        ihdr,
+        chunk("IDAT", compressed.subarray(0, 6)),
+        chunk("IDAT", compressed.subarray(6)),
+        iend,
+      ),
+    ]) {
+      expect(
+        comparePngScreenshots(
+          compareWebScreenshotsInputSchema.parse({
+            before: valid,
+            after: original,
+          }),
+        ).status,
+      ).toBe("identical");
+    }
+  });
+});
+
 const artifact = (width: number, height: number, pixels: readonly number[]) =>
   createWebScreenshotArtifact(png(width, height, pixels));
 

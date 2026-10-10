@@ -43,6 +43,7 @@ import {
   type WebScreenshotDiff,
 } from "../domain/webScreenshot.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { type BrowserObservationOperation } from "../domain/browserObservationErrors.js";
@@ -314,6 +315,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
     try {
       return ok(webScreenshotDiffSchema.parse(comparePngScreenshots(input)));
     } catch (cause: unknown) {
+      if (cause instanceof TypeError)
+        return err(
+          new AnalysisInputError("compare_web_screenshots", { cause }, [
+            { path: [], reason: "invalid_format", message: cause.message },
+          ]),
+        );
       return err(providerError(cause, "compare_web_screenshots"));
     }
   }
