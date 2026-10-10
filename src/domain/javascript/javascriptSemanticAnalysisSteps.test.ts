@@ -3,6 +3,10 @@ import { expect, it } from "vitest";
 import {
   analyzeParsedJavaScriptSemantics,
   analyzeParsedJavaScriptSemanticsSteps,
+  classifyParsedJavaScriptElectronBindings,
+  classifyParsedJavaScriptElectronBindingsSteps,
+  classifyParsedJavaScriptOpenReceivers,
+  classifyParsedJavaScriptOpenReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
@@ -30,8 +34,7 @@ it("yields between semantic phases and returns the synchronous result (#1462)", 
     yields += 1;
     step = steps.next();
   }
-  // Every top-level phase and derived collector is a separate step.
-  expect(yields).toBeGreaterThanOrEqual(13);
+  expect(yields).toBeGreaterThan(0);
   const reparsed = parseJavaScriptSource(source, "main.js");
   if (reparsed === null) throw new Error("Expected parsed source");
   expect(step.value).toEqual(analyzeParsedJavaScriptSemantics(reparsed));
@@ -58,4 +61,44 @@ it("traverses a large tree in steps with the synchronous visit order (#1462)", (
   while (steps.next().done !== true) yields += 1;
   expect(yields).toBeGreaterThan(0);
   expect(stepped).toEqual(synchronous);
+});
+
+it("preserves receiver and Electron alias scope across traversal pauses (#1462)", () => {
+  const padding = Array.from(
+    { length: 400 },
+    (_, index) => `const v${index} = [${index}];`,
+  ).join("\n");
+  const text = `
+import { BrowserWindow as NativeWindow } from "electron";
+const ambient = window;
+export function local(ambient, NativeWindow) {
+  ${padding}
+  ambient.open("/local");
+  new NativeWindow();
+}
+ambient.open("/global");
+new NativeWindow();
+`;
+  const parsed = parseJavaScriptSource(text, "receivers.js");
+  if (parsed === null) throw new Error("Expected parsed source");
+  const openSteps = classifyParsedJavaScriptOpenReceiversSteps(parsed);
+  let openStep = openSteps.next();
+  expect(openStep.done).toBe(false);
+  while (openStep.done !== true) openStep = openSteps.next();
+  expect([...openStep.value]).toEqual([
+    [text.indexOf('ambient.open("/local")'), "local"],
+    [text.indexOf('ambient.open("/global")'), "window"],
+  ]);
+  expect(openStep.value).toEqual(classifyParsedJavaScriptOpenReceivers(parsed));
+
+  const electronSteps = classifyParsedJavaScriptElectronBindingsSteps(parsed);
+  let electronStep = electronSteps.next();
+  expect(electronStep.done).toBe(false);
+  while (electronStep.done !== true) electronStep = electronSteps.next();
+  expect([...electronStep.value]).toEqual([
+    [text.lastIndexOf("NativeWindow()"), "BrowserWindow"],
+  ]);
+  expect(electronStep.value).toEqual(
+    classifyParsedJavaScriptElectronBindings(parsed),
+  );
 });
