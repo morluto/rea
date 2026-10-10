@@ -269,10 +269,7 @@ const setupPlan = (input: {
     })),
   ...(input.installSkill
     ? input.skillDestinations.map(({ client, path }): SetupAction => ({
-        id:
-          client === "claude_code"
-            ? "install_skill:claude_code"
-            : "install_skill",
+        id: client === "shared" ? "install_skill" : `install_skill:${client}`,
         kind: "install_skill",
         label:
           client === "claude_code"

@@ -171,7 +171,16 @@ export const systemUninstallHost = (
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
   return {
     clients: () =>
-      Promise.resolve(supportedClients(home, platform, environment)),
+      Promise.resolve(
+        supportedClients(home, platform, environment).flatMap((client) =>
+          client.configPaths === undefined
+            ? [client]
+            : client.configPaths.map((configPath) => ({
+                ...client,
+                configPath,
+              })),
+        ),
+      ),
     inspectClient: async (client) => {
       const read = await readClientConfiguration(client, fileSystem);
       return read.kind === "item" && read.item.status === "failed"

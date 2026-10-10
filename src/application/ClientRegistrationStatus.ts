@@ -1,10 +1,14 @@
 import {
+  effectiveClientConfiguration,
+  readClientConfigurationFiles,
+  readClientPolicyBlock,
+} from "./ClientConfigurationFiles.js";
+import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
   effectiveClientServer,
-  parseClientConfiguration,
 } from "./ClientConfigurationDocument.js";
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -98,8 +102,36 @@ export const readClientRegistrationStatuses = async (
       continue;
     }
     try {
-      const content = await readFile(client.configPath, "utf8");
-      const parsed = parseClientConfiguration(content, client.format);
+      const files = await readClientConfigurationFiles(client);
+      if (!files.ok) {
+        statuses.push({
+          client: client.name,
+          config_path: client.configPath,
+          command: [],
+          state: "invalid",
+          remediation: files.error.detail,
+        });
+        continue;
+      }
+      const parsed = effectiveClientConfiguration(files.value);
+      if (parsed === undefined) {
+        statuses.push(
+          unavailableStatus(client.name, client.configPath, "missing"),
+        );
+        continue;
+      }
+      const policy = await readClientPolicyBlock(client, parsed);
+      if (!policy.ok) {
+        statuses.push({
+          client: client.name,
+          config_path: client.configPath,
+          command: [],
+          state: "invalid",
+          remediation: policy.error.detail,
+        });
+        continue;
+      }
+      const policyBlock = policy.value;
       const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
         statuses.push(
@@ -124,9 +156,14 @@ export const readClientRegistrationStatuses = async (
             options.platform ?? process.platform,
             clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey),
           ) &&
-            !clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+            !clientServerListedDisabled(
+              parsed,
+              PRODUCT_IDENTITY.mcpServerKey,
+            ) &&
+            policyBlock === undefined
             ? "aligned"
             : "stale",
+          policyBlock,
         ),
       );
     } catch (cause: unknown) {
@@ -246,10 +283,17 @@ const configuredStatus = (
   configPath: string,
   command: RegistrationCommand,
   state: "aligned" | "stale",
+  policyRemediation?: string,
 ): ClientRegistrationStatus =>
   state === "aligned"
     ? { client, config_path: configPath, command, state, remediation: null }
-    : { client, config_path: configPath, command, state, remediation };
+    : {
+        client,
+        config_path: configPath,
+        command,
+        state,
+        remediation: policyRemediation ?? remediation,
+      };
 
 const unavailableStatus = (
   client: string,

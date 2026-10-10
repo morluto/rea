@@ -1,4 +1,8 @@
 import {
+  readClientConfigurationFiles,
+  readClientPolicyBlock,
+} from "./ClientConfigurationFiles.js";
+import {
   clientRegistrationEntry,
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
@@ -44,6 +48,11 @@ const configureClientDocument = async (
   command: readonly string[],
   format: NonNullable<SetupClient["format"]>,
 ): Promise<ClientConfigurationResult> => {
+  const files = await readClientConfigurationFiles(client);
+  if (!files.ok) return { status: "failed", reason: "readback" };
+  const policy = await readClientPolicyBlock(client);
+  if (!policy.ok || policy.value !== undefined)
+    return { status: "failed", reason: "readback" };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -61,6 +70,9 @@ const configureClientDocument = async (
       original ?? (format === "toml" || format === "grok" ? "" : "{}"),
       format,
     );
+    const policy = await readClientPolicyBlock(client, parsed);
+    if (!policy.ok || policy.value !== undefined)
+      return { status: "failed", reason: "readback" };
   } catch (cause: unknown) {
     // Malformed existing configuration fails the readback gate.
     void cause;
@@ -155,16 +167,23 @@ export const clientConfigurationAligned = async (
   command: readonly string[],
 ): Promise<boolean> => {
   try {
+    const files = await readClientConfigurationFiles(client);
+    if (!files.ok) return false;
     const original = await readFile(client.configPath, "utf8");
     const parsed = parseClientConfiguration(original, client.format);
-    return registrationCurrent(
-      parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed.dialect,
-      ),
+    const policy = await readClientPolicyBlock(client, parsed);
+    return (
+      policy.ok &&
+      policy.value === undefined &&
+      registrationCurrent(
+        parsed,
+        clientConfigurationDesired(
+          client,
+          providerEnvironment,
+          command,
+          parsed.dialect,
+        ),
+      )
     );
   } catch (cause: unknown) {
     // Unreadable configuration is treated as not aligned so setup repairs it.
@@ -180,6 +199,13 @@ export const inspectClientConfiguration = async (
   command: readonly string[],
 ): Promise<ClientConfigurationInspection> => {
   if (client.format === "unsupported") return { status: "already_current" };
+  const files = await readClientConfigurationFiles(client);
+  if (!files.ok) return { status: "invalid", remediation: files.error.detail };
+  const policy = await readClientPolicyBlock(client);
+  if (!policy.ok)
+    return { status: "invalid", remediation: policy.error.detail };
+  if (policy.value !== undefined)
+    return { status: "invalid", remediation: policy.value };
   const transactionPath = await resolveClientConfigTransactionPath(
     client.configPath,
   );
@@ -202,6 +228,11 @@ export const inspectClientConfiguration = async (
   }
   try {
     const parsed = parseClientConfiguration(original, client.format);
+    const policy = await readClientPolicyBlock(client, parsed);
+    if (!policy.ok)
+      return { status: "invalid", remediation: policy.error.detail };
+    if (policy.value !== undefined)
+      return { status: "invalid", remediation: policy.value };
     const desired = clientConfigurationDesired(
       client,
       providerEnvironment,
