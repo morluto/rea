@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
+import type { ReadStream, Stats, WriteStream } from "node:fs";
 import { chmod, open, rm, stat, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { Transform, type TransformCallback } from "node:stream";
@@ -68,6 +68,8 @@ const copyAndroidSnapshot = async (
 ): Promise<string> => {
   const source = await openRegularFile(sourcePath, { symlinks: "follow" });
   let destination: FileHandle | undefined;
+  let inputStream: ReadStream | undefined;
+  let outputStream: WriteStream | undefined;
   let copiedBytes = 0;
   const hash = createHash("sha256");
   try {
@@ -93,15 +95,13 @@ const copyAndroidSnapshot = async (
     });
     try {
       destination = await open(snapshotPath, "wx", 0o600);
-      await pipeline(
-        source.createReadStream({
-          start: 0,
-          end: initial.size,
-          autoClose: false,
-        }),
-        digest,
-        destination.createWriteStream({ autoClose: false }),
-      );
+      inputStream = source.createReadStream({
+        start: 0,
+        end: initial.size,
+        autoClose: false,
+      });
+      outputStream = destination.createWriteStream({ autoClose: false });
+      await pipeline(inputStream, digest, outputStream);
       await verifySourceState(source, sourcePath, initial, copiedBytes);
       const observedSha256 = hash.digest("hex");
       if (observedSha256 !== expectedSha256)
@@ -115,6 +115,11 @@ const copyAndroidSnapshot = async (
       throw cause;
     }
   } finally {
+    // Non-auto-closing streams retain a reference to their FileHandle even
+    // after pipeline completion. Release those references before awaiting
+    // descriptor closure, after the admitted source state has been verified.
+    inputStream?.destroy();
+    outputStream?.destroy();
     await Promise.all([source.close(), destination?.close()]);
   }
 };
