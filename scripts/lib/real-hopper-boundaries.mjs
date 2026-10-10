@@ -42,7 +42,11 @@ export async function verifyHopperBoundaryContracts(
       ajv.validateSchema(tool.outputSchema),
       `${tool.name} output schema`,
     );
-    validators.set(tool.name, ajv.compile(tool.outputSchema));
+    validators.set(
+      tool.name,
+      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
+        ajv.compile(tool.outputSchema),
+    );
   }
   let successfulCalls = 0;
   let rejectedCalls = 0;
