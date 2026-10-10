@@ -102,25 +102,21 @@ const waitFor = async (
 };
 
 const fixturePid = async (root: string): Promise<number> => {
+  let pid = Number.NaN;
   await waitFor("the finalization fixture PID", async () => {
     try {
-      await access(join(root, "pid.txt"));
-      return true;
+      pid = Number.parseInt(await readFile(join(root, "pid.txt"), "utf8"), 10);
+      return Number.isSafeInteger(pid) && pid > 0;
     } catch {
       return false;
     }
   });
-  const pid = Number.parseInt(
-    await readFile(join(root, "pid.txt"), "utf8"),
-    10,
-  );
-  if (!Number.isSafeInteger(pid) || pid <= 0)
-    throw new Error("finalization fixture wrote an invalid PID");
   return pid;
 };
 
 const waitForFinalization = async (root: string): Promise<number> => {
-  const pid = await fixturePid(root);
+  // The fixture writes the PID before it can receive SIGTERM, so once the
+  // marker exists the PID file is complete.
   await waitFor("the finalization fixture to receive SIGTERM", async () => {
     try {
       await access(join(root, "sigterm-received"));
@@ -129,7 +125,7 @@ const waitForFinalization = async (root: string): Promise<number> => {
       return false;
     }
   });
-  return pid;
+  return fixturePid(root);
 };
 
 const waitForProcessExit = async (pid: number): Promise<void> =>
