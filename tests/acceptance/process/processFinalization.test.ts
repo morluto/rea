@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
-import { access, writeFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { expect, onTestFinished } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { partialProcessCaptureObservationSchema } from "../../../src/domain/process/processCapture.js";
 import {
   parseProcessCapture,
@@ -78,10 +79,73 @@ const captureViaMcp = async (
   return {
     kind: "capture",
     capture: parseProcessCapture(
-      parseEvidence(response.structuredContent).normalized_result,
+      parseEvidence(
+        toolContract("capture_process_scenario").outputSchema.parse(
+          response.structuredContent,
+        ),
+      ).normalized_result,
     ),
   };
 };
+
+const waitFor = async (
+  description: string,
+  predicate: () => Promise<boolean>,
+  deadlineMs = 7_500,
+): Promise<void> => {
+  const deadline = Date.now() + deadlineMs;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline)
+      throw new Error(`timed out waiting for ${description}`);
+    await delay(25);
+  }
+};
+
+const fixturePid = async (root: string): Promise<number> => {
+  await waitFor("the finalization fixture PID", async () => {
+    try {
+      await access(join(root, "pid.txt"));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const pid = Number.parseInt(
+    await readFile(join(root, "pid.txt"), "utf8"),
+    10,
+  );
+  if (!Number.isSafeInteger(pid) || pid <= 0)
+    throw new Error("finalization fixture wrote an invalid PID");
+  return pid;
+};
+
+const waitForFinalization = async (root: string): Promise<number> => {
+  const pid = await fixturePid(root);
+  await waitFor("the finalization fixture to receive SIGTERM", async () => {
+    try {
+      await access(join(root, "sigterm-received"));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  return pid;
+};
+
+const waitForProcessExit = async (pid: number): Promise<void> =>
+  waitFor(`finalization fixture ${String(pid)} to exit`, async () => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error: unknown) {
+      return (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ESRCH"
+      );
+    }
+  });
 
 const finalizationFromPartial = (partial: unknown) => {
   const parsed = partialProcessCaptureObservationSchema.parse(partial);
@@ -141,11 +205,12 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
   if (outcome.kind === "partial") {
     expect(
       finalizationFromPartial(outcome.partial),
-      "the cleanup-flake partial observation preserves SIGTERM finalization",
+      "the cleanup-flake partial observation preserves SIGTERM and SIGKILL finalization",
     ).toMatchObject({
-      signals: expect.arrayContaining([
-        expect.objectContaining({ signal: "SIGTERM", delivery: "signaled" }),
-      ]),
+      signals: [
+        { signal: "SIGTERM", delivery: "signaled" },
+        { signal: "SIGKILL", delivery: "signaled" },
+      ],
     });
     return;
   }
@@ -325,10 +390,11 @@ captureTest(
       if (cli.exitCode === null && cli.signalCode === null) cli.kill("SIGKILL");
       await cliClosed;
     });
-    await delay(1_500);
+    const cliFixturePid = await waitForFinalization(cliRoot);
     const cliStarted = Date.now();
     cli.kill("SIGINT");
     const cliExit = await cliClosed;
+    await waitForProcessExit(cliFixturePid);
     expect(cliExit.code, "SIGINT produces the CLI cancellation status").toBe(
       130,
     );
@@ -375,13 +441,18 @@ captureTest(
       },
       { signal: controller.signal },
     );
-    await delay(1_500);
+    const mcpFixturePid = await waitForFinalization(mcpRoot);
     const mcpStarted = Date.now();
     controller.abort(new Error("cancel finalization acceptance fixture"));
     await expect(
       call,
       "MCP cancellation rejects the pending SDK request",
     ).rejects.toThrow("cancel finalization acceptance fixture");
+    await waitForProcessExit(mcpFixturePid);
+    await expect(
+      client.listTools(),
+      "the server accepts a follow-up request after cancelling the capture",
+    ).resolves.toMatchObject({ tools: expect.any(Array) });
     expect(
       Date.now() - mcpStarted,
       "MCP cancellation does not wait for the grace interval",

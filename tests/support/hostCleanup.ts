@@ -2,22 +2,29 @@ import { expect } from "vitest";
 
 import type { ProcessCaptureError } from "../../src/process/capture/ProcessCaptureError.js";
 
-type SerializedCleanupFailure = {
-  readonly error: {
-    readonly code: unknown;
-    readonly details: {
-      readonly cleanup_report: {
-        readonly owned_process_group: {
-          readonly state: unknown;
-          readonly reason: unknown;
-        };
-        readonly terminal_renderer: { readonly state: unknown };
-        readonly temporary_root: { readonly state: unknown };
-      };
-      readonly partial_observation: unknown;
-    };
+type SerializedCleanupReport = {
+  readonly owned_process_group: {
+    readonly state: unknown;
+    readonly reason: unknown;
   };
+  readonly terminal_renderer: { readonly state: unknown };
+  readonly temporary_root: { readonly state: unknown };
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const isSerializedCleanupReport = (
+  value: unknown,
+): value is SerializedCleanupReport =>
+  isRecord(value) &&
+  isRecord(value.owned_process_group) &&
+  "state" in value.owned_process_group &&
+  "reason" in value.owned_process_group &&
+  isRecord(value.terminal_renderer) &&
+  "state" in value.terminal_renderer &&
+  isRecord(value.temporary_root) &&
+  "state" in value.temporary_root;
 
 const expectHostCleanupReport = (report: {
   readonly owned_process_group: {
@@ -95,18 +102,8 @@ export const expectSerializedUnverifiedHostCleanup = (
   )
     throw new Error("cleanup error omitted report or partial observation");
   const cleanupReport = details.cleanup_report;
-  expect(typeof cleanupReport).toBe("object");
-  expect(cleanupReport).not.toBeNull();
-  if (
-    typeof cleanupReport !== "object" ||
-    cleanupReport === null ||
-    !("owned_process_group" in cleanupReport) ||
-    !("terminal_renderer" in cleanupReport) ||
-    !("temporary_root" in cleanupReport)
-  )
+  if (!isSerializedCleanupReport(cleanupReport))
     throw new Error("cleanup error report is incomplete");
-  expectHostCleanupReport(
-    cleanupReport as SerializedCleanupFailure["error"]["details"]["cleanup_report"],
-  );
+  expectHostCleanupReport(cleanupReport);
   return details.partial_observation;
 };

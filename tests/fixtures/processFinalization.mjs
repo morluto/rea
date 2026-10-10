@@ -9,6 +9,7 @@ import { join } from "node:path";
 // - "exits": exits on its own at once.
 const [mode, directory] = process.argv.slice(2);
 
+writeFileSync(join(directory, "pid.txt"), String(process.pid));
 writeFileSync(
   join(directory, "periodic.json"),
   JSON.stringify({ phase: "periodic" }),
@@ -17,10 +18,13 @@ writeFileSync(
 if (mode === "exits") process.exit(0);
 
 if (mode === "ignoring") {
-  process.on("SIGTERM", () => undefined);
+  process.on("SIGTERM", () => {
+    writeFileSync(join(directory, "sigterm-received"), "received");
+  });
   process.on("SIGINT", () => undefined);
 } else {
   process.on("SIGTERM", () => {
+    writeFileSync(join(directory, "sigterm-received"), "received");
     process.stdout.write("finalized\n");
     writeFileSync(
       join(directory, "final.json"),
