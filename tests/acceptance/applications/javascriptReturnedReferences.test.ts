@@ -15,6 +15,17 @@ const writes = {
   method:
     "const box = {get() { return shared; }}; const o = {}; o.a = box.get(); o.a.x = 2;",
   methodDirect: "const box = {get() { return shared; }}; box.get().x = 2;",
+  objectGetter: "const box = {get v() { return shared; }}; box.v.x = 2;",
+  capturedGetter:
+    "const box = {get v() { return shared; }}; const copy = box.v; copy.x = 2;",
+  instanceGetter: "class Box { get v() { return shared; } } new Box().v.x = 2;",
+  storedInstanceGetter:
+    "class Box { get v() { return shared; } } const box = new Box(); box.v.x = 2;",
+  staticGetter: "class Box { static get v() { return shared; } } Box.v.x = 2;",
+  pairedGetter:
+    "const box = {get v() { return shared; }, set v(value) {}}; box.v.x = 2;",
+  optionalGetter:
+    "const box = {get v() { return shared; }}; const copy = box?.v; copy.x = 2;",
   quotedMethod:
     "const box = {['get/ref']() { return shared; }}; box['get/ref']().x = 2;",
   alias: "const get = () => shared; const another = get; another().x = 2;",
@@ -59,6 +70,9 @@ const source = [
   ),
   "export function directSibling(){ const shared = {x: 1}; const parent = {shared, keep: 7}; const get = () => parent.shared; get().x = 2; return {x: shared.x, keep: parent.keep}; }",
   "export function primitive(){ const n = 1; const get = () => n; const t = get(); return n; }",
+  "export function unreadMethod(){ const shared = {x: 1}; const box = {v(){ return shared; }}; const method = box.v; return shared.x; }",
+  "export function overwrittenGetter(){ const shared = {x: 1}; const box = {get v(){ return shared; }, v: {}}; box.v.x = 2; return shared.x; }",
+  "export function assignedGetter(){ const shared = {x: 1}; const box = {get v(){ return shared; }, set v(value){}}; box.v = {}; return shared.x; }",
   "export function copy(){ const shared = {x: 1}; const get = () => ({...shared}); get().x = 2; return shared.x; }",
   "export function methodCopy(){ const shared = {x: 1}; const box = {get(){ return {...shared}; }}; box.get().x = 2; return shared.x; }",
   "export function arrayCopy(){ const shared = {x: 1}; const get = () => [shared.x]; get()[0] = 2; return shared.x; }",
@@ -83,6 +97,9 @@ const assertReturns = (fields: JavaScriptReturnFields): void => {
   );
   for (const name of [
     "primitive",
+    "unreadMethod",
+    "overwrittenGetter",
+    "assignedGetter",
     "copy",
     "methodCopy",
     "arrayCopy",
