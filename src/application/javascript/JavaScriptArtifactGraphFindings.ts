@@ -44,11 +44,12 @@ interface ResolvedReference {
 }
 
 /** Project imports, workers, roles, endpoints, storage, and source-map links. */
-export const addJavaScriptStaticFindings = (
+export function* addJavaScriptStaticFindingsSteps(
   context: JavaScriptArtifactGraphContext,
-): readonly string[] => {
+): Generator<void, readonly string[]> {
   const omissions = { selfReferences: 0 };
   for (const analyzed of context.analysis.files) {
+    yield;
     const { file, javascript } = analyzed;
     const asset = context.assetNodes.get(file.path);
     if (javascript === null || asset === undefined) continue;
@@ -69,7 +70,7 @@ export const addJavaScriptStaticFindings = (
     ["static reference", "static references"],
     "the referencing module",
   );
-};
+}
 
 const addReference = (
   context: JavaScriptArtifactGraphContext,

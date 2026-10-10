@@ -43,7 +43,7 @@ HTML files. No URL list needs to be maintained.
 - `public/first-investigation/index.html`: a guided Notes export investigation, from setup to a checked CSV prediction.
 - `public/showcase/index.html`: the case-study index.
 - `public/blog/index.html`: articles about reconstruction methods, ports, mods and reverse engineering.
-- `public/blog/touhou-reconstruction/index.html`: a personal essay about agent-driven reconstruction, knowledge that compounds across TH08 and TH095, and the workflow's applicability to PC-98 TH04.
+- `public/blog/touhou-reconstruction/index.html`: a personal essay about agent autonomy, oracle quality, knowledge carried between TH08 and TH095, PC-98 TH04, and the path from exact reconstruction to readable source and modern ports.
 - `public/showcase/aegis/index.html`: Aegis's Android login-code calculation, with an adjustable clock and reference checks.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
 - `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
@@ -135,6 +135,10 @@ quoted README passage and milestone counting rules are in
 [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
 The completed text has normal search metadata and is included in the generated
 sitemap.
+
+Its opening flywheel connects agent autonomy, reference-based oracles and
+repository memory. The essay develops those ideas through the project examples.
+Figure labels are selectable HTML; inline SVG supplies the feedback arrows.
 
 Keep the copy direct and specific. Explain the task and the result before listing
 tool names. Setup commands and runtime requirements should match the released
