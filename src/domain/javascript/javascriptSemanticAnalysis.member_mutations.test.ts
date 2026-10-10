@@ -644,8 +644,13 @@ describe("results of methods on an escaped receiver", () => {
       Math.min(
         ...[0, 1].map(() => {
           const start = performance.now();
-          resultValue(body);
-          return performance.now() - start;
+          const value = resultValue(body);
+          const elapsed = performance.now() - start;
+          expect(value).toMatchObject({
+            status: "array",
+            items: [{ value: { status: "unknown" } }],
+          });
+          return elapsed;
         }),
       );
     resultValue(receiverCalls(100));
@@ -654,9 +659,5 @@ describe("results of methods on an escaped receiver", () => {
     // re-expanding every method per call cost about 13-14x.
     const ratio = fastest(receiverCalls(1600)) / fastest(receiverCalls(400));
     expect(ratio).toBeLessThan(10);
-    expect(resultValue(receiverCalls(400))).toMatchObject({
-      status: "array",
-      items: [{ value: { status: "unknown" } }],
-    });
   }, 60000);
 });
