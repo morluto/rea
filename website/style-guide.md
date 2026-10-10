@@ -144,6 +144,27 @@ Keep the explanation on the website. Repository links provide source,
 reproduction instructions and further evidence. Use specific links for those
 purposes, and immutable commit links for checkpoint-dependent facts.
 
+### Method articles in the Blog
+
+Use longer articles to explain how to approach a problem, choose a workflow and
+learn from project outcomes. Open with the reader's goal and one clear thesis.
+Use an overview figure to show the method before expanding its steps.
+
+Choose cases that teach different decisions. For example, TH08 illustrates
+continuing existing work, TH095 illustrates reusing an established method in a
+new project, and TH04 illustrates adapting checks to an older platform. Close
+each case with the lesson the reader can apply. Put dates and progress figures
+beside the milestone they measure, with pinned evidence links in supporting
+details. Calendar time, source presence, exact comparison, build success and
+runtime checks each describe a different result.
+
+Make an analogy concrete and use it briefly. The industrial analogy can connect
+agent execution, tools, quality checks and durable knowledge; the actual workflow
+should remain clear without the metaphor. Explain necessary terms in plain
+language and leave engine inventories in references. Finish with a bounded first
+task the reader can try. Working outlines should be visibly labeled and marked
+`noindex` until they become finished articles.
+
 ## Make figures explain a relationship
 
 Each figure should answer a question that a reader can name. Choose the visual

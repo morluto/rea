@@ -42,6 +42,8 @@ HTML files. No URL list needs to be maintained.
 - `public/examples/dino-lab/index.html`: adjustable-speed mini-game, recovered rule, original-game check and browser analysis steps.
 - `public/first-investigation/index.html`: a guided Notes export investigation, from setup to a checked CSV prediction.
 - `public/showcase/index.html`: the case-study index.
+- `public/blog/index.html`: articles about reconstruction methods, ports, mods and reverse engineering.
+- `public/blog/touhou-reconstruction/index.html`: the working English outline for a Touhou reconstruction article, with TH08, TH095 and TH04 timelines.
 - `public/showcase/aegis/index.html`: Aegis's Android login-code calculation, with an adjustable clock and reference checks.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
 - `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
@@ -120,6 +122,15 @@ and [sitemap guidance](https://developers.google.com/search/docs/crawling-indexi
 and Cloudflare's [managed robots behavior](https://developers.cloudflare.com/bots/additional-configurations/managed-robots-txt/).
 
 ## Content
+
+Blog articles explain methods and decisions across a project. Use a clear thesis,
+an overview figure, a practical workflow and a few cases that test the method.
+Case studies remain focused on one inspected behavior. Keep engine details in
+supporting references unless they explain a decision the reader needs to make.
+
+The Touhou article is currently a working outline, marked `noindex`. Replace it
+with the finished article before removing that directive. Its timeline provenance
+and counting rules are in [evidence/touhou-reconstruction-method.md](evidence/touhou-reconstruction-method.md).
 
 Keep the copy direct and specific. Explain the task and the result before listing
 tool names. Setup commands and runtime requirements should match the released

@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reconstructing Touhou with AI Agents — REA</title>
+    <meta
+      name="description"
+      content="An article outline about repeatable game reconstruction: project memory, small verified changes and lessons from TH08, TH095 and PC-98 TH04."
+    />
+    <link
+      rel="canonical"
+      href="https://rea.tools/blog/touhou-reconstruction/"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="REA" />
+    <meta
+      property="og:title"
+      content="Reconstructing Touhou with AI Agents — REA"
+    />
+    <meta
+      property="og:description"
+      content="An article outline about repeatable game reconstruction: project memory, small verified changes and lessons from TH08, TH095 and PC-98 TH04."
+    />
+    <meta
+      property="og:url"
+      content="https://rea.tools/blog/touhou-reconstruction/"
+    />
+    <meta
+      property="og:image"
+      content="https://rea.tools/assets/social-card.png"
+    />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="REA — Find out how software works. Reverse engineering with your coding agent."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Reconstructing Touhou with AI Agents — REA"
+    />
+    <meta
+      name="twitter:description"
+      content="An article outline about repeatable game reconstruction: project memory, small verified changes and lessons from TH08, TH095 and PC-98 TH04."
+    />
+    <meta
+      name="twitter:image"
+      content="https://rea.tools/assets/social-card.png"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="REA — Find out how software works. Reverse engineering with your coding agent."
+    />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="../../assets/styles.css" />
+    <script src="../../assets/main.js" defer></script>
+  </head>
+  <body id="top" class="blog-article">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="../../" aria-label="REA home"
+          ><span class="brand-name">REA</span
+          ><span class="brand-caption">Reverse Engineer Anything</span></a
+        >
+        <nav class="navigation" aria-label="Main navigation">
+          <a href="../../showcase/">Showcases</a>
+          <a href="../" aria-current="true">Blog</a>
+          <a class="nav-start" href="../../get-started/">Get started</a>
+          <a href="../../guides/">Guides</a>
+          <a href="../../faq/">FAQ</a>
+        </nav>
+        <div class="header-social">
+          <a
+            class="nav-github"
+            href="https://github.com/morluto/rea"
+            aria-label="REA on GitHub"
+            title="REA on GitHub"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+              />
+            </svg>
+            <span class="nav-github-count" hidden aria-hidden="true"></span>
+          </a>
+          <a
+            class="nav-discord"
+            href="https://discord.gg/GkcryMnJDM"
+            aria-label="Join REA on Discord"
+            title="Join REA on Discord"
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path
+                fill="currentColor"
+                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
+              />
+            </svg>
+          </a>
+        </div>
+      </div>
+    </header>
+    <main id="main" class="container">
+      <div class="page-heading">
+        <p class="breadcrumb">
+          <a href="../../">Home</a> / <a href="../">Blog</a> / Touhou
+          reconstruction
+        </p>
+        <p class="eyebrow">Game reconstruction · Article outline</p>
+        <h1>Reconstructing Touhou with AI agents.</h1>
+        <p class="lede">
+          From individual expertise to a repeatable workflow. Lessons from
+          continuing TH08, starting TH095, and rebuilding TH04 for PC-98.
+        </p>
+        <p class="page-meta">By N0zoM1z0 · Working outline · 10 October 2026</p>
+        <p class="blog-thesis">
+          <strong
+            >The unit of progress is a checked change that the next agent can
+            build on.</strong
+          >
+        </p>
+      </div>
+      <figure class="workflow-figure">
+        <p class="figure-title">
+          The factory idea, in one reconstruction batch
+        </p>
+        <ol class="flow-steps">
+          <li>
+            <span class="flow-label">01 · One question</span
+            ><strong class="flow-node">Inspect → reconstruct</strong
+            ><span class="flow-note"
+              >The agent uses analysis tools such as REA to collect evidence,
+              then writes source for one behavior or subsystem.</span
+            >
+          </li>
+          <li>
+            <span class="flow-label">02 · A tested change</span
+            ><strong class="flow-node">Compile → compare → run</strong
+            ><span class="flow-note"
+              >Project checks test the change against the original code and the
+              reconstructed program.</span
+            >
+          </li>
+          <li>
+            <span class="flow-label">03 · A saved checkpoint</span
+            ><strong class="flow-node">Code + evidence + next task</strong
+            ><span class="flow-note"
+              >The repository keeps the result and the lesson. A fresh agent can
+              continue from this state.</span
+            >
+          </li>
+        </ol>
+        <p class="flow-result">
+          A failed check sends the batch back to investigation. A useful lesson
+          improves the next batch—and the next game.
+        </p>
+        <figcaption>
+          The human sets the goal, priorities and release decisions. The
+          investigation remains flexible; the checks and handoff are repeatable.
+          This is the proposed opening figure for the article.
+        </figcaption>
+      </figure>
+      <div class="article-layout">
+        <nav class="contents" aria-label="On this page">
+          <p>Article outline</p>
+          <ul>
+            <li><a href="#goal">1. Choose the goal</a></li>
+            <li><a href="#industrial-shift">2. The industrial shift</a></li>
+            <li><a href="#th08">3. Continue TH08</a></li>
+            <li><a href="#th095">4. Start TH095</a></li>
+            <li><a href="#th04">5. Adapt to PC-98</a></li>
+            <li><a href="#workflow">6. The working loop</a></li>
+            <li><a href="#ports-and-mods">7. Ports and mods</a></li>
+            <li><a href="#start">8. Your first batch</a></li>
+          </ul>
+        </nav>
+        <article
+          class="article"
+          aria-label="Touhou reconstruction article outline"
+        >
+          <section class="article-section" id="goal">
+            <h2>1. Decide what you want to build</h2>
+            <p>
+              Open with a practical question: do you want to understand a game,
+              rebuild it, move it to another platform, or change how it plays?
+            </p>
+            <ul>
+              <li>
+                <strong>Reconstruction:</strong> recover source and check it
+                against the original program.
+              </li>
+              <li>
+                <strong>Port:</strong> make that source work with a new
+                platform’s rendering, input, audio and files.
+              </li>
+              <li>
+                <strong>Mod:</strong> understand a behavior, change it
+                deliberately, then test the result.
+              </li>
+            </ul>
+            <p class="caption">
+              Planned figure: one recovered codebase branches into a faithful
+              build, a port and a mod. Each branch names its own success check.
+            </p>
+          </section>
+          <section class="article-section" id="industrial-shift">
+            <h2>2. Turn expertise into a repeatable process</h2>
+            <p>
+              The industrial-age analogy: agents do the work, tools let them
+              inspect the program, checks test the result, and the repository
+              preserves what they learned.
+            </p>
+            <ul>
+              <li>
+                <strong>Make the task small enough to check.</strong> One
+                behavior or connected subsystem has a clear input, output and
+                test.
+              </li>
+              <li>
+                <strong>Make feedback fast.</strong> A compile error, mismatch
+                or runtime failure tells the agent what to investigate next.
+              </li>
+              <li>
+                <strong>Make experience reusable.</strong> A lesson becomes a
+                script, test, evidence note or handoff that survives the
+                conversation.
+              </li>
+            </ul>
+            <p>
+              <strong
+                >Standardize the checks and the handoff; leave the investigation
+                flexible.</strong
+              >
+              REA fits at the inspection step: it gives the agent code,
+              references and observations. Source reconstruction and project
+              validation complete the loop.
+            </p>
+          </section>
+          <section class="article-section" id="th08">
+            <h2>3. TH08: continue the work people already did</h2>
+            <p>
+              Start with the public GensokyoClub reconstruction: its code,
+              names, build knowledge and contribution history. Show how a
+              continuation turns that foundation into an explicit baseline and a
+              sequence of checked tasks.
+            </p>
+            <ul>
+              <li>
+                Preserve credit and inspect what the inherited source actually
+                establishes.
+              </li>
+              <li>
+                Record the target, existing checks, missing source and next
+                useful work.
+              </li>
+              <li>
+                Use the path to Linux and Web to introduce the value of
+                readable, maintained source.
+              </li>
+            </ul>
+            <ol class="blog-timeline">
+              <li>
+                <time datetime="2026-08-13">13 Aug</time
+                ><span>Independent continuation begins.</span>
+              </li>
+              <li>
+                <time datetime="2026-08-19">19 Aug</time
+                ><span
+                  >Source recorded for all 1,107 identified game
+                  functions.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-08-24">24 Aug</time
+                ><span
+                  >Playable Linux port committed, about 11 days after the
+                  continuation began.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-08-30">30 Aug</time
+                ><span>Native Linux 64-bit release published.</span>
+              </li>
+            </ol>
+            <p>
+              <strong>Lesson:</strong> a good workflow makes existing expertise
+              easier to extend. The starting foundation remains part of the
+              result.
+            </p>
+            <p class="caption">
+              <a href="https://github.com/N0zoM1z0/th08">TH08 repository</a> ·
+              <a
+                href="https://github.com/N0zoM1z0/th08/blob/d2a00f4acb4a13916e07a00bd13f714961714628/README.md#credits-and-provenance"
+                >History and credits</a
+              >
+            </p>
+          </section>
+          <section class="article-section" id="th095">
+            <h2>4. TH095: start a new game with an established method</h2>
+            <p>
+              The new repository starts with zero confirmed authored functions.
+              It already has experience from earlier reconstructions: target
+              checks, task boundaries, comparison tooling and a way to retain
+              evidence.
+            </p>
+            <ul>
+              <li>
+                Bring up the build and comparison loop early, then work through
+                bounded tasks.
+              </li>
+              <li>
+                Use the timeline to show what “fast” means for source recovery,
+                exact comparisons and a playable build.
+              </li>
+              <li>
+                Explain one integration failure in plain language: individually
+                correct functions can still use the wrong shared state when
+                assembled into a program.
+              </li>
+            </ul>
+            <ol class="blog-timeline">
+              <li>
+                <time datetime="2026-08-29">29 Aug</time
+                ><span
+                  >Repository initialized; authored source count starts at
+                  zero.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-09-07">7 Sep</time
+                ><span
+                  >697 / 697 identified game functions have source, about 9 days
+                  later.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-09-08">8 Sep</time
+                ><span
+                  >696 / 697 identified game functions accepted as exact.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-09-10">10 Sep</time
+                ><span
+                  >Windows i386 reconstruction marked playable, about 12 days
+                  after initialization.</span
+                >
+              </li>
+            </ol>
+            <p>
+              <strong>Lesson:</strong> the next game starts with more than a
+              prompt. It starts with a working process and the previous game’s
+              lessons.
+            </p>
+            <p class="caption">
+              <a href="https://github.com/N0zoM1z0/th095">TH095 repository</a> ·
+              <a
+                href="https://github.com/N0zoM1z0/th095/blob/3442dcf29d9e0b5bef384a49bd0c9ad32a711826/docs/WHOLE_BUILD_TODO.md"
+                >Build and runtime checkpoint</a
+              >
+            </p>
+          </section>
+          <section class="article-section" id="th04">
+            <h2>5. TH04: keep the method, rethink the assumptions</h2>
+            <p>
+              PC-98 changes the practical problem. The game spans four DOS
+              programs and depends on older hardware behavior. Existing ReC98
+              work supplies valuable knowledge; the new reconstruction still
+              needs its own checks.
+            </p>
+            <ul>
+              <li>
+                Map the whole product: startup, menus, gameplay, endings and the
+                resident component.
+              </li>
+              <li>
+                Show why one excellent function percentage can leave important
+                parts of the game untested.
+              </li>
+              <li>
+                Adapt the comparison and runtime checks to the platform. Feed
+                discoveries back into reusable tests.
+              </li>
+            </ul>
+            <ol class="blog-timeline">
+              <li>
+                <time datetime="2026-09-06">6 Sep</time
+                ><span>Reconstruction repository bootstrapped.</span>
+              </li>
+              <li>
+                <time datetime="2026-09-26">26 Sep</time
+                ><span
+                  >661 / 663 reviewed game functions accepted across four
+                  programs.</span
+                >
+              </li>
+              <li>
+                <time datetime="2026-10-02">2 Oct</time
+                ><span
+                  >Four standalone DOS products built, about 26 days after
+                  bootstrap.</span
+                >
+              </li>
+            </ol>
+            <p>
+              <strong>Lesson:</strong> reuse the process, then verify the
+              assumptions that the new platform changes.
+            </p>
+            <p class="caption">
+              <a href="https://github.com/N0zoM1z0/th04">TH04 repository</a> ·
+              <a href="../../showcase/th04/">A smaller TH04 investigation</a>
+            </p>
+          </section>
+          <section class="article-section" id="workflow">
+            <h2>6. Run small experiments and keep useful checkpoints</h2>
+            <p>
+              Bring the three stories together into a working loop a reader can
+              use.
+            </p>
+            <ol>
+              <li>
+                <strong>Establish a baseline.</strong> Identify the exact target
+                and rerun the checks that matter to this task.
+              </li>
+              <li>
+                <strong>Pick one question.</strong> Choose a behavior or
+                subsystem with a result you can inspect.
+              </li>
+              <li>
+                <strong>Gather evidence.</strong> Follow the code that reads or
+                changes a value, and the functions that call it; name what is
+                known and what still needs testing.
+              </li>
+              <li>
+                <strong>Reconstruct and check.</strong> Compare the affected
+                code, build the program, and exercise relevant behavior.
+              </li>
+              <li>
+                <strong>Commit and hand off.</strong> Keep source, evidence,
+                failed hypotheses and the next task in the repository.
+              </li>
+            </ol>
+            <p>
+              Explain how this loop continues across fresh agent sessions. Turn
+              a recurring failure into a test so the next game benefits from it.
+            </p>
+            <p class="caption">
+              Planned figure: a failing experiment returns to investigation; an
+              accepted batch feeds both the next task and the shared knowledge
+              base.
+            </p>
+          </section>
+          <section class="article-section" id="ports-and-mods">
+            <h2>7. Use the recovered source for ports and mods</h2>
+            <p>
+              Explain the payoff: source with meaningful names, clear ownership
+              and reproducible checks is something you can change with
+              confidence.
+            </p>
+            <ul>
+              <li>
+                Use TH08’s Linux and Web products to illustrate replacing
+                platform services while preserving game logic.
+              </li>
+              <li>
+                Show how a small mod begins with one recovered rule and a
+                controlled change.
+              </li>
+              <li>
+                Connect the desired outcome to its checks: faithful behavior, a
+                working new platform, or an intentional gameplay difference.
+              </li>
+            </ul>
+            <p class="caption">
+              Planned figure: checked reconstruction → readable source →
+              portable backend or a deliberate gameplay change.
+            </p>
+          </section>
+          <section class="article-section" id="start">
+            <h2>8. Start with one behavior you can verify</h2>
+            <p>
+              Close with a small first task, an example agent prompt, and what
+              the reader should keep: recovered source, a reproducible check and
+              a clear next question.
+            </p>
+            <p>
+              The article’s final prompt will walk through one bounded
+              reconstruction batch. The
+              <a href="../../guides/native/">native analysis guide</a> and
+              <a href="../../get-started/">setup guide</a> cover the tools
+              needed to begin.
+            </p>
+            <details class="native-details">
+              <summary>Sources and timeline counting</summary>
+              <p>
+                Dates above come from public GitHub commits and releases,
+                checked on 10 October 2026. Elapsed days are calendar time
+                between recorded checkpoints. Each row names its milestone:
+                source presence, function comparison, build or runtime.
+              </p>
+              <ul>
+                <li>
+                  <a
+                    href="https://github.com/N0zoM1z0/touhou-reconstruction-factory/tree/038b6bed51d273c8b3680553b6f43e1b97d19bd1"
+                    >Touhou Reconstruction Factory</a
+                  >: project memory, bounded work, empirical feedback and
+                  cross-game lessons.
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/commit/001bf3e9c91cc35b79c7a0e36b3565b86f494362"
+                    >TH08 continuation start</a
+                  >,
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/blob/15caba73df6735fc44eac4783bc61b8d098ea830/docs/PROGRESS.md"
+                    >source checkpoint</a
+                  >,
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/commit/da07b21c8cb63230142b0a66228d6aac66555f3f"
+                    >Linux port</a
+                  >
+                  and
+                  <a
+                    href="https://github.com/N0zoM1z0/th08/releases/tag/v0.2.0-linux-64bit"
+                    >64-bit release</a
+                  >.
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/N0zoM1z0/th095/blob/8c31e6f892d945423b7f7b439747a2bd915f82d8/docs/PROGRESS.md"
+                    >TH095 initial ledger</a
+                  >,
+                  <a
+                    href="https://github.com/N0zoM1z0/th095/blob/0fa857fb2b2ec6237732e4d6be8d0a28069c9330/docs/PROGRESS.md"
+                    >source checkpoint</a
+                  >
+                  and
+                  <a
+                    href="https://github.com/N0zoM1z0/th095/blob/74baddfccb712d1311a4d6e7487a63cd1100452e/docs/PROGRESS.md"
+                    >exact comparison checkpoint</a
+                  >.
+                </li>
+                <li>
+                  <a
+                    href="https://github.com/N0zoM1z0/th04/commit/f402cb30b7e795ea4328b6de794e9eefc52c97b3"
+                    >TH04 bootstrap</a
+                  >,
+                  <a
+                    href="https://github.com/N0zoM1z0/th04/blob/1cd1a2577a3dbf4c17ac7a939faed5eeb81a6ebf/docs/PROGRESS.md"
+                    >four-artifact ledger</a
+                  >
+                  and
+                  <a
+                    href="https://github.com/N0zoM1z0/th04/commit/4b6a57f8c0625da07c38258b78f5f205aae92805"
+                    >four-product build checkpoint</a
+                  >.
+                </li>
+              </ul>
+            </details>
+          </section>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>REA · Reverse Engineer Anything</p>
+        <div class="footer-links">
+          <a href="https://github.com/morluto/rea">Source</a
+          ><a href="https://github.com/morluto/rea/blob/main/LICENSE"
+            >MIT license</a
+          ><a href="https://discord.gg/GkcryMnJDM">Community</a>
+        </div>
+      </div>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+    <a class="back-to-top" href="#top" aria-label="Back to top"
+      ><span aria-hidden="true">↑</span> Top</a
+    >
+  </body>
+</html>
