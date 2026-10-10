@@ -191,6 +191,52 @@ it("allows an early forced kill only for a cancelled exit", () => {
   ).toContain("committed");
 });
 
+it("ties finalization evidence to the observed exit and to a committed interval", () => {
+  const finalization = {
+    requested_ms: 500,
+    signal: "SIGTERM" as const,
+    outcome: "forced_kill" as const,
+    elapsed_ms: 500,
+  };
+
+  expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      signal: 15,
+      finalization,
+    }),
+    "a forced kill must show SIGKILL in the observed exit",
+  ).toContain("SIGKILL");
+  expect(
+    finalizationConsistencyIssue({
+      reason: "timeout",
+      signal: 9,
+      finalization,
+    }),
+    "a forced kill that ended on SIGKILL is consistent",
+  ).toBeUndefined();
+  expect(
+    finalizationConsistencyIssue(
+      { reason: "timeout", signal: 9 },
+      { finalization_ms: 500 },
+    ),
+    "a deadline exit with a committed interval must carry the record",
+  ).toContain("finalization evidence");
+  expect(
+    finalizationConsistencyIssue(
+      { reason: "cancelled", signal: 9 },
+      {
+        finalization_ms: 500,
+      },
+    ),
+    "cancellation before the deadline has no finalization record",
+  ).toBeUndefined();
+  expect(
+    finalizationConsistencyIssue({ reason: "timeout", signal: 9 }, {}),
+    "a scenario without an interval needs no record",
+  ).toBeUndefined();
+});
+
 it("requires an explicit journal and validates complete journals", () => {
   const capture = emptyCapture();
   const { event_journal: _eventJournal, ...oldCapture } = capture;
