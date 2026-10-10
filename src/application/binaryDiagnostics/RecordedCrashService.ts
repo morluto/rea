@@ -83,7 +83,8 @@ export class RecordedCrashService {
           operation: OPERATION,
           parameters: input.data,
           result: value,
-          rawResult: value,
+          // The decoded report is the only representation; do not repeat it.
+          rawResult: null,
           confidence:
             value.debugger.status === "available" ? "derived" : "observed",
           limitations: value.limitations,

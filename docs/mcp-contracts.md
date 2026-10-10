@@ -198,7 +198,9 @@ Custom clients upgrading from 6.1 should follow the
 
 Evidence-producing tools return the complete canonical Evidence record in both
 text and structured content. Read `structuredContent.normalized_result` for the
-operation result and `structuredContent.evidence_id` for its identity. The same
+operation result and `structuredContent.evidence_id` for its identity.
+`raw_result` holds a provider representation distinct from that result, such
+as an upstream tool's original report, and is `null` when there is none. The same
 record is retained in the session bundle. `analysis_profile` is always present:
 a concrete profile object or `null`; either value participates in semantic
 identity. Records omitting this field are rejected. Pass the returned Evidence

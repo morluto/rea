@@ -1,15 +1,12 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
 import { afterEach, describe, expect, it } from "vitest";
 
+import { runCliJson as runCli } from "../../fixtures/cliJsonProcess.js";
 import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
   type FakeOptions,
 } from "../../fixtures/fakeCdpBrowser.js";
 
-const execute = promisify(execFile);
 const browsers: FakeCdpBrowser[] = [];
 const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
 
@@ -287,33 +284,6 @@ describe("browser CLI capture parity", () => {
     INTEGRATION_TEST_TIMEOUT_MS,
   );
 });
-
-const runCli = async (
-  arguments_: readonly string[],
-  environment: NodeJS.ProcessEnv,
-): Promise<unknown> => {
-  try {
-    const { stdout } = await execute(
-      process.execPath,
-      ["scripts/rea.mjs", ...arguments_],
-      {
-        cwd: process.cwd(),
-        env: environment,
-        maxBuffer: 16 * 1_024 * 1_024,
-      },
-    );
-    return JSON.parse(stdout);
-  } catch (cause: unknown) {
-    if (
-      typeof cause === "object" &&
-      cause !== null &&
-      "stdout" in cause &&
-      typeof cause.stdout === "string"
-    )
-      return JSON.parse(cause.stdout);
-    throw cause;
-  }
-};
 
 const screenshotArtifact = (value: unknown): Record<string, unknown> => {
   if (

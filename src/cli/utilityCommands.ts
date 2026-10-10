@@ -65,10 +65,6 @@ export const registerUtilityCommands = (
           .default(500)
           .describe("Maximum accessibility nodes per capture"),
       }),
-      alias: {
-        windowId: "window-id",
-        maxNodes: "max-nodes",
-      },
       run: ({ args, options }) =>
         logCliCommand(logger, command, async () => {
           const parameters = {
@@ -172,7 +168,6 @@ const registerNativeCommands = (
           "Plist path relative to the app root (default: Contents/Info.plist)",
         ),
     }),
-    alias: { relativePath: "relative-path" },
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
         runProviderAnalysis(
