@@ -1,26 +1,15 @@
 import { expect, it } from "vitest";
 
-import { createCli } from "../../../src/cli.js";
+import { serveCli } from "./cliServeHarness.js";
+
+const jebEnvironment = {
+  REA_JEB_MCP_URL: "http://127.0.0.1:1/mcp",
+};
 
 const serve = async (
   argv: readonly string[],
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  const cli = createCli({
-    REA_JEB_MCP_URL: "http://127.0.0.1:1/mcp",
-  });
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
+): Promise<{ readonly stdout: string; readonly exitCode: number }> =>
+  serveCli(argv, jebEnvironment);
 
 it.each([
   ["inspect-jeb-client"],

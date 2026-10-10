@@ -32,6 +32,7 @@ import {
 } from "../process/ExecFileOutput.js";
 import {
   AdbConfigurationFailure,
+  adbConfigurationAvailability,
   inspectAdbClient,
   resolveAdbBinary,
   type AdbBinarySelection,
@@ -105,7 +106,7 @@ const sha256File = async (path: string): Promise<string> => {
 
 /** adb joins shell operands into a remote POSIX command; quote at that boundary. */
 const quoteShellOperand = (value: string): string =>
-  /^[A-Za-z0-9_./:=@+,\-]+$/u.test(value)
+  /^[A-Za-z0-9_./:=@+,-]+$/u.test(value)
     ? value
     : "'" + value.replaceAll("'", "'\\''") + "'";
 
@@ -372,17 +373,7 @@ export class AdbProvider {
       };
     } catch (cause) {
       if (cause instanceof AdbConfigurationFailure)
-        return {
-          status: "unavailable",
-          code:
-            cause.code === "binary_missing"
-              ? "executable_missing"
-              : cause.code === "not_absolute"
-                ? "not_configured"
-                : "version_unresolved",
-          reason: cause.message,
-          diagnostics: { ...cause.diagnostics },
-        };
+        return adbConfigurationAvailability(cause);
       throw cause;
     }
   }

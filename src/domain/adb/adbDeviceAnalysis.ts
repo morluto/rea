@@ -178,10 +178,7 @@ export const adbInputSchemas = {
       .string()
       .min(1)
       .max(256)
-      .regex(
-        /^[A-Za-z0-9._-]+$/u,
-        "Setting keys are restricted to identifiers",
-      )
+      .regex(/^[A-Za-z0-9._-]+$/u, "Setting keys are restricted to identifiers")
       .describe("Setting key to read"),
   }),
   collect_adb_bugreport: z.strictObject({

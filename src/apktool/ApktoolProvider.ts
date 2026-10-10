@@ -40,6 +40,7 @@ import {
 } from "../process/ExecFileOutput.js";
 import {
   ApktoolConfigurationFailure,
+  apktoolConfigurationAvailability,
   inspectApktoolClient,
   resolveApktoolCommand,
   type ApktoolCommandSelection,
@@ -264,17 +265,7 @@ export class ApktoolProvider {
       };
     } catch (cause) {
       if (cause instanceof ApktoolConfigurationFailure)
-        return {
-          status: "unavailable",
-          code:
-            cause.code === "command_missing"
-              ? "executable_missing"
-              : cause.code === "not_absolute"
-                ? "not_configured"
-                : "version_unresolved",
-          reason: cause.message,
-          diagnostics: { ...cause.diagnostics },
-        };
+        return apktoolConfigurationAvailability(cause);
       throw cause;
     }
   }

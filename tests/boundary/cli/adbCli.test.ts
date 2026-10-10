@@ -1,25 +1,6 @@
 import { expect, it } from "vitest";
 
-import { createCli } from "../../../src/cli.js";
-
-const serve = async (
-  argv: readonly string[],
-  environment: Readonly<Record<string, string | undefined>> = {},
-): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
-  const cli = createCli(environment);
-  let stdout = "";
-  let exitCode = 0;
-  await cli.serve([...argv], {
-    env: {},
-    exit: (code) => {
-      exitCode = code;
-    },
-    stdout: (text) => {
-      stdout += text;
-    },
-  });
-  return { stdout, exitCode };
-};
+import { serveCli as serve } from "./cliServeHarness.js";
 
 it.each([
   ["inspect-adb-client"],

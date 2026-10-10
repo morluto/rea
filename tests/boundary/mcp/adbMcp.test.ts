@@ -1,14 +1,13 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
 
@@ -320,22 +319,7 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
   ] as const;
   for (const name of operationNames) expect(names, name).toContain(name);
 
-  const ajv = new Ajv2020({ strict: false, allErrors: true });
-  for (const name of operationNames) {
-    const contract = toolContract(name);
-    const listed = tools.find((tool) => tool.name === name);
-    expect(listed, name).toBeTruthy();
-    if (listed?.inputSchema === undefined) continue;
-    // The server may present a compacted form of the contract schema; what
-    // must hold is that the advertised schema compiles and accepts the
-    // contract's own examples, and rejects unknown input.
-    const validate = ajv.compile(
-      JSON.parse(JSON.stringify(listed.inputSchema)),
-    );
-    for (const example of contract.examples)
-      expect(validate(example.input), `${name} example`).toBe(true);
-    expect(validate({ unknown_argument: true }), `${name} rejects`).toBe(false);
-  }
+  assertAdvertisedMcpContracts(operationNames, tools);
 
   const pulled = await client.callTool({
     name: "pull_adb_package",
