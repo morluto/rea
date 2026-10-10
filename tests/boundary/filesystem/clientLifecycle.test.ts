@@ -246,7 +246,7 @@ describe("Grok Build server table edits", () => {
     expect(configured).toContain("share = false");
     expect(configured).toContain("[mcp_servers.rea]");
     expect(configured).toContain("startup_timeout_sec = 30");
-    expect(configured).not.toContain('OLD = "1"');
+    expect(configured).toContain('OLD = "1"');
     expect(configured).not.toContain('command = "old"');
     expect(parseToml(configured)).toMatchObject({
       mcp_servers: {
@@ -256,6 +256,7 @@ describe("Grok Build server table edits", () => {
           args: ["mcp"],
           startup_timeout_sec: 30,
           env: {
+            OLD: "1",
             JAVA_HOME: "/opt/jdk-21",
             HOPPER_LAUNCHER_PATH: "/Hopper Path",
             GHIDRA_INSTALL_DIR: "/opt/ghidra",
@@ -505,7 +506,7 @@ describe("Grok Build text that resembles a server table", () => {
     const configured = await readFile(configPath, "utf8");
     expect(configured).not.toContain("mcp_servers . rea");
     expect(configured).not.toContain("\\u0072ea");
-    expect(configured).not.toContain('OLD = "1"');
+    expect(configured).toContain('OLD = "1"');
     expect(
       configured
         .split("\n")
@@ -513,7 +514,12 @@ describe("Grok Build text that resembles a server table", () => {
     ).toHaveLength(1);
     expect(parseToml(configured)).toMatchObject({
       mcp_servers: {
-        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          startup_timeout_sec: 30,
+          env: { OLD: "1" },
+        },
       },
     });
   });

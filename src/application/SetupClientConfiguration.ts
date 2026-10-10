@@ -2,6 +2,7 @@ import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import { readClientConfigurationFiles } from "./ClientConfigurationFiles.js";
 import {
   clientRegistrationEntry,
+  effectiveClientServer,
   clientConfigurationValuesEqual,
   clientServerListedDisabled,
   clientServerPath,
@@ -11,12 +12,12 @@ import {
   serializeClientConfiguration,
   withClientServers,
   type ClientConfigurationDocument,
-  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { constants as fsConstants } from "node:fs";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import writeFileAtomic from "write-file-atomic";
+import { z } from "zod";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -54,7 +55,12 @@ const configureClientDocument = async (
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(client, environment, command, client.format),
+    clientConfigurationDesired(
+      client,
+      environment,
+      command,
+      files.value.at(-1),
+    ),
   );
   if (!policy.ok || policy.value !== undefined)
     return { status: "failed", reason: "readback" };
@@ -78,7 +84,7 @@ const configureClientDocument = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(client, environment, command, parsed.dialect),
+      clientConfigurationDesired(client, environment, command, parsed),
     );
     if (!policy.ok || policy.value !== undefined)
       return { status: "failed", reason: "readback" };
@@ -91,7 +97,7 @@ const configureClientDocument = async (
     client,
     environment,
     command,
-    parsed.dialect,
+    parsed,
   );
   if (registrationCurrent(parsed, desired)) return { status: "unchanged" };
   const backupPath =
@@ -184,12 +190,7 @@ export const clientConfigurationAligned = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed.dialect,
-      ),
+      clientConfigurationDesired(client, providerEnvironment, command, parsed),
     );
     return (
       policy.ok &&
@@ -200,7 +201,7 @@ export const clientConfigurationAligned = async (
           client,
           providerEnvironment,
           command,
-          parsed.dialect,
+          parsed,
         ),
       )
     );
@@ -229,7 +230,7 @@ export const inspectClientConfiguration = async (
       client,
       providerEnvironment,
       command,
-      client.format,
+      files.value.at(-1),
     ),
   );
   if (!policy.ok)
@@ -261,12 +262,7 @@ export const inspectClientConfiguration = async (
     const policy = await readClientPolicyBlock(
       client,
       parsed,
-      clientConfigurationDesired(
-        client,
-        providerEnvironment,
-        command,
-        parsed.dialect,
-      ),
+      clientConfigurationDesired(client, providerEnvironment, command, parsed),
     );
     if (!policy.ok)
       return { status: "invalid", remediation: policy.error.detail };
@@ -276,7 +272,7 @@ export const inspectClientConfiguration = async (
       client,
       providerEnvironment,
       command,
-      parsed.dialect,
+      parsed,
     );
     if (registrationCurrent(parsed, desired))
       return { status: "already_current" };
@@ -338,15 +334,28 @@ const clientConfigurationDesired = (
   client: SetupClient,
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
-  format: ClientRegistrationDialect | undefined,
+  parsed?: ClientConfigurationDocument,
 ) => {
+  const format = parsed?.dialect ?? client.format ?? "json";
+  const environmentKey =
+    format === "opencode" || format === "opencode_v2" ? "environment" : "env";
+  const existing = z
+    .object({ [environmentKey]: z.record(z.string(), z.string()).optional() })
+    .safeParse(
+      parsed === undefined
+        ? undefined
+        : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
+    );
+  // Preserve explicitly configured server settings, never the ambient process
+  // environment. Newly discovered provider paths win only for their own keys.
   const environment = Object.fromEntries(
-    Object.entries(providerEnvironment).sort(([left], [right]) =>
-      left.localeCompare(right),
-    ),
+    Object.entries({
+      ...(existing.success ? existing.data[environmentKey] : {}),
+      ...providerEnvironment,
+    }).sort(([left], [right]) => left.localeCompare(right)),
   );
   const registration = clientRegistrationEntry(
-    format ?? "json",
+    format,
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command,
     environment,
   );

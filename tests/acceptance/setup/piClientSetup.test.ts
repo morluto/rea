@@ -1,10 +1,120 @@
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { expect } from "vitest";
+import { z } from "zod";
+
+import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES } from "../../../src/config/mcpInputSchemaProfile.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest(
+  "setup preserves a configured compact catalog through CLI migration and MCP startup",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-pi-environment-cli-");
+    const agent = join(home, ".pi", "agent");
+    const config = join(agent, "mcp.json");
+    const custom = {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_LOG_LEVEL: "silent",
+    };
+    const original = JSON.stringify({
+      mcpServers: {
+        rea: {
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "rea-agents@1.0.0", "mcp"],
+          env: custom,
+        },
+      },
+    });
+    await mkdir(agent, { recursive: true });
+    await writeFile(config, original);
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      HOPPER_LAUNCHER_PATH: join(home, "unconfigured-hopper"),
+    };
+    const arguments_ = [
+      "setup",
+      "--client",
+      "pi",
+      "--skill=false",
+      "--yes",
+      "--json",
+    ];
+    const applied = await cli.run({
+      arguments: arguments_,
+      cwd: home,
+      environment,
+      timeoutMs: 20_000,
+    });
+    expect(applied.exitCode).toBe(0);
+    expect(applied.json).toMatchObject({
+      status: "ready",
+      clients: { pi: { status: "configured" } },
+    });
+    const configured = await readFile(config, "utf8");
+    const registration = z
+      .object({
+        mcpServers: z.object({
+          rea: z.object({
+            command: z.string(),
+            args: z.array(z.string()),
+            env: z.record(z.string(), z.string()).optional(),
+          }),
+        }),
+      })
+      .parse(JSON.parse(configured)).mcpServers.rea;
+    const transport = new StdioClientTransport({
+      command: registration.command,
+      args: registration.args,
+      cwd: home,
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        ...environment,
+        ...registration.env,
+      },
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "setup-environment", version: "1" });
+    try {
+      await client.connect(transport);
+      const { tools } = await client.listTools();
+      expect(tools.length).toBeGreaterThan(0);
+      expect(
+        tools
+          .filter(
+            ({ inputSchema }) =>
+              Buffer.byteLength(JSON.stringify(inputSchema), "utf8") >
+              COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          )
+          .map(({ name }) => name),
+      ).toEqual([]);
+      expect(await client.ping()).toEqual({});
+    } finally {
+      await client.close();
+      await transport.close();
+    }
+    expect(registration.env).toMatchObject(custom);
+    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+    const repeated = await cli.run({
+      arguments: arguments_,
+      cwd: home,
+      environment,
+      timeoutMs: 20_000,
+    });
+    expect(repeated.exitCode).toBe(0);
+    expect(repeated.json).toMatchObject({
+      plannedActions: [],
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(configured);
+  },
+);
 
 cliTest(
   "Pi public CLI plans, requires approval, applies, diagnoses, repeats, and uninstalls only owned content",
