@@ -5,6 +5,7 @@ import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
   analysisViewInputError,
+  type AnalysisViewCoverage,
   type AnalysisViewParent,
   type AnalysisViewRequest,
   type UnsignedAnalysisView,
@@ -14,7 +15,6 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 
-type NativeView = Extract<AnalysisViewRequest, { readonly kind: "native" }>;
 type Artifact = { readonly path: string; readonly sha256: string };
 
 const viewError = (message: string): AnalysisError =>
@@ -28,6 +28,7 @@ const parentFields = (
   artifact: Artifact,
 ) => {
   const flow = dossier.native_value_flow;
+  const api = dossier.native_api;
   const unknowns: string[] = [];
   if (flow === null) unknowns.push("native_value_flow was not recorded");
   else if (!flow.available)
@@ -36,21 +37,90 @@ const parentFields = (
     unknowns.push(
       "native_value_flow is truncated; omitted observations remain unknown",
     );
-  if (dossier.native_api?.available === false)
-    unknowns.push("native_api unavailable: " + dossier.native_api.reason);
+  if (api === null) unknowns.push("native_api was not recorded");
+  else if (!api.available)
+    unknowns.push(
+      "native_api unavailable: " + api.reason,
+      ...api.residual_unknowns,
+    );
   return {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "analyze_function" as const,
     parent_digest: parent.evidenceId.slice(3),
-    procedure_address: dossier.procedure.address || null,
+    procedure_address: dossier.procedure.address,
     artifact,
     limitations: uniqueSorted([
       ...parent.limitations,
       ...dossier.limitations,
       ...(flow?.limitations ?? []),
+      ...(api?.available ? api.limitations : []),
     ]),
     unknowns: uniqueSorted(unknowns),
   };
+};
+
+const pseudocodePage = (
+  body: string,
+  offset: number,
+  limit: number,
+): Result<
+  {
+    readonly item: { readonly text: string; readonly unit: "utf16-code-units" };
+    readonly coverage: AnalysisViewCoverage;
+  },
+  AnalysisError
+> => {
+  const start = Math.min(offset, body.length);
+  const high = (n: number) => n >= 0xd800 && n <= 0xdbff;
+  const low = (n: number) => n >= 0xdc00 && n <= 0xdfff;
+  if (
+    start > 0 &&
+    start < body.length &&
+    high(body.charCodeAt(start - 1)) &&
+    low(body.charCodeAt(start))
+  )
+    return err(viewError("Pseudocode offset splits a UTF-16 surrogate pair."));
+  let end = Math.min(start + limit, body.length);
+  if (
+    end > start &&
+    end < body.length &&
+    high(body.charCodeAt(end - 1)) &&
+    low(body.charCodeAt(end))
+  )
+    end--;
+  if (end === start && start < body.length)
+    return err(
+      viewError(
+        "Increase pseudocode limit to include the next complete Unicode character.",
+      ),
+    );
+  return ok({
+    item: { text: body.slice(start, end), unit: "utf16-code-units" },
+    coverage: pageViewCoverage(start, end - start, body.length),
+  });
+};
+
+const nativeRows = (
+  dossier: FunctionDossier,
+  facet: Exclude<
+    Extract<AnalysisViewRequest, { readonly kind: "native" }>["facet"],
+    "procedure" | "pseudocode" | "value_flow_summary"
+  >,
+) => {
+  const sourceFlow = dossier.native_value_flow;
+  const flow = sourceFlow?.available ? sourceFlow : undefined;
+  return {
+    assembly: dossier.assembly,
+    callers: dossier.callers,
+    callees: dossier.callees,
+    incoming_references: dossier.incoming_references,
+    outgoing_references: dossier.outgoing_references,
+    value_flow_operations: flow?.operations,
+    value_flow_def_use: flow?.def_use,
+    value_flow_effects: flow?.effects,
+    value_flow_parameters: flow?.parameters,
+    value_flow_parameter_uses: flow?.parameter_uses,
+  }[facet];
 };
 
 /** Project bounded native function facets from complete retained Evidence without reanalysis. */
@@ -108,73 +178,19 @@ export const projectNativeFunctionView = (
     return ok(singleton(status));
   }
   if (view.facet === "pseudocode") {
-    const body = dossier.pseudocode;
-    const start = Math.min(view.offset, body.length);
-    const high = (n: number) => n >= 0xd800 && n <= 0xdbff;
-    const low = (n: number) => n >= 0xdc00 && n <= 0xdfff;
-    if (
-      start > 0 &&
-      start < body.length &&
-      high(body.charCodeAt(start - 1)) &&
-      low(body.charCodeAt(start))
-    )
-      return err(
-        viewError("Pseudocode offset splits a UTF-16 surrogate pair."),
-      );
-    let end = Math.min(start + view.limit, body.length);
-    if (
-      end > start &&
-      end < body.length &&
-      high(body.charCodeAt(end - 1)) &&
-      low(body.charCodeAt(end))
-    )
-      end--;
-    if (end === start && start < body.length)
-      return err(
-        viewError(
-          "Increase pseudocode limit to include the next complete Unicode character.",
-        ),
-      );
-    return ok({
-      kind: "native",
-      view,
-      item: { text: body.slice(start, end), unit: "utf16-code-units" },
-      coverage: pageViewCoverage(start, end - start, body.length),
-      ...common,
-    });
+    const page = pseudocodePage(dossier.pseudocode, view.offset, view.limit);
+    return page.ok
+      ? ok({ kind: "native", view, ...page.value, ...common })
+      : page;
   }
-  const rows = (() => {
-    switch (view.facet) {
-      case "assembly":
-        return dossier.assembly;
-      case "callers":
-        return dossier.callers;
-      case "callees":
-        return dossier.callees;
-      case "incoming_references":
-        return dossier.incoming_references;
-      case "outgoing_references":
-        return dossier.outgoing_references;
-      case "value_flow_operations":
-        return flow?.available ? flow.operations : null;
-      case "value_flow_def_use":
-        return flow?.available ? flow.def_use : null;
-      case "value_flow_effects":
-        return flow?.available ? flow.effects : null;
-      case "value_flow_parameters":
-        return flow?.available ? flow.parameters : null;
-      case "value_flow_parameter_uses":
-        return flow?.available ? flow.parameter_uses : null;
-    }
-  })();
-  if (rows === null)
+  const rows = nativeRows(dossier, view.facet);
+  if (rows === undefined)
     return ok(
       singleton({
         available: false,
         reason: flow?.available === false ? flow.reason : "not recorded",
       }),
     );
-  if (rows === undefined) return err(viewError("Unknown native facet."));
   const items = rows.slice(view.offset, view.offset + view.limit);
   return ok({
     kind: "native",

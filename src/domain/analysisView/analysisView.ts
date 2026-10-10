@@ -94,7 +94,7 @@ const nativeViewSchema = z.strictObject({
     "value_flow_parameter_uses",
   ]),
   offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().max(256).default(64),
+  limit: z.number().int().positive().default(64),
 });
 
 /** Caller-selected projection of already completed analysis Evidence. */
@@ -369,13 +369,15 @@ export const projectAnalysisView = (
     const native = functionDossierSchema.safeParse(parent.normalizedResult);
     if (!native.success)
       return err(
-        analysisViewInputError([
-          {
-            path: ["source", "normalized_result"],
-            reason: "invalid_value",
-            message: "Parent Evidence result does not match analyze_function.",
-          },
-        ]),
+        analysisInputErrorFromIssues(
+          INSPECT_ANALYSIS_VIEW_OPERATION,
+          native.error.issues.map((issue) => ({
+            ...issue,
+            path: ["source", "normalized_result", ...issue.path],
+          })),
+          { source: { normalized_result: parent.normalizedResult } },
+          { cause: native.error },
+        ),
       );
     const projected = projectNativeFunctionView(parent, native.data, view);
     return projected.ok ? ok(sealAnalysisView(projected.value)) : projected;

@@ -135,7 +135,9 @@ const createAnalysisViewEvidence = (
     limitations: result.limitations,
     locations: [
       { kind: "artifact-path" as const, path: result.artifact.path },
-      ...(result.kind === "native" && result.procedure_address !== null
+      ...(result.kind === "native" &&
+      result.procedure_address !== null &&
+      result.procedure_address.length > 0
         ? [{ kind: "address" as const, address: result.procedure_address }]
         : []),
     ],

@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 
 import { resolveJavaScriptSourceMapReference } from "../javascript/javascriptSourceMapPaths.js";
+import { functionDossierSchema } from "../hopperValues.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
@@ -96,7 +97,7 @@ it("projects native procedure and bounded assembly and high-pcode with exact par
   expect(flow.value).toMatchObject({ item: [{ opcode: "COPY" }] });
 });
 
-it("rejects invalid native parents, unsupported source operations and page sizes", () => {
+it("rejects invalid native parents, unsupported source operations and singleton offsets", () => {
   const view = {
     kind: "native",
     facet: "assembly",
@@ -129,19 +130,64 @@ it("rejects invalid native parents, unsupported source operations and page sizes
       limit: 2,
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  expect(
-    inspectAnalysisViewInputSchema.safeParse({
-      source: {
-        kind: "retained-evidence",
-        evidence_id: nativeParent().evidenceId,
+});
+
+it("preserves native API limitations and unavailable residual unknowns", () => {
+  const original = functionDossierSchema.parse(ghidraFunctionDossier());
+  const view = {
+    kind: "native",
+    facet: "procedure",
+    offset: 0,
+    limit: 64,
+  } as const;
+  const unavailable = projectAnalysisView(
+    nativeParent({
+      ...original,
+      native_api: {
+        available: false,
+        reason: "No decompiler",
+        residual_unknowns: ["Calling convention unresolved"],
       },
-      view: { kind: "native", facet: "assembly", offset: 0, limit: 257 },
-    }).success,
-  ).toBe(false);
+    }),
+    view,
+  );
+  if (!unavailable.ok) throw unavailable.error;
+  expect(unavailable.value.unknowns).toContain("Calling convention unresolved");
+  const available = projectAnalysisView(nativeParent(), view);
+  if (!available.ok) throw available.error;
+  if (!original.native_api?.available) throw new Error("expected API fixture");
+  expect(available.value.limitations).toEqual(
+    expect.arrayContaining(original.native_api.limitations),
+  );
+});
+
+it("reports the malformed native dossier field", () => {
+  const result = projectAnalysisView(
+    nativeParent({
+      ...functionDossierSchema.parse(ghidraFunctionDossier()),
+      pseudocode: 12,
+    }),
+    {
+      kind: "native",
+      facet: "pseudocode",
+      offset: 0,
+      limit: 64,
+    },
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: ["source", "normalized_result", "pseudocode"],
+        }),
+      ]),
+    },
+  });
 });
 
 it("native pseudocode pages do not split surrogate pairs", () => {
-  const original = ghidraFunctionDossier() as Record<string, unknown>;
+  const original = functionDossierSchema.parse(ghidraFunctionDossier());
   const parent = nativeParent({ ...original, pseudocode: "ab😀cd" });
   expect(
     projectAnalysisView(parent, {
@@ -164,20 +210,29 @@ it("native pseudocode pages do not split surrogate pairs", () => {
   });
 });
 
-it("accepts caller-selected page sizes and rejects malformed bounds", () => {
-  const input = {
-    source: { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` },
-    view: { kind: "page", collection: "sections", offset: 0, limit: 500 },
-  };
-  expect(inspectAnalysisViewInputSchema.safeParse(input).success).toBe(true);
-  for (const limit of [0, -1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1])
-    expect(
-      inspectAnalysisViewInputSchema.safeParse({
-        ...input,
-        view: { ...input.view, limit },
-      }).success,
-    ).toBe(false);
-});
+it.each([
+  { kind: "page", collection: "sections", offset: 0, limit: 500 },
+  { kind: "native", facet: "assembly", offset: 0, limit: 500 },
+])(
+  "accepts caller-selected page sizes and rejects malformed bounds: $kind",
+  (view) => {
+    const input = {
+      source: {
+        kind: "retained-evidence",
+        evidence_id: `ev_${"a".repeat(64)}`,
+      },
+      view,
+    };
+    expect(inspectAnalysisViewInputSchema.safeParse(input).success).toBe(true);
+    for (const limit of [0, -1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1])
+      expect(
+        inspectAnalysisViewInputSchema.safeParse({
+          ...input,
+          view: { ...input.view, limit },
+        }).success,
+      ).toBe(false);
+  },
+);
 
 it("projects layout summary, facet, item, and stable pages", () => {
   const parent = layoutParent();
