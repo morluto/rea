@@ -37,6 +37,7 @@ import {
   verifyDenseDefaultReturn,
   verifyNativeTypeLayout,
   verifyRelativeSwitch,
+  verifyRelativeSignedSwitch,
   verifyNativeValueTrace,
 } from "./verify-real-ghidra-function.mjs";
 const exec = promisify(execFile);
@@ -162,6 +163,30 @@ try {
           { format, architecture: "arm64" },
         ]);
       }
+    }
+    const signedRelativeSource = fileURLToPath(
+      new URL(
+        "../tests/conformance/ghidra/relative-switch-signed.S",
+        import.meta.url,
+      ),
+    );
+    for (const format of [
+      "elf",
+      ...(expectedNativeTarget.architecture === "arm64" ? ["mach-o"] : []),
+    ]) {
+      const targetPath = join(fixtureRoot, `relative-signed-${format}.o`);
+      await exec(clang, [
+        ...(format === "elf" ? ["--target=aarch64-linux-gnu"] : []),
+        "-c",
+        signedRelativeSource,
+        "-o",
+        targetPath,
+      ]);
+      crossTargets.push([
+        targetPath,
+        "relative-signed",
+        { format, architecture: "arm64" },
+      ]);
     }
 
     await exec(clang, [
@@ -505,23 +530,26 @@ async function verifyTarget(targetPath, variant, expectedTarget = null) {
             client,
           })
         : null;
-    const probes = variant.startsWith("relative-")
-      ? await verifyRelativeSwitch(
-          client,
-          procedures,
-          Number(variant.slice(-1)),
-        )
-      : variant === "type-layout"
-        ? await verifyNativeTypeLayout(client, names)
-        : variant === "custom" || variant === "aarch64-jump-table"
-          ? null
-          : await verifyInventoryOperations({
+    const probes =
+      variant === "relative-signed"
+        ? await verifyRelativeSignedSwitch(client)
+        : variant.startsWith("relative-")
+          ? await verifyRelativeSwitch(
               client,
-              variant,
               procedures,
-              names,
-              strings,
-            });
+              Number(variant.slice(-1)),
+            )
+          : variant === "type-layout"
+            ? await verifyNativeTypeLayout(client, names)
+            : variant === "custom" || variant === "aarch64-jump-table"
+              ? null
+              : await verifyInventoryOperations({
+                  client,
+                  variant,
+                  procedures,
+                  names,
+                  strings,
+                });
     const nativeValues =
       variant === "debug"
         ? await verifyNativeValueTrace(client, procedures, parsedTarget.value)

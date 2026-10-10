@@ -603,6 +603,71 @@ export async function verifyRelativeSwitch(client, procedures, entrySize) {
   };
 }
 
+/**
+ * Oracle for relative-switch-signed.S: signed halfword byte offsets from a base
+ * inside the case bodies, a CBZ route for the zero entry, and a B.CS bound.
+ */
+const SIGNED_RELATIVE_SWITCH_CASES = [
+  { value: 0, immediate: 200 },
+  { value: 1, immediate: 201 },
+  { value: 2, immediate: 202 },
+  { value: 3, immediate: 250 },
+  { value: 4, immediate: 204 },
+];
+
+export async function verifyRelativeSignedSwitch(client) {
+  const names = await inventoryCall(client, "list_names", {
+    document: null,
+    address: null,
+  });
+  const procedure = requireProcedure(names, "rea_relative_switch_signed");
+  const dossier = await functionCall(client, "analyze_function", {
+    procedure: procedure.address,
+  });
+  const table = dossier.native_api?.jump_tables.find((item) =>
+    item.data_sources.some(
+      (source) =>
+        source.entry_size_bytes === 2 &&
+        source.entry_count === SIGNED_RELATIVE_SWITCH_CASES.length,
+    ),
+  );
+  if (table === undefined)
+    throw new Error(
+      `Exact signed halfword relative table unavailable: ${JSON.stringify(dossier.native_api)}`,
+    );
+  for (const { value, immediate } of SIGNED_RELATIVE_SWITCH_CASES) {
+    const mapping = table.mappings.find((item) => item.case_value === value);
+    if (mapping === undefined || mapping.confidence !== "high")
+      throw new Error(
+        `Signed relative switch case ${value} was not verified: ${JSON.stringify(table)}`,
+      );
+    const instruction = await functionCall(
+      client,
+      "inspect_native_instruction",
+      { address: mapping.target_address },
+    );
+    if (
+      instruction.status !== "decoded" ||
+      !instruction.operands.some((operand) =>
+        operand.components.some(
+          (component) =>
+            component.kind === "immediate" &&
+            component.value === `0x${immediate.toString(16)}`,
+        ),
+      )
+    )
+      throw new Error(
+        `Signed relative switch target does not implement source case ${value}: ${JSON.stringify(instruction)}`,
+      );
+  }
+  return {
+    entry_size: 2,
+    signed: true,
+    dispatch_address: table.dispatch_address,
+    mappings: table.mappings.length,
+  };
+}
+
 export async function verifyNativeValueTrace(client, procedures, target) {
   const entry = requireProcedure(procedures, "rea_ghidra_inventory_entry");
   const names = await inventoryCall(client, "list_names", {
