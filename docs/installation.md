@@ -195,6 +195,44 @@ REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
 and home expansion before resolving that profile. Setup previews the resolved
 configuration and skill destinations; doctor and uninstall use those same paths.
 
+### DeepSeek Harness
+
+DeepSeek Harness uses a Cordis YAML patch sequence rather than a `mcpServers`
+object. REA's `setup --client` does not edit this format. For Harness
+`0.2.0-rc.2`, append the following entry to `$DSH_HOME/cordis.patch.yml`
+(`~/.dsh/cordis.patch.yml` when `DSH_HOME` is unset). Preserve existing patches
+and replace the executable paths with absolute paths from your installation:
+
+```yaml
+- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: /absolute/path/to/node
+        args: ["/absolute/path/to/rea/scripts/rea.mjs", mcp]
+        cwd: !!js process.cwd()
+```
+
+For a global npm installation, the launcher is under
+`$(npm root -g)/rea-agents/scripts/rea.mjs`. Check the Node executable with
+`command -v node`. Register `serverName: rea` only once in each active profile,
+then restart Harness. It exposes tools as `mcp__rea__<tool_name>`.
+Run `rea setup --skill --dry-run`, review the destination, then
+`rea setup --skill --yes` to install the workflow in `~/.agents/skills`.
+Harness discovers that directory, or `$DSH_AGENTS_HOME/skills` when configured;
+its native `skill` tool can load `reverse-engineer-anything`.
+
+REA's optional [native client verification](testing.md#end-to-end-integration-and-golden-evidence)
+checks headless chat, skill loading, all tool input schemas and actual analysis
+using the installed Harness and a local model fixture. This establishes the
+Harness integration, with live DeepSeek API compatibility remaining unverified.
+See the [Harness MCP guide](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/mcp/mcp-client/README.md)
+for its native configuration contract.
+
+### Other client settings
+
 For OpenCode, setup writes the V1 `mcp.rea` entry, which OpenCode V1 and V2
 both load. If the configuration already uses OpenCode V2's native
 `mcp.servers` table, setup registers REA there instead and replaces any earlier

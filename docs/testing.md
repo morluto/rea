@@ -103,6 +103,21 @@ prove live model-provider or native Windows compatibility. Qwen and Pi use
 caller-configured skill directories to isolate the fixture account from the OS
 home; this does not prove their default home-directory discovery.
 
+`verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
+verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
+`REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
+installs the skill through `rea setup --skill`, writes the native Cordis MCP
+patch into an isolated `DSH_HOME`, and uses `DSH_AGENTS_HOME` for native personal
+skill discovery. A separate Git root prevents inherited project skills from
+masking a missing installation. The default `call` mode checks skill loading,
+complete catalog discovery, the actual forwarded input schemas and regexes,
+and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
+chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
+The fixture uses Harness's custom OpenAI adapter and the one-million-token
+context capacity declared by its default DeepSeek Flash model; it does not
+establish live DeepSeek API or native Windows coverage. Receipts include
+request artifacts, result digests and owned-process lineage.
+
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes an
 actual Foundation binary archive, runs the CLI and a separate stdio MCP
