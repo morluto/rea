@@ -133,7 +133,9 @@ const coverageSchema = z.strictObject({
 });
 
 const artifactSchema = z.strictObject({
-  path: z.string().min(1),
+  path: z
+    .string()
+    .describe("Exact recorded artifact path, including an empty string."),
   sha256: digestSchema,
 });
 

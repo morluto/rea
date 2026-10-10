@@ -11,42 +11,46 @@ import {
 } from "../../../tests/fixtures/analysisView.js";
 import { inspectAnalysisView } from "./AnalysisViewService.js";
 
-it("preserves a recorded empty procedure address without creating an invalid location", () => {
-  const original = functionDossierSchema.parse(ghidraFunctionDossier());
-  const parent = createEvidence(
-    { path: "/fixtures/unknown.exe", format: "pe", sha256: "c".repeat(64) },
-    { id: "ghidra", name: "Ghidra", version: "12.1.4" },
-    {
-      operation: "analyze_function",
-      parameters: {},
-      result: {
-        ...original,
-        procedure: {
-          ...original.procedure,
-          address: "",
-          body: { available: false, reason: "Not recorded" },
+it.each(["/fixtures/unknown.exe", ""])(
+  "preserves recorded empty native identity fields: path=%j",
+  (path) => {
+    const original = functionDossierSchema.parse(ghidraFunctionDossier());
+    const parent = createEvidence(
+      { path, format: "pe", sha256: "c".repeat(64) },
+      { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      {
+        operation: "analyze_function",
+        parameters: {},
+        result: {
+          ...original,
+          procedure: {
+            ...original.procedure,
+            address: "",
+            body: { available: false, reason: "Not recorded" },
+          },
         },
       },
-    },
-  );
-  const result = inspectAnalysisView({
-    source: { kind: "inline", evidence: parent },
-    view: {
-      kind: "native",
-      facet: "procedure",
-      offset: 0,
-      limit: 64,
-    },
-  });
-  if (!result.ok) throw result.error;
-  expect(result.value.normalized_result).toMatchObject({
-    procedure_address: "",
-    item: { address: "" },
-  });
-  expect(result.value.locations).toEqual([
-    { kind: "artifact-path", path: "/fixtures/unknown.exe" },
-  ]);
-});
+    );
+    const result = inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: {
+        kind: "native",
+        facet: "procedure",
+        offset: 0,
+        limit: 64,
+      },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.normalized_result).toMatchObject({
+      procedure_address: "",
+      artifact: { path },
+      item: { address: "" },
+    });
+    expect(result.value.locations).toEqual(
+      path.length > 0 ? [{ kind: "artifact-path", path }] : [],
+    );
+  },
+);
 
 it("projects a small native view from an authenticated >10 MiB retained dossier", () => {
   const original = functionDossierSchema.parse(ghidraFunctionDossier());
