@@ -105,6 +105,83 @@ home; this does not prove their default home-directory discovery.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
 
+`verify:gemini-client` requires an installed Gemini CLI (verified with
+`@google/gemini-cli@0.63.0`); select it with `REA_VERIFY_GEMINI_COMMAND`.
+The optional POSIX lane uses native `GEMINI_CLI_HOME` discovery in an isolated
+Git project, checks setup plans, backups and idempotence, activates the installed
+personal skill, validates all forwarded input JSON Schemas against their declared
+dialect, forwards the complete REA catalog and checks full JavaScript
+Evidence for a Unicode path. Use `-- chat` for ordinary chat with REA enabled,
+or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed REA package.
+The local fixture exercises the real Gemini API adapter, including its
+`untrusted_context` tool-result envelope. Token counts are synthetic; live
+Google API and native Windows compatibility remain unverified. The lane disables
+the client's memory-based relaunch to preserve the caller's Node heap budget.
+
+`verify:opencode-client` requires an installed OpenCode (verified with
+`opencode-ai@1.18.35`); select it with `REA_VERIFY_OPENCODE_COMMAND`.
+The optional POSIX lane configures isolated XDG roots and `OPENCODE_CONFIG_DIR`,
+checks setup plans, backups, preserved JSONC comments and idempotence, activates
+the installed skill, validates all forwarded input schemas and verifies complete
+JavaScript Evidence for a Unicode path. JSONC is the default fixture; set
+`REA_VERIFY_OPENCODE_CONFIG_FORMAT=json` for JSON. Use `-- chat` for ordinary
+chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
+The native core runs with external plugins disabled through `OPENCODE_PURE`;
+the local OpenAI-compatible fixture has a caller-declared one-million-token
+context and synthetic usage. Skills use an explicit isolated `skills.paths`
+directory, so default OS-home discovery remains unverified. Live model APIs and
+native Windows are also unverified.
+
+`verify:claude-client` requires installed Claude Code (verified with
+`@anthropic-ai/claude-code@2.1.296`); select it with `REA_VERIFY_CLAUDE_COMMAND`.
+The optional POSIX lane uses native `CLAUDE_CONFIG_DIR` discovery, an independent
+Git workspace, user settings and default built-in tools. It preserves caller
+preferences and backups, checks idempotent setup, waits through the native
+`WaitForMcpServers` tool when discovery is pending, and validates the complete
+catalog and forwarded input schemas. Call mode loads the personal skill through
+native `Skill`, checks its full body and verifies named-schema JavaScript Evidence
+for a Unicode path. Use `-- chat` for ordinary chat with REA enabled, or
+`REA_VERIFY_RUNTIME_ROOT` for a production-only installed package. The local
+Anthropic Messages/SSE fixture preserves native resource-hint envelopes in its
+request artifacts. Usage is synthetic; live Anthropic API, native Windows and
+bare-mode personal-skill activation remain unverified by this lane.
+
+`verify:copilot-client` requires installed GitHub Copilot CLI (verified with
+`@github/copilot@1.0.95`); select it with `REA_VERIFY_COPILOT_COMMAND`.
+The optional POSIX lane uses native `COPILOT_HOME` discovery, an independent
+Git workspace, guarded setup plans, preserved registrations, backups and
+idempotence. Native `skill add` registers the isolated installed skill; call
+mode loads its full body, validates all forwarded input schemas and checks
+named-schema JavaScript Evidence for a Unicode path. When Copilot spills a
+large MCP result, the model requests native `view` with `forceReadLargeFiles`
+and validates the complete returned Evidence rather than its preview.
+Use `-- chat` for ordinary
+chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
+The native offline BYOK adapter uses a loopback OpenAI completions/SSE fixture
+and `gpt-5.4` model metadata; model inference and token usage are synthetic.
+Set `REA_VERIFY_COPILOT_MODEL` to examine another model configuration. In the
+verified client, `gpt-4.1` blocks the complete catalog before HTTP with
+`compaction_static_context_blocked`, even when requesting a larger BYOK prompt
+capacity. The effective capacity is unknown; this lane does not establish a
+fix for that client/model limit. It preserves the complete catalog and schemas.
+Live model APIs, native Windows and default OS-home skill discovery remain
+unverified.
+
+`verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
+verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
+`REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
+installs the skill through `rea setup --skill`, writes the native Cordis MCP
+patch into an isolated `DSH_HOME`, and uses `DSH_AGENTS_HOME` for native personal
+skill discovery. A separate Git root prevents inherited project skills from
+masking a missing installation. The default `call` mode checks skill loading,
+complete catalog discovery, the actual forwarded input schemas and regexes,
+and full JavaScript Evidence for a Unicode path. Use `-- chat` for ordinary
+chat with REA enabled, or `REA_VERIFY_RUNTIME_ROOT` for an installed package.
+The fixture uses Harness's custom OpenAI adapter and the one-million-token
+context capacity declared by its default DeepSeek Flash model; it does not
+establish live DeepSeek API or native Windows coverage. Receipts include
+request artifacts, result digests and owned-process lineage.
+
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes an
 actual Foundation binary archive, runs the CLI and a separate stdio MCP

@@ -431,7 +431,8 @@ const projectionLimitations = (facts: {
     : []),
   "Bundle roles follow path conventions. Read each info_plist_path with inspect_plist for CFBundleExecutable, identifiers, and declared services.",
   "Bundle identifiers and signing claims require dedicated plist and CMS parsing; this projection reports only exact paths and hashes.",
-  "Runtime families are inferred from inventory formats and paths.",
+  "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
+  "Generic framework and dylib paths do not establish Swift or Objective-C; this inventory projection does not decode language metadata.",
   "Bridge candidates are path-based hypotheses, not observed runtime calls.",
   "A bridge basis is inferred from the native path and is repeated for every managed component.",
 ];

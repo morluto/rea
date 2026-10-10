@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { expect, it } from "vitest";
 
@@ -44,6 +44,18 @@ it("threads the selected host and environment into system diagnostics", async ()
   expect(
     calls.every(({ environment: observed }) => observed === environment),
   ).toBe(true);
+});
+
+it("does not report a directory as an available executable", async () => {
+  const host = systemDoctorHost({
+    platform: "darwin",
+    architecture: "arm64",
+    environment: {},
+    execFileOutput: () => Promise.reject(new Error("unexpected command")),
+  });
+
+  await expect(host.executable(dirname(process.execPath))).resolves.toBe(false);
+  await expect(host.executable(process.execPath)).resolves.toBe(true);
 });
 
 it.each([

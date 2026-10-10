@@ -88,7 +88,10 @@ window.loadFile("renderer.html");require("node:fs").writeFileSync(${JSON.stringi
         ajv.compile(tool.inputSchema);
         return [
           tool.name,
-          tool.outputSchema ? ajv.compile(tool.outputSchema) : undefined,
+          tool.outputSchema
+            ? (tool.outputSchema.$id && ajv.getSchema(tool.outputSchema.$id)) ||
+              ajv.compile(tool.outputSchema)
+            : undefined,
         ];
       }),
     );

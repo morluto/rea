@@ -11,6 +11,7 @@ import {
   collectSemanticModuleLink,
   collectSemanticCallable,
   collectSemanticReferences,
+  collectSemanticReferencesSteps,
   immutableSemanticBindings,
   immutableSemanticScopes,
 } from "./javascriptSemanticProjection.js";
@@ -31,14 +32,17 @@ import {
   semanticScopeId,
   semanticVariableScope,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAstSteps,
+} from "./javascriptSemanticTraversal.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
-import { collectSemanticMemberMutations } from "./javascriptSemanticMemberMutations.js";
+import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
   collectSemanticReturns,
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
-import { collectJavaScriptDerivedSemantics } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { propertyName } from "./javascriptAstValues.js";
 import { semanticCoverage } from "./javascriptSemanticCoverage.js";
@@ -99,26 +103,40 @@ export const analyzeParsedJavaScriptReferences = (
   name?: string,
 ): readonly JavaScriptSemanticReference[] => {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
+  completeSemanticSteps(collectDefinitionsSteps(file.program, state));
   return collectSemanticReferences(file.program, state, name);
 };
 
 /** Recover semantics from an already parsed JavaScript artifact. */
 export const analyzeParsedJavaScriptSemantics = (
   file: ParsedJavaScriptSource,
-): JavaScriptSemanticIr => {
+): JavaScriptSemanticIr =>
+  completeSemanticSteps(analyzeParsedJavaScriptSemanticsSteps(file));
+
+/**
+ * Recover semantics from a parsed artifact with a yield between analysis
+ * phases, so a caller can serve control messages within one large file.
+ * Each phase completes before the next starts; results equal the synchronous
+ * form.
+ */
+export function* analyzeParsedJavaScriptSemanticsSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, JavaScriptSemanticIr> {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
-  collectSemanticMemberMutations(file.program, state);
-  traverseJavaScriptAst(file.program, {
+  yield* collectDefinitionsSteps(file.program, state);
+  yield* collectSemanticMemberMutationsSteps(file.program, state);
+  yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => collectSemanticModuleLink(node, state),
   });
-  const references = collectSemanticReferences(file.program, state);
+  yield;
+  const references = yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = file.errors.length > 0;
   const bindings = immutableSemanticBindings(state);
+  yield;
   const callables = collectSemanticReturns(file.program, state, parserPartial);
+  yield;
   const moduleLinks = resolveSemanticModuleCallables(state, callables);
-  const derived = collectJavaScriptDerivedSemantics(
+  const derived = yield* collectJavaScriptDerivedSemanticsSteps(
     file.program,
     state,
     callables,
@@ -154,7 +172,7 @@ export const analyzeParsedJavaScriptSemantics = (
       "Cross-function mutation and dynamic property resolution remain unknown.",
     ],
   };
-};
+}
 
 /** Receiver identity facts for the overloaded `.open` syntax only. */
 export type JavaScriptOpenReceiverFact =
@@ -172,11 +190,17 @@ export type JavaScriptOpenReceiverFact =
  */
 export const classifyParsedJavaScriptOpenReceivers = (
   file: ParsedJavaScriptSource,
-): ReadonlyMap<number, JavaScriptOpenReceiverFact> => {
+): ReadonlyMap<number, JavaScriptOpenReceiverFact> =>
+  completeSemanticSteps(classifyParsedJavaScriptOpenReceiversSteps(file));
+
+/** Classify `.open` receivers while yielding during lexical and AST scans. */
+export function* classifyParsedJavaScriptOpenReceiversSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, ReadonlyMap<number, JavaScriptOpenReceiverFact>> {
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
+  yield* collectDefinitionsSteps(file.program, state);
   const facts = new Map<number, JavaScriptOpenReceiverFact>();
-  traverseJavaScriptAst(file.program, {
+  yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
         (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) ||
@@ -252,7 +276,7 @@ export const classifyParsedJavaScriptOpenReceivers = (
     },
   });
   return facts;
-};
+}
 
 const openGlobalFact = (
   name: string,
@@ -295,12 +319,18 @@ const ELECTRON_MODULE = /^electron(?:\/(?:common|main|renderer|utility))?$/u;
  */
 export const classifyParsedJavaScriptElectronBindings = (
   file: ParsedJavaScriptSource,
-): ReadonlyMap<number, string> => {
+): ReadonlyMap<number, string> =>
+  completeSemanticSteps(classifyParsedJavaScriptElectronBindingsSteps(file));
+
+/** Resolve Electron aliases while yielding during lexical and AST scans. */
+export function* classifyParsedJavaScriptElectronBindingsSteps(
+  file: ParsedJavaScriptSource,
+): Generator<void, ReadonlyMap<number, string>> {
   const facts = new Map<number, string>();
   const state = createState(file.program);
-  collectDefinitions(file.program, state);
+  yield* collectDefinitionsSteps(file.program, state);
   const exportsByBinding = new Map<string, string | null>();
-  traverseJavaScriptAst(file.program, {
+  yield* traverseJavaScriptAstSteps(file.program, {
     enter: (node) => {
       if (
         !t.isCallExpression(node) &&
@@ -322,7 +352,7 @@ export const classifyParsedJavaScriptElectronBindings = (
     },
   });
   return facts;
-};
+}
 
 const calleeRoot = (node: t.Node): t.Identifier | undefined => {
   while (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
@@ -395,10 +425,10 @@ const createState = (program: t.Program): JavaScriptSemanticAnalysisState => {
   };
 };
 
-const collectDefinitions = (
+function* collectDefinitionsSteps(
   program: t.Program,
   state: JavaScriptSemanticAnalysisState,
-): void => {
+): Generator<void, void> {
   const stack: JavaScriptSemanticScopeState[] = [
     currentSemanticScope(state.scopes),
   ];
@@ -412,7 +442,7 @@ const collectDefinitions = (
     readonly scope: JavaScriptSemanticScopeState;
     readonly parameters: t.Function["params"];
   }[] = [];
-  traverseJavaScriptAst(program, {
+  yield* traverseJavaScriptAstSteps(program, {
     enter: (node, parent, readAncestors) => {
       let parentScope = currentSemanticScope(stack);
       if (
@@ -495,14 +525,19 @@ const collectDefinitions = (
   });
   // All declarations must exist before resolving writes, including hoisted
   // functions and local declarations that shadow an outer binding.
-  for (const { node, scope } of assignments) bindAssignment(node, scope, state);
-  for (const { body, scope, parameters } of functionBodies)
+  for (const [index, { node, scope }] of assignments.entries()) {
+    if (index % 64 === 0) yield;
+    bindAssignment(node, scope, state);
+  }
+  for (const [index, { body, scope, parameters }] of functionBodies.entries()) {
+    if (index % 64 === 0) yield;
     for (const parameter of parameters)
       for (const identifier of assignedPatternIdentifiers(
         t.isTSParameterProperty(parameter) ? parameter.parameter : parameter,
       ))
         copyParameterToBody({ identifier, body, scope, state });
-};
+  }
+}
 
 const copyParameterToBody = (input: {
   readonly identifier: t.Identifier;

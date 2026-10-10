@@ -1,9 +1,11 @@
-import { chmod, readdir, rm } from "node:fs/promises";
+import { chmod, readdir, realpath, rm, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createIdaTarget,
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 
@@ -33,6 +35,26 @@ const clientFor = (root: string, target: BinaryTarget) => {
 };
 
 describe("IDA workspace ownership before input preparation", () => {
+  it.skipIf(process.platform === "win32")(
+    "opens the private input through a canonical path when the workspace root is a symlink",
+    async () => {
+      const { root, target } = await createIdaTarget();
+      roots.push(root);
+      const linked = join(
+        await createTestTempDirectory("rea-ida-link-"),
+        "root",
+      );
+      await symlink(root, linked);
+      const { client, producer } = clientFor(linked, target);
+      expect((await client.execute("health", {})).ok).toBe(true);
+      const open = producer.calls.find(({ name }) => name === "idb_open");
+      expect(
+        String(open?.args.input_path).startsWith(`${await realpath(root)}/`),
+      ).toBe(true);
+      expect((await client.close()).ok).toBe(true);
+    },
+  );
+
   it("retains cleanup ownership when copying the admitted input fails", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
