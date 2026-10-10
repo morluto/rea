@@ -146,6 +146,27 @@ Anthropic Messages/SSE fixture preserves native resource-hint envelopes in its
 request artifacts. Usage is synthetic; live Anthropic API, native Windows and
 bare-mode personal-skill activation remain unverified by this lane.
 
+`verify:copilot-client` requires installed GitHub Copilot CLI (verified with
+`@github/copilot@1.0.95`); select it with `REA_VERIFY_COPILOT_COMMAND`.
+The optional POSIX lane uses native `COPILOT_HOME` discovery, an independent
+Git workspace, guarded setup plans, preserved registrations, backups and
+idempotence. Native `skill add` registers the isolated installed skill; call
+mode loads its full body, validates all forwarded input schemas and checks
+named-schema JavaScript Evidence for a Unicode path. When Copilot spills a
+large MCP result, the model requests native `view` with `forceReadLargeFiles`
+and validates the complete returned Evidence rather than its preview.
+Use `-- chat` for ordinary
+chat or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed package.
+The native offline BYOK adapter uses a loopback OpenAI completions/SSE fixture
+and `gpt-5.4` model metadata; model inference and token usage are synthetic.
+Set `REA_VERIFY_COPILOT_MODEL` to examine another model configuration. In the
+verified client, `gpt-4.1` blocks the complete catalog before HTTP with
+`compaction_static_context_blocked`, even when requesting a larger BYOK prompt
+capacity. The effective capacity is unknown; this lane does not establish a
+fix for that client/model limit. It preserves the complete catalog and schemas.
+Live model APIs, native Windows and default OS-home skill discovery remain
+unverified.
+
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
