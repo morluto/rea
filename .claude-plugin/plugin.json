@@ -1,0 +1,25 @@
+{
+  "name": "rea",
+  "version": "6.4.0",
+  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+  "author": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "skills": ["./.agents/skills/reverse-engineer-anything"],
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@latest", "mcp"]
+    }
+  }
+}

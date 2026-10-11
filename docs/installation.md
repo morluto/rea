@@ -928,6 +928,24 @@ symbolic link is retained and reported rather than followed. Uninstall checks
 REA's managed shared and Claude Code personal skill locations. See the
 [CLI guide](cli.md#output-and-exit-status) for exit statuses.
 
+## Claude Code plugin
+
+The repository root is a Claude Code plugin. Its manifest,
+`.claude-plugin/plugin.json`, bundles the `reverse-engineer-anything` skill
+from `.agents/skills/` and registers the stdio server as
+`npx -y rea-agents@latest mcp`, so plugin directories and marketplaces can
+list REA without a second distribution artifact. To load it from a checkout:
+
+```bash
+claude --plugin-dir /absolute/path/to/rea
+```
+
+Each release updates the manifest version, which is when installed copies
+refresh the bundled skill. The plugin does not run `rea setup`: provider
+configuration and readiness checks still follow the sections above. Use the
+plugin or a `rea setup` registration for Claude Code, not both, to avoid two
+`rea` servers.
+
 ## MCP Registry
 
 REA is published in the official MCP Registry as `io.github.morluto/rea`. Registry
