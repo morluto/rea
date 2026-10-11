@@ -223,7 +223,8 @@ tag remains in main's ancestry. Keep the released tag unchanged.
 
 The synchronization must include `.release-please-manifest.json`,
 `package.json`, both root versions in `package-lock.json`, `CHANGELOG.md`,
-`server.json`, and the versioned documentation examples. Run
+`server.json`, both plugin manifests (`.claude-plugin/plugin.json` and
+`.codex-plugin/plugin.json`), and the versioned documentation examples. Run
 `npm run docs:generate`, `npm run docs:check`, and the release configuration
 tests against the combined tree. After the merge, verify that the released
 tag is an ancestor of main:

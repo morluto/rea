@@ -8,6 +8,10 @@ const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
 
 const versionedDocumentation = ["docs/installation.md"] as const;
+const pluginManifests = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+] as const;
 
 describe("release configuration", () => {
   it("keeps doctor and setup runtime support aligned with package engines", async () => {
@@ -42,6 +46,11 @@ describe("release configuration", () => {
               path: "server.json",
               jsonpath: "$.packages[0].version",
             },
+            ...pluginManifests.map((path) => ({
+              type: "json",
+              path,
+              jsonpath: "$.version",
+            })),
           ],
         },
       },
@@ -78,6 +87,19 @@ describe("release configuration", () => {
     const changelog = await readFile("CHANGELOG.md", "utf8");
     expect(/^## \[([^\]]+)\]/mu.exec(changelog)?.[1]).toBe(packageJson.version);
   });
+
+  it.each(pluginManifests)(
+    "keeps the plugin manifest %s aligned with the package version",
+    async (path) => {
+      const packageJson = (await readJson("package.json")) as {
+        version: string;
+      };
+
+      expect(await readJson(path)).toMatchObject({
+        version: packageJson.version,
+      });
+    },
+  );
 
   it("keeps the npm package and MCP Registry metadata aligned", async () => {
     const packageJson = (await readJson("package.json")) as {
