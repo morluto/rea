@@ -1,0 +1,20 @@
+{
+  "name": "rea",
+  "interface": {
+    "displayName": "REA"
+  },
+  "plugins": [
+    {
+      "name": "rea",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

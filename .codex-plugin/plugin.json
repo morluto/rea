@@ -1,0 +1,38 @@
+{
+  "name": "rea",
+  "version": "6.4.0",
+  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+  "author": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "skills": ["./.agents/skills/reverse-engineer-anything"],
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@latest", "mcp"]
+    }
+  },
+  "interface": {
+    "displayName": "REA",
+    "shortDescription": "Reverse engineer anything with agents",
+    "longDescription": "Use REA to explain shipped behavior from native binaries, managed assemblies, Electron and JavaScript bundles, packages, firmware, and browser targets, with evidence that separates observations from inferences.",
+    "developerName": "morluto",
+    "category": "Developer Tools",
+    "websiteURL": "https://rea.tools/",
+    "defaultPrompt": [
+      "Use REA to explain how this binary implements a feature.",
+      "Use REA to compare two versions of this application.",
+      "Use REA to recover the sources from this JavaScript bundle."
+    ]
+  }
+}

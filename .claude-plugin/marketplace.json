@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "rea",
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+  "owner": {
+    "name": "morluto",
+    "url": "https://github.com/morluto"
+  },
+  "plugins": [
+    {
+      "name": "rea",
+      "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+      "source": "./",
+      "category": "development"
+    }
+  ]
+}

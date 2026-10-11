@@ -928,22 +928,35 @@ symbolic link is retained and reported rather than followed. Uninstall checks
 REA's managed shared and Claude Code personal skill locations. See the
 [CLI guide](cli.md#output-and-exit-status) for exit statuses.
 
-## Claude Code plugin
+## Agent plugins and marketplaces
 
-The repository root is a Claude Code plugin. Its manifest,
-`.claude-plugin/plugin.json`, bundles the `reverse-engineer-anything` skill
-from `.agents/skills/` and registers the stdio server as
-`npx -y rea-agents@latest mcp`, so plugin directories and marketplaces can
-list REA without a second distribution artifact. To load it from a checkout:
+The repository root is both a Claude Code plugin
+(`.claude-plugin/plugin.json`) and a Codex plugin
+(`.codex-plugin/plugin.json`). Each manifest bundles the
+`reverse-engineer-anything` skill from `.agents/skills/` and registers the
+stdio server as `npx -y rea-agents@latest mcp`, without a second distribution
+artifact.
 
-```bash
-claude --plugin-dir /absolute/path/to/rea
+The repository is also its own single-plugin marketplace, through
+`.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
+
+In Claude Code:
+
+```text
+/plugin marketplace add morluto/rea
+/plugin install rea@rea
 ```
 
-Each release updates the manifest version, which is when installed copies
-refresh the bundled skill. The plugin does not run `rea setup`: provider
+In Codex, add the marketplace and then install REA from the plugin list:
+
+```bash
+codex plugin marketplace add morluto/rea
+```
+
+Each release updates both manifest versions, which is when installed copies
+refresh the bundled skill. A plugin does not run `rea setup`: provider
 configuration and readiness checks still follow the sections above. Use the
-plugin or a `rea setup` registration for Claude Code, not both, to avoid two
+plugin or a `rea setup` registration for a client, not both, to avoid two
 `rea` servers.
 
 ## MCP Registry
