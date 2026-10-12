@@ -998,10 +998,17 @@ codex plugin marketplace add morluto/rea
 ```
 
 Each release updates both manifest versions, which is when installed copies
-refresh the bundled skill. A plugin does not run `rea setup`: provider
-configuration and readiness checks still follow the sections above. Use the
-plugin or a `rea setup` registration for a client, not both, to avoid two
-`rea` servers.
+refresh the bundled skill. A plugin does not run `rea setup`, so provider
+configuration still follows the sections above. Use the plugin or a
+`rea setup` registration for a client, not both, to avoid two `rea` servers.
+
+`rea doctor` does not see plugin-owned state. Its client and skill checks read
+only the registrations and skill locations that `rea setup` manages, so for a
+plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
+`missing` and recommend `rea setup`. Do not follow that remediation. Check the
+plugin with the client instead (`claude plugin list` and `/mcp` in Claude
+Code, `codex plugin list` in Codex), and check analysis engines with
+`rea doctor --provider <id> --json`.
 
 ## MCP Registry
 
