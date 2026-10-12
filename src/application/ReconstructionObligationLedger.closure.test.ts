@@ -9,6 +9,8 @@ import {
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
+import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
+import { evaluateReconstructionObligationLedger } from "./ReconstructionObligationLedgerEvaluation.js";
 
 describe("reconstruction obligation ledger", () => {
   it("emits the complete deterministic ledger and closure identity", () => {
@@ -83,6 +85,34 @@ describe("reconstruction obligation ledger", () => {
       ]),
     );
     expect(result.status).toBe("open");
+  });
+});
+
+describe("reconstruction obligation ledger Evidence provenance", () => {
+  it("links observed-case Evidence separately from authority references", () => {
+    const capture = processEvidence();
+    const caseEvidence = proofEvidence("distinct-original-case");
+    const bundle = request([capture, caseEvidence]).evidence_bundle;
+    const generated = deriveReconstructionObligationCandidates(bundle, []);
+    const candidates = generated.candidates.map((candidate) => ({
+      ...candidate,
+      observed_cases: candidate.observed_cases.map((observedCase) => ({
+        ...observedCase,
+        evidence_id: caseEvidence.evidence_id,
+      })),
+    }));
+
+    const result = evaluateReconstructionObligationLedger({
+      candidates,
+      bundle,
+      manifest: { bindings: [], contradictions: [] },
+      generationLimitations: [],
+    });
+
+    expect(result.obligations[0]?.authority_references[0]?.evidence_id).toBe(
+      capture.evidence_id,
+    );
+    expect(result.evidence_links).toContain(caseEvidence.evidence_id);
   });
 });
 
@@ -166,45 +196,44 @@ describe("reconstruction obligation ledger case closure", () => {
       verifier_ids: ["verifier.packaged"],
       claim_ids: ["claim.process"],
     });
-    const result = build(
-      request([capture, proof], {
-        manifest: {
-          bindings: [
-            {
-              obligation_id: obligation.obligation_id,
-              owner: {
-                module_path: "src/processOwner.ts",
-                symbol: "runProcess",
-                owner_sha256: "2".repeat(64),
-              },
-              parser_type: null,
-              original_cases: originalCases(obligation, capture.evidence_id),
-              fixtures: obligation.required_case_kinds.map((caseKind) => ({
-                fixture_id: `packaged.${caseKind}`,
-                case_kind: caseKind,
-                authority: "packaged-process",
-                evidence_ids: [proof.evidence_id],
-              })),
-              verifier: {
-                verifier_id: "verifier.packaged",
-                claim_id: "claim.process",
-                command: "npm run verify:package -- process",
-                authority: "packaged-process",
-                status: "pass",
-                result_evidence_id: proof.evidence_id,
-                enumerated_obligation_ids: [obligation.obligation_id],
-                nondeterminism: {
-                  mode: "partial-order",
-                  specification:
-                    "Startup precedes teardown; worker completion is unordered.",
-                },
+    const ledgerRequest = request([capture, proof], {
+      manifest: {
+        bindings: [
+          {
+            obligation_id: obligation.obligation_id,
+            owner: {
+              module_path: "src/processOwner.ts",
+              symbol: "runProcess",
+              owner_sha256: "2".repeat(64),
+            },
+            parser_type: null,
+            original_cases: originalCases(obligation, capture.evidence_id),
+            fixtures: obligation.required_case_kinds.map((caseKind) => ({
+              fixture_id: `packaged.${caseKind}`,
+              case_kind: caseKind,
+              authority: "packaged-process",
+              evidence_ids: [proof.evidence_id],
+            })),
+            verifier: {
+              verifier_id: "verifier.packaged",
+              claim_id: "claim.process",
+              command: "npm run verify:package -- process",
+              authority: "packaged-process",
+              status: "pass",
+              result_evidence_id: proof.evidence_id,
+              enumerated_obligation_ids: [obligation.obligation_id],
+              nondeterminism: {
+                mode: "partial-order",
+                specification:
+                  "Startup precedes teardown; worker completion is unordered.",
               },
             },
-          ],
-          contradictions: [],
-        },
-      }),
-    );
+          },
+        ],
+        contradictions: [],
+      },
+    });
+    const result = build(ledgerRequest);
 
     expect(result.obligations[0]).toMatchObject({
       status: "verified",
@@ -212,5 +241,19 @@ describe("reconstruction obligation ledger case closure", () => {
     });
     expect(result.status).toBe("ready");
     expect(result.summary.required_open).toBe(0);
+
+    const generated = deriveReconstructionObligationCandidates(
+      ledgerRequest.evidence_bundle,
+      ledgerRequest.reviewed_obligations,
+    );
+    const limited = evaluateReconstructionObligationLedger({
+      candidates: generated.candidates,
+      bundle: ledgerRequest.evidence_bundle,
+      manifest: ledgerRequest.manifest,
+      generationLimitations: ["A supplementary source was unavailable."],
+    });
+    expect(limited.obligations[0]?.status).toBe("verified");
+    expect(limited.status).toBe("unknown");
+    expect(limited.coverage.status).toBe("partial");
   });
 });

@@ -239,4 +239,35 @@ describe("parsePmPathOutput", () => {
       role: "unknown",
     });
   });
+
+  it("preserves whitespace and the exact POSIX device path", () => {
+    const devicePath = "/data/app/My App/résumé:final\\draft*.apk";
+    const { paths, rejectedPaths, unparsedLines } = parsePmPathOutput(
+      `package:${devicePath}\r\n`,
+    );
+    expect(paths).toEqual([
+      {
+        device_path: devicePath,
+        file_name: "résumé:final\\draft*.apk",
+        role: "unknown",
+      },
+    ]);
+    expect(rejectedPaths).toEqual([]);
+    expect(unparsedLines).toEqual([]);
+  });
+
+  it("rejects an empty final component without normalizing the source", () => {
+    const devicePath = "/data/app/pkg/base.apk/";
+    const parsed = parsePmPathOutput(`package:${devicePath}\n`);
+    expect(parsed.paths).toEqual([]);
+    expect(parsed.rejectedPaths).toEqual([
+      { device_path: devicePath, reason: "empty_file_name" },
+    ]);
+  });
+
+  it("retains malformed lines including surrounding whitespace", () => {
+    expect(
+      parsePmPathOutput(" package:/data/app/pkg/base.apk \n").unparsedLines,
+    ).toEqual([" package:/data/app/pkg/base.apk "]);
+  });
 });

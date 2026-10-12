@@ -14,6 +14,7 @@ import {
   createAnalysisSnapshotWorkflowEntry,
   parseAnalysisSnapshot,
   serializeAnalysisSnapshot,
+  snapshotEvidenceForQuery,
   snapshotBinding,
   snapshotTarget,
 } from "../../domain/analysisSnapshot.js";
@@ -30,6 +31,7 @@ import {
   SNAPSHOT_CACHE_ENTRY_CEILING,
   isSnapshotCacheable,
 } from "./AnalysisSnapshotCache.js";
+import { enhancedOutputSchemas } from "../../contracts/toolOutputSchemaGroups.js";
 
 it("exports independent nested query, workflow and Evidence payloads", () => {
   const cache = new AnalysisSnapshotCache();
@@ -441,7 +443,7 @@ describe("analysis snapshot cache partitioning", () => {
       ANALYSIS_SNAPSHOT_PROFILE,
       createEvidenceBundle([evidence]),
     );
-    if (!exported.ok) throw new Error("snapshot export failed");
+    if (!exported.ok) throw exported.error;
     const tampered = structuredClone(exported.value);
     const tamperedEntry = tampered.entries[0];
     if (tamperedEntry === undefined)
@@ -498,4 +500,164 @@ describe("analysis snapshot cache partitioning", () => {
       ),
     ).toBeUndefined();
   });
+});
+
+describe("relationship coverage snapshot replay", () => {
+  it("authenticates relationship coverage and replays legacy reads as unknown", () => {
+    const cache = new AnalysisSnapshotCache();
+    const operation = "procedure_callees" as const;
+    const parameters = { procedure: "0x1000", document: "fixture" };
+    const coverage = {
+      status: "complete" as const,
+      diagnostics: ["The provider retained an unresolved call target."],
+    };
+    const execution = createAnalysisExecution(
+      ["0x2000"],
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        rawResult: ["0x2000"],
+        relationshipCoverage: coverage,
+        subject: {
+          path: ANALYSIS_SNAPSHOT_TARGET.path,
+          sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+          format: ANALYSIS_SNAPSHOT_TARGET.format,
+          ...(ANALYSIS_SNAPSHOT_TARGET.architecture === undefined
+            ? {}
+            : { architecture: ANALYSIS_SNAPSHOT_TARGET.architecture }),
+        },
+      },
+    );
+    cache.record({
+      target: ANALYSIS_SNAPSHOT_TARGET,
+      profile: ANALYSIS_SNAPSHOT_PROFILE,
+      operation,
+      parameters,
+      execution,
+    });
+    const evidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation,
+        parameters,
+        result: ["0x2000"],
+        rawResult: ["0x2000"],
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+        relationshipCoverage: coverage,
+      },
+    );
+    const exported = cache.export(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROFILE,
+      createEvidenceBundle([evidence]),
+    );
+    if (!exported.ok) throw exported.error;
+    expect(
+      cache.lookup(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROFILE,
+        operation,
+        parameters,
+      )?.relationshipCoverage,
+    ).toEqual(coverage);
+
+    const tampered = structuredClone(exported.value);
+    const tamperedEntry = tampered.entries[0];
+    if (tamperedEntry === undefined) throw new Error("snapshot entry missing");
+    tamperedEntry.execution.relationship_coverage = {
+      status: "complete",
+      diagnostics: ["forged coverage"],
+    };
+    expect(
+      new AnalysisSnapshotCache().import(tampered, undefined, () => ok(0)).ok,
+    ).toBe(false);
+
+    const legacy = structuredClone(exported.value);
+    const legacyEntry = legacy.entries[0];
+    if (legacyEntry === undefined) throw new Error("snapshot entry missing");
+    Reflect.deleteProperty(legacyEntry.execution, "relationship_coverage");
+    const legacyEvidence = createEvidence(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROVIDER,
+      {
+        operation,
+        parameters,
+        result: ["0x2000"],
+        rawResult: ["0x2000"],
+        analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      },
+    );
+    Reflect.deleteProperty(legacyEvidence, "relationship_coverage");
+    legacy.evidence_bundle = createEvidenceBundle([legacyEvidence]);
+    parseAnalysisSnapshot(legacy);
+    const replayCache = new AnalysisSnapshotCache();
+    expect(replayCache.import(legacy, undefined, () => ok(0)).ok).toBe(true);
+    expect(
+      replayCache.lookup(
+        ANALYSIS_SNAPSHOT_TARGET,
+        ANALYSIS_SNAPSHOT_PROFILE,
+        operation,
+        parameters,
+      )?.relationshipCoverage,
+    ).toEqual({
+      status: "unknown",
+      reason: "Snapshot entry does not report relationship coverage.",
+    });
+  });
+});
+
+it("does not replay pre-envelope call graphs under the revised workflow profile", () => {
+  const cache = new AnalysisSnapshotCache();
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const operation = "get_call_graph" as const;
+  const parameters = { address: "0x1000", direction: "forward" };
+  const oldProfile = workflowAnalysisProfile(profile);
+  const revisedProfile = workflowAnalysisProfile(profile, operation);
+  const oldResult = { "0": [] };
+  cache.recordWorkflow({
+    target,
+    profile,
+    operation,
+    parameters,
+    execution: {
+      ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+        subject: target,
+        rawResult: oldResult,
+      }),
+      analysisProfile: oldProfile,
+    },
+  });
+  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+    operation,
+    confidence: "derived",
+    parameters,
+    result: oldResult,
+    rawResult: oldResult,
+    analysisProfile: oldProfile,
+  });
+  const exported = cache.export(
+    target,
+    profile,
+    createEvidenceBundle([evidence]),
+  );
+  if (!exported.ok) throw exported.error;
+  const snapshot = parseAnalysisSnapshot(exported.value);
+
+  expect(
+    snapshotEvidenceForQuery(snapshot, {
+      target,
+      bindingProfile: profile,
+      operation,
+      parameters,
+      provider: REA_WORKFLOW_PROVIDER,
+      evidenceProfile: revisedProfile,
+    }),
+  ).toBeUndefined();
+  expect(
+    enhancedOutputSchemas.get_call_graph?.safeParse({
+      normalized_result: oldResult,
+    }).success,
+  ).toBe(false);
 });

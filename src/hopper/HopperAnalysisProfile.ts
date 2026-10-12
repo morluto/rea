@@ -6,8 +6,11 @@ import type {
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryTarget,
+  type BinaryArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -37,7 +40,7 @@ export const resolveHopperAnalysisProfile = async (
   if (target.kind !== "executable" && target.kind !== "database")
     return ok({ profile: null });
   let machoContainer: "thin" | "fat32" | "fat64" | undefined;
-  if (target.kind === "executable" && target.format === "mach-o") {
+  if (target.kind === "executable" && isMachOFormat(target.format)) {
     const header = await readMachoMagic(target.path, options.signal);
     if (!header.ok) return header;
     machoContainer = [0xcafebabf, 0xbfbafeca].includes(header.value)
@@ -119,21 +122,22 @@ export const hopperLoaderArgsForTarget = (
       ),
     );
   const flag = hopperArchitectureFlag(architecture);
-  switch (target.format) {
-    case "mach-o":
-      if (machoContainer === undefined)
-        return err(
-          new AnalysisCapabilityUnavailableError(
-            "hopper",
-            "resolve_analysis_profile",
-            "Mach-O container kind is unknown; resolve the Hopper analysis profile before starting its client.",
-          ),
-        );
-      return ok(
-        machoContainer === "fat32" || machoContainer === "fat64"
-          ? ["-l", "FAT", flag, "-l", "Mach-O"]
-          : ["-l", "Mach-O", flag],
+  if (isMachOFormat(target.format)) {
+    if (machoContainer === undefined)
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "hopper",
+          "resolve_analysis_profile",
+          "Mach-O container kind is unknown; resolve the Hopper analysis profile before starting its client.",
+        ),
       );
+    return ok(
+      machoContainer === "fat32" || machoContainer === "fat64"
+        ? ["-l", "FAT", flag, "-l", "Mach-O"]
+        : ["-l", "Mach-O", flag],
+    );
+  }
+  switch (target.format) {
     case "elf":
       return ok(["-l", "ELF", flag]);
     case "pe":

@@ -3,7 +3,6 @@ import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, expect, it } from "vitest";
-import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type {
@@ -12,8 +11,11 @@ import type {
 } from "../../../src/application/AnalysisProvider.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { toolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 
@@ -65,7 +67,7 @@ it("executes a realistic workflow: list methods, decompile selected, get xrefs",
         case "xrefs":
           return Promise.resolve(ok(["0x1000"]));
         default:
-          return Promise.resolve(ok(null));
+          throw new Error(`Unexpected analysis operation: ${name}`);
       }
     },
   });
@@ -126,11 +128,10 @@ it("advertises the complete currently available inventory with a session", async
       arguments: {},
     }),
   );
-  const inventory = z
-    .object({
-      result: z.object({ tool_availability: z.array(toolAvailability) }),
-    })
-    .parse(status).result.tool_availability;
+  const inventory = expandToolAvailability(
+    toolContract("binary_session").outputSchema.parse(status).result
+      .tool_availability,
+  );
   for (const availability of inventory) {
     if (availability.available) continue;
     expect(availability.reason).not.toBe("available");

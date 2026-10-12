@@ -89,6 +89,11 @@ const registerOfficialTool = (
                 : { analysisProfile: result.value.analysisProfile }),
               rawResult: result.value.rawResult,
               limitations: result.value.limitations,
+              ...(result.value.relationshipCoverage === undefined
+                ? {}
+                : {
+                    relationshipCoverage: result.value.relationshipCoverage,
+                  }),
               locations: result.value.locations,
             },
           );

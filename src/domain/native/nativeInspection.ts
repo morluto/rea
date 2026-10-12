@@ -28,7 +28,12 @@ const architectureSchema = z.object({
   name: z.string(),
   cpu_type: z.string().nullable(),
   cpu_subtype: z.string().nullable(),
-  file_offset: z.number().int().min(0).nullable(),
+  file_offset: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe("Offset from the start of the input Mach-O container."),
   size: z.number().int().min(0).nullable(),
   alignment: z.number().int().min(0).nullable(),
 });
@@ -43,7 +48,12 @@ const sectionSchema = z.object({
   name: z.string(),
   address: hexAddress.nullable(),
   size: z.number().int().min(0).nullable(),
-  file_offset: z.number().int().min(0).nullable(),
+  file_offset: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe("Offset from the start of the selected Mach-O slice."),
   alignment: z.number().int().min(0).nullable(),
   flags: z.array(z.string()),
 });
@@ -51,7 +61,12 @@ const segmentSchema = z.object({
   name: z.string(),
   vm_address: hexAddress.nullable(),
   vm_size: z.number().int().min(0).nullable(),
-  file_offset: z.number().int().min(0).nullable(),
+  file_offset: z
+    .number()
+    .int()
+    .min(0)
+    .nullable()
+    .describe("Offset from the start of the selected Mach-O slice."),
   file_size: z.number().int().min(0).nullable(),
   maximum_permissions: permissionSchema,
   initial_permissions: permissionSchema,
@@ -84,12 +99,39 @@ const buildMetadataSchema = z.object({
 
 export const inspectMachoSchema = z.object({
   format: z.literal("mach-o"),
+  /** Exact lipo slice selected for inspection and its offset in the input container. */
+  selected_architecture: z.object({
+    name: z
+      .string()
+      .nullable()
+      .describe(
+        "Exact architecture name selected from lipo output; null when selection is unknown.",
+      ),
+    container_file_offset: z
+      .number()
+      .int()
+      .min(0)
+      .nullable()
+      .describe(
+        "Offset of the selected slice from the start of the input Mach-O container; null when unknown.",
+      ),
+  }),
   endian: z.enum(["little", "big"]).nullable(),
   word_size: z.union([z.literal(32), z.literal(64)]).nullable(),
   file_type: z.string().nullable(),
   flags: z.array(z.string()),
   uuid: z.string().nullable(),
-  entrypoints: coverage(z.object({ file_offset: z.number().int().min(0) })),
+  entrypoints: coverage(
+    z.object({
+      file_offset: z
+        .number()
+        .int()
+        .min(0)
+        .describe(
+          "LC_MAIN entry offset from the start of the selected Mach-O slice.",
+        ),
+    }),
+  ),
   architectures: coverage(architectureSchema),
   build_metadata: coverage(buildMetadataSchema),
   load_commands: coverage(loadCommandSchema),

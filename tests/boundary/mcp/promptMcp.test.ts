@@ -54,9 +54,11 @@ describe("guided prompts over MCP", () => {
       completions: {},
       prompts: { listChanged: true },
     });
-    for (const [index, contract] of PROMPT_CONTRACTS.entries()) {
-      const advertised = prompts.prompts[index];
-      expect(advertised?.arguments).toEqual(
+    const advertisedByName = new Map(
+      prompts.prompts.map((prompt) => [prompt.name, prompt]),
+    );
+    for (const contract of PROMPT_CONTRACTS) {
+      expect(advertisedByName.get(contract.name)?.arguments).toEqual(
         Object.entries(contract.arguments).map(
           ([name, { description, required }]) => ({
             name,
@@ -271,15 +273,21 @@ describe("guided prompt completion registry", () => {
     });
     await connectPair(server, client);
     resources.push(session);
-    expect((await client.listPrompts()).prompts[0]?.title).toBe(
-      "Investigate a feature",
+    const contract = PROMPT_CONTRACTS.find(
+      ({ name }) => name === "investigate_feature",
     );
+    if (contract === undefined)
+      throw new Error("Missing investigate_feature prompt contract");
+    const initialPrompt = (await client.listPrompts()).prompts.find(
+      ({ name }) => name === contract.name,
+    );
+    expect(initialPrompt?.title).toBe(contract.title);
 
     registry.update({
-      ...PROMPT_CONTRACTS[0],
-      title: "Investigate a feature (updated)",
+      ...contract,
+      title: `${contract.title} (updated)`,
       arguments: {
-        ...PROMPT_CONTRACTS[0].arguments,
+        ...contract.arguments,
         document: {
           description: "Updated provider-backed selector",
           required: false,
@@ -289,7 +297,9 @@ describe("guided prompt completion registry", () => {
     });
     await changed;
     const prompts = await client.listPrompts();
-    expect(prompts.prompts[0]?.title).toBe("Investigate a feature (updated)");
+    expect(
+      prompts.prompts.find(({ name }) => name === contract.name)?.title,
+    ).toBe(`${contract.title} (updated)`);
     expect(await complete(client, "document", "fixture")).toEqual(["fixture"]);
   });
 });

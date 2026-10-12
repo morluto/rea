@@ -11,7 +11,78 @@ import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
+import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
+import {
+  analyzeJavaScriptApplication,
+  readJavaScriptArtifactFiles,
+} from "../../../support/javascriptApplicationScope.js";
+import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
+import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
+import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
+
+describe("JavaScript source selection cancellation boundary", () => {
+  it("keeps unselected files outside scope when the real worker cancels after the last selected file", async () => {
+    const root = await createTestTempDirectory(
+      "rea-js-selected-last-cancellation-",
+    );
+    await writeJavaScriptSourceSelectionFixture(root);
+    const snapshot = await scanCanonicalArtifactInventory(root, {});
+    const reader = createJavaScriptArtifactReader(root, "directory");
+    const controller = new AbortController();
+    const sourcePaths = ["main.mjs"];
+    try {
+      const files = await readJavaScriptArtifactFiles(
+        reader,
+        snapshot,
+        controller.signal,
+        sourcePaths,
+      );
+      const worker = createJavaScriptSourceAnalysis(
+        { heapMb: 512, timeoutMs: 30_000 },
+        1,
+      );
+      let outcome: Awaited<
+        ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>
+      >;
+      try {
+        const realWorker = worker.analyze.bind(worker);
+        outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
+          files,
+          {
+            analyze: async (...args) => {
+              const result = await realWorker(...args);
+              controller.abort();
+              return result;
+            },
+          },
+          createJavaScriptSemanticGraphProjection(),
+          async () => {},
+          controller.signal,
+        );
+      } finally {
+        await worker.close();
+      }
+      expect(outcome.interruption).toBeInstanceOf(AnalysisCancelledError);
+      const unselected = outcome.analysis.files.filter(
+        ({ file }) =>
+          !file.text.included && file.text.reason === "outside-analysis-scope",
+      );
+      expect(unselected).toHaveLength(5);
+      expect(
+        unselected.every(
+          ({ analysis_failure }) => analysis_failure === undefined,
+        ),
+      ).toBe(true);
+      expect(
+        outcome.analysis.files.find(({ file }) => file.path === "main.mjs")
+          ?.javascript,
+      ).toMatchObject({ parse_status: "complete" });
+    } finally {
+      await reader.close();
+    }
+  });
+});
 
 describe("Selected JavaScript source failure diagnostics", () => {
   it("analyzes selected files in first-request order and reports only selected progress", async () => {

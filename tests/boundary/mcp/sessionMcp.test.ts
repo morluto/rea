@@ -26,6 +26,8 @@ import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
+import { expandProviderCapabilities } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import {
   createSessionMcpHarness,
@@ -294,15 +296,12 @@ describe("target-free MCP workflow", () => {
     expect(openedStatus).toMatchObject({
       result: { path: await realpath(first) },
     });
+    const sessionStatus =
+      toolContract("binary_session").outputSchema.parse(openedStatus);
     expect(
-      z
-        .object({
-          result: z.object({
-            capabilities: z.array(z.object({ operation: z.string() })),
-          }),
-        })
-        .parse(openedStatus)
-        .result.capabilities.map(({ operation }) => operation),
+      expandProviderCapabilities(sessionStatus.result.capabilities).map(
+        ({ operation }) => operation,
+      ),
     ).not.toContain("inventory_artifact");
     expect(
       text(await mcp.callTool({ name: "current_document", arguments: {} })),

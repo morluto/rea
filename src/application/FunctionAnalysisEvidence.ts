@@ -46,6 +46,9 @@ export const executeFunctionAnalysisEvidence = async (
       rawResult: observation.rawResult,
       limitations: observation.limitations,
       locations: observation.locations,
+      ...(observation.relationshipCoverage === undefined
+        ? {}
+        : { relationshipCoverage: observation.relationshipCoverage }),
       ...(observation.analysisProfile === undefined
         ? {}
         : { analysisProfile: observation.analysisProfile }),

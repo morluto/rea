@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { writeAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
@@ -84,9 +85,10 @@ describe("direct analysis snapshot files", () => {
       workflow_entries: [],
       evidence_bundle: createEvidenceBundle([evidence]),
     };
-    expect(
-      (await writeAnalysisSnapshot(snapshot, snapshotPath, false)).ok,
-    ).toBe(true);
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(snapshot, snapshotPath, false, resources),
+    );
+    if (!written.ok) throw written.error;
     vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 
 import {
   readEvidenceBundle,
@@ -99,15 +100,10 @@ describe("evidence bundle export cancellation", () => {
       yield "unused";
     }
     expect(
-      await writeTextParts(
-        parts(),
-        join(root, "missing", "bundle.json"),
-        false,
-        {
-          signal: controller.signal,
-          operation: "export_evidence_bundle",
-        },
-      ),
+      await writeParts(parts(), join(root, "missing", "bundle.json"), false, {
+        signal: controller.signal,
+        operation: "export_evidence_bundle",
+      }),
     ).toMatchObject({
       ok: false,
       error: {
@@ -118,7 +114,7 @@ describe("evidence bundle export cancellation", () => {
     expect(advanced).toBe(false);
     expect(await readdir(root)).toEqual([]);
     expect(
-      await writeEvidenceBundle(
+      await writeBundle(
         bundle(),
         join(root, "bundle.json"),
         false,
@@ -149,7 +145,7 @@ describe("evidence bundle export cancellation", () => {
         }
       }
       expect(
-        await writeTextParts(parts(), path, overwrite, {
+        await writeParts(parts(), path, overwrite, {
           signal: controller.signal,
           operation: "export_evidence_bundle",
         }),
@@ -164,9 +160,9 @@ describe("evidence bundle export cancellation", () => {
       expect(continued).toBe(false);
       expect(await readdir(root)).toEqual(overwrite ? ["bundle.json"] : []);
       if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
-      expect(
-        await writeEvidenceBundle(bundle(), path, overwrite),
-      ).toMatchObject({ ok: true });
+      expect(await writeBundle(bundle(), path, overwrite)).toMatchObject({
+        ok: true,
+      });
       expect(await readEvidenceBundle(path)).toEqual({
         ok: true,
         value: bundle(),
@@ -184,7 +180,7 @@ describe("evidence bundle export cancellation", () => {
       controller.abort();
     }
     expect(
-      await writeTextParts(parts(), path, true, {
+      await writeParts(parts(), path, true, {
         signal: controller.signal,
         operation: "export_evidence_bundle",
       }),
@@ -193,6 +189,29 @@ describe("evidence bundle export cancellation", () => {
     expect(await readdir(root)).toEqual(["bundle.json"]);
   });
 });
+
+const writeBundle = (
+  value: ReturnType<typeof bundle>,
+  path: string,
+  overwrite: boolean,
+  signal?: AbortSignal,
+) =>
+  withArtifactResourceScope((resources) =>
+    writeEvidenceBundle(value, path, overwrite, resources, signal),
+  );
+
+const writeParts = (
+  parts: Iterable<string>,
+  path: string,
+  overwrite: boolean,
+  cancellation?: {
+    readonly signal: AbortSignal;
+    readonly operation: string;
+  },
+) =>
+  withArtifactResourceScope((resources) =>
+    writeTextParts(parts, path, overwrite, resources, cancellation),
+  );
 
 describe("evidence bundle publication", () => {
   it.each([false, true])(
@@ -205,9 +224,7 @@ describe("evidence bundle publication", () => {
         yield "partial";
         throw new Error("Source stream failed");
       }
-      expect(
-        await writeTextParts(brokenParts(), path, overwrite),
-      ).toMatchObject({
+      expect(await writeParts(brokenParts(), path, overwrite)).toMatchObject({
         ok: false,
         error: { _tag: "EvidenceFileError", reason: "io" },
       });
@@ -220,7 +237,7 @@ describe("evidence bundle publication", () => {
     const root = await createTestTempDirectory("rea-stream-bytes-");
     const path = join(root, "bundle.json");
     const parts = ["雪", "😀", "\n"];
-    expect(await writeTextParts(parts, path, false)).toEqual({
+    expect(await writeParts(parts, path, false)).toEqual({
       ok: true,
       value: { path, bytes: Buffer.byteLength(parts.join("")) },
     });
@@ -233,7 +250,7 @@ describe("evidence bundle publication", () => {
     const path = join(root, "bundle.json");
     const candidates = [bundle(), bundle(false)];
     const results = await Promise.all(
-      candidates.map((value) => writeEvidenceBundle(value, path, false)),
+      candidates.map((value) => writeBundle(value, path, false)),
     );
     expect(results.filter(({ ok }) => ok)).toHaveLength(1);
     expect(results.filter(({ ok }) => !ok)).toMatchObject([
@@ -253,7 +270,7 @@ describe("evidence bundle publication", () => {
     await mkdir(directory);
     const path = join(directory, "bundle.json");
     const value = bundle();
-    expect(await writeEvidenceBundle(value, path, false)).toMatchObject({
+    expect(await writeBundle(value, path, false)).toMatchObject({
       ok: true,
     });
     expect(await readEvidenceBundle(path)).toEqual({
@@ -308,7 +325,7 @@ describe("evidence bundle filesystem adapter", () => {
     const directory = await createTestTempDirectory("rea-evidence-");
     const path = join(directory, "bundle.json");
     const evidenceBundle = bundle();
-    const first = await writeEvidenceBundle(evidenceBundle, path, false);
+    const first = await writeBundle(evidenceBundle, path, false);
     expect(first).toMatchObject({ ok: true, value: { path } });
     expect(await readFile(path, "utf8")).toBe(
       serializeEvidenceBundle(evidenceBundle),
@@ -329,15 +346,13 @@ describe("evidence bundle filesystem adapter", () => {
         summary: { records_unchanged: 1 },
       },
     });
-    expect(
-      await writeEvidenceBundle(evidenceBundle, path, false),
-    ).toMatchObject({
+    expect(await writeBundle(evidenceBundle, path, false)).toMatchObject({
       ok: false,
       error: { _tag: "EvidenceFileError", reason: "exists" },
     });
-    expect(await writeEvidenceBundle(evidenceBundle, path, true)).toMatchObject(
-      { ok: true },
-    );
+    expect(await writeBundle(evidenceBundle, path, true)).toMatchObject({
+      ok: true,
+    });
   });
 
   it("reads the caller-selected symlink target and refuses to replace a symlink", async () => {
@@ -352,7 +367,7 @@ describe("evidence bundle filesystem adapter", () => {
       ok: true,
       value: bundle(),
     });
-    expect(await writeEvidenceBundle(bundle(), link, true)).toMatchObject({
+    expect(await writeBundle(bundle(), link, true)).toMatchObject({
       ok: false,
       error: { _tag: "EvidenceFileError", reason: "not-file" },
     });
@@ -373,7 +388,7 @@ describe("evidence bundle filesystem adapter", () => {
     });
 
     const orphan = join(directory, "absent", "bundle.json");
-    const written = await writeEvidenceBundle(bundle(), orphan, false);
+    const written = await writeBundle(bundle(), orphan, false);
     expect(written).toMatchObject({
       ok: false,
       error: { _tag: "EvidenceFileError", reason: "missing", path: orphan },

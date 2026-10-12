@@ -234,7 +234,7 @@ const readFatSlices = async (
 ): Promise<MachoSlice[]> => {
   const slices: MachoSlice[] = [];
   for (const declaration of declarations) {
-    const { index, offset, size: length, cpuType, cpuSubtype } = declaration;
+    const { offset, size: length, cpuType, cpuSubtype } = declaration;
     const rangeIssue = validateFatSlice(declaration, size, tableEnd);
     if (rangeIssue !== null)
       throw new MachoFormatIssue(

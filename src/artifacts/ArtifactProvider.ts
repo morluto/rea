@@ -21,7 +21,10 @@ import {
   artifactExtractionExecutionSchema,
   type ArtifactAnalysisOperation,
 } from "../contracts/artifactToolContracts.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -294,7 +297,7 @@ class ArtifactClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
-    if (this.target.kind !== "executable" || this.target.format !== "mach-o")
+    if (this.target.kind !== "executable" || !isMachOFormat(this.target.format))
       throw this.unsupportedTarget(
         "trace_dylib_resolution",
         "trace_dylib_resolution requires an active Mach-O or .app bundle target",

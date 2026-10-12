@@ -58,6 +58,34 @@ reports `resource-limit` with unavailable or partial coverage; omitted facts do
 not become empty observations. Ambiguous PE section mappings are rejected
 rather than interpreted according to section order.
 
+### Selected member inspection
+
+When whole-assembly member decoding reaches the representation budget, select
+known declaring types before their signatures and CIL bodies are decoded:
+
+```bash
+rea inspect-managed-members /absolute/path/Assembly.dll --type Example.Parser
+```
+
+MCP uses `inspect_managed_members` with
+`{"path":"/absolute/path/Assembly.dll","type_names":["Example.Parser"]}`.
+Repeat `--type` or supply multiple unique `type_names` for several types.
+Names match the reported `full_name` exactly. Top-level names are namespace
+qualified; nested types currently report bare names, which can select several
+types with that name.
+
+The result preserves the requested names in `selection.type_names` and reports
+unmatched names separately. If metadata names are unreadable, limitations retain
+that uncertainty. With no selection, `selection` is null and whole-assembly
+inspection keeps its existing resource policy. Selection restricts types,
+fields, methods, call edges and field accesses; member references remain an
+assembly-wide inventory, so output size is not guaranteed to be small.
+
+Coverage describes the selected members. Comparisons leave members outside the
+opposite observation's selection unknown, and application graphs report their
+selected scope as partial. Neither makes an absence claim about the whole
+assembly. Older member Evidence without `selection` remains readable.
+
 ## Analysis objective
 
 REA's managed-code track is intended to answer five different questions without

@@ -64,6 +64,15 @@ const provider = (
   );
 };
 
+const createElfClient = async (ghidra: GhidraProvider) => {
+  const target = executableTarget("elf", "x86_64");
+  const resolved = await ghidra.resolveAnalysisProfile(target);
+  if (!resolved.ok) throw resolved.error;
+  if (resolved.value.profile === null)
+    throw new Error("Expected a bound Ghidra profile");
+  return ghidra.createClient(target, resolved.value.profile);
+};
+
 describe("Ghidra provider", () => {
   it("commits DOS loader and real-mode language while retaining the CPU family", async () => {
     const ghidra = provider();
@@ -230,7 +239,7 @@ describe("Ghidra Mach-O slice support", () => {
       path: "/tmp/fixture",
       sha256: "a".repeat(64),
       kind: "executable",
-      format: "mach-o",
+      format: "mach-o-universal",
       architecture: "arm64",
       availableArchitectures: ["x86_64", "arm64"],
     };
@@ -246,6 +255,13 @@ describe("Ghidra Mach-O slice support", () => {
     });
     expect(
       ghidra.inspectTargetSupport(executableTarget("mach-o", "arm64")),
+    ).toMatchObject({ status: "supported" });
+
+    expect(
+      ghidra.inspectTargetSupport({
+        ...universal,
+        availableArchitectures: ["arm64"] as const,
+      }),
     ).toMatchObject({ status: "supported" });
   });
 });
@@ -570,6 +586,7 @@ describe("Ghidra client projection", () => {
     expect(resolved.value.profile.parameters).toMatchObject({
       language_id: "auto-from-header",
       compiler_spec_id: "auto-default",
+      call_relationship_coverage: "resolved-call-reference-diagnostics-v1",
     });
 
     const result = await ghidra
@@ -608,15 +625,6 @@ describe("Ghidra client projection", () => {
 });
 
 describe("Ghidra result projection", () => {
-  const createElfClient = async (ghidra: GhidraProvider) => {
-    const target = executableTarget("elf", "x86_64");
-    const resolved = await ghidra.resolveAnalysisProfile(target);
-    if (!resolved.ok) throw resolved.error;
-    if (resolved.value.profile === null)
-      throw new Error("Expected a bound Ghidra profile");
-    return ghidra.createClient(target, resolved.value.profile);
-  };
-
   it("rejects malformed inventory output before Evidence creation", async () => {
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
@@ -760,6 +768,35 @@ describe("Ghidra result projection", () => {
       ok: false,
       error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
     });
+  });
+});
+
+describe("Ghidra relationship coverage", () => {
+  it("marks the full direct call-reference response complete while keeping static caveats", async () => {
+    const ghidra = provider(installationHost(), () => ({
+      start: () => Promise.resolve(ok(sessionInfo())),
+      callTool: (operation) =>
+        Promise.resolve(
+          ok(operation === "procedure_callees" ? ["0x2000"] : []),
+        ),
+      close: () => Promise.resolve(ok(null)),
+    }));
+    const client = await createElfClient(ghidra);
+    const execution = await client.execute("procedure_callees", {
+      procedure: "0x1000",
+      document: "fixture",
+    });
+    if (!execution.ok) throw execution.error;
+    expect(execution.value.relationshipCoverage).toEqual({
+      status: "complete",
+      diagnostics: [
+        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
+      ],
+    });
+    expect(execution.value.limitations).not.toContain(
+      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
+    );
+    await client.close();
   });
 });
 

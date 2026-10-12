@@ -20,6 +20,28 @@ export const managedTargetInputSchema = z.strictObject({
     .optional(),
 });
 
+/** Member inspection may select declaring types before members are decoded. */
+export const managedMembersInputSchema = managedTargetInputSchema.extend({
+  type_names: z
+    .array(
+      z
+        .string()
+        .min(1)
+        .describe(
+          "Exact declaring-type full_name: namespace-qualified for top-level types (System.Threading.Monitor); nested types report their bare name, so it selects every nested type of that name",
+        ),
+    )
+    .min(1)
+    .refine((names) => new Set(names).size === names.length, {
+      message: "type_names must not repeat a name",
+    })
+    .meta({ uniqueItems: true })
+    .describe(
+      "Inspect only the fields, methods, call edges, and field accesses declared by these exact type full names; omit to inspect every type. Unmatched names are reported in selection.unmatched_type_names.",
+    )
+    .optional(),
+});
+
 const outputSchema = requireOutputSchema(
   managedOutputSchemas,
   "inspect_managed_artifact",
@@ -54,14 +76,21 @@ export const MANAGED_TOOL_CONTRACTS = [
     name: "inspect_managed_members",
     ...toolContractMetadata("inspect_managed_members"),
     description:
-      "Inspect PE/CLI metadata members, signatures, raw CIL hashes, decoded-instruction-tuple hashes, separately reported exception regions, call edges, and field-access anchors without loading or executing target code. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID; the tuple hash does not resolve them or fully commit control flow.",
+      "Inspect PE/CLI metadata members, signatures, raw CIL hashes, decoded-instruction-tuple hashes, separately reported exception regions, call edges, and field-access anchors without loading or executing target code. Select type_names to decode only the members of those exact declaring types, which keeps large assemblies such as a base class library within the representation budget. Metadata tokens are reported as build-local coordinates bound to the artifact SHA-256 and MVID; the tuple hash does not resolve them or fully commit control flow.",
     kind: "managed-provider",
-    inputSchema: managedTargetInputSchema,
+    inputSchema: managedMembersInputSchema,
     outputSchema: memberOutputSchema,
     examples: [
       {
         title: "Example inspect managed members request",
         input: {},
+      },
+      {
+        title: "Example inspect selected managed types request",
+        input: {
+          path: "/tmp/mscorlib.dll",
+          type_names: ["System.Threading.Monitor"],
+        },
       },
     ],
   },

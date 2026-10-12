@@ -55,6 +55,11 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Keep observed, derived, and inferred relationships distinct. Preserve
   unresolved edges and partial provider facts instead of requiring every
   provider to supply the same metadata.
+- For caller/callee reads, `relationship_coverage` describes only the
+  provider-observed direct relationship set. `complete` means that set was
+  returned without a known read limit; it does not claim every possible runtime
+  edge. Provider and execution caveats stay in `limitations` and do not imply
+  incomplete relationship coverage. Missing coverage remains `unknown`.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
   enforce the requested target and lifecycle.
 - Add limits only for real format, protocol, authority, or measured resource

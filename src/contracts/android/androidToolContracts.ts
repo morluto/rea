@@ -26,7 +26,7 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "search_android_classes",
     ...toolContractMetadata("search_android_classes"),
     description:
-      "Search complete decompiler class names in an explicit local APK by case-sensitive substring. Empty query inventories all classes. Retains artifact and engine identity; no APK execution.",
+      "Search complete decompiler class-name rows in an explicit local APK by case-sensitive substring. Empty query inventories all rows. Repeated names remain repeated and appear in duplicate_names; the provider accepts only class names for lookup, so these rows do not identify which same-name class node a later lookup selects. Retains artifact and engine identity; no APK execution.",
     kind: "android-provider",
     inputSchema: androidInputSchemas.search_android_classes,
     outputSchema: evidenceResultOf(androidResultSchemas.search_android_classes),

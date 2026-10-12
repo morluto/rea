@@ -105,9 +105,11 @@ const underlyingErrorCode = (
   if (error instanceof ArtifactOperationError)
     return artifactOperationCode(error);
   if (error instanceof BinaryTargetError)
-    return error.systemCode === undefined
-      ? "target_unavailable"
-      : "access_denied";
+    return error.constraint === "load_selection_rejected"
+      ? "invalid_request"
+      : error.systemCode === undefined
+        ? "target_unavailable"
+        : "access_denied";
   if (error instanceof EvidenceFileError) return evidenceFileCode(error.reason);
   if (error instanceof UnknownRegistryError)
     return unknownRegistryCode(error.reason);
@@ -309,6 +311,13 @@ const artifactStateErrorDetails = (
       operation: error.operation,
       reason: error.reason,
       ...(error.path === undefined ? {} : { path: error.path }),
+      ...(error.published === undefined
+        ? {}
+        : {
+            published: true,
+            bytes: error.published.bytes,
+            published_path: error.published.path,
+          }),
     };
   return undefined;
 };

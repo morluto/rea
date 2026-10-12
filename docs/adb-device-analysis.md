@@ -109,12 +109,12 @@ existing analysis families directly, for example
 - **Device paths are not host paths.** `base_apk_device_path` values live on
   the device filesystem. Only pulls and captures produce host-local paths,
   each paired with byte size and SHA-256 digest. A pulled file's host name is
-  the device path's last segment, accepted only when every host can store it:
-  a `pull_adb_file` whose device path ends in a separator, `.`/`..`, a
-  control or reserved character, a Windows reserved device name, a trailing
-  dot or space, or a `:` alternate-data-stream marker is refused as
-  `invalid_request` before any `adb pull` runs, and REA never renames a
-  device-reported file.
+  the device path's final POSIX segment. REA preserves the original device
+  path and filename; a missing final segment or `.`/`..` is refused before
+  output creation. Windows hosts follow [Windows filename rules](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file),
+  while POSIX hosts retain valid POSIX filenames such as names with spaces or
+  colons. A package pull checks reported names against the destination
+  filesystem before pulling, and refuses names that would share a local path.
 - **Splits are part of the answer.** `pm path` enumerates the base APK and
   every installed split; pulls cover the whole set. System packages whose
   APKs keep other names report the `unknown` role rather than guessing.

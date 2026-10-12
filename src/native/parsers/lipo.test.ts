@@ -62,4 +62,31 @@ architecture arm64e
       },
     ]);
   });
+
+  it.each([
+    ["CPU_SUBTYPE_LIB64", 0x80000003],
+    ["0x80", 0x80000003],
+    ["0x0", 3],
+  ])("applies printed x86_64 capabilities %s", (capabilities, code) => {
+    expect(
+      parseLipoArchitectures(
+        `architecture x86_64\n cpusubtype CPU_SUBTYPE_X86_64_ALL\n capabilities ${capabilities}\n`,
+      )[0]?.cpu_subtype_code,
+    ).toBe(code);
+  });
+
+  it("leaves the subtype code unknown when lipo prints no capabilities", () => {
+    // macOS 26 lipo prints this blank line for LIB64 and plain x86_64 slices.
+    expect(
+      parseLipoArchitectures(
+        "architecture x86_64\n cputype CPU_TYPE_X86_64\n cpusubtype CPU_SUBTYPE_X86_ALL\n capabilities \n offset 16384\n",
+      ),
+    ).toMatchObject([
+      {
+        cpu_subtype: "CPU_SUBTYPE_X86_ALL",
+        cpu_subtype_code: null,
+        capabilities: null,
+      },
+    ]);
+  });
 });

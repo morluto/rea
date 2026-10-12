@@ -751,7 +751,7 @@ describe("web source-map sourcesContent validation", () => {
             JSON.stringify({
               version: 3,
               sources: ["source.ts"],
-              sourcesContent: [null],
+              sourcesContent: null,
               names: [],
               mappings: "",
             }),
@@ -763,9 +763,60 @@ describe("web source-map sourcesContent validation", () => {
     expect(result.items[0]).toMatchObject({
       status: "included",
       original_sources: [
-        { source: `${origin}/assets/source.ts`, artifact: null },
+        {
+          source_index: 0,
+          declaration_index: 0,
+          source: `${origin}/assets/source.ts`,
+          artifact: null,
+        },
       ],
     });
+  });
+
+  it("keeps unnamed source slots and mapping indices", async () => {
+    const result = await fetchWebSourceMaps([request], input(), undefined, {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              version: 3,
+              sources: [null, "source.ts"],
+              sourcesContent: ["unknown source text", "named source text"],
+              names: [],
+              mappings: "ACAA",
+            }),
+            { status: 200 },
+          ),
+        ),
+    });
+
+    expect(result.items[0]).toMatchObject({
+      status: "partial",
+      original_sources: [
+        {
+          source_index: 0,
+          declaration_index: 0,
+          source: null,
+          artifact: { text: "unknown source text" },
+        },
+        {
+          source_index: 1,
+          declaration_index: 1,
+          source: `${origin}/assets/source.ts`,
+          artifact: { text: "named source text" },
+        },
+      ],
+      mappings: [
+        {
+          source_index: 1,
+          declaration_index: 1,
+          source: `${origin}/assets/source.ts`,
+        },
+      ],
+    });
+    expect(result.items[0]?.limitation).toContain(
+      "unnamed source at declaration 0",
+    );
   });
 });
 

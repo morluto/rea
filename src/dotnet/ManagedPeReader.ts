@@ -1,4 +1,5 @@
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
+import { decodePeMachine } from "../domain/peMachine.js";
 import {
   managedFailure,
   ManagedReaderFailure,
@@ -100,25 +101,18 @@ const add = (left: number, right: number, scope: string): number => {
   return result;
 };
 
-const architectureFor = (machine: number): ManagedPeLayout["architecture"] => {
-  switch (machine) {
-    case 0x014c:
-      return "x86";
-    case 0x8664:
-      return "x86_64";
-    case 0x01c0:
-    case 0x01c2:
-    case 0x01c4:
-      return "arm";
-    case 0xaa64:
-      return "arm64";
-    default:
-      throw managedFailure(
-        "invalid-directory",
-        "pe.machine",
-        `Unsupported PE machine 0x${machine.toString(16).padStart(4, "0")}`,
-      );
-  }
+const architectureFor = (
+  machine: number,
+  managed: boolean,
+): ManagedPeLayout["architecture"] => {
+  const decoded = decodePeMachine(machine);
+  if (decoded === undefined || (decoded.nativeOsOverride && !managed))
+    throw managedFailure(
+      "invalid-directory",
+      "pe.machine",
+      `Unsupported PE machine 0x${machine.toString(16).padStart(4, "0")}`,
+    );
+  return decoded.architecture;
 };
 
 /** Resolve one section identity for both exact reads and available-byte queries. */
@@ -398,7 +392,7 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     }
   return {
     machine: coff.machine,
-    architecture: architectureFor(coff.machine),
+    architecture: architectureFor(coff.machine, cliDirectoryPresent),
     optionalHeader: optional.optionalHeader,
     sectionCount: coff.sectionCount,
     characteristics: coff.characteristics,

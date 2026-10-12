@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
@@ -76,11 +77,14 @@ describe("analysis snapshots: persistence", () => {
     const directory = await createTestTempDirectory("rea-snapshot-");
     const path = join(directory, "analysis.json");
     const snapshot = snapshotFixture();
-    const written = await writeAnalysisSnapshot(snapshot, path, false);
-    expect(written.ok).toBe(true);
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(snapshot, path, false, resources),
+    );
+    if (!written.ok) throw written.error;
     expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
-    expect((await readAnalysisSnapshot(path)).ok).toBe(true);
+    const roundTrip = await readAnalysisSnapshot(path);
+    if (!roundTrip.ok) throw roundTrip.error;
 
     const altered: unknown = JSON.parse(await readFile(path, "utf8"));
     if (
@@ -102,8 +106,9 @@ describe("analysis snapshots: persistence", () => {
     Reflect.set(first.parameters, "address", "0x2000");
     await writeFile(path, JSON.stringify(altered));
     const loaded = await readAnalysisSnapshot(path);
-    expect(loaded.ok).toBe(false);
-    if (!loaded.ok) expect(loaded.error._tag).toBe("EvidenceIntegrityError");
+    if (loaded.ok)
+      throw new Error("Expected changed snapshot identity rejection");
+    expect(loaded.error._tag).toBe("EvidenceIntegrityError");
     expect(() => parseAnalysisSnapshot(altered)).toThrow(/identifier/u);
   });
 });

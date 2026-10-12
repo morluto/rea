@@ -37,17 +37,20 @@ describe("enhanced MCP tools", () => {
     expect(graph).toMatchObject({
       ok: true,
       value: {
-        "0": [
-          {
-            address: "0x1",
-            status: "error",
-            error: {
-              category: "execution_failure",
-              message:
-                "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+        graph: {
+          "0": [
+            {
+              address: "0x1",
+              status: "error",
+              error: {
+                category: "execution_failure",
+                message:
+                  "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
+              },
             },
-          },
-        ],
+          ],
+        },
+        limitations: [],
       },
     });
     expect(unresolved).toEqual({

@@ -217,7 +217,9 @@ const pathTo = (
 const isTerminal = (node: ApplicationNode): boolean =>
   ["endpoint", "storage", "native-addon", "native-export", "unknown"].includes(
     node.kind,
-  );
+  ) ||
+  (node.kind === "javascript-expression" &&
+    node.observations.some((o) => o.properties.step_kind === "terminal"));
 
 const factSummary = (
   nodes: readonly ApplicationNode[],

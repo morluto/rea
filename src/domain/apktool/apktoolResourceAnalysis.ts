@@ -2,8 +2,6 @@ import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { digestSchema } from "../digests.js";
 
-/** Upper bound for one decoded resource projection in one response. */
-const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_STRINGS = 2_000;
 
 /**

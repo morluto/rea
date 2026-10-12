@@ -6,6 +6,34 @@ import { z } from "zod";
 import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import { toolContract } from "./toolContracts.js";
 import { toolInputSchemaWithMetadata } from "./toolSchemaMetadata.js";
+import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "./javascript/javascriptRuntimeReconciliationExample.js";
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "preserves the complete inline Evidence contract before deferred authentication in %s",
+  (target) => {
+    const schema = toolInputSchemaWithMetadata(
+      toolContract("inspect_analysis_view"),
+    )["~standard"].jsonSchema.input({ target });
+    const ajv =
+      target === "draft-2020-12"
+        ? new Ajv2020({ strict: false, validateFormats: false })
+        : new Ajv({ strict: false, validateFormats: false });
+    expect(ajv.validateSchema(schema)).toBe(true);
+    const validate = ajv.compile(schema);
+    const input = {
+      source: {
+        kind: "inline",
+        evidence: JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE,
+      },
+      view: { kind: "summary" },
+    };
+    expect(validate(input), JSON.stringify(validate.errors)).toBe(true);
+    expect(
+      validate({ ...input, source: { kind: "inline", evidence: {} } }),
+    ).toBe(false);
+    expect(validate({ ...input, source: { kind: "inline" } })).toBe(false);
+  },
+);
 
 describe("advertised input references", () => {
   it.each(["draft-2020-12", "draft-07"] as const)(

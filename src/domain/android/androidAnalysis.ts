@@ -121,6 +121,12 @@ export const androidResultSchemas = {
     query: z.string(),
     total_classes: z.number().int().nonnegative(),
     matches: z.array(z.string()),
+    duplicate_names: z.array(
+      z.strictObject({
+        name: z.string(),
+        occurrences: z.number().int().min(2),
+      }),
+    ),
     coverage: z.literal("complete"),
   }),
   inspect_android_class: z.strictObject({

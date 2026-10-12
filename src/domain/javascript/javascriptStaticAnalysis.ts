@@ -1,4 +1,5 @@
 import * as t from "@babel/types";
+import { collectElectronWrappedCallPaths } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
   ELECTRON_MODULE,
@@ -27,6 +28,7 @@ import {
 } from "./javascriptStaticAnalysisCalls.js";
 import {
   inspectBundlerRegistration,
+  inspectBundlerBootstrap,
   inspectEsbuildWrapper,
 } from "./javascriptStaticAnalysisBundler.js";
 import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
@@ -36,8 +38,10 @@ import {
   type JavaScriptFindingContext,
 } from "./javascriptStaticAnalysisState.js";
 import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
+import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.js";
 import {
-  classifyParsedJavaScriptElectronBindingsSteps,
+  indexJavaScriptElectronIdentitySteps,
+  indexJavaScriptBindingsSteps,
   classifyParsedJavaScriptRpcClientRootsSteps,
   classifyParsedJavaScriptOpenReceivers,
   type JavaScriptOpenReceiverFact,
@@ -80,16 +84,30 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
   openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>,
 ): Generator<void, JavaScriptStaticAnalysis> {
   const accumulator = createJavaScriptAnalysisAccumulator(source.length);
-  const electronBindings =
-    yield* classifyParsedJavaScriptElectronBindingsSteps(file);
+  const bindings = yield* indexJavaScriptBindingsSteps(file.program);
+  const electronIdentity = yield* indexJavaScriptElectronIdentitySteps(
+    file.program,
+    bindings,
+  );
   const clientRoots = yield* classifyParsedJavaScriptRpcClientRootsSteps(file);
-  yield* traverseStaticSourceSteps(file, {
+  yield* traverseStaticSourceSteps(
+    file,
+    {
+      source,
+      accumulator,
+      ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
+      electronBindings: electronIdentity.bindings,
+      rpcScan: createJavaScriptRpcScan(source, clientRoots),
+    },
+    bindings,
+  );
+  accumulator.electronCallPaths = collectElectronWrappedCallPaths(
+    file.program,
+    bindings,
     source,
     accumulator,
-    ...(openReceiverFacts === undefined ? {} : { openReceiverFacts }),
-    electronBindings,
-    rpcScan: createJavaScriptRpcScan(source, clientRoots),
-  });
+    electronIdentity,
+  );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator);
 }
@@ -97,11 +115,12 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
 function* traverseStaticSourceSteps(
   file: ParsedJavaScriptSource,
   findings: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): Generator<void, void> {
   yield* traverseJavaScriptAstSteps(file, {
     enter: (node) => {
       findings.accumulator.visitedNodes += 1;
-      inspectNode(node, findings);
+      inspectNode(node, findings, bindings);
       return undefined;
     },
   });
@@ -114,6 +133,16 @@ const finalizeStaticAnalysis = (
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const limitations = [
+    ...(accumulator.electronCallPaths?.length
+      ? [
+          "Bundled Electron call paths use static argument and closure substitutions. Conditions, ambient helper overrides, runtime reachability and arbitrary side effects remain unproven.",
+        ]
+      : []),
+    ...(accumulator.electronCallPathLimitReached
+      ? [
+          "Electron wrapper expansion reached its resource budget (1000000 visits/substitutions or depth 128); additional paths remain unknown.",
+        ]
+      : []),
     ...(parserErrors === 0
       ? []
       : [
@@ -162,6 +191,9 @@ const finalizeStaticAnalysis = (
     source_map_urls: accumulator.sourceMaps,
     vendors: detectVendors(source),
     electron: {
+      ...(accumulator.electronCallPaths?.length
+        ? { call_paths: accumulator.electronCallPaths }
+        : {}),
       browser_windows: finalizeLocatedFindings(
         accumulator.browserWindows,
         accumulator.moduleRangeIndex,
@@ -194,10 +226,12 @@ const finalizeStaticAnalysis = (
 const inspectNode = (
   node: t.Node,
   findings: JavaScriptFindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const { source, accumulator } = findings;
   inspectElectronStaticNode(node, findings);
   if (t.isCallExpression(node)) {
+    inspectBundlerBootstrap(source, node, accumulator, bindings);
     inspectBundlerRegistration(source, node, accumulator);
     inspectEsbuildWrapper(source, node, accumulator);
     inspectCall(source, node, findings);

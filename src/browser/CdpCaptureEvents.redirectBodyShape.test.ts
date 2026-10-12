@@ -18,6 +18,7 @@ it("preserves an already captured response shape without marking it unavailable"
     method: "Network.requestWillBeSent",
     params: {
       requestId: "request-1",
+      initiator: { type: "other" },
       request: {
         url: `${origin}/prior`,
         method: "POST",
@@ -43,6 +44,7 @@ it("preserves an already captured response shape without marking it unavailable"
     base64Encoded: false,
   });
   const capturedShape = events.network.get("request-1")?.body_shapes.response;
+  expect(capturedShape).toBeDefined();
   expect(capturedShape).not.toBeNull();
 
   events.ingest({
@@ -50,6 +52,7 @@ it("preserves an already captured response shape without marking it unavailable"
     params: {
       requestId: "request-1",
       request: { url: `${origin}/continuation`, method: "GET" },
+      initiator: { type: "other" },
       redirectResponse: null,
       timestamp: 2,
     },

@@ -17,7 +17,10 @@ import {
   parseExecutableHeader,
   type ExecutableMetadata,
 } from "../domain/binaryTarget.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryArchitecture,
+} from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   ghidraApplicationProperties,
@@ -28,7 +31,6 @@ import {
   ghidraReleaseCompatibility,
   ghidraReleaseLine,
   ghidraVersionDetail,
-  SUPPORTED_GHIDRA_JAVA_MAJOR,
   SUPPORTED_GHIDRA_VERSION,
   type GhidraApplicationProperties,
   type GhidraJavaRequirement,
@@ -132,7 +134,10 @@ const assessNativeDecompiler = (
     };
   const observed = `${parsed.value.format} ${parsed.value.architecture}`;
   const expected = `${expectedFormat} ${expectedArchitecture}`;
-  if (observed === expected)
+  const formatMatches = isMachOFormat(expectedFormat)
+    ? isMachOFormat(parsed.value.format)
+    : parsed.value.format === expectedFormat;
+  if (formatMatches && parsed.value.architecture === expectedArchitecture)
     return {
       status: "compatible",
       detail: `${path} reports ${observed}, which matches ${platform}/${architecture}`,

@@ -1,3 +1,4 @@
+import { DOMParser, normalizeLineEndings } from "@xmldom/xmldom";
 import { parse } from "plist";
 
 /** The dictionary key REA results cannot carry: validation strips it. */
@@ -46,10 +47,6 @@ export const omitPrototypeKeys = (
   value: unknown,
 ): PropertyListWithoutPrototypeKeys => withoutKey(value, PROTOTYPE_KEY);
 
-// Comments and CDATA text are consumed whole so only element keys match.
-const KEY_TOKEN =
-  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<key>([^<]*)<\/key>|<key><!\[CDATA\[([\s\S]*?)\]\]><\/key>/gu;
-
 const XML_ENTITIES: Readonly<Record<string, string>> = {
   amp: "&",
   apos: "'",
@@ -87,18 +84,54 @@ export const decodeXmlText = (text: string): string =>
 export const parseXmlPropertyList = (
   text: string,
 ): PropertyListWithoutPrototypeKeys => {
-  // The decoded text holds every key the decoder can produce, including
-  // entity-encoded spellings of the placeholder, so no source key aliases it.
-  // Decoding comment or CDATA text too can only lengthen the placeholder.
-  const decoded = decodeXmlText(text);
-  let placeholder = "__rea_prototype_key__";
-  while (decoded.includes(placeholder)) placeholder = `_${placeholder}`;
-  const substituted = text.replace(
-    KEY_TOKEN,
-    (token, plain?: string, cdata?: string) =>
-      (plain === undefined ? cdata : decodeXmlText(plain)) === PROTOTYPE_KEY
-        ? `<key>${placeholder}</key>`
-        : token,
+  // Preserve the pinned decoder's existing OpenStep autodetection, also used
+  // by app Info.plist resolution. Only XML needs the key-element substitution.
+  const first = text.trimStart()[0];
+  if (first === "{" || first === "(") return omitPrototypeKeys(parse(text));
+  const { substituted, placeholder } = substitutePrototypeKeys(
+    normalizeLineEndings(text),
   );
   return withoutKey(parse(substituted), placeholder);
+};
+
+/** Locate keys with the same XML parser and first-child semantics as plist. */
+const substitutePrototypeKeys = (text: string) => {
+  // Normalize only the literal line endings the pinned decoder normalizes.
+  // Preserve character references in the source: serializing a DOM would turn
+  // e.g. an encoded carriage return into a literal newline on the second parse.
+  const document = new DOMParser().parseFromString(text, "text/xml");
+  const keys = Array.from(document.getElementsByTagName("key"));
+  const decodedKeys = new Set(keys.map((key) => key.firstChild?.nodeValue));
+  let placeholder = "__rea_prototype_key__";
+  while (decodedKeys.has(placeholder)) placeholder = `_${placeholder}`;
+
+  const omitted = keys
+    .map((key) => key.firstChild)
+    .filter((node) => node?.nodeValue === PROTOTYPE_KEY);
+  if (omitted.length === 0) return { substituted: text, placeholder };
+
+  // xmldom uses one-based locators in document order. Scan forward only to
+  // needed lines instead of retaining an offset for every source newline.
+  let line = 1;
+  let lineStart = 0;
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const node of omitted) {
+    const nodeLine = node?.lineNumber;
+    const column = node?.columnNumber;
+    if (nodeLine === undefined || column === undefined)
+      throw new TypeError("XML plist key has no source location");
+    while (line < nodeLine) {
+      const newline = text.indexOf("\n", lineStart);
+      if (newline === -1)
+        throw new TypeError("XML plist key has an invalid source location");
+      lineStart = newline + 1;
+      line += 1;
+    }
+    const offset = lineStart + column - 1;
+    parts.push(text.slice(cursor, offset), `<![CDATA[${placeholder}]]>`);
+    cursor = offset;
+  }
+  parts.push(text.slice(cursor));
+  return { substituted: parts.join(""), placeholder };
 };

@@ -2,6 +2,7 @@ import type {
   CapabilityDescriptor,
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import {
   hasWindowsNativeAuthority,
   windowsNativeAuthorityUnavailableReason,
@@ -42,6 +43,20 @@ const stringInventoryLimitation =
 
 const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
+
+const resolvedCallReferenceLimitation =
+  "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.";
+
+/** Relationship-only caveats belong to each observed caller/callee result. */
+export const relationshipCoverageFor = (
+  operation: string,
+): RelationshipCoverage | undefined =>
+  operation === "procedure_callers" || operation === "procedure_callees"
+    ? {
+        status: "complete",
+        diagnostics: [resolvedCallReferenceLimitation],
+      }
+    : undefined;
 
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (operation: string): readonly string[] => {
@@ -135,10 +150,7 @@ export const limitationsFor = (operation: string): readonly string[] => {
       ];
     case "procedure_callers":
     case "procedure_callees":
-      return [
-        ...common,
-        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-      ];
+      return common;
     case "xrefs":
       return [
         ...common,

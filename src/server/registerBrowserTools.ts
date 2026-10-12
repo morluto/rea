@@ -24,8 +24,6 @@ import { toolContract } from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
-import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
-import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import type { Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
@@ -86,11 +84,7 @@ export const registerBrowserTools = (
         inspectContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          inspectWebPage(
-            options.browser,
-            inspectWebPageInputSchema.parse(parsed),
-            { signal, progress },
-          ),
+          inspectWebPage(options.browser, parsed, { signal, progress }),
       ),
   );
   server.registerTool(
@@ -102,14 +96,10 @@ export const registerBrowserTools = (
         analyzeContract,
         { input, context },
         (parsed, { signal, progress }) =>
-          analyzeWebBundle(
-            options.browser,
-            analyzeWebBundleInputSchema.parse(parsed),
-            {
-              signal,
-              progress,
-            },
-          ),
+          analyzeWebBundle(options.browser, parsed, {
+            signal,
+            progress,
+          }),
       ),
   );
   server.registerTool(

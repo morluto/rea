@@ -1,6 +1,7 @@
 import type { JavaScriptSourceAnalysisPort } from "../domain/javascript/javascriptSourceAnalysis.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
+import type { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
 import type { ArtifactReader } from "./ArtifactReader.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -32,6 +33,11 @@ export type ArtifactResourceOwner =
       readonly kind: "output-tree";
       readonly resource: string;
       readonly tree: SafeOutputTree;
+    }
+  | {
+      readonly kind: "staged-output";
+      readonly resource: string;
+      readonly output: OwnedStagedOutput;
     };
 
 export type ArtifactCleanupAttempt =
@@ -60,7 +66,7 @@ export class ArtifactResourceScope {
           "Artifact resource scope is closed",
         );
       if (this.#pending.size > 0) {
-        await this.#retryCleanup();
+        await this.retryCleanup();
         continue;
       }
       const running = Promise.resolve().then(operation);
@@ -86,7 +92,7 @@ export class ArtifactResourceScope {
   }
 
   /** Retry retained owners without closing resource admission. */
-  #retryCleanup(): Promise<void> {
+  retryCleanup(): Promise<void> {
     if (this.#draining !== undefined) return this.#draining;
     this.#draining = this.#drainAndRetry().finally(() => {
       this.#draining = undefined;
@@ -97,7 +103,7 @@ export class ArtifactResourceScope {
   /** Stop admission, wait for active operations, and retry every retained owner. */
   close(): Promise<void> {
     this.#closed = true;
-    return this.#retryCleanup();
+    return this.retryCleanup();
   }
 
   async #drainAndRetry(): Promise<void> {
@@ -152,5 +158,8 @@ const cleanup = async (owner: ArtifactResourceOwner): Promise<void> => {
       return;
     case "output-tree":
       await owner.tree.rollback();
+      return;
+    case "staged-output":
+      await owner.output.close();
   }
 };

@@ -213,6 +213,11 @@ export interface ManagedMemberComparisonSide {
   readonly result: ManagedMemberInspection;
 }
 
+const selectedTypes = (
+  result: ManagedMemberInspection,
+): ReadonlySet<string> | null =>
+  result.selection === null ? null : new Set(result.selection.type_names);
+
 /** Compare managed members with constrained exact and structural identities. */
 export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
@@ -224,6 +229,8 @@ export const compareManagedMembers = (
     rightEvidenceId: right.evidenceId,
     leftComplete: left.result.metadata.status === "complete",
     rightComplete: right.result.metadata.status === "complete",
+    leftSelection: selectedTypes(left.result),
+    rightSelection: selectedTypes(right.result),
   };
   const methodItems = buildMethodItems(methodMatches, itemContext);
   const fieldItems = buildFieldItems(fieldMatches, itemContext);

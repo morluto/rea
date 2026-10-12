@@ -10,7 +10,11 @@ import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { webPageInspectionSchema } from "../../../src/domain/browserObservationSchemas.js";
 import { createWebScreenshotArtifact } from "../../../src/domain/webScreenshot.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { runCliJson } from "../../fixtures/cliJsonProcess.js";
@@ -59,16 +63,18 @@ it(
       name: "binary_session",
       arguments: {},
     });
-    expect(status.structuredContent).toMatchObject({
-      result: {
-        tool_availability: expect.arrayContaining([
-          expect.objectContaining({
-            name: "inspect_web_page",
-            reason: expect.any(String),
-          }),
-        ]),
-      },
-    });
+    const sessionStatus = toolContract("binary_session").outputSchema.parse(
+      status.structuredContent,
+    );
+    const availability = expandToolAvailability(
+      sessionStatus.result.tool_availability,
+    );
+    expect(availability).toContainEqual(
+      expect.objectContaining({
+        name: "inspect_web_page",
+        reason: expect.any(String),
+      }),
+    );
     const listed = await connected.client.callTool({
       name: "list_browser_targets",
       arguments: {

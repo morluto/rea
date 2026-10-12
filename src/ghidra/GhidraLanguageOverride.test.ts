@@ -158,8 +158,14 @@ describe("Ghidra language catalog", () => {
         { languageId: "x86:LE:32:default", compilerSpecId: "removed" },
         catalog,
         "12.1.4",
-      ),
-    ).not.toBeNull();
+      )?.settings,
+    ).toEqual([
+      {
+        setting: "REA_GHIDRA_COMPILER_SPEC_ID",
+        constraint:
+          "must be one of the selected language's compiler specs: borlandcpp",
+      },
+    ]);
   });
 
   it.each([

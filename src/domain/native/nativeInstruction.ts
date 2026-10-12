@@ -53,7 +53,23 @@ export const nativeInstructionSchema = z.strictObject({
   ]),
   procedure: z.string().nullable(),
   architecture: z.string(),
-  mode: z.string(),
+  mode: z
+    .string()
+    .describe(
+      "Provider-reported mode label. Per-address decoder context, when available, is reported separately; a program-wide label does not establish runtime encoding mode.",
+    ),
+  decoder_context: z
+    .array(
+      z.strictObject({
+        register: z.string().min(1),
+        value: z.string().min(1).nullable(),
+        source: z.string().min(1),
+      }),
+    )
+    .optional()
+    .describe(
+      "Observed per-address decoder context. Null means no value was available; omission means the provider or older capture does not expose this facet. The separate mode field retains the program language variant.",
+    ),
   bytes: z.string().nullable(),
   length: z.number().int().positive().nullable(),
   mnemonic: z.string().nullable(),

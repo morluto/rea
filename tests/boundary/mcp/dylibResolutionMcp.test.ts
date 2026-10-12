@@ -8,11 +8,13 @@ import { z } from "zod";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import {
+  CPU,
   FILE_TYPE,
   LC,
   buildVersionCommand,
   dylibCommand,
   dyldEnvironmentCommand,
+  fatImage,
   machoImage,
   rpathCommand,
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
@@ -109,6 +111,44 @@ it("traces dylib resolution for an opened app bundle and rejects a changed targe
     });
     expect(changed.isError).toBe(true);
     expect(JSON.stringify(parseMcpToolError(changed))).toContain("integrity");
+  });
+});
+
+it("traces architecture slices from a universal Mach-O target", async () => {
+  const root = await createTestTempDirectory("rea-dylib-universal-");
+  const executable = join(root, "Universal");
+  const cpu = process.arch === "arm64" ? CPU.arm64 : CPU.x86_64;
+  const architecture = process.arch === "arm64" ? "arm64" : "x86_64";
+  await writeFile(
+    executable,
+    fatImage([
+      {
+        cpu,
+        bytes: machoImage({
+          cpu,
+          commands: [buildVersionCommand(1)],
+        }),
+      },
+    ]),
+  );
+
+  await withClient(async (client) => {
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: executable },
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const called = await client.callTool({
+      name: "trace_dylib_resolution",
+      arguments: { architecture },
+    });
+    expect(called.isError, JSON.stringify(called.structuredContent)).not.toBe(
+      true,
+    );
+    const trace = dylibResolutionResultSchema.parse(
+      structuredResult(called.structuredContent),
+    );
+    expect(trace.roots).toEqual([{ image: "Universal", architecture }]);
   });
 });
 

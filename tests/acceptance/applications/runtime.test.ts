@@ -7,7 +7,11 @@ import { z } from "zod";
 
 import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { evidenceResultOf } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
+  evidenceResultOf,
+  expandToolAvailability,
+  toolAvailabilityInventory,
+} from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 const mainPath = fileURLToPath(
@@ -24,15 +28,14 @@ const expectAvailableToolInventory = async (client: Client) => {
     arguments: {},
   });
   expect(status.isError).not.toBe(true);
-  const availability = z
+  const inventory = z
     .object({
       result: z.object({
-        tool_availability: z.array(
-          z.object({ name: z.string(), available: z.boolean() }),
-        ),
+        tool_availability: toolAvailabilityInventory,
       }),
     })
     .parse(status.structuredContent).result.tool_availability;
+  const availability = expandToolAvailability(inventory);
   // This asserts the compiled entrypoint matches the source catalog. When it
   // fails, check that `dist/` is current (`npm run build:cached`) before
   // suspecting a registration bug -- a stale build is by far the likeliest

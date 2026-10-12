@@ -97,40 +97,69 @@ export const webNetworkCaptureRecordSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
+/** Decoded records retain unique producer ordinals within their declared coverage. */
+export const webNetworkCapturePayloadSchema = z
+  .strictObject({
+    decoder: z.strictObject({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      version: z.string().min(1),
+    }),
+    container: z.strictObject({
+      reported: jsonValueSchema,
+      numeric_literals: z.array(numberSchema),
+      redactions: z.array(redactionSchema),
+      records_pointer: pointerSchema.nullable(),
+    }),
+    total_records: z.number().int().nonnegative(),
+    records: z.array(webNetworkCaptureRecordSchema),
+  })
+  .superRefine((capture, context) => {
+    if (capture.records.length > capture.total_records) {
+      context.addIssue({
+        code: "custom",
+        path: ["records"],
+        message: "Retained record count exceeds the declared capture total.",
+      });
+      return;
+    }
+    const seen = new Set<number>();
+    for (const [index, record] of capture.records.entries()) {
+      if (record.ordinal >= capture.total_records || seen.has(record.ordinal)) {
+        context.addIssue({
+          code: "custom",
+          path: ["records", index, "ordinal"],
+          message:
+            "Retained ordinals must be unique and within the declared capture total.",
+        });
+        return;
+      }
+      seen.add(record.ordinal);
+    }
+  });
+
 /** Historical capture inspection has file identity, producer provenance and explicit unknowns. */
-export const webNetworkCaptureSchema = z.strictObject({
-  artifact: z.strictObject({
-    path: z
-      .string()
-      .describe(
-        "Selected artifact path; empty when explicitly excluded from Evidence.",
-      ),
-    sha256: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/)
-      .nullable()
-      .describe(
-        "Observed artifact SHA-256; null only when explicitly excluded by a sensitive declaration.",
-      ),
-    bytes: z.number().int().nonnegative(),
-  }),
-  format: z.enum(["har", "mitmproxy"]),
-  decoder: z.strictObject({
-    id: z.string().min(1),
-    name: z.string().min(1),
-    version: z.string().min(1),
-  }),
-  container: z.strictObject({
-    reported: jsonValueSchema,
-    numeric_literals: z.array(numberSchema),
-    redactions: z.array(redactionSchema),
-    records_pointer: pointerSchema.nullable(),
-  }),
-  total_records: z.number().int().nonnegative(),
-  records: z.array(webNetworkCaptureRecordSchema),
-  runtime_attribution: z.literal("unknown"),
-  limitations: z.array(z.string()),
-});
+export const webNetworkCaptureSchema =
+  webNetworkCapturePayloadSchema.safeExtend({
+    artifact: z.strictObject({
+      path: z
+        .string()
+        .describe(
+          "Selected artifact path; empty when explicitly excluded from Evidence.",
+        ),
+      sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .nullable()
+        .describe(
+          "Observed artifact SHA-256; null only when explicitly excluded by a sensitive declaration.",
+        ),
+      bytes: z.number().int().nonnegative(),
+    }),
+    format: z.enum(["har", "mitmproxy"]),
+    runtime_attribution: z.literal("unknown"),
+    limitations: z.array(z.string()),
+  });
 
 export type InspectWebNetworkCaptureInput = z.output<
   typeof inspectWebNetworkCaptureInputSchema

@@ -10,7 +10,7 @@
         "package-lock.json",
         "scripts/check-dependency-install.mjs",
         "scripts/clean-build-output.mjs",
-        "scripts/bundle-mcp-runtime.mjs",
+        "scripts/bundle-runtime.mjs",
         "scripts/generate-package-metadata.mjs",
         "src/**/*.ts",
         "!src/**/*.test.ts",

@@ -7,7 +7,7 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import type { MipsElfMetadata } from "../../../src/domain/binaryTargetTypes.js";
-import { readMipsElfAbiFlags } from "../../../src/application/MipsElfAbiFlags.js";
+import { readMipsElfMetadata } from "../../../src/application/MipsElfMetadata.js";
 import { ok } from "../../../src/domain/result.js";
 import {
   ghidraMipsProfileParameters,
@@ -85,7 +85,7 @@ const inspect = async (
   const path = await writeFixture(bytes);
   const handle = await open(path, "r");
   try {
-    const result = await readMipsElfAbiFlags(
+    const result = await readMipsElfMetadata(
       handle,
       metadata(little),
       checkCancelled,
@@ -131,6 +131,8 @@ for (const little of [true, false]) {
     const fp64 = await inspect(bytes, little);
     assert.ok(fp64.ok);
     const changed = target({ ...metadata(little), abiFlags: fp64.value });
+    assert.equal(fp64.value?.cpr1Size, 2);
+    assert.equal(fp64.value?.fpAbi, 6);
     assert.match(ghidraMipsUnsupportedReason(changed) ?? "", /FP64/u);
     assert.notDeepEqual(ghidraMipsProfileParameters(changed), before);
   });
@@ -272,6 +274,13 @@ const unsupported: [string, (bytes: Buffer) => void, RegExp][] = [
     /MIPS32r2/u,
   ],
   [
+    "soft-float with declared CPR1",
+    (b) => {
+      b[abiOffset + 7] = 3;
+    },
+    /soft-float without CPR1/u,
+  ],
+  [
     "unspecified FP ABI",
     (b) => {
       b[abiOffset + 7] = 0;
@@ -301,19 +310,22 @@ for (const [name, change, reason] of unsupported) {
     );
   });
 }
-it("resolves soft-float ABI metadata and commits its integer-register storage policy", async () => {
-  const bytes = fixture();
-  bytes[abiOffset + 5] = 0;
-  bytes[abiOffset + 7] = 3;
-  const resolved = await resolveFixture(bytes);
-  assert.equal(resolved.mips.abiFlags?.cpr1Size, 0);
-  assert.equal(resolved.mips.abiFlags?.fpAbi, 3);
-  assert.equal(ghidraMipsUnsupportedReason(resolved), null);
-  assert.equal(
-    ghidraMipsProfileParameters(resolved).mips_soft_float_storage,
-    "o32-soft-float-prototype-v1",
-  );
-});
+it.each([true, false])(
+  "resolves soft-float ABI metadata and commits its integer-register storage policy (little endian: %s)",
+  async (little) => {
+    const bytes = fixture(little);
+    bytes[abiOffset + 5] = 0;
+    bytes[abiOffset + 7] = 3;
+    const resolved = await resolveFixture(bytes);
+    assert.equal(resolved.mips.abiFlags?.cpr1Size, 0);
+    assert.equal(resolved.mips.abiFlags?.fpAbi, 3);
+    assert.equal(ghidraMipsUnsupportedReason(resolved), null);
+    assert.equal(
+      ghidraMipsProfileParameters(resolved).mips_soft_float_storage,
+      "o32-soft-float-prototype-v1",
+    );
+  },
+);
 it("preserves the caller's cancellation error during table inspection", async () => {
   const cancelled = new Error("caller cancellation sentinel");
   let checks = 0;

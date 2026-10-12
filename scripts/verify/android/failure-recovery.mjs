@@ -1,4 +1,8 @@
-import { requireMcpToolError } from "../../lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpToolError,
+  sortVerifierNames,
+} from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import {
   access,
@@ -273,22 +277,23 @@ const verifyAndroidReadiness = async ({
   try {
     await client.connect(transport);
     const catalog = await client.listTools();
-    const catalogNames = catalog.tools.map(({ name }) => name).sort();
-    const status = await client.callTool({
+    const catalogNames = sortVerifierNames(
+      catalog.tools.map(({ name }) => name),
+    );
+    const statusReply = await client.callTool({
       name: "binary_session",
       arguments: {},
     });
-    assert.notEqual(status.isError, true, JSON.stringify(status));
-    const availability = status.structuredContent?.result?.tool_availability;
-    assert.ok(Array.isArray(availability));
+    const status = requireMcpLifecycleResult(statusReply, "binary_session");
+    const availability = status.tool_availability;
     assert.deepEqual(
-      availability.map(({ name }) => name).sort(),
-      TOOL_CONTRACTS.map(({ name }) => name).sort(),
+      sortVerifierNames(availability.map(({ name }) => name)),
+      sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name)),
       "Readiness must retain one availability record for the complete canonical catalog",
     );
     assert.deepEqual(
       catalogNames,
-      TOOL_CONTRACTS.map(({ name }) => name).sort(),
+      sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name)),
       "Readiness must not truncate the SDK tool catalog",
     );
     const byName = new Map(availability.map((item) => [item.name, item]));

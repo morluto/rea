@@ -55,15 +55,20 @@ describe("raw-binary admission", () => {
       },
     });
   });
-  it("rejects an empty file", () => {
+  it("rejects an empty file as a target refusal while naming the extent", () => {
     expect(validateRawBinaryLength(0).ok).toBe(false);
-    expect(
-      admitRawBinary({
-        architecture: "x86",
-        entryPoint: "0x1000",
-        fileBytes: 0,
-      }).ok,
-    ).toBe(false);
+    const result = admitRawBinary({
+      architecture: "x86",
+      entryPoint: "0x1000",
+      fileBytes: 0,
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        reason: "raw-binary requires at least one file byte",
+        constraint: "file_format_rejected",
+      },
+    });
   });
   it("rejects a 32-bit mapping that exceeds the architecture width", () => {
     const result = admitRawBinary({
@@ -73,7 +78,8 @@ describe("raw-binary admission", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected overflow rejection");
-    expect(result.error).toContain("arm address width");
+    expect(result.error.reason).toContain("arm address width");
+    expect(result.error.constraint).toBe("load_selection_rejected");
   });
   it("allows a 64-bit mapping that would overflow 32-bit ARM", () => {
     expect(
@@ -92,11 +98,27 @@ describe("raw-binary admission", () => {
           admitRawBinary({ architecture, entryPoint, fileBytes: 4 }),
         ).toEqual({
           ok: false,
-          error: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned`,
+          error: {
+            reason: `raw-binary ${architecture} entry_point ${entryPoint} must be 4-byte aligned`,
+            constraint: "load_selection_rejected",
+          },
         });
       }
     },
   );
+  it.each([
+    ["malformed entry", { architecture: "arm", entryPoint: "0xgg" }],
+    ["missing entry", { architecture: "arm", entryPoint: undefined }],
+    [
+      "missing architecture",
+      { architecture: undefined, entryPoint: "0x8000000" },
+    ],
+  ])("classifies a %s as caller input", (_name, selection) => {
+    const result = admitRawBinary({ ...selection, fileBytes: 4 });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected caller-input rejection");
+    expect(result.error.constraint).toBe("load_selection_rejected");
+  });
   it.each(["x86", "x86_64"])(
     "admits byte-aligned %s entries",
     (architecture) => {
@@ -105,7 +127,7 @@ describe("raw-binary admission", () => {
         entryPoint: "0x1001",
         fileBytes: 1,
       });
-      if (!admitted.ok) throw new Error(admitted.error);
+      if (!admitted.ok) throw new Error(admitted.error.reason);
       expect(admitted.value.entryPoint).toBe("0x1001");
     },
   );

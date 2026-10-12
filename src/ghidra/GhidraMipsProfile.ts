@@ -1,9 +1,30 @@
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 
 const MIPS_FP_ABI_SOFT = 3;
 const MIPS_ET_REL = 1;
 const MIPS_ET_EXEC = 2;
+const MIPS_ET_DYN = 3;
+const MIPS16_HEADER_ASE = 0x04000000;
+
+/** A distinct compressed shared-image shape; admission still checks every declaration. */
+const isGhidraMips16SharedTarget = (target: BinaryTarget): boolean =>
+  target.kind === "executable" &&
+  target.architecture === "mips" &&
+  target.mips.type === MIPS_ET_DYN &&
+  (target.mips.flags & 0x0f000000) === MIPS16_HEADER_ASE;
+
+/** Generic MIPS32 permits per-function ISA_MODE; a global 16e processor does not. */
+export const ghidraMipsSharedLanguageOverride = (
+  target: BinaryTarget,
+): GhidraLanguageOverride | undefined =>
+  isGhidraMips16SharedTarget(target) && target.architecture === "mips"
+    ? {
+        languageId: `MIPS:${target.mips.byteOrder === "little" ? "LE" : "BE"}:32:default`,
+        compilerSpecId: "default",
+      }
+    : undefined;
 
 /** Keep family recognition separate from the deliberately bounded Ghidra lane. */
 export const ghidraMipsUnsupportedReason = (
@@ -14,11 +35,16 @@ export const ghidraMipsUnsupportedReason = (
   const metadata = target.mips;
   if (target.format !== "elf" || metadata === undefined)
     return "MIPS analysis requires ELF header metadata; a family name alone does not select an ISA or ABI.";
+  const shared = isGhidraMips16SharedTarget(target);
   if (metadata.elfClass !== 32)
     return "This Ghidra MIPS lane supports ELF32 only; MIPS64 and n64 remain unsupported.";
-  if (metadata.type !== MIPS_ET_EXEC && metadata.type !== MIPS_ET_REL)
+  if (
+    metadata.type !== MIPS_ET_EXEC &&
+    metadata.type !== MIPS_ET_REL &&
+    !shared
+  )
     return "This Ghidra MIPS lane supports ET_EXEC and ET_REL only; shared images and PSP PRX need separate load verification.";
-  if ((metadata.flags & 0x0f000000) !== 0)
+  if ((metadata.flags & 0x0f000000) !== 0 && !shared)
     return "MIPS16, microMIPS and other ASE encodings are outside this standard-instruction MIPS lane.";
   if ((metadata.flags & 0x00ff0000) !== 0)
     return "Machine-specific MIPS variants, including PSP Allegrex, need a separately supported processor profile.";
@@ -33,7 +59,20 @@ export const ghidraMipsUnsupportedReason = (
     return "EF_MIPS_FP64 requires separate verification of 64-bit floating-point register semantics in this Ghidra lane.";
   if ((metadata.flags & 0x00000400) !== 0)
     return "EF_MIPS_NAN2008 requires separate verification of NaN encoding semantics in this Ghidra lane.";
+  if (shared) {
+    if ((metadata.flags & 0x40) !== 0)
+      return "EF_MIPS_ABI_ON32 declares an unverified ABI for the MIPS16 shared-image lane.";
+    const load = metadata.sharedLoad;
+    if (load === undefined || load.status !== "complete")
+      return `MIPS16 shared images require complete dynamic relocation inspection. ${load?.reason ?? "The source declarations have not been inspected."}`;
+    if (load.relocationTypes.some((type) => type !== 0 && type !== 3))
+      return "This MIPS16 shared-image lane verifies R_MIPS_NONE and R_MIPS_REL32 only; other dynamic relocation types require separate verification.";
+    if (load.symbolRelativeCount !== 0)
+      return "Symbol-bearing R_MIPS_REL32 is unsupported: Ghidra normalizes MIPS16 function addresses and can lose the source function-pointer mode tag. Symbol-index-zero REL32 is verified separately.";
+  }
   const abi = metadata.abiFlags;
+  if (shared && abi === null && (metadata.limitations?.length ?? 0) === 0)
+    return null; // Inspected absence leaves FP semantics unknown, never inferred.
   if (abi === undefined || abi === null)
     return [
       "This Ghidra MIPS lane requires an inspected ABI flags record; header flags alone do not establish the floating-point ABI.",
@@ -49,8 +88,8 @@ export const ghidraMipsUnsupportedReason = (
   const softFloat = abi.cpr1Size === 0 && abi.fpAbi === MIPS_FP_ABI_SOFT;
   if (!hardFloat && !softFloat)
     return "This Ghidra MIPS lane admits double-precision or FPXX ABI declarations with 32-bit CPR1, or soft-float without CPR1; single-float, FP64 and unspecified modes need separate verification.";
-  if (abi.isaExtension !== 0 || abi.ases !== 0)
-    return "MIPS ABI flags declare an ISA extension or ASE outside this standard-instruction lane.";
+  if (abi.isaExtension !== 0 || abi.ases !== (shared ? 0x400 : 0))
+    return "MIPS ABI flags declare an ISA extension or ASE outside this profile's verified instruction declarations.";
   // MIPS_AFL_FLAGS1_ODDSPREG (bit 0) is the GCC and LLVM default for MIPS32 o32
   // whatever the FP ABI; soft-float objects from both carry it. With no CPR1 it
   // selects nothing, so it is accepted for soft-float as well as hard-float.
@@ -116,6 +155,22 @@ export const ghidraMipsRelocatableLimitations = (
       ]
     : [];
 
+/** Shared-image results are analysis observations, not dynamic-loader execution. */
+export const ghidraMipsSharedLimitations = (
+  target: BinaryTarget,
+): readonly string[] =>
+  isGhidraMips16SharedTarget(target) && target.architecture === "mips"
+    ? [
+        "MIPS16 shared ELF: the endian-matched generic MIPS32 language uses the provider's per-address ISA_MODE context. The program language variant is not the instruction's encoding mode.",
+        "Shared-image addresses are Ghidra analysis coordinates, not runtime addresses. The source bytes remain unchanged; inspect_native_load_image retains original relocation bytes, loaded memory bytes and provider relocation status. External GOT bindings remain unverified without their defining images.",
+        ...(target.mips.abiFlags === null
+          ? [
+              "No MIPS ABI flags record was found in the completely examined declaration tables. The header declares o32 but does not establish the floating-point ABI; the default compiler specification does not verify floating-point argument or return storage.",
+            ]
+          : []),
+      ]
+    : [];
+
 /** Commit source ELF interpretation without confusing target ISA with host CPU. */
 export const ghidraMipsProfileParameters = (
   target: BinaryTarget,
@@ -152,12 +207,33 @@ export const ghidraMipsProfileParameters = (
               flags1: abi.flags1,
               flags2: abi.flags2,
             },
+      ...(target.mips.sharedLoad === undefined
+        ? {}
+        : {
+            shared_load:
+              target.mips.sharedLoad.status === "complete"
+                ? {
+                    status: "complete",
+                    relocation_count: target.mips.sharedLoad.relocationCount,
+                    relocation_types: [
+                      ...target.mips.sharedLoad.relocationTypes,
+                    ],
+                    symbol_relative_count:
+                      target.mips.sharedLoad.symbolRelativeCount,
+                  }
+                : {
+                    status: "unavailable",
+                    reason: target.mips.sharedLoad.reason,
+                  },
+          }),
     },
     ...(isGhidraMipsSoftFloatTarget(target)
       ? { mips_soft_float_storage: GHIDRA_MIPS_SOFT_FLOAT_STORAGE }
       : {}),
-    mips_support_lane:
-      target.mips.type === MIPS_ET_REL
+    instruction_context_evidence: "per-address-isa-mode-v1",
+    mips_support_lane: isGhidraMips16SharedTarget(target)
+      ? "elf32-dyn-o32-arch32r2-mips16-local-rel32-v1"
+      : target.mips.type === MIPS_ET_REL
         ? "elf32-rel-o32-arch32r2-standard-v1"
         : "elf32-exec-o32-arch32r2-standard-v3",
   };

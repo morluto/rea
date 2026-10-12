@@ -6,6 +6,11 @@
  * their evidence basis.
  */
 
+import {
+  adbHostFileName,
+  type AdbHostFileNameReason,
+} from "./AdbHostFileName.js";
+
 /** One device exactly as `adb devices -l` reports it. */
 export interface AdbDeviceEntry {
   readonly serial: string;
@@ -205,11 +210,6 @@ export interface AdbPackagePathEntry {
   readonly role: "base" | "split" | "unknown";
 }
 
-const fileNameOf = (devicePath: string): string => {
-  const parts = devicePath.split(/\//u);
-  return parts[parts.length - 1] ?? devicePath;
-};
-
 /**
  * Parse `pm path PACKAGE` lines. The base/split role is derived from the file
  * name (`base.apk`, `split_*.apk`), which is the only signal the output
@@ -219,20 +219,35 @@ export const parsePmPathOutput = (
   stdout: string,
 ): {
   paths: readonly AdbPackagePathEntry[];
+  rejectedPaths: readonly {
+    device_path: string;
+    reason: AdbHostFileNameReason;
+  }[];
   unparsedLines: readonly string[];
 } => {
   const paths: AdbPackagePathEntry[] = [];
+  const rejectedPaths: {
+    device_path: string;
+    reason: AdbHostFileNameReason;
+  }[] = [];
   const unparsedLines: string[] = [];
   for (const rawLine of stdout.split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (line === "") continue;
-    const match = /^package:(\S+)$/u.exec(line);
+    if (rawLine === "") continue;
+    const match = /^package:(.*)$/u.exec(rawLine);
     if (match === null) {
-      unparsedLines.push(line);
+      unparsedLines.push(rawLine);
       continue;
     }
     const devicePath = match[1]!;
-    const fileName = fileNameOf(devicePath);
+    const validated = adbHostFileName(devicePath);
+    if (!validated.ok) {
+      rejectedPaths.push({
+        device_path: devicePath,
+        reason: validated.reason,
+      });
+      continue;
+    }
+    const fileName = validated.fileName;
     paths.push({
       device_path: devicePath,
       file_name: fileName,
@@ -244,5 +259,5 @@ export const parsePmPathOutput = (
             : "unknown",
     });
   }
-  return { paths, unparsedLines };
+  return { paths, rejectedPaths, unparsedLines };
 };

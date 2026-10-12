@@ -193,6 +193,7 @@ describe("configuration failure diagnostics", () => {
       if (result.ok) throw new Error("Expected invalid startup deadline");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "configuration_invalid",
+        category: "invalid_input",
         details: {
           settings: [
             {
@@ -223,6 +224,7 @@ describe("configuration failure diagnostics", () => {
       if (result.ok) throw new Error("Expected invalid startup deadline");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "configuration_invalid",
+        category: "invalid_input",
         details: {
           settings: [
             {
@@ -248,6 +250,7 @@ describe("configuration failure diagnostics", () => {
       const constraint = `${setting} must be absolute`;
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "configuration_invalid",
+        category: "invalid_input",
         message: `REA configuration is invalid: ${constraint}.`,
         remediation: { action: expect.stringContaining(`Correct ${setting} `) },
         details: { settings: [{ setting, constraint }] },

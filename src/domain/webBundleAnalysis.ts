@@ -32,7 +32,9 @@ const findingSchema = z.object({
 });
 
 const originalSourceSchema = z.object({
-  source: z.string(),
+  source_index: z.number().int().min(0).optional(),
+  declaration_index: z.number().int().min(0).optional(),
+  source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
@@ -42,9 +44,11 @@ const originalModuleEdgeSchema = z.object({
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
+  source_index: z.number().int().min(0).optional(),
+  declaration_index: z.number().int().min(0).optional(),
   generated_line: z.number().int().min(1),
   generated_column: z.number().int().min(0),
-  source: z.string(),
+  source: z.string().nullable(),
   original_line: z.number().int().min(1),
   original_column: z.number().int().min(0),
   name: z.string().nullable(),

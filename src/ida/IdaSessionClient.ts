@@ -211,6 +211,9 @@ export class IdaSessionClient implements AnalysisClient {
             observations: jsonValueSchema.parse(runner.raw),
           },
           limitations: [...IDA_LIMITATIONS, ...runner.limitations],
+          ...(runner.relationshipCoverage === undefined
+            ? {}
+            : { relationshipCoverage: runner.relationshipCoverage }),
           locations: [
             { kind: "artifact-path", path: this.target.path },
             ...runner.locations,

@@ -2,6 +2,10 @@ import { execFile } from "node:child_process";
 import { lstat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import {
+  requireMcpLifecycleResult,
+  sortVerifierNames,
+} from "./mcp-verifier-results.mjs";
 
 /** Promisified child_process execution helper. */
 export const exec = promisify(execFile);
@@ -46,11 +50,10 @@ export const verifyCompleteToolCatalog = async (client, options) => {
     { name: "binary_session", arguments: {} },
     options,
   );
-  const availability = status.structuredContent?.result?.tool_availability;
-  if (!Array.isArray(availability))
-    throw new Error("packaged MCP omitted tool availability");
-  const expected = availability.map(({ name }) => name).sort();
-  const observed = listed.tools.map(({ name }) => name).sort();
+  const expanded = requireMcpLifecycleResult(status, "binary_session");
+  const availability = expanded.tool_availability;
+  const expected = sortVerifierNames(availability.map(({ name }) => name));
+  const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
   if (JSON.stringify(observed) !== JSON.stringify(expected))
     throw new Error(
       "packaged MCP tool inventory diverged from session metadata",

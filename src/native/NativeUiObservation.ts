@@ -1,6 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import {
   nativeUiObservationInputSchema,
   nativeUiScenarioInputSchema,
@@ -78,7 +81,7 @@ const observeWithHelper = async (
   ).safeParse(parameters);
   if (!parsed.success)
     return err(new AnalysisInputError(operation, { cause: parsed.error }));
-  if (target.kind !== "executable" || target.format !== "mach-o")
+  if (target.kind !== "executable" || !isMachOFormat(target.format))
     return err(
       new AnalysisCapabilityUnavailableError(
         "native-macos",

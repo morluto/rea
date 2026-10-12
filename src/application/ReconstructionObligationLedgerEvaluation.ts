@@ -9,6 +9,17 @@ import {
   type ReconstructionObligationLedger,
   type ReconstructionObligationManifest,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import {
+  reconstructionObligationCoverage,
+  reconstructionObligationDependencyGraph,
+  reconstructionObligationLedgerClosureDigest,
+  reconstructionObligationLedgerStatus,
+  hasReconstructionObligationDiagnostic as hasDiagnostic,
+  reconstructionObligationOwnershipGraph,
+  reconstructionObligationReports,
+  summarizeReconstructionObligations,
+} from "../domain/reconstructionObligationLedgerIntegrity.js";
 import type { ReconstructionObligationCandidate } from "./ReconstructionObligationCandidates.js";
 import {
   evidenceAuthoritySupportsProof,
@@ -20,22 +31,13 @@ import {
   contradictionDiagnostics,
   groupManifestBindings,
   groupManifestContradictions,
-  hasObligationDiagnostic as hasDiagnostic,
   uniqueObligationDiagnostics as uniqueDiagnostics,
 } from "./ReconstructionObligationLedgerDiagnostics.js";
 import {
   originalCaseDiagnostics,
   originalCasesFor,
 } from "./ReconstructionObligationOriginalCases.js";
-import {
-  digestObligationLedgerValue,
-  obligationLedgerCoverage,
-  obligationEdgeOrder,
-  obligationLedgerEvidenceLinks,
-  obligationLedgerStatus,
-  obligationReports,
-  summarizeObligations,
-} from "./ReconstructionObligationLedgerProjection.js";
+import { obligationLedgerEvidenceLinks } from "./ReconstructionObligationLedgerProjection.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
@@ -70,64 +72,41 @@ export const evaluateReconstructionObligationLedger = ({
     candidates.map((candidate) => evaluateObligation(candidate, context)),
     context,
   );
-  const ownershipGraph = obligations
-    .flatMap((obligation) =>
-      obligation.binding === null
-        ? []
-        : [
-            {
-              obligation_id: obligation.obligation_id,
-              module_path: obligation.binding.owner.module_path,
-              symbol: obligation.binding.owner.symbol,
-            },
-          ],
-    )
-    .sort(obligationEdgeOrder);
-  const dependencyGraph = obligations
-    .flatMap((obligation) =>
-      obligation.dependency_obligation_ids.map((dependencyId) => ({
-        obligation_id: obligation.obligation_id,
-        depends_on_obligation_id: dependencyId,
-      })),
-    )
-    .sort(obligationEdgeOrder);
+  const ownershipGraph = reconstructionObligationOwnershipGraph(obligations);
+  const dependencyGraph = reconstructionObligationDependencyGraph(obligations);
   const evidenceLinks = obligationLedgerEvidenceLinks(obligations, manifest);
   const limitations = ledgerLimitations(
     generationLimitations,
     allCandidates.length,
     orphanManifestIds,
   );
-  const coverage = obligationLedgerCoverage(limitations.length > 0);
+  const coverage = reconstructionObligationCoverage(limitations);
   const semantic = {
     coverage,
-    summary: summarizeObligations(obligations),
-    reports: obligationReports(obligations),
+    summary: summarizeReconstructionObligations(obligations),
+    reports: reconstructionObligationReports(obligations),
     ownership_graph: ownershipGraph,
     dependency_graph: dependencyGraph,
     obligations,
     evidence_links: evidenceLinks,
     limitations,
   };
-  const evaluatedStatus = obligationLedgerStatus(obligations);
-  const status =
-    evaluatedStatus === "failed"
-      ? evaluatedStatus
-      : limitations.length > 0
-        ? "unknown"
-        : evaluatedStatus;
-  const closureDigest = digestObligationLedgerValue({
-    schema: "ReconstructionObligationClosure",
+  const status = reconstructionObligationLedgerStatus(obligations, limitations);
+  const closureDigest = reconstructionObligationLedgerClosureDigest({
     status,
     ...semantic,
   });
   return reconstructionObligationLedgerSchema.parse({
     schema: "ReconstructionObligationLedger",
-    ledger_id: `rol_${digestObligationLedgerValue({
-      schema: "ReconstructionObligationLedger",
-      evidence_ids: bundle.records.map(({ evidence_id: id }) => id),
-      obligation_ids: obligations.map(({ obligation_id: id }) => id),
-      closure_digest: closureDigest,
-    })}`,
+    ledger_id: `rol_${digestCanonicalValue(
+      {
+        schema: "ReconstructionObligationLedger",
+        evidence_ids: bundle.records.map(({ evidence_id: id }) => id),
+        obligation_ids: obligations.map(({ obligation_id: id }) => id),
+        closure_digest: closureDigest,
+      },
+      "Reconstruction obligation ledger",
+    )}`,
     closure_digest: closureDigest,
     status,
     ...semantic,

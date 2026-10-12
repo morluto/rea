@@ -440,6 +440,14 @@ export const managedMemberInspectionSchema = z.object({
   member_refs: z.array(managedMemberReferenceSchema),
   call_edges: z.array(managedCallEdgeSchema),
   field_accesses: z.array(managedFieldAccessSchema),
+  /** Caller-selected declaring types; null when every type was inspected. */
+  selection: z
+    .object({
+      type_names: z.array(z.string().min(1)).min(1),
+      unmatched_type_names: z.array(z.string().min(1)),
+    })
+    .nullable()
+    .default(null),
   coverage: z.object({
     state: z.enum(["complete", "partial", "unavailable"]),
     issues: z.array(managedParseIssueSchema),

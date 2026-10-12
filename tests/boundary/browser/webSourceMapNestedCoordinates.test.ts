@@ -345,7 +345,7 @@ it.each(cases)(
       item.mappings.map((entry) => [
         entry.generated_line,
         entry.generated_column,
-        entry.source.replace(origin + "/", ""),
+        entry.source?.replace(origin + "/", "") ?? null,
       ]),
     ).toEqual(expected);
     expect(item.artifact.sha256).toBe(

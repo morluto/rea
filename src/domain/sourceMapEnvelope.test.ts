@@ -14,11 +14,31 @@ describe("source-map envelope walk", () => {
     const root = {
       version: 3,
       sections: [
-        { offset: { line: 0, column: 0 }, map: leaf },
-        { offset: { line: 10, column: 0 }, map: { ...leaf, sources: [] } },
+        {
+          offset: { line: 0, column: 0 },
+          map: {
+            version: 3,
+            sections: [
+              {
+                offset: { line: 0, column: 0 },
+                map: { ...leaf, sources: ["b.ts"] },
+              },
+              {
+                offset: { line: 1, column: 0 },
+                map: { ...leaf, sources: ["c.ts"] },
+              },
+            ],
+          },
+        },
+        {
+          offset: { line: 10, column: 0 },
+          map: { ...leaf, sources: ["d.ts"] },
+        },
       ],
     };
-    expect(flattenSourceMapLeaves(root)).toHaveLength(2);
+    expect(flattenSourceMapLeaves(root)?.map(({ sources }) => sources)).toEqual(
+      [["b.ts"], ["c.ts"], ["d.ts"]],
+    );
   });
 
   it("rejects sections without embedded maps", () => {

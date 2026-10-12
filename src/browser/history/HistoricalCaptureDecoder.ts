@@ -29,7 +29,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
-  webNetworkCaptureSchema,
+  webNetworkCapturePayloadSchema,
   type InspectWebNetworkCaptureInput,
   type WebNetworkCapture,
 } from "../../domain/webNetworkCapture.js";
@@ -38,14 +38,11 @@ import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 
 const OPERATION = "inspect_web_network_capture";
-const decodedSchema = webNetworkCaptureSchema.omit({
-  artifact: true,
-  format: true,
-  runtime_attribution: true,
-  limitations: true,
-});
 const replySchema = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true), value: decodedSchema }),
+  z.strictObject({
+    ok: z.literal(true),
+    value: webNetworkCapturePayloadSchema,
+  }),
   z.strictObject({
     ok: z.literal(false),
     reason: z.enum([

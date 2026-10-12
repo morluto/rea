@@ -18,7 +18,6 @@ import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
-import { observeJavaScriptRuntimeInputSchema } from "../domain/javascript/javascriptRuntimeObservation.js";
 import type { Logger } from "pino";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
@@ -61,10 +60,8 @@ export const registerJavaScriptRuntimeObservationTools = (
         registration,
         observeContract,
         { input, context },
-        async (parsed, signal) => {
-          const request = observeJavaScriptRuntimeInputSchema.parse(parsed);
-          return observeJavaScriptRuntime(options.runtime, request, { signal });
-        },
+        (parsed, signal) =>
+          observeJavaScriptRuntime(options.runtime, parsed, { signal }),
       ),
   );
 };

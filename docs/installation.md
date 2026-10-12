@@ -89,8 +89,11 @@ running server or its registration.
 
 The npm release checked on **2026-10-11** was **6.4.0**, published from
 [`a56f7bb6`](https://github.com/morluto/rea/commit/a56f7bb668ab23fec8d33f7af353ac7ed2fe1895).
-The actual registry package accepted dry-run setup plans for all 17 client IDs
-listed below, including Qwen Code, Pi and Hermes. OpenCode's plan selected
+The actual registry package accepted dry-run setup plans for the 17 client IDs
+in that release, including Qwen Code, Pi and Hermes. DeepSeek Harness (`dsh`)
+is on main and is not in npm 6.4.0; `rea setup --client dsh` against `@latest`
+reports an unsupported client until a release containing it is published.
+OpenCode's plan selected
 `OPENCODE_CONFIG_DIR` even when that directory did not yet exist. These checks
 used an isolated home on macOS with Node 24; they verify planning and argument
 admission, without writing client configuration or establishing live integration
@@ -162,6 +165,10 @@ listed after the table because its connector is not one of these files:
 | OMP                | `omp`            |
 | Pi                 | `pi`             |
 | Hermes             | `hermes`         |
+| DeepSeek Harness   | `dsh`            |
+
+`dsh` is main-only until a release after 6.4.0. The registry check above does
+not cover it.
 
 For GitHub Copilot CLI 1.0.95, `gpt-4.1` model metadata can block ordinary
 chat with REA's full input-schema profile before sending a model request
@@ -259,11 +266,15 @@ configuration and skill destinations; doctor and uninstall use those same paths.
 
 ### DeepSeek Harness
 
-DeepSeek Harness uses a Cordis YAML patch sequence rather than a `mcpServers`
-object. REA's `setup --client` does not edit this format. For Harness
-`0.2.0-rc.2`, append the following entry to `$DSH_HOME/cordis.patch.yml`
-(`~/.dsh/cordis.patch.yml` when `DSH_HOME` is unset). Preserve existing patches
-and replace the executable paths with absolute paths from your installation:
+DeepSeek Harness registers MCP clients through a Cordis YAML patch sequence
+rather than a `mcpServers` object. `rea setup --client dsh` appends (or
+replaces) the REA entry in the home patch `$DSH_HOME/cordis.patch.yml`
+(`~/.dsh/cordis.patch.yml` when `DSH_HOME` is unset), preserving unrelated
+patches and comments. `rea doctor --client dsh` checks that same entry id.
+`rea uninstall` removes it by scanning supported clients; uninstall takes no
+`--client` flag. The home patch applies to every Harness profile, so the
+registration is written once and no per-profile edit is needed. The written
+entry is:
 
 ```yaml
 - insert:
@@ -274,17 +285,20 @@ and replace the executable paths with absolute paths from your installation:
         transport: stdio
         command: /absolute/path/to/node
         args: ["/absolute/path/to/rea/scripts/rea.mjs", mcp]
-        cwd: !!js process.cwd()
 ```
 
+Setup preserves caller-owned Cordis expressions and replaces launcher fields
+with literal values that doctor can verify. It refuses to edit an expression
+that produces the entire REA config, or a group-targeted REA insertion. Use a
+literal config and a root-level insertion as shown above.
+
 For a global npm installation, the launcher is under
-`$(npm root -g)/rea-agents/scripts/rea.mjs`. Check the Node executable with
-`command -v node`. Register `serverName: rea` only once in each active profile,
-then restart Harness. It exposes tools as `mcp__rea__<tool_name>`.
-Run `rea setup --skill --dry-run`, review the destination, then
-`rea setup --skill --yes` to install the workflow in `~/.agents/skills`.
-Harness discovers that directory, or `$DSH_AGENTS_HOME/skills` when configured;
-its native `skill` tool can load `reverse-engineer-anything`.
+`$(npm root -g)/rea-agents/scripts/rea.mjs`. Restart Harness after setup; it
+exposes tools as `mcp__rea__<tool_name>`. Run `rea setup --skill --dry-run`,
+review the destination, then `rea setup --skill --yes` to install the workflow
+in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
+discovers that directory, and its native `skill` tool can load
+`reverse-engineer-anything`.
 
 REA's optional [native client verification](testing.md#end-to-end-integration-and-golden-evidence)
 checks headless chat, skill loading, all tool input schemas and actual analysis
@@ -779,6 +793,32 @@ is no fixed per-operation or response-size ceiling. Unresolved computed calls
 remain unknown, reference-kind provenance is preserved, and provider-specific
 pseudocode is never treated as original source or Hopper-equivalent text.
 
+### Missing macOS native decompiler
+
+If `rea doctor --json` reports `native_decompiler` as missing on macOS x64,
+the extracted Ghidra archive may include the decompiler source without the
+macOS executable. For Ghidra 12.1.4, you can build it manually with an existing
+Xcode Command Line Tools installation, `make`, and `bison`:
+
+```bash
+cd "$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"
+make ghidra_opt
+decompiler_dir="$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/os/mac_x86_64"
+mkdir -p "$decompiler_dir"
+test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &&
+  install -m 755 ghidra_opt "$decompiler_dir/decompile"
+rea doctor --json
+```
+
+The copy step requires the destination to be absent and preserves an existing
+decompiler. This recipe is specific to macOS x64: the
+[Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
+explicitly selects `-arch x86_64` on Darwin. For other architectures or a Gradle
+build, follow the matching release's
+[native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-native-components).
+REA accepts the matching executable under either `os/<platform>/` or
+`build/os/<platform>/`; it does not build the component during setup or diagnosis.
+
 ### Ghidra import language and analysis seeds
 
 Ghidra detects the language from the executable header. To set it (for example, Borland C++ PE images):
@@ -882,8 +922,12 @@ verification workflows.
 
 Unexpected request failures retain their original internal cause. CLI and MCP
 errors expose Error names, messages, and available codes under
-`details.diagnostics.failure_cause`; other rejection values retain their
-primitive value or an explicit type. Shutdown warnings include the failure
+`details.diagnostics.failure_cause`, including bounded nested causes and explicit
+truncation markers. Darwin ownership-helper compilation failures also retain
+the compiler outcome, exit code or signal, and bounded stderr; a timed-out
+compiler remains distinguishable from a compiler that exited with an error.
+Other rejection values retain their primitive value or an explicit type.
+Shutdown warnings include the failure
 kind, message, and diagnostics, while process and temporary-project cleanup
 continues. These messages redact known bridge authentication tokens and
 preserve local paths and other analysis context.

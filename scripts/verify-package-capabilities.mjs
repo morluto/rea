@@ -1,13 +1,19 @@
 import { json, run } from "./lib/verify-package-core.mjs";
+import {
+  expandCapabilitiesOutput,
+  expandProviderOutput,
+} from "./lib/mcp-verifier-results.mjs";
 
 /** Verify packaged capabilities, providers, and non-Linux search results. */
 export async function verifyPackageCapabilitiesAndSearch({ cli, environment }) {
-  const capabilities = json(
-    await run(cli, ["capabilities", "--json"], environment),
+  const capabilities = expandCapabilitiesOutput(
+    json(await run(cli, ["capabilities", "--json"], environment)),
   );
   if (!Array.isArray(capabilities.capabilities))
     throw new Error("packaged capabilities CLI failed");
-  const providers = json(await run(cli, ["providers", "--json"], environment));
+  const providers = expandProviderOutput(
+    json(await run(cli, ["providers", "--json"], environment)),
+  );
   const candidates = providers.analysis_provider_candidates;
   if (
     !Array.isArray(candidates) ||

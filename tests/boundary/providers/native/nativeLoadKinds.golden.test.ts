@@ -95,6 +95,74 @@ it("retains empty dylib-use options and rejects missing or ambiguous encoding fi
   }
 });
 
+it.each(["vmaddr", "vmsize", "uuid", "entryoff"])(
+  "rejects a required %s label truncated before its value",
+  async (key) => {
+    const raw = await nativeFixture("otool-load.txt");
+    const truncated = raw.replace(
+      new RegExp(`^(\\s*${key})\\s+\\S.*$`, "mu"),
+      "$1",
+    );
+    expect(truncated).not.toBe(raw);
+    expect(() => parseOtoolLoadCommands(raw)).not.toThrow();
+    // Only the empty dylib-use options row may omit its value.
+    expect(() => parseOtoolLoadCommands(truncated)).toThrow(
+      `otool field ${key} has no value`,
+    );
+  },
+);
+
+it("retains the unnamed segment of a Mach-O object file", () => {
+  // Captured from `otool -l` on a clang `-c` object: MH_OBJECT sections live
+  // in one segment whose segname is empty, printed as a bare label.
+  const objectSegment = [
+    "Load command 0",
+    "      cmd LC_SEGMENT_64",
+    "  cmdsize 152",
+    "  segname ",
+    "   vmaddr 0x0000000000000000",
+    "   vmsize 0x0000000000000018",
+    "  fileoff 392",
+    " filesize 24",
+    "  maxprot 0x00000007",
+    " initprot 0x00000007",
+    "   nsects 1",
+    "    flags 0x0",
+    "Section",
+    "  sectname __text",
+    "   segname __TEXT",
+    "      addr 0x0000000000000000",
+    "      size 0x0000000000000018",
+    "    offset 392",
+    "     align 2^2 (4)",
+    "    reloff 0",
+    "    nreloc 0",
+    "     flags 0x80000400",
+    " reserved1 0",
+    " reserved2 0",
+    "",
+  ].join("\n");
+  const load = parseOtoolLoadCommands(withOtoolMachHeader(objectSegment));
+  expect(load.segments).toMatchObject([
+    { name: "unknown", sections: [{ segment: "__TEXT", name: "__text" }] },
+  ]);
+  // An all-NUL section name is printed the same way and stays "unknown".
+  expect(
+    parseOtoolLoadCommands(
+      withOtoolMachHeader(
+        objectSegment.replace("  sectname __text", "  sectname "),
+      ),
+    ).segments,
+  ).toMatchObject([{ sections: [{ segment: "__TEXT", name: "unknown" }] }]);
+  expect(() =>
+    parseOtoolLoadCommands(
+      withOtoolMachHeader(
+        objectSegment.replace("   vmaddr 0x0000000000000000", "   vmaddr"),
+      ),
+    ),
+  ).toThrow("otool field vmaddr has no value");
+});
+
 it("preserves dependency install names that begin with the word stamp", () => {
   const load = parseOtoolLoadCommands(
     withOtoolMachHeader(

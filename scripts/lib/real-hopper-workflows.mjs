@@ -37,7 +37,7 @@ export async function verifyHopperWorkflows(call, invalid, procedure) {
   );
   assert.equal(cycle.length, 2, "fixture omitted its source-owned call cycle");
   const cycleGraph = await call("get_call_graph", { address: cycle[0].value });
-  const cycleNodes = Object.values(cycleGraph).flat();
+  const cycleNodes = Object.values(cycleGraph.graph).flat();
   assert.equal(cycleNodes.length, 2);
   assert.deepEqual(
     cycleNodes.map((node) => node.address).sort(),

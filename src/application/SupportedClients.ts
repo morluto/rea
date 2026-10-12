@@ -38,6 +38,7 @@ export interface SetupClient {
     | "omp"
     | "pi"
     | "hermes"
+    | "dsh"
     | "unsupported";
 }
 
@@ -128,6 +129,12 @@ const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
 
 const grokDirectory = ({ home, env }: ClientPathContext): string =>
   env.GROK_HOME || join(home, ".grok");
+
+const dshHomeDirectory = ({ home, env }: ClientPathContext): string =>
+  env.DSH_HOME ?? join(home, ".dsh");
+
+const dshPatchDirectory = (context: ClientPathContext): string =>
+  join(dshHomeDirectory(context), "cordis.patch.yml");
 
 const hermesDirectory = ({ home, platform, env }: ClientPathContext): string =>
   resolveHermesClientHome(home, platform, env);
@@ -491,6 +498,17 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
+  },
+  {
+    name: "dsh",
+    displayName: "DeepSeek Harness",
+    // The home Cordis patch applies to every profile; the skill directory is
+    // shared agent storage Harness discovers.
+    skillPath: ({ home, env }: ClientPathContext) =>
+      join(env.DSH_AGENTS_HOME ?? join(home, ".agents"), "skills"),
+    configPath: dshPatchDirectory,
+    markerPath: dshHomeDirectory,
+    format: "dsh",
   },
   {
     name: "grok_bot",

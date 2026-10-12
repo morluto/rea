@@ -49,10 +49,11 @@ export interface UpdateHost {
   planMaintenance(
     installation: UpdateInstallation,
   ): Promise<IntegrationMaintenance>;
+  close?(): Promise<string | undefined>;
 }
 
 /** Verified update outcome, separate from the unapplied integration plan. */
-export type UpdateResult =
+export type UpdateResult = (
   | {
       readonly status: "current";
       readonly currentVersion: string;
@@ -80,7 +81,8 @@ export type UpdateResult =
         | "verification";
       readonly installedVersion?: string;
       readonly remediation: string;
-    };
+    }
+) & { readonly cleanupFailure?: string };
 
 /** Resolve the exact package-manager command for the identified installation and release. */
 export const updateInstallCommand = (
@@ -141,6 +143,39 @@ export const runUpdate = async (
   currentVersion: string,
   host: UpdateHost,
   output: UpdateOutput = "human",
+): Promise<UpdateResult> => {
+  let result: UpdateResult | undefined;
+  let primaryFailure: unknown;
+  let failed = false;
+  try {
+    result = await runUpdateWorkflow(currentVersion, host, output);
+  } catch (cause: unknown) {
+    failed = true;
+    primaryFailure = cause;
+  }
+  let cleanupFailure: string | undefined;
+  try {
+    cleanupFailure = await host.close?.();
+  } catch (cause: unknown) {
+    cleanupFailure = `Update resource cleanup failed: ${cause instanceof Error ? cause.message : String(cause)}`;
+  }
+  if (failed) {
+    if (cleanupFailure !== undefined)
+      throw new AggregateError(
+        [primaryFailure, new Error(cleanupFailure)],
+        "Update failed and its resource cleanup remains incomplete.",
+        { cause: primaryFailure },
+      );
+    throw primaryFailure;
+  }
+  if (result === undefined) throw new Error("Update result was not produced.");
+  return cleanupFailure === undefined ? result : { ...result, cleanupFailure };
+};
+
+const runUpdateWorkflow = async (
+  currentVersion: string,
+  host: UpdateHost,
+  output: UpdateOutput,
 ): Promise<UpdateResult> => {
   const installation = await host.installation();
   const release = await host.latestVersion(installation);

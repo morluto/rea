@@ -13,6 +13,7 @@ import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
 import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
 import {
   MANAGED_TOOL_CONTRACTS,
+  managedMembersInputSchema,
   managedTargetInputSchema,
   type ManagedToolName,
 } from "../contracts/managed/managedToolContracts.js";
@@ -235,14 +236,20 @@ const inspectManagedOperation = (
   | ManagedArtifactInspection
   | ManagedMemberInspection
   | ManagedNativeBoundaryInspection => {
+  if (operation === "inspect_managed_members") {
+    const { type_names: typeNames } =
+      managedMembersInputSchema.parse(parameters);
+    return inspectManagedMembersBytes(
+      bytes,
+      target,
+      typeNames === undefined ? {} : { typeNames },
+    );
+  }
   managedTargetInputSchema.parse(parameters);
   if (operation === "inspect_managed_artifact") {
     return inspectManagedArtifactBytes(bytes, target);
   }
-  if (operation === "inspect_managed_native_boundaries") {
-    return inspectManagedNativeBoundariesBytes(bytes, target);
-  }
-  return inspectManagedMembersBytes(bytes, target);
+  return inspectManagedNativeBoundariesBytes(bytes, target);
 };
 
 const managedLocations = (

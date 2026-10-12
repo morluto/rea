@@ -89,10 +89,12 @@ const decodeStub = (
     readonly withStrings?: boolean;
     readonly withGerman?: boolean;
     readonly failDecode?: boolean;
+    readonly stringsXml?: string;
   } = {},
 ): ((root: string) => string) => {
   const withStrings = options.withStrings ?? true;
   const withGerman = options.withGerman ?? true;
+  const stringsXml = options.stringsXml ?? REAL_STRINGS;
   return () => `if [ "$1" = "--version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "d" ]; then
   ${
@@ -101,7 +103,7 @@ if [ "$1" = "d" ]; then
       : `printf '%s\\n' '${REAL_YML.replace(/'/gu, "'\\''")}' > "$5/apktool.yml"
   printf '%s\\n' '${REAL_MANIFEST.replace(/'/gu, "'\\''")}' > "$5/AndroidManifest.xml"
   mkdir -p "$5/res/values"${withGerman ? ' "$5/res/values-de"' : ""}
-  ${withStrings ? `printf '%s\\n' '${REAL_STRINGS.replace(/'/gu, "'\\''")}' > "$5/res/values/strings.xml"` : ""}
+  ${withStrings ? `printf '%s\\n' '${stringsXml.replace(/'/gu, "'\\''")}' > "$5/res/values/strings.xml"` : ""}
   ${withGerman ? `printf '%s\\n' '${DE_STRINGS.replace(/'/gu, "'\\''")}' > "$5/res/values-de/strings.xml"` : ""}
   printf 'I: Using Apktool on stub\\n'
   exit 0`
@@ -171,6 +173,22 @@ it("decodes resources with target identity, metadata, and strings", async () => 
   expect(result.locale).toBeNull();
   expect(result.decoded_file_count).toBeGreaterThan(2);
   expect(result.coverage).toBe("complete");
+});
+
+it("preserves empty resource strings and reports markup omissions as partial", async () => {
+  const stringsXml =
+    '<resources><string name="empty"/><string name="raw">  A &amp; B  </string><string name="styled">Hello <b>world</b></string></resources>';
+  const { command, root } = await writeApktoolStub(decodeStub({ stringsXml }));
+  const apk = await apkFixture(root);
+  const result = await evidenceResult(providerOver(command), {
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: true },
+  });
+  expect(result.strings).toEqual([
+    { name: "empty", value: "" },
+    { name: "raw", value: "  A &amp; B  " },
+  ]);
+  expect(result.coverage).toBe("partial");
 });
 
 it("projects one locale's strings on request", async () => {

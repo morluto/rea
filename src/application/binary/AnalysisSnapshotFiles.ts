@@ -16,6 +16,7 @@ import type { AnalysisResourceConstraintError } from "../../domain/analysisError
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 
@@ -118,6 +119,7 @@ export const writeAnalysisSnapshot = async (
   snapshot: AnalysisSnapshot,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
 ): Promise<
   Result<{ readonly path: string; readonly bytes: number }, SnapshotFailure>
 > => {
@@ -129,7 +131,7 @@ export const writeAnalysisSnapshot = async (
       new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause }),
     );
   }
-  return writeTextFile(encoded, path, overwrite);
+  return writeTextFile(encoded, path, overwrite, resources);
 };
 
 const snapshotValidationMessage = (cause: unknown): string =>

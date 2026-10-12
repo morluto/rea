@@ -27,7 +27,6 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { runOwnedCommand } from "../../process/OwnedCommand.js";
-import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   pwntoolsResourceLimitsSchema,
   readPwntoolsFailureEvidence,

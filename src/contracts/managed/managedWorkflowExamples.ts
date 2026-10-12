@@ -53,6 +53,7 @@ const emptyManagedMembers = (
   member_refs: [],
   call_edges: [],
   field_accesses: [],
+  selection: null,
   coverage: { state: "complete", issues: [] },
   limitations: [],
 });
@@ -224,6 +225,7 @@ const boundaryEvidence = () => {
 const nativeExportEvidence = () => {
   const result: InspectMacho = {
     format: "mach-o",
+    selected_architecture: { name: "x86_64", container_file_offset: null },
     endian: "little",
     word_size: 64,
     file_type: "dylib",
@@ -246,7 +248,9 @@ const nativeExportEvidence = () => {
     ]),
     segments: coverage([]),
     provenance: [],
-    limitations: [],
+    limitations: [
+      "Selected Mach-O slice container offset is unknown in this synthetic example.",
+    ],
   };
   return createEvidence(
     {

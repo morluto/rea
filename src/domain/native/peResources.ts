@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { localPathStringSchema } from "../localPath.js";
+
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
 const identity = z.discriminatedUnion("kind", [
@@ -14,7 +16,9 @@ const identity = z.discriminatedUnion("kind", [
 
 /** Complete bounded inspection of a caller-selected PE image, without execution. */
 export const inspectPeResourcesInputSchema = z.strictObject({
-  path: z.string().min(1).describe("Absolute filesystem path to a PE image"),
+  path: localPathStringSchema.describe(
+    "Absolute filesystem path to a PE image",
+  ),
   max_file_bytes: z
     .number()
     .int()

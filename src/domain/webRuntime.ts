@@ -3,7 +3,6 @@ import {
   browserAllowedOriginsSchema,
   browserEndpointSchema,
 } from "./browserObservation.js";
-import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 
 // CDP positions are zero-based and relative to the resource named by url.

@@ -4,9 +4,14 @@ import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import type {
   CapabilityDescriptor,
+  ProviderIdentity,
   ProviderRequestActivitySnapshot,
   ProviderRuntimeLineageSnapshot,
 } from "../AnalysisProvider.js";
+import {
+  PROVIDER_EFFECT_NAMES,
+  type ProviderCapabilitySet,
+} from "../../contracts/toolOutputSchemaPrimitives.js";
 import type {
   SessionProviderRoute,
   SessionProviderRouter,
@@ -38,7 +43,7 @@ export const binarySessionStatus = ({
   requestActivitySnapshots,
   providerOperationHealth,
 }: BinarySessionStatusInput): JsonValue => {
-  const capabilities = [...route.capabilities.values()]
+  const routeCapabilities = [...route.capabilities.values()]
     .filter(({ operation }) => operation !== "inventory_artifact")
     .sort((left, right) =>
       compareUnicodeCodePoints(left.operation, right.operation),
@@ -52,8 +57,8 @@ export const binarySessionStatus = ({
             available: false as const,
             reason: unavailable.reason,
           };
-    })
-    .map(capabilityStatus);
+    });
+  const capabilities = providerCapabilitySets(routeCapabilities);
   const analysisProviderBinding =
     route.binding === null
       ? null
@@ -69,13 +74,14 @@ export const binarySessionStatus = ({
       availability: structuredClone(candidate.availability),
       target_support: structuredClone(candidate.targetSupport),
       selected: candidate.selected,
-      capabilities: candidate.capabilities
-        .slice()
-        .filter(({ operation }) => operation !== "inventory_artifact")
-        .sort((left, right) =>
-          compareUnicodeCodePoints(left.operation, right.operation),
-        )
-        .map(capabilityStatus),
+      capabilities: providerCapabilitySets(
+        candidate.capabilities
+          .slice()
+          .filter(({ operation }) => operation !== "inventory_artifact")
+          .sort((left, right) =>
+            compareUnicodeCodePoints(left.operation, right.operation),
+          ),
+      ),
     }));
   const common = {
     capabilities,
@@ -187,17 +193,109 @@ const processLineageStatus = (
           })),
       };
 
-const capabilityStatus = (
-  descriptor: Omit<CapabilityDescriptor, "available" | "reason"> & {
-    readonly available: boolean;
-    readonly reason: string | null;
-  },
-) => ({
-  operation: descriptor.operation,
-  available: descriptor.available,
-  reason: descriptor.reason,
-  availability_code: descriptor.availabilityCode ?? null,
-  effects: {
+type CapabilityEffectName = (typeof PROVIDER_EFFECT_NAMES)[number];
+type CapabilityAvailabilityCode = Exclude<
+  CapabilityDescriptor["availabilityCode"],
+  undefined
+>;
+type CapabilityProjection = Omit<CapabilityDescriptor, "available" | "reason"> &
+  (
+    | { readonly available: true; readonly reason: null }
+    | { readonly available: false; readonly reason: string }
+  );
+type ProviderCapabilityGroup = ProviderCapabilitySet["groups"][number];
+
+/** Group inline capability facts without merging distinct providers or states. */
+const providerCapabilitySets = (
+  descriptors: readonly CapabilityProjection[],
+): ProviderCapabilitySet[] => {
+  const providers = new Map<
+    string,
+    {
+      readonly identity: ProviderIdentity;
+      readonly descriptors: CapabilityProjection[];
+    }
+  >();
+  for (const descriptor of descriptors) {
+    const key = JSON.stringify([
+      descriptor.provider.id,
+      descriptor.provider.name,
+      descriptor.provider.version,
+    ]);
+    const provider = providers.get(key);
+    if (provider === undefined)
+      providers.set(key, {
+        identity: descriptor.provider,
+        descriptors: [descriptor],
+      });
+    else provider.descriptors.push(descriptor);
+  }
+  return [...providers.values()].map(({ identity, descriptors: owned }) => {
+    const sharedLimitations = commonLimitationsPrefix(owned);
+    const groups = new Map<string, ProviderCapabilityGroup>();
+    for (const descriptor of owned) {
+      const effects = enabledCapabilityEffects(descriptor);
+      const limitations = descriptor.limitations.slice(
+        sharedLimitations.length,
+      );
+      const availabilityCode: CapabilityAvailabilityCode | null =
+        descriptor.availabilityCode ?? null;
+      const status = descriptor.available
+        ? {
+            available: true as const,
+            reason: null,
+            availability_code: null,
+          }
+        : {
+            available: false as const,
+            reason: descriptor.reason,
+            availability_code: availabilityCode,
+          };
+      const key = JSON.stringify([
+        effects,
+        limitations,
+        status.available,
+        status.reason,
+        status.availability_code,
+      ]);
+      const group = groups.get(key);
+      if (group === undefined)
+        groups.set(key, {
+          operations: [descriptor.operation],
+          effects,
+          limitations,
+          ...status,
+        });
+      else group.operations.push(descriptor.operation);
+    }
+    return {
+      provider: providerSummary(identity),
+      shared_limitations: sharedLimitations,
+      groups: [...groups.values()],
+    };
+  });
+};
+
+const commonLimitationsPrefix = (
+  descriptors: readonly CapabilityProjection[],
+): string[] => {
+  const first = descriptors[0]?.limitations;
+  if (first === undefined) return [];
+  let length = first.length;
+  for (const descriptor of descriptors.slice(1)) {
+    length = Math.min(length, descriptor.limitations.length);
+    let index = 0;
+    while (index < length && first[index] === descriptor.limitations[index])
+      index++;
+    length = index;
+  }
+  return first.slice(0, length);
+};
+
+const enabledCapabilityEffects = (
+  descriptor: CapabilityProjection,
+): CapabilityEffectName[] => {
+  const effectValues = {
     mutates_artifact: descriptor.effects.mutatesArtifact,
     launches_process: descriptor.effects.launchesProcess,
     may_show_ui: descriptor.effects.mayShowUi,
@@ -205,9 +303,9 @@ const capabilityStatus = (
     may_write_filesystem: descriptor.effects.mayWriteFilesystem,
     changes_permissions: descriptor.effects.changesPermissions,
     requires_root: descriptor.effects.requiresRoot,
-  },
-  limitations: [...descriptor.limitations],
-});
+  } satisfies Record<CapabilityEffectName, boolean>;
+  return PROVIDER_EFFECT_NAMES.filter((name) => effectValues[name]);
+};
 
 const providerOperationHealthStatus = (
   health: ProviderOperationHealth | null | undefined,

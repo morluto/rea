@@ -236,12 +236,31 @@ const inspectSearch = ({
     const depth = reached.get(node) ?? 0;
     const snapshot = snapshots.get(node);
     if (snapshot !== undefined) {
-      limitations.push(...snapshot.limitations);
+      const coverage = snapshot.evidence.relationship_coverage;
+      for (const limitation of snapshot.limitations)
+        limitations.push(limitation);
+      if (coverage?.status === "partial")
+        for (const limitation of coverage.limitations)
+          limitations.push(limitation);
+      else if (coverage?.status === "unknown")
+        limitations.push(coverage.reason);
+      for (const diagnostic of coverage !== null && "diagnostics" in coverage
+        ? coverage.diagnostics
+        : [])
+        limitations.push(diagnostic);
       // The requested goal is a terminal for this search. Its outgoing edges
       // cannot add a path to the goal, so its dossier limits are contextual
       // but do not make the searched start-to-goal closure incomplete.
       if (node === goal) continue;
-      if (snapshot.limitations.length > 0) incompleteExpandedCoverage = true;
+      // Explicit, Evidence-bound relationship coverage owns completeness;
+      // generic provider/dossier limitations remain contextual. Legacy Evidence
+      // without that metadata retains its conservative limitation-based rule.
+      if (
+        coverage === null
+          ? snapshot.limitations.length > 0
+          : coverage.status !== "complete"
+      )
+        incompleteExpandedCoverage = true;
     } else if (node === goal) {
       continue;
     }

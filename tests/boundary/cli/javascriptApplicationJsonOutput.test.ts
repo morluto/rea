@@ -1,15 +1,15 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { Filter } from "incur";
 import { expect } from "vitest";
 import { z } from "zod";
 
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const filter = "evidence_id,normalized_result.graph.nodes[0:1].node_id";
+const filter = "evidence_id,normalized_result.graph.nodes[0,1].node_id";
 
 for (const scenario of [
   {
@@ -34,6 +34,9 @@ for (const scenario of [
       await writeFile(join(root, "main.js"), "fetch('');\n");
       const direct = await analyzeJavaScriptApplication({ input_path: root });
       if (!direct.ok) throw direct.error;
+      const normalized = javascriptApplicationAnalysisResultSchema.parse(
+        direct.value.normalized_result,
+      );
       const output = await cli.run({
         arguments: [
           scenario.command,
@@ -61,9 +64,20 @@ for (const scenario of [
       }
       expect(data).toEqual(
         scenario.filtered
-          ? Filter.apply(direct.value, Filter.parse(filter))
+          ? {
+              evidence_id: direct.value.evidence_id,
+              normalized_result: {
+                graph: {
+                  nodes: normalized.graph.nodes
+                    .slice(0, 1)
+                    .map(({ node_id }) => ({ node_id })),
+                },
+              },
+            }
           : direct.value,
       );
+      if (scenario.filtered)
+        expect(normalized.graph.nodes.length).toBeGreaterThan(0);
     },
   );
 }
@@ -121,5 +135,69 @@ cliTest(
     });
     expect(output.exitCode).toBe(0);
     expect(output.json).toEqual({});
+  },
+);
+
+cliTest(
+  "honors caller-selected semantic node limits across files and records them in Evidence",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-node-budgets-");
+    await writeFile(join(root, "first.js"), "external;\n".repeat(40));
+    await writeFile(join(root, "second.js"), "another;\n".repeat(40));
+    const output = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--format",
+        "json",
+        "--max-semantic-nodes",
+        "50",
+        "--max-semantic-nodes-per-file",
+        "30",
+      ],
+    });
+    expect(output.exitCode).toBe(0);
+    const result = z
+      .object({
+        parameters: z.object({
+          max_semantic_nodes: z.number(),
+          max_semantic_nodes_per_file: z.number(),
+        }),
+        normalized_result: z.object({
+          semantic_graph: z.object({
+            nodes: z.array(
+              z.object({ identity: z.object({ module_path: z.string() }) }),
+            ),
+            coverage: z.object({
+              truncated: z.boolean(),
+              omitted_nodes: z.number().nullable(),
+              limits: z.array(
+                z.object({ name: z.string(), value: z.number() }),
+              ),
+            }),
+          }),
+        }),
+      })
+      .parse(output.json);
+    expect(result.parameters).toEqual({
+      max_semantic_nodes: 50,
+      max_semantic_nodes_per_file: 30,
+    });
+    const graph = result.normalized_result.semantic_graph;
+    expect(graph.nodes).toHaveLength(50);
+    expect(
+      graph.nodes.filter((node) => node.identity.module_path === "first.js"),
+    ).toHaveLength(30);
+    expect(
+      graph.nodes.filter((node) => node.identity.module_path === "second.js"),
+    ).toHaveLength(20);
+    expect(graph.coverage.truncated).toBe(true);
+    expect(graph.coverage.omitted_nodes).toBeNull();
+    expect(graph.coverage.limits).toEqual(
+      expect.arrayContaining([
+        { name: "semantic_graph_node_ceiling", value: 50 },
+        { name: "semantic_graph_file_node_ceiling", value: 30 },
+      ]),
+    );
   },
 );

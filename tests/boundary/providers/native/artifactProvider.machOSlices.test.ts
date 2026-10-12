@@ -291,3 +291,61 @@ describe("artifact Mach-O arm64e variant slices", () => {
     },
   );
 });
+
+// macOS 26 lipo leaves capabilities blank, even for a LIB64 x86_64 slice.
+describe("artifact Mach-O LIB64 slices", () => {
+  const LIB64 = { type: 0x01000007, subtype: 0x80000003 } as const;
+  const lib64Slices = async (x86Subtype: string) => {
+    const root = await createTestTempDirectory("rea-slices-lib64-");
+    const binary = join(root, "fat");
+    const x86 = machoImage({ cpu: LIB64 });
+    const arm = machoImage({ cpu: CPU.arm64 });
+    await writeFile(
+      binary,
+      fatImage([
+        { cpu: LIB64, bytes: x86 },
+        { cpu: CPU.arm64, bytes: arm },
+      ]),
+    );
+    const reader = new MachOSliceArtifactReader(
+      binary,
+      {},
+      lipoRunner(
+        [
+          "architecture x86_64",
+          " cputype CPU_TYPE_X86_64",
+          ` cpusubtype ${x86Subtype}`,
+          " capabilities ",
+          " offset 4096",
+          ` size ${String(x86.length)}`,
+          " align 2^12 (4096)",
+          "architecture arm64",
+          " cputype CPU_TYPE_ARM64",
+          " cpusubtype CPU_SUBTYPE_ARM64_ALL",
+          " capabilities ",
+          " offset 8192",
+          ` size ${String(arm.length)}`,
+          " align 2^12 (4096)",
+          "",
+        ].join("\n"),
+      ),
+    );
+    onTestFinished(() => reader.close());
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    return entries.map(({ path, byteOffset }) => [path, byteOffset]);
+  };
+
+  it("matches an x86_64 LIB64 slice whose lipo capabilities are blank", async () => {
+    expect(await lib64Slices("CPU_SUBTYPE_X86_ALL")).toEqual([
+      ["slices/x86_64", 4096],
+      ["slices/arm64", 8192],
+    ]);
+  });
+
+  it("still rejects a blank-capability subtype that names other bits", async () => {
+    await expect(lib64Slices("CPU_SUBTYPE_X86_64_H")).rejects.toMatchObject({
+      reason: "integrity",
+    });
+  });
+});

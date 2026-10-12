@@ -46,3 +46,9 @@ observed exit signal stays in `exit.signal`, `exit.code` is null for every
 deadline exit, and the code of a finalizer that exited on its own is in
 `exit.finalization.exit_code` (null on a signal exit or when no exit was
 observed).
+
+Use `inspect_analysis_view` with `view: {kind: "api-surface"}` on retained
+`inspect_web_network_capture` HAR Evidence to group observed request lines by
+method, origin and path template. Format matches are inferences, not handler
+identity or schemas. Group pages cite parent record ordinals; consult record
+coverage and exclusions before claiming completeness. No requests are replayed.

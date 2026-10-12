@@ -18,6 +18,7 @@ import {
   type NpmInstallationHost,
 } from "./UpdateRuntime.js";
 import type { IntegrationMaintenance } from "./UpdateMaintenance.js";
+import { isUpdateFailure } from "./UpdateFailure.js";
 
 class FakeUpdateHost implements UpdateHost {
   release: Result<string, ReleaseLookupFailure> = ok("3.3.0");
@@ -37,6 +38,7 @@ class FakeUpdateHost implements UpdateHost {
   verifiedInstallation: UpdateInstallation | undefined;
   maintenanceInspected = false;
   output: UpdateOutput | undefined;
+  cleanupFailure: string | undefined;
 
   installation = (): Promise<UpdateInstallation | undefined> => {
     this.installationInspected = true;
@@ -63,6 +65,8 @@ class FakeUpdateHost implements UpdateHost {
     this.maintenanceInspected = true;
     return Promise.resolve(this.maintenance);
   };
+  close = (): Promise<string | undefined> =>
+    Promise.resolve(this.cleanupFailure);
 }
 
 describe("REA update", () => {
@@ -77,6 +81,20 @@ describe("REA update", () => {
     expect(host.installationInspected).toBe(true);
     expect(host.installedVersions).toEqual([]);
     expect(host.maintenanceInspected).toBe(false);
+  });
+
+  it("preserves update status while marking incomplete resource cleanup as failure", async () => {
+    const host = new FakeUpdateHost();
+    host.cleanupFailure = "Regular file remains open: /fixture/skill/SKILL.md";
+
+    const result = await runUpdate("3.3.0", host);
+
+    expect(result).toMatchObject({
+      status: "current",
+      currentVersion: "3.3.0",
+      cleanupFailure: host.cleanupFailure,
+    });
+    expect(isUpdateFailure(result)).toBe(true);
   });
 
   it("reports an unknown current installation honestly", async () => {

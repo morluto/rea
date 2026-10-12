@@ -112,8 +112,12 @@ Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
 
 `verify:gemini-client` requires an installed Gemini CLI (verified with
-`@google/gemini-cli@0.63.0`); select it with `REA_VERIFY_GEMINI_COMMAND`.
-The optional POSIX lane uses native `GEMINI_CLI_HOME` discovery in an isolated
+`@google/gemini-cli@0.63.0` on POSIX and native Windows); select it with
+`REA_VERIFY_GEMINI_COMMAND`. A selected `.js`, `.mjs` or `.cjs` entry point runs
+under the verifier's Node. On Windows, select the npm install's
+`node_modules/@google/gemini-cli/bundle/gemini.js`, because only a `gemini.cmd`
+shim reaches `PATH`.
+The optional lane uses native `GEMINI_CLI_HOME` discovery in an isolated
 Git project, checks setup plans, backups and idempotence, activates the installed
 personal skill, validates all forwarded input JSON Schemas against their declared
 dialect, forwards the complete REA catalog and checks full JavaScript
@@ -121,7 +125,7 @@ Evidence for a Unicode path. Use `-- chat` for ordinary chat with REA enabled,
 or `REA_VERIFY_RUNTIME_ROOT` for a production-only installed REA package.
 The local fixture exercises the real Gemini API adapter, including its
 `untrusted_context` tool-result envelope. Token counts are synthetic; live
-Google API and native Windows compatibility remain unverified. The lane disables
+Google API compatibility remains unverified. The lane disables
 the client's memory-based relaunch to preserve the caller's Node heap budget.
 
 `verify:opencode-client` requires an installed OpenCode (verified with
@@ -268,9 +272,13 @@ unverified; skill discovery uses an explicit isolated custom directory.
 `verify:deepseek-client` requires an installed DeepSeek Harness (`dsh`;
 verified with `@deepseek-ai/dsh@0.2.0-rc.2`) and Git. Set
 `REA_VERIFY_DEEPSEEK_COMMAND` to select its executable. This optional POSIX lane
-installs the skill through `rea setup --skill`, writes the native Cordis MCP
-patch into an isolated `DSH_HOME`, and binds `HOME` and `USERPROFILE` to the
-disposable account. The native default `~/.agents/skills` search path discovers
+seeds caller model settings and a stale Cordis registration in an isolated
+`DSH_HOME`, then runs public `setup --client dsh` dry-run, setup, repeated setup,
+and scoped doctor. It checks the backup and unrelated patches before booting
+Harness with the generated registration. After native execution it uninstalls
+through the public CLI and checks that only caller patches remain. `HOME` and
+`USERPROFILE` point to the disposable account. The native default
+`~/.agents/skills` search path discovers
 the installed skill without a `DSH_AGENTS_HOME` override. A separate Git root prevents inherited project skills from
 masking a missing installation. The default `call` mode checks skill loading,
 complete catalog discovery, the actual forwarded input schemas and regexes,
@@ -280,6 +288,12 @@ The fixture uses Harness's custom OpenAI adapter and the one-million-token
 context capacity declared by its default DeepSeek Flash model; it does not
 establish live DeepSeek API or native Windows coverage. Receipts include
 request artifacts, result digests and owned-process lineage.
+
+The DSH acceptance journey also exercises public setup, approval, doctor,
+generated-launcher MCP startup and uninstall without an installed Harness.
+That journey proves REA workflow behavior, not native Cordis expression
+evaluation. Filesystem regressions retain tagged values and unrelated rows
+across alias dependencies and check refusal of unsafe YAML without mutation.
 
 Full E2E tests invoke the production command dispatcher and real providers,
 without fake launchers, runners or responses. `verify:keyed-archive` writes

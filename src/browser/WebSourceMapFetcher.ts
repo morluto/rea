@@ -567,17 +567,21 @@ const normalizeSourceMap = (
     const sourceJsonBytes = new Map<string, number>();
     const nameJsonBytes = new Map<string, number>();
     const originalSources: ParsedSourceMapItem["original_sources"] = [];
+    let declarationIndex = 0;
     for (const { leaf, resolvedSources } of decoded) {
       for (const [index, rawSource] of leaf.map.sources.entries()) {
         if ((index & 255) === 0) check();
         const resolved =
-          resolvedSources[index] ?? rawSource ?? "[unknown-source]";
-        const sanitized = cachedSanitized(sourcesByRaw, resolved);
+          rawSource === null ? null : (resolvedSources[index] ?? null);
+        const sanitized =
+          resolved === null ? null : cachedSanitized(sourcesByRaw, resolved);
         const content = leaf.map.sourcesContent?.[index] ?? null;
         consumeExpandedBytes(
           context.budget,
-          cachedJsonBytes(sourceJsonBytes, sanitized) +
-            sourceEntryOverheadBytes() +
+          (sanitized === null
+            ? 4
+            : cachedJsonBytes(sourceJsonBytes, sanitized)) +
+            sourceEntryOverheadBytes(index, declarationIndex) +
             (originalSources.length === 0 ? 0 : 1) +
             (content === null
               ? 0
@@ -586,6 +590,8 @@ const normalizeSourceMap = (
                 4),
         );
         originalSources.push({
+          source_index: index,
+          declaration_index: declarationIndex++,
           source: sanitized,
           artifact:
             content === null
@@ -595,16 +601,21 @@ const normalizeSourceMap = (
       }
     }
     const mappings: ParsedSourceMapItem["mappings"] = [];
-    for (const { leaf, rows, resolvedSources } of decoded)
+    declarationIndex = 0;
+    for (const { leaf, rows, resolvedSources } of decoded) {
+      const declarationBase = declarationIndex;
+      declarationIndex += leaf.map.sources.length;
       for (const [line, row] of rows.entries()) {
         if ((line & 255) === 0) check();
         for (const segment of row) {
           if (!isBeforeSourceMapLeafStop(leaf, line, segment[0])) continue;
           if (segment.length === 1) continue;
           const rawSource = leaf.map.sources[segment[1]];
+          if (rawSource === undefined) continue;
           const resolved =
-            resolvedSources[segment[1]] ?? rawSource ?? "[unknown-source]";
-          const source = cachedSanitized(sourcesByRaw, resolved);
+            rawSource === null ? null : (resolvedSources[segment[1]] ?? null);
+          const source =
+            resolved === null ? null : cachedSanitized(sourcesByRaw, resolved);
           const name =
             segment.length === 5 ? (leaf.map.names[segment[4]] ?? null) : null;
           const generatedLine = leaf.offset.line + line + 1;
@@ -612,9 +623,11 @@ const normalizeSourceMap = (
             segment[0] + (line === 0 ? leaf.offset.column : 0);
           consumeExpandedBytes(
             context.budget,
-            cachedJsonBytes(sourceJsonBytes, source) +
+            (source === null ? 4 : cachedJsonBytes(sourceJsonBytes, source)) +
               (name === null ? 4 : cachedJsonBytes(nameJsonBytes, name)) +
               mappingRowBytes(
+                segment[1],
+                declarationBase + segment[1],
                 generatedLine,
                 generatedColumn,
                 segment[2] + 1,
@@ -623,6 +636,8 @@ const normalizeSourceMap = (
               (mappings.length === 0 ? 0 : 1),
           );
           mappings.push({
+            source_index: segment[1],
+            declaration_index: declarationBase + segment[1],
             generated_line: generatedLine,
             generated_column: generatedColumn,
             source,
@@ -632,6 +647,7 @@ const normalizeSourceMap = (
           });
         }
       }
+    }
     const modules = originalModuleEdges(originalSources, check, (edge) =>
       consumeExpandedBytes(
         context.budget,
@@ -705,15 +721,22 @@ const originalModuleEdges = (
   for (const source of sources) {
     check();
     if (source.artifact === null) continue;
+    const sourceName = source.source;
+    if (sourceName === null) {
+      incomplete.push(
+        `unnamed source at declaration ${String(source.declaration_index)}`,
+      );
+      continue;
+    }
     const parsed = parseJavaScriptSource(source.artifact.text);
     check();
     if (parsed === null) {
-      incomplete.push(source.source);
+      incomplete.push(sourceName);
       continue;
     }
     // A recovered program still yields the imports it did parse, but nodes
     // after an unrecoverable point are missing, so the edges are a subset.
-    if (parsed.errors.length > 0) incomplete.push(source.source);
+    if (parsed.errors.length > 0) incomplete.push(sourceName);
     let unboundRequires: ReadonlySet<string> | undefined;
     traverseJavaScriptAst(parsed, {
       enter: (node) => {
@@ -742,14 +765,14 @@ const originalModuleEdges = (
           )
             return;
         }
-        const key = `${source.source}\0${kind}\0${specifier}`;
+        const key = `${sourceName}\0${kind}\0${specifier}`;
         if (seen.has(key)) return;
         seen.add(key);
         const edge = {
-          from_source: source.source,
+          from_source: sourceName,
           kind,
           specifier,
-          resolved_source: resolveOriginalSource(specifier, source.source),
+          resolved_source: resolveOriginalSource(specifier, sourceName),
         };
         beforeEdge(edge);
         edges.push(edge);
@@ -840,7 +863,8 @@ const preflightResolvedSourceBytes = (
     }
     for (const source of map.sources) {
       check();
-      const sourceKey = source ?? "";
+      if (source === null) continue;
+      const sourceKey = source;
       let resolved = sourcesForRoot.get(sourceKey);
       if (resolved === undefined)
         resolved = resolveSourceMapSource(source, map.sourceRoot, mapUrl);
@@ -948,8 +972,13 @@ const sourceMapFailureReservation = (
   jsonBytes(status) -
   jsonBytes("fetch_failed");
 
-const sourceEntryOverheadBytes = (): number =>
-  Buffer.byteLength('{"source":,"artifact":null}');
+const sourceEntryOverheadBytes = (
+  sourceIndex: number,
+  declarationIndex: number,
+): number =>
+  Buffer.byteLength(
+    `{"source_index":${String(sourceIndex)},"declaration_index":${String(declarationIndex)},"source":,"artifact":null}`,
+  );
 
 const cachedJsonBytes = (cache: Map<string, number>, value: string): number => {
   const cached = cache.get(value);
@@ -968,13 +997,15 @@ const cachedSanitized = (cache: Map<string, string>, value: string): string => {
 };
 
 const mappingRowBytes = (
+  sourceIndex: number,
+  declarationIndex: number,
   generatedLine: number,
   generatedColumn: number,
   originalLine: number,
   originalColumn: number,
 ): number =>
   Buffer.byteLength(
-    `{"generated_line":${String(generatedLine)},"generated_column":${String(generatedColumn)},"source":,"original_line":${String(originalLine)},"original_column":${String(originalColumn)},"name":}`,
+    `{"source_index":${String(sourceIndex)},"declaration_index":${String(declarationIndex)},"generated_line":${String(generatedLine)},"generated_column":${String(generatedColumn)},"source":,"original_line":${String(originalLine)},"original_column":${String(originalColumn)},"name":}`,
   );
 
 const resolveOriginalSource = (

@@ -26,6 +26,7 @@ const classes = [
     { length: generatedCount },
     (_, index) => `fixture.Class${index}`,
   ),
+  ...(mode === "duplicate-class-name" ? ["fixture.Target"] : []),
 ];
 const methods = [
   {

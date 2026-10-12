@@ -160,6 +160,19 @@ it.each([
 ])("rejects incomplete decoded module-name metadata: %s", (text) => {
   expect(() => parseWabtWat(text)).toThrow(/metadata/u);
 });
+it("frames custom section names at their NUL-terminated objdump display", async () => {
+  const text = await golden();
+  expect(parseWabtOutput(text, 76, ["test\0hidden"]).sections.at(-1)).toEqual({
+    kind: "Custom",
+    start: 64,
+    end: 76,
+    bytes: 12,
+    description: '"test"',
+  });
+  expect(() => parseWabtOutput(text, 76, ["other\0test"])).toThrow(
+    /custom-section header/u,
+  );
+});
 it("extracts escaped WAT import/export forms while retaining multiline producer text", async () => {
   const text = await readFile(
     new URL("../../tests/fixtures/wasm/decoded.wat", import.meta.url),

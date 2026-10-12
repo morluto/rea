@@ -7,7 +7,10 @@ import {
   type JavaScriptArtifactGraphContext,
   type JavaScriptArtifactGraphCoverage,
 } from "./JavaScriptArtifactGraphContext.js";
-import { astObservationEvidence } from "./JavaScriptArtifactGraphEvidence.js";
+import {
+  astObservationEvidence,
+  staticInferenceEvidence,
+} from "./JavaScriptArtifactGraphEvidence.js";
 import {
   collectElectronIpcRecords,
   unambiguousElectronIpcPairings,
@@ -120,11 +123,18 @@ const addChannelNode = (
       : `literal:${finding.channel}`;
   return context.accumulator.addNode({
     kind: "ipc-channel",
-    identity: electronObservationIdentity(
-      context,
-      "electron-ipc-channel",
-      identityKey,
-    ),
+    identity:
+      finding.resolution_basis === "wrapper-substitution"
+        ? artifactLocalIdentity(
+            file.sha256,
+            "electron-inferred-ipc-channel",
+            identityKey,
+          )
+        : electronObservationIdentity(
+            context,
+            "electron-ipc-channel",
+            identityKey,
+          ),
     observations: [
       {
         label: finding.channel ?? finding.channel_expression,
@@ -135,19 +145,28 @@ const addChannelNode = (
           channel: finding.channel,
           channel_expression: finding.channel_expression,
           resolution: finding.channel === null ? "dynamic" : "literal",
+          ...(finding.invocation_location === undefined
+            ? {}
+            : { invocation_location: finding.invocation_location }),
         },
-        evidence: astObservationEvidence({
+        evidence: (finding.resolution_basis === "wrapper-substitution"
+          ? staticInferenceEvidence
+          : astObservationEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: finding.location,
           operation: "observe-ipc-channel-expression",
           coverage,
           limitations:
-            finding.channel === null
+            finding.resolution_basis === "wrapper-substitution"
               ? [
-                  "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+                  "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
                 ]
-              : [],
+              : finding.channel === null
+                ? [
+                    "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+                  ]
+                : [],
         }),
       },
     ],
@@ -176,8 +195,13 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
           channel_expression: finding.channel_expression,
           handler_kind: finding.handler_kind,
           handler_location: finding.handler_location,
+          ...(finding.invocation_location === undefined
+            ? {}
+            : { invocation_location: finding.invocation_location }),
         },
-        evidence: astObservationEvidence({
+        evidence: (finding.resolution_basis === "wrapper-substitution"
+          ? staticInferenceEvidence
+          : astObservationEvidence)({
           sha256: file.sha256,
           path: file.path,
           range: handlerRange,
@@ -209,6 +233,9 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
       channel: finding.channel,
       channel_expression: finding.channel_expression,
       resolution: finding.channel === null ? "dynamic" : "literal",
+      ...(finding.invocation_location === undefined
+        ? {}
+        : { invocation_location: finding.invocation_location }),
     },
   });
   return handler;

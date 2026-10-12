@@ -26,6 +26,8 @@ import {
 } from "./SupportedClients.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { dshDocument } from "./DshCordisPatch.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 interface ClientRegistrationStatusBase {
   readonly client: string;
@@ -65,6 +67,7 @@ const registrationSchema = z
     startup_timeout_sec: z.number().positive().optional(),
     type: z.string().optional(),
     transport: z.string().optional(),
+    serverName: z.string().optional(),
     tools: z.array(z.string()).optional(),
     disabled: z.boolean().optional(),
     enabled: z.boolean().optional(),
@@ -78,6 +81,7 @@ export const readClientRegistrationStatuses = async (
   options: {
     readonly platform?: NodeJS.Platform;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly resources?: ArtifactResourceScope;
   } = {},
 ): Promise<readonly ClientRegistrationStatus[]> => {
   const statuses: ClientRegistrationStatus[] = [];
@@ -110,7 +114,10 @@ export const readClientRegistrationStatuses = async (
       continue;
     }
     try {
-      const files = await readClientConfigurationFiles(client);
+      const files = await readClientConfigurationFiles(
+        client,
+        options.resources,
+      );
       if (!files.ok) {
         statuses.push({
           client: client.name,
@@ -128,7 +135,12 @@ export const readClientRegistrationStatuses = async (
         );
         continue;
       }
-      const policy = await readClientPolicyBlock(client, parsed);
+      const policy = await readClientPolicyBlock(
+        client,
+        parsed,
+        undefined,
+        options.resources,
+      );
       if (!policy.ok) {
         statuses.push({
           client: client.name,
@@ -168,6 +180,7 @@ export const readClientRegistrationStatuses = async (
               parsed,
               PRODUCT_IDENTITY.mcpServerKey,
             ) &&
+            (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
             policyBlock === undefined
             ? "aligned"
             : "stale",
@@ -211,6 +224,13 @@ const registrationAligned = (
   )
     return false;
   if (client.format === "vscode" && registration.type !== "stdio") return false;
+  // A Harness registration only connects as the rea stdio server; another
+  // server name or transport leaves the session without REA tools.
+  if (
+    client.format === "dsh" &&
+    (registration.serverName !== "rea" || registration.transport !== "stdio")
+  )
+    return false;
   // OMP and Pi infer stdio for a command entry without an explicit type.
   if (
     (client.format === "omp" || client.format === "pi") &&
@@ -254,6 +274,11 @@ const parseRegistration = (
   value: unknown,
   client: SetupClient,
 ): z.output<typeof registrationSchema> => {
+  if (client.format === "dsh")
+    return registrationSchema
+      .pick({ command: true, args: true, serverName: true, transport: true })
+      .strip()
+      .parse(value);
   if (client.format === "opencode") {
     const entry = z
       .object({

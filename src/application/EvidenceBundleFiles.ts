@@ -21,6 +21,7 @@ import {
 } from "../domain/jsonSerialization.js";
 import { readJsonFile, writeTextParts } from "./JsonFiles.js";
 import { RegularFileCleanupFailure } from "./RegularFileRead.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 type EvidenceReadFailure =
   | EvidenceFileError
@@ -105,6 +106,7 @@ export const writeEvidenceBundle = async (
   bundle: EvidenceBundle,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<
   Result<
@@ -128,6 +130,7 @@ export const writeEvidenceBundle = async (
     bufferedJsonParts(canonicalJsonParts(checked)),
     path,
     overwrite,
+    resources,
     signal === undefined
       ? undefined
       : { signal, operation: "export_evidence_bundle" },

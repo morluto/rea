@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -141,6 +142,57 @@ const asManagedMemberResult = (execution: AnalysisExecution) =>
 
 const asManagedNativeBoundaryResult = (execution: AnalysisExecution) =>
   managedNativeBoundaryInspectionSchema.parse(execution.result);
+
+it("preserves custom attribute value evidence through the filesystem provider when its constructor is invalid", async () => {
+  const directory = await createTestTempDirectory("rea-managed-attribute-");
+  const path = join(directory, "fixture.exe");
+  await writeFile(path, buildManagedPeFixture({ customAttributeTypeRaw: 19 }));
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  const frameworkText = Buffer.from(".NETCoreApp,Version=v8.0", "utf8");
+  const attributeValue = Buffer.concat([
+    Buffer.from([1, 0, frameworkText.length]),
+    frameworkText,
+    Buffer.alloc(2),
+  ]);
+  const client = new ManagedStaticProvider().createClient(parsed.value);
+  try {
+    const execution = await client.execute("inspect_managed_artifact", {});
+    if (!execution.ok) throw execution.error;
+
+    const result = asManagedResult(execution.value);
+    expect(result).toMatchObject({
+      attributes: [
+        {
+          parent_token: "0x20000001",
+          constructor_token: null,
+          type_name: null,
+          value_length: attributeValue.length,
+          value_sha256: createHash("sha256")
+            .update(attributeValue)
+            .digest("hex"),
+          token: "0x0c000001",
+        },
+      ],
+      coverage: {
+        state: "partial",
+      },
+    });
+    const attribute = result.attributes[0];
+    if (attribute === undefined) throw new Error("Fixture omitted attribute");
+    expect(result.coverage.issues).toEqual([
+      expect.objectContaining({
+        code: "invalid-row",
+        scope: "metadata.CustomAttribute:0x0c000001",
+        offset: attribute.row_offset + 2,
+        detail:
+          "CustomAttribute constructor coded index 0x13 is invalid: coded index selects row 2 in table 10, which has 1 rows",
+      }),
+    ]);
+  } finally {
+    await client.close();
+  }
+});
 
 it("retains U+FEFF metadata through the filesystem target and provider", async () => {
   const directory = await createTestTempDirectory("rea-managed-bom-");

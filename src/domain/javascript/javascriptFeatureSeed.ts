@@ -82,7 +82,12 @@ const kindMatches = (
         ({ properties }) => properties.endpoint_kind === "route",
       )
     );
-  if (kind === "api") return node.kind === "context-bridge-api";
+  if (kind === "api")
+    return (
+      node.kind === "context-bridge-api" ||
+      (node.kind === "javascript-expression" &&
+        node.observations.some((o) => o.properties.step_kind === "exposure"))
+    );
   if (kind === "channel") return node.kind === "ipc-channel";
   if (kind === "module")
     return ["javascript-asset", "javascript-module", "source-module"].includes(

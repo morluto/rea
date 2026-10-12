@@ -662,6 +662,16 @@ try {
     bytes.writeBigUInt64LE(8n, header + 56);
     return [`undersized-entry-${type}`, bytes, "invalid_input"];
   });
+  const nonintegralSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
+    const section = protectedReport.sections.find((item) => item.type === type);
+    assert.notEqual(section, undefined);
+    const bytes = Buffer.from(sectionBearingBytes);
+    const header = Number(BigInt(section.header_location.offset));
+    const size = bytes.readBigUInt64LE(header + 32);
+    assert.ok(size + 1n <= BigInt(bytes.length) - BigInt(section.offset));
+    bytes.writeBigUInt64LE(size + 1n, header + 32);
+    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
+  });
   const relocationSection = relocatable.sections.find(
     (item) => item.type === "SHT_RELA",
   );
@@ -676,6 +686,17 @@ try {
     bytes.writeBigUInt64LE(8n, header + 32);
     bytes.writeBigUInt64LE(8n, header + 56);
     return [`undersized-entry-${type}`, bytes, "invalid_input"];
+  });
+  const nonintegralRelocationEntries = [
+    ["RELA", 4, 24],
+    ["REL", 9, 16],
+  ].map(([type, sectionType, entrySize]) => {
+    const bytes = Buffer.from(object);
+    const header = Number(BigInt(relocationSection.header_location.offset));
+    bytes.writeUInt32LE(sectionType, header + 4);
+    bytes.writeBigUInt64LE(BigInt(entrySize + 1), header + 32);
+    bytes.writeBigUInt64LE(BigInt(entrySize), header + 56);
+    return [`nonintegral-entry-count-${type}`, bytes, "invalid_input"];
   });
   const invalidRelocationReferences = [
     ["missing-symbol-table", relocatable.sections.length + 100],
@@ -1066,7 +1087,9 @@ try {
     ],
     ...zeroSymbolEntries,
     ...undersizedSymbolEntries,
+    ...nonintegralSymbolEntries,
     ...undersizedRelocationEntries,
+    ...nonintegralRelocationEntries,
     ...invalidRelocationReferences,
     ["unterminated-dynamic-segment", shortDynamic, "invalid_input"],
     ["unterminated-interpreter", unterminatedInterpreter, "invalid_input"],

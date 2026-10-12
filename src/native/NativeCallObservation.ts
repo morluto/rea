@@ -7,7 +7,10 @@ import {
   AnalysisInputError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -40,7 +43,7 @@ export const observeNativeCalls = async (
   signal?: AbortSignal,
   readTargetDigest: typeof fileSha256 = fileSha256,
 ): Promise<Result<NativeCallObservationResult, AnalysisError>> => {
-  if (target.kind !== "executable" || target.format !== "mach-o")
+  if (target.kind !== "executable" || !isMachOFormat(target.format))
     return err(
       new AnalysisCapabilityUnavailableError(
         "native-macos",

@@ -10,6 +10,7 @@ import type {
   JavaScriptStaticStorage,
 } from "./javascriptStaticAnalysisTypes.js";
 import type {
+  ElectronCallPath,
   ElectronBrowserWindowFinding,
   ElectronContextBridgeFinding,
   ElectronIpcFinding,
@@ -36,6 +37,8 @@ export interface LocatedJavaScriptFinding<Value> {
 
 /** Mutable collections used during one inert AST traversal. */
 export interface JavaScriptAnalysisAccumulator {
+  electronCallPaths?: readonly ElectronCallPath[];
+  electronCallPathLimitReached?: boolean;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   readonly storage: LocatedJavaScriptFinding<JavaScriptStaticStorage>[];

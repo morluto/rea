@@ -27,6 +27,7 @@ export interface ElectronGraphEdgeInput {
     | "exposes"
     | "sends"
     | "invokes"
+    | "calls"
     | "handles";
   readonly operation: string;
   readonly properties: Readonly<Record<string, unknown>>;

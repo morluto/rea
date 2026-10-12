@@ -9,6 +9,10 @@ it.each([
   "<key>__proto__</key>",
   "<key><![CDATA[__proto__]]></key>",
   "<key>&#95;&#x5F;proto__</key>",
+  "<key >__proto__</key >",
+  "<key\n>__proto__</key>",
+  "<key>__proto__<!-- trailing comment --></key>",
+  "<key><![CDATA[__proto__]]><!-- trailing comment --></key>",
 ])("omits and counts a dictionary keyed %s", (key) => {
   const parsed = parseXmlPropertyList(
     plist(
@@ -61,6 +65,59 @@ it("omits own __proto__ entries that JSON decoding creates", () => {
   );
   expect(omitPrototypeKeys(decoded)).toEqual({
     value: { a: [{ b: 3 }] },
+    omittedPrototypeKeys: 2,
+  });
+});
+
+it("preserves the pinned decoder's first-child key semantics", () => {
+  const text = plist(
+    "<dict><key>__pro<![CDATA[to__]]></key><string>kept</string><key>__proto__</key><string>omitted</string></dict>",
+  );
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: { __pro: "kept" },
+    omittedPrototypeKeys: 1,
+  });
+});
+
+it("preserves OpenStep dictionary and array autodetection", () => {
+  expect(
+    parseXmlPropertyList(
+      "  { CFBundleExecutable = App; values = (one, two); __rea_prototype_key__ = kept; }",
+    ),
+  ).toEqual({
+    value: {
+      CFBundleExecutable: "App",
+      values: ["one", "two"],
+      __rea_prototype_key__: "kept",
+    },
+    omittedPrototypeKeys: 0,
+  });
+  expect(parseXmlPropertyList("(one, two)")).toEqual({
+    value: ["one", "two"],
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it.each(["\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029"])(
+  "preserves unrelated source values around %j line endings",
+  (newline) => {
+    const text = plist(
+      `<dict>${newline}<key>kept&#13;key</key><string>a&#13;b&#x85;c&#x2028;d</string>${newline}<key${newline}>__proto__<!--tail--></key><string>omitted</string></dict>`,
+    );
+    expect(parseXmlPropertyList(text)).toEqual({
+      value: { "kept\rkey": "a\rb\u0085c\u2028d" },
+      omittedPrototypeKeys: 1,
+    });
+  },
+);
+
+it("locates sparse omitted keys across newline-dense source", () => {
+  const lines = "\n".repeat(64 * 1024);
+  const text = plist(
+    `<dict>${lines}<key >__proto__</key><string>omitted</string><key>nested</key><dict>${lines}<key>__proto__<!--tail--></key><string>omitted</string><key>kept</key><true/></dict></dict>`,
+  );
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: { nested: { kept: true } },
     omittedPrototypeKeys: 2,
   });
 });

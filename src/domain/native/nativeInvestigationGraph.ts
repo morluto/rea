@@ -38,10 +38,6 @@ export const nativeInvestigationNodeKindSchema = z.enum([
   "unknown",
 ]);
 
-type NativeInvestigationNodeKind = z.infer<
-  typeof nativeInvestigationNodeKindSchema
->;
-
 /** One UI, dispatch, or value entity with optional decoded source location. */
 export const nativeInvestigationNodeSchema = z.strictObject({
   id: z.string().min(1),
@@ -51,7 +47,6 @@ export const nativeInvestigationNodeSchema = z.strictObject({
   attributes: z.record(z.string(), jsonValueSchema),
   evidence: z.array(nativeMetadataEvidenceSchema),
 });
-type NativeInvestigationNode = z.infer<typeof nativeInvestigationNodeSchema>;
 
 /** Relationship types preserve UI wiring, native dispatch, and value flow. */
 export const nativeInvestigationRelationSchema = z.enum([
@@ -71,10 +66,6 @@ export const nativeInvestigationRelationSchema = z.enum([
   "flows_to",
   "controls",
 ]);
-
-type NativeInvestigationRelation = z.infer<
-  typeof nativeInvestigationRelationSchema
->;
 
 /** An observed, inferred, or unresolved relationship between entities. */
 export const nativeInvestigationEdgeSchema = z.discriminatedUnion(

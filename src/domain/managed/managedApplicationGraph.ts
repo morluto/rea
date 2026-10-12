@@ -335,6 +335,11 @@ const projectionLimitations = (
   ...(omissions.partialInput
     ? ["At least one supplied managed Evidence record has partial coverage."]
     : []),
+  ...(omissions.selectedTypes === null
+    ? []
+    : [
+        `Managed member Evidence selected only these declaring types: ${omissions.selectedTypes.join(", ")}; type, method, and field nodes of other types are omitted, not absent.`,
+      ]),
   ...(omissions.unscopedTokenRelationships
     ? [
         "Managed boundary tokens were not linked to member nodes because matching module MVID scope was not established.",

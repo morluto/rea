@@ -664,6 +664,30 @@ describe("Ghidra native decompiler admission", () => {
     });
   });
 
+  it("accepts a one-slice universal-format Darwin native decompiler", () => {
+    const bytes = fat([0x0100000c]);
+    const result = inspectGhidraInstallation(
+      {
+        environment: {},
+        installDir: INSTALL,
+        platform: "darwin",
+        architecture: "arm64",
+      },
+      host({
+        executableHeader: (path: string) =>
+          path === MAC_DECOMPILER ? { bytes, size: bytes.length } : undefined,
+      }),
+    );
+    expect(result.status).toBe("available");
+    if (result.status !== "available") return;
+    expect(
+      result.checks.find(({ name }) => name === "native_decompiler"),
+    ).toMatchObject({
+      status: "passed",
+      detail: `${MAC_DECOMPILER} reports mach-o-universal arm64, which matches darwin/arm64`,
+    });
+  });
+
   it("names the observed and the required executable in the failure", () => {
     const result = inspectGhidraInstallation(
       {

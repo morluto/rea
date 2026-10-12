@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
 
 import { ApktoolResourceAnalysisService } from "../dist/application/apktool/ApktoolResourceAnalysisService.js";
 import { createApktoolResourceAnalysisProvider } from "../dist/composition/apktool.js";
@@ -11,8 +9,8 @@ if (options.help) {
   process.stdout.write(
     "Usage: npm run verify:apktool [-- --apk PATH]\n" +
       "Requires a caller-selected apktool launcher (REA_APKTOOL_COMMAND or\n" +
-      "PATH) and a Java runtime. Without --apk, a small signed probe APK is\n" +
-      "expected at the path given by --apk; nothing is downloaded or built.\n",
+      "PATH) and a Java runtime. Without --apk, only client availability is\n" +
+      "checked. Supply a local APK to verify decoding; nothing is downloaded or built.\n",
   );
   process.exit(0);
 }
@@ -38,70 +36,80 @@ const run = async (operation, input) => {
   return result.value.normalized_result;
 };
 
-const client = await run("inspect_apktool_client", {});
-if (client !== null) {
-  check(
-    "apktool launcher reports a version",
-    typeof client.client.apktool_version === "string" &&
-      client.client.apktool_version !== "",
-    `command=${client.client.command} version=${client.client.apktool_version}`,
-  );
-}
+try {
+  const client = await run("inspect_apktool_client", {});
+  if (client !== null) {
+    check(
+      "apktool launcher reports a version",
+      typeof client.client.apktool_version === "string" &&
+        client.client.apktool_version !== "",
+      `command=${client.client.command} version=${client.client.apktool_version}`,
+    );
+  }
 
-if (options.apk !== null) {
-  const decoded = await run("decode_android_resources", {
-    path: options.apk,
-    include_strings: true,
-  });
-  if (decoded !== null) {
-    const bytes = await stat(options.apk).then((info) => info.size);
-    const digest = createHash("sha256")
-      .update(await readFile(options.apk))
-      .digest("hex");
-    check(
-      "decoded target identity matches the file on disk",
-      decoded.target.bytes === bytes && decoded.target.sha256 === digest,
-      `${bytes} bytes`,
-    );
-    check(
-      "metadata carries version and SDK facts",
-      typeof decoded.metadata.version_name === "string" &&
-        decoded.metadata.min_sdk_version !== null &&
-        decoded.metadata.target_sdk_version !== null,
-      `version=${String(decoded.metadata.version_name)} sdk=${String(decoded.metadata.min_sdk_version)}..${String(decoded.metadata.target_sdk_version)}`,
-    );
-    check(
-      "decoded manifest names the package",
-      typeof decoded.metadata.package_name === "string" &&
-        decoded.manifest !== null &&
-        decoded.manifest.includes(decoded.metadata.package_name),
-      String(decoded.metadata.package_name),
-    );
-    check(
-      "string resources projected",
-      decoded.strings.length > 0,
-      `${decoded.strings.length} string(s)`,
-    );
-    if (decoded.locales.length > 0) {
-      const locale = await run("decode_android_resources", {
-        path: options.apk,
-        include_strings: true,
-        locale: decoded.locales[0],
-      });
-      if (locale !== null)
-        check(
-          `locale table projected for ${String(decoded.locales[0])}`,
-          Array.isArray(locale.strings),
-          `${locale.strings.length} string(s)`,
-        );
+  if (options.apk !== null) {
+    const decoded = await run("decode_android_resources", {
+      path: options.apk,
+      include_strings: true,
+    });
+    if (decoded !== null) {
+      const bytes = await stat(options.apk).then((info) => info.size);
+      const digest = createHash("sha256")
+        .update(await readFile(options.apk))
+        .digest("hex");
+      check(
+        "decoded target identity matches the file on disk",
+        decoded.target.bytes === bytes && decoded.target.sha256 === digest,
+        `${bytes} bytes`,
+      );
+      check(
+        "metadata carries version and SDK facts",
+        typeof decoded.metadata.version_name === "string" &&
+          decoded.metadata.min_sdk_version !== null &&
+          decoded.metadata.target_sdk_version !== null,
+        `version=${String(decoded.metadata.version_name)} sdk=${String(decoded.metadata.min_sdk_version)}..${String(decoded.metadata.target_sdk_version)}`,
+      );
+      check(
+        "decoded manifest names the package",
+        typeof decoded.metadata.package_name === "string" &&
+          decoded.manifest !== null &&
+          decoded.manifest.includes(decoded.metadata.package_name),
+        String(decoded.metadata.package_name),
+      );
+      check(
+        "string resources projected",
+        decoded.strings.length > 0,
+        `${decoded.strings.length} string(s)`,
+      );
+      if (decoded.locales.length > 0) {
+        const locale = await run("decode_android_resources", {
+          path: options.apk,
+          include_strings: true,
+          locale: decoded.locales[0],
+        });
+        if (locale !== null)
+          check(
+            `locale table projected for ${String(decoded.locales[0])}`,
+            Array.isArray(locale.strings),
+            `${locale.strings.length} string(s)`,
+          );
+      }
     }
   }
-}
-
-try {
-  await provider.close();
-} catch {
-  // The provider owns per-call workspaces only; closing is best-effort.
+} catch (cause) {
+  failures += 1;
+  process.stdout.write(
+    `[FAIL] verifier execution — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+  );
+} finally {
+  try {
+    await provider.close();
+  } catch (cause) {
+    failures += 1;
+    process.stdout.write(
+      `[FAIL] provider cleanup — ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    );
+  }
 }
 
 if (failures > 0) {
@@ -116,7 +124,12 @@ function parseArguments(argv) {
     const argument = argv[index];
     if (argument === "--help" || argument === "-h") parsed.help = true;
     else if (argument === "--apk") {
-      parsed.apk = argv[index + 1] ?? null;
+      const path = argv[index + 1];
+      if (path === undefined) {
+        process.stderr.write("--apk requires a local APK path\n");
+        process.exit(2);
+      }
+      parsed.apk = path;
       index += 1;
     } else {
       process.stderr.write(`unknown argument: ${argument}\n`);

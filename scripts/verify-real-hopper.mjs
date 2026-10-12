@@ -30,6 +30,7 @@ import {
   requireMcpOperationResult,
   requireMcpLifecycleResult,
   requireMcpEvidenceResult,
+  sortVerifierNames,
   requireWorkflowEvidenceProvider,
 } from "./lib/mcp-verifier-results.mjs";
 import {
@@ -283,8 +284,10 @@ try {
   const availableTools = initialStatus.tool_availability;
   if (!Array.isArray(availableTools))
     throw new Error("The real session omitted tool availability");
-  const expectedNames = availableTools.map(({ name }) => name).sort();
-  const actualNames = listed.tools.map(({ name }) => name).sort();
+  const expectedNames = sortVerifierNames(
+    availableTools.map(({ name }) => name),
+  );
+  const actualNames = sortVerifierNames(listed.tools.map(({ name }) => name));
   if (JSON.stringify(actualNames) !== JSON.stringify(expectedNames)) {
     const expected = new Set(expectedNames);
     const actual = new Set(actualNames);

@@ -33,6 +33,8 @@ import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (error instanceof EvidenceFileError && error.published !== undefined)
+    return "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
   if (error instanceof AnalysisSnapshotMismatchError)
     return "Run analysis without this snapshot, then save a fresh snapshot using the intended artifact, provider, and analysis profile.";
   if (error instanceof AnalysisUnsupportedTargetError)
@@ -75,6 +77,21 @@ export const analysisErrorRemediationAction = (
   )
     return "For a JavaScript/Electron application directory, call analyze_javascript_application with input_path or run `rea analyze <directory>`. For binary analysis, select its executable file.";
   if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "load_selection_rejected"
+  )
+    return "Correct the reported load argument (--target-format, --architecture, or --entry-point on the CLI; format, architecture, or entry_point through MCP) and retry.";
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "file_format_rejected"
+  )
+    return "Review the reported file-format reason and select a supported, well-formed target.";
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "wasm_requires_static_inspection"
+  )
+    return `For static inspection, call inspect_wasm_artifact with ${JSON.stringify({ path: error.path })} or run \`rea inspect-wasm-artifact <path> --format json\`. This separate lane requires caller-supplied WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; check its availability in binary_session. REA does not execute WASM or install tools, and the header alone does not establish that the complete module is valid.`;
+  if (
     error instanceof AnalysisAccessDeniedError ||
     (error instanceof BinaryTargetError && error.systemCode !== undefined)
   )
@@ -93,6 +110,17 @@ export const analysisErrorRemediationAction = (
 export const analysisErrorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "load_selection_rejected"
+  )
+    return "invalid_input";
+  if (
+    error instanceof BinaryTargetError &&
+    (error.constraint === "wasm_requires_static_inspection" ||
+      error.constraint === "file_format_rejected")
+  )
+    return "unsupported_target";
   if (
     error instanceof ProviderSelectionError &&
     error.reason === "provider_unavailable"
@@ -156,6 +184,7 @@ const artifactErrorCategory = (
 const STATIC_ERROR_CATEGORIES: Readonly<
   Partial<Record<AnalysisErrorTag, AnalysisErrorProjection["category"]>>
 > = {
+  ConfigurationError: "invalid_input",
   AnalysisInputError: "invalid_input",
   AnalysisAccessDeniedError: "unavailable",
   AnalysisArtifactChangedError: "integrity_mismatch",
@@ -210,10 +239,18 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
           )
           .join("; ")}.`;
   if (error instanceof NoBinaryOpenError) return error.message;
+  if (
+    error instanceof BinaryTargetError &&
+    error.constraint === "wasm_requires_static_inspection"
+  )
+    return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
       ? "open_binary accepts files and macOS app bundles. This target is a directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or `rea analyze <directory>`."
-      : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
+      : error.constraint === "file_format_rejected" ||
+          error.constraint === "load_selection_rejected"
+        ? `${error.message}.`
+        : `${error.message}. Check that the path exists, is readable, and points to a supported file.`;
   if (error._tag === "ProcessCaptureError")
     return (
       error.userMessage ??
@@ -368,7 +405,10 @@ const artifactMessage = ({
 const evidenceFileMessage = ({
   operation,
   reason,
+  published,
 }: EvidenceFileError): string => {
+  if (published !== undefined)
+    return "The output file was published, but staging cleanup remains incomplete.";
   if (reason === "missing")
     return operation === "read"
       ? "Evidence file does not exist at the selected path. Check the path and try again."

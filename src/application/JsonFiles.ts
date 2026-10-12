@@ -5,12 +5,14 @@ import {
   open,
   realpath,
   rename,
-  rm,
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 
-import { EvidenceFileError } from "../domain/evidenceErrors.js";
+import {
+  EvidenceFileError,
+  type PublishedEvidenceFile,
+} from "../domain/evidenceErrors.js";
 import {
   AnalysisCancelledError,
   AnalysisResourceConstraintError,
@@ -22,6 +24,10 @@ import {
   type JsonObjectMemberReader,
 } from "./JsonInputFile.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
 export interface TextWriteCancellation {
@@ -119,28 +125,57 @@ export const writeTextFile = async (
   encoded: string,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
 ): Promise<TextWriteResult<EvidenceFileError>> =>
-  writeTextParts([encoded], path, overwrite);
+  writeTextParts([encoded], path, overwrite, resources);
 
 /** Publish streamed text atomically unless cancellation wins before publication. */
 export function writeTextParts(
   parts: Iterable<string>,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
 ): Promise<TextWriteResult<EvidenceFileError>>;
-/** Pass request control to stop streamed generation before atomic publication. */
 export function writeTextParts(
   parts: Iterable<string>,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
   cancellation: TextWriteCancellation | undefined,
 ): Promise<TextWriteResult>;
-export async function writeTextParts(
+export function writeTextParts(
   parts: Iterable<string>,
   path: string,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
   cancellation?: TextWriteCancellation,
 ): Promise<TextWriteResult> {
+  return resources
+    .run(() =>
+      writeTextPartsOwned(parts, path, overwrite, resources, cancellation),
+    )
+    .catch((cause: unknown) => {
+      const cleanup =
+        cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+          ? cause.cleanup
+          : undefined;
+      return err(
+        new EvidenceFileError("write", "io", {
+          cause,
+          path: resolve(path),
+          ...(cleanup === undefined ? {} : { cleanup }),
+        }),
+      );
+    });
+}
+
+const writeTextPartsOwned = async (
+  parts: Iterable<string>,
+  path: string,
+  overwrite: boolean,
+  resources: ArtifactResourceScope,
+  cancellation?: TextWriteCancellation,
+): Promise<TextWriteResult> => {
   const requestedPath = resolve(path);
   try {
     assertWriteActive(cancellation);
@@ -165,10 +200,40 @@ export async function writeTextParts(
       destination,
       parts,
       overwrite,
+      resources,
       cancellation,
     );
     return ok({ path: requestedPath, bytes });
   } catch (cause: unknown) {
+    if (cause instanceof StagedOutputCleanupFailure) {
+      const cleanup = {
+        reason: failureMessage(cause.cleanupCause),
+        resources: [cause.owner.directory],
+      };
+      if (cause.outcome.ok)
+        return err(
+          new EvidenceFileError("write", "io", {
+            cause,
+            path: requestedPath,
+            cleanup,
+            published: { ...cause.outcome.value, path: requestedPath },
+          }),
+        );
+      if (cause.outcome.error instanceof AnalysisCancelledError)
+        return err(
+          new AnalysisCancelledError(cause.outcome.error.operation, {
+            cause,
+            cleanup,
+          }),
+        );
+      return err(
+        new EvidenceFileError("write", missingOrIo(cause.outcome.error), {
+          cause,
+          path: requestedPath,
+          cleanup,
+        }),
+      );
+    }
     if (
       cancellation?.signal.aborted === true &&
       cause instanceof AnalysisCancelledError &&
@@ -189,7 +254,7 @@ export async function writeTextParts(
       }),
     );
   }
-}
+};
 
 /** A missing path or parent is a selection error, not a permission failure. */
 const missingOrIo = (cause: unknown): "missing" | "io" => {
@@ -201,32 +266,74 @@ const publishFile = async (
   destination: string,
   parts: Iterable<string>,
   overwrite: boolean,
+  resources: ArtifactResourceScope,
   cancellation?: TextWriteCancellation,
 ): Promise<number> => {
   const stagingDirectory = await mkdtemp(
     resolve(dirname(destination), ".rea-write-"),
   );
+  const owner = await OwnedStagedOutput.create(stagingDirectory);
+  let outcome: Result<PublishedEvidenceFile, unknown>;
+  const staged = resolve(stagingDirectory, "content");
   try {
-    const staged = resolve(stagingDirectory, "content");
     const file = await open(staged, "wx", 0o600);
-    let bytes = 0;
+    await owner.setFile(new OwnedFileHandle(file));
+    let written: Result<number, unknown>;
     try {
-      bytes = await writeStagedParts(file, parts, cancellation);
+      const bytes = await writeStagedParts(file, parts, cancellation);
       assertWriteActive(cancellation);
       await file.sync();
-    } finally {
-      await file.close();
+      written = ok(bytes);
+    } catch (cause: unknown) {
+      written = err(cause);
     }
-    // Once submitted, the atomic publication can win a later cancellation race.
+    try {
+      await owner.closeFile();
+    } catch (cause: unknown) {
+      if (written.ok) written = err(cause);
+    }
+    if (!written.ok) throw written.error;
+    // Once submitted, atomic publication can win a later cancellation race.
     assertWriteActive(cancellation);
-    if (overwrite) await rename(staged, destination);
+    await owner.assertReadyForPublication(staged);
+    assertWriteActive(cancellation);
+    if (overwrite) {
+      await rename(staged, destination);
+      owner.recordPublishedRename();
+    }
     // A hard link publishes complete bytes atomically and cannot replace an existing name.
     else await link(staged, destination);
-    return bytes;
-  } finally {
-    await rm(stagingDirectory, { recursive: true, force: true });
+    outcome = ok({ path: destination, bytes: written.value });
+  } catch (cause: unknown) {
+    outcome = err(cause);
   }
+
+  // One cleanup phase owns both the open descriptor (if any) and its staging directory.
+  const released = await resources.release({
+    kind: "staged-output",
+    resource: owner.directory,
+    output: owner,
+  });
+  if (released.kind === "failed")
+    throw new StagedOutputCleanupFailure(outcome, released.cause, owner);
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value.bytes;
 };
+
+class StagedOutputCleanupFailure extends Error {
+  constructor(
+    readonly outcome: Result<PublishedEvidenceFile, unknown>,
+    readonly cleanupCause: unknown,
+    readonly owner: OwnedStagedOutput,
+  ) {
+    super("Staged output cleanup failed", {
+      cause: outcome.ok ? cleanupCause : outcome.error,
+    });
+  }
+}
+
+const failureMessage = (cause: unknown): string =>
+  cause instanceof Error ? cause.message || cause.name : String(cause);
 
 const writeStagedParts = async (
   file: FileHandle,

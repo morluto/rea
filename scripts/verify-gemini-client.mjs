@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import {
@@ -13,14 +13,18 @@ import { exec } from "./lib/verify-package-core.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createGeminiModelFixture } from "./verify/clients/gemini-model-fixture.mjs";
 
-assert(
-  process.platform !== "win32",
-  "Native Gemini verifier requires POSIX; Windows is unverified",
-);
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const command = process.env.REA_VERIFY_GEMINI_COMMAND ?? "gemini";
 const mode = process.argv[2] ?? "call";
+// npm installs of Gemini CLI provide a JavaScript entry point; on Windows only a gemini.cmd shim reaches
+// PATH, which Node does not spawn without a shell, so a selected .js entry runs under this Node. It is
+// resolved once, because the preflight runs from the caller's directory and the client from the workspace.
+const entryPoint = /\.(c|m)?js$/iu.test(command) ? resolve(command) : undefined;
+const launch = (args) =>
+  entryPoint === undefined
+    ? [command, args]
+    : [process.execPath, [entryPoint, ...args]];
 assert(
   ["chat", "call"].includes(mode),
   "Usage: verify-gemini-client.mjs [chat|call]",
@@ -60,11 +64,15 @@ const environment = {
 let clientVersion;
 try {
   clientVersion = (
-    await exec(command, ["--version"], { env: environment, timeout: 30_000 })
+    await exec(...launch(["--version"]), { env: environment, timeout: 30_000 })
   ).stdout.trim();
 } catch (cause) {
+  const windowsHint =
+    process.platform === "win32"
+      ? " On Windows, select the JavaScript entry point; npm installs provide it as node_modules/@google/gemini-cli/bundle/gemini.js."
+      : "";
   throw new Error(
-    `Gemini preflight failed for ${command}; install Gemini CLI or set REA_VERIFY_GEMINI_COMMAND. ${String(cause)}`,
+    `Gemini preflight failed for ${command}; install Gemini CLI or set REA_VERIFY_GEMINI_COMMAND.${windowsHint} ${String(cause)}`,
   );
 }
 const original = JSON.stringify(
@@ -103,11 +111,11 @@ for (const args of [
       assert(parsed.plannedActions.some((a) => a.target === configPath));
       assert(
         parsed.plannedActions.some((a) =>
-          a.target.startsWith(join(profile, ".agents", "skills") + "/"),
+          a.target.startsWith(join(profile, ".agents", "skills") + sep),
         ),
       );
       assert(
-        parsed.plannedActions.every((a) => a.target.startsWith(profile + "/")),
+        parsed.plannedActions.every((a) => a.target.startsWith(profile + sep)),
       );
     }
   }
@@ -300,8 +308,7 @@ const fixture = await createGeminiModelFixture({
 let failure;
 try {
   const response = await exec(
-    command,
-    [
+    ...launch([
       "--model",
       "gemini-2.5-flash",
       "--approval-mode",
@@ -314,7 +321,7 @@ try {
       mode === "chat"
         ? "Say hello briefly."
         : `Use REA to analyze the JavaScript directory ${target}. Report the result.`,
-    ],
+    ]),
     {
       env: {
         ...environment,

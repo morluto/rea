@@ -150,7 +150,10 @@ describe("Qwen Code profile setup", () => {
       expect(await setup.configureClient(client, {}, command)).toEqual({
         status: "configured",
       });
-      expect(await setup.installSkill([client.name])).toBe("installed");
+      expect(await setup.installSkill([client.name])).toEqual({
+        ok: true,
+        value: "installed",
+      });
       const skill = join(home, ".agents", "skills", PRODUCT_IDENTITY.skillName);
       await writeFile(join(skill, "user-notes.txt"), "user-authored");
       expect(await readFile(join(skill, "SKILL.md"), "utf8")).toContain(
@@ -158,7 +161,10 @@ describe("Qwen Code profile setup", () => {
       );
       expect(await setup.clientNeedsConfigure(client, {}, command)).toBe(false);
       expect(await setup.skillNeedsInstall([client.name])).toBe(false);
-      expect(await setup.installSkill([client.name])).toBe("unchanged");
+      expect(await setup.installSkill([client.name])).toEqual({
+        ok: true,
+        value: "unchanged",
+      });
       expect(
         (
           await readClientRegistrationStatuses(

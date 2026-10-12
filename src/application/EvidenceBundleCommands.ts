@@ -1,10 +1,14 @@
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+} from "../domain/evidenceErrors.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareBundles } from "../domain/bundleComparison.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   readEvidenceBundle,
   writeEvidenceBundle,
@@ -31,10 +35,33 @@ export const exportEvidenceBundleCommand = async (
 ): Promise<Result<JsonValue, AnalysisError>> => {
   const loaded = await readEvidenceBundle(sourcePath);
   if (!loaded.ok) return loaded;
-  return projectWrite(
+  const resources = new ArtifactResourceScope();
+  const written = await writeEvidenceBundle(
     loaded.value,
-    await writeEvidenceBundle(loaded.value, outputPath, overwrite),
+    outputPath,
+    overwrite,
+    resources,
   );
+  if (written.ok) return projectWrite(loaded.value, written);
+
+  let cleanupSucceeded = false;
+  try {
+    await resources.close();
+    cleanupSucceeded = true;
+  } catch {
+    // The original error cause retains the same staged-output owner for diagnostics.
+  }
+  if (
+    cleanupSucceeded &&
+    written.error instanceof EvidenceFileError &&
+    written.error.published
+  ) {
+    return projectWrite(loaded.value, {
+      ok: true,
+      value: written.error.published,
+    });
+  }
+  return written;
 };
 
 /** Compare two validated canonical Evidence bundles without session state. */

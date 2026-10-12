@@ -220,5 +220,9 @@ const resolvesToFile = (input: ResolveToFileInput): boolean => {
   );
 };
 
-const ipcRecordKey = (path: string, finding: ElectronIpcFinding): string =>
-  `${path}\0${String(finding.location.start.line)}:${String(finding.location.start.column)}\0${finding.side}\0${finding.operation}`;
+const ipcRecordKey = (path: string, finding: ElectronIpcFinding): string => {
+  const identity = `${path}\0${String(finding.location.start.line)}:${String(finding.location.start.column)}\0${finding.side}\0${finding.operation}\0${finding.channel ?? finding.channel_expression}\0${JSON.stringify(finding.handler_location)}`;
+  return finding.invocation_location === undefined
+    ? identity
+    : `${identity}\0${String(finding.invocation_location.start.line)}:${String(finding.invocation_location.start.column)}`;
+};

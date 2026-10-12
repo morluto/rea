@@ -11,7 +11,7 @@ describe("executable dispatcher", () => {
     async ({ processes, workspace }) => {
       const scripts = await workspace.mkdir("scripts");
       await workspace.mkdir("dist");
-      await workspace.mkdir("dist/cli");
+      await workspace.mkdir("dist/cli-runtime");
       await workspace.mkdir("dist/mcp");
       await Promise.all([
         copyFile("scripts/rea.mjs", join(scripts, "rea.mjs")),
@@ -24,19 +24,19 @@ describe("executable dispatcher", () => {
           'export const runEntrypoint = () => process.stdout.write(JSON.stringify({ adapter: "mcp" }));\n',
         ),
         workspace.write(
-          "dist/cli.js",
+          "dist/cli-runtime/cli.js",
           'export const createCli = () => ({ serve: (args) => process.stdout.write(JSON.stringify({ adapter: "cli", args })) });\n',
         ),
         workspace.write(
-          "dist/cliOutput.js",
+          "dist/cli-runtime/cliOutput.js",
           "export const validateCliOutputArguments = () => ({ ok: true }); export const renderCliOutputArgumentError = () => ''; export const renderEmptyFilteredCliOutput = () => undefined;\n",
         ),
         workspace.write(
-          "dist/cli/streamedJsonOutput.js",
+          "dist/cli-runtime/streamedJsonOutput.js",
           "export const createStreamedCliJsonOutput = () => undefined;\n",
         ),
         workspace.write(
-          "dist/mcpDoctor.js",
+          "dist/cli-runtime/mcpDoctor.js",
           'export const runProductionMcpDoctorCli = (args) => Promise.resolve({ output: JSON.stringify({ adapter: "mcp-doctor", args }), exitCode: 0 });\n',
         ),
       ]);

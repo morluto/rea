@@ -52,6 +52,7 @@ export const registerManagedTools = (
         path,
         operation,
         executionOptions?.signal,
+        parameters,
       );
       if (execution.ok && typeof requestedPath === "string")
         selectedManagedPath = requestedPath;

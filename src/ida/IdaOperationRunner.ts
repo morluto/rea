@@ -10,6 +10,7 @@ import {
   functionInstructionWindowSchema,
 } from "../domain/hopperValues.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { readCallGraphCallees, unavailableCallGraph } from "./IdaCallGraph.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaOperation } from "./IdaProviderCapabilities.js";
@@ -65,6 +66,7 @@ export class IdaOperationRunner {
   readonly raw: IdaRawObservation[] = [];
   readonly locations: EvidenceLocation[] = [];
   readonly limitations: string[] = [];
+  relationshipCoverage: RelationshipCoverage | undefined;
   constructor(
     private readonly connection: IdaMcpConnection,
     private readonly protocol: "legacy" | "modern",
@@ -203,6 +205,7 @@ export class IdaOperationRunner {
             (tool, args) => this.call(tool, args),
             fn.address,
           );
+    this.relationshipCoverage = graph.coverage;
     this.limitations.push(...graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
@@ -366,6 +369,11 @@ export class IdaOperationRunner {
       this.limitations.push(
         "Modern upstream xrefs classify references as code or data, without proving call edges. Direct callers are unavailable in this profile.",
       );
+      this.relationshipCoverage = {
+        status: "unknown",
+        reason:
+          "Modern upstream xrefs do not establish direct caller relationships.",
+      };
       return [];
     } else {
       const page = modernCalleesSchema.parse(
@@ -379,6 +387,15 @@ export class IdaOperationRunner {
         this.limitations.push(
           "Upstream callees capped results at 500; additional callees remain unknown.",
         );
+      this.relationshipCoverage =
+        page.more === true
+          ? {
+              status: "partial",
+              limitations: [
+                "Upstream callees capped results at 500; additional callees remain unknown.",
+              ],
+            }
+          : { status: "complete" };
       for (const item of page.callees) {
         if ("type" in item && item.type === "external")
           result.set(
@@ -392,6 +409,11 @@ export class IdaOperationRunner {
       const resolved = identity(await this.resolve(query));
       result.set(resolved.address, resolved);
     }
+    if (this.relationshipCoverage === undefined)
+      this.relationshipCoverage = {
+        status: "unknown",
+        reason: "The legacy relationship response does not report coverage.",
+      };
     return [...result.values()];
   }
 

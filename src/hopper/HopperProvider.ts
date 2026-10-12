@@ -271,6 +271,10 @@ export class HopperProvider implements AnalysisProviderCandidate {
                 // Only the file-offset mapping differs from Hopper's reply.
                 rawResult: mapped === result ? null : result.value,
                 ...(profile === undefined ? {} : { analysisProfile: profile }),
+                ...(operation === "procedure_callers" ||
+                operation === "procedure_callees"
+                  ? { relationshipCoverage: { status: "complete" as const } }
+                  : {}),
                 limitations: [
                   ...(preparedImage === undefined
                     ? []

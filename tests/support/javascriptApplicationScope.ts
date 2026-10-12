@@ -12,9 +12,10 @@ export const readJavaScriptArtifactFiles = (
   reader: ArtifactReader,
   snapshot: ArtifactInventorySnapshot,
   signal?: AbortSignal,
+  sourcePaths?: readonly string[],
 ) =>
   withArtifactResourceScope((scope) =>
-    readOwned(reader, snapshot, scope, signal),
+    readOwned(reader, snapshot, scope, signal, sourcePaths),
   );
 
 /** Run a JavaScript analysis with an awaited, test-owned artifact scope. */

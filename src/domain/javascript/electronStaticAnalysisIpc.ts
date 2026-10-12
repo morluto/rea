@@ -175,7 +175,7 @@ const addValidation = (
   });
 };
 
-const ipcDescriptor = (
+export const ipcDescriptor = (
   path: readonly string[] | undefined,
 ): ElectronIpcDescriptor | undefined => {
   if (path?.length !== 2) return undefined;
@@ -201,6 +201,7 @@ const ipcDescriptor = (
           operation: "send-to-host",
           mode: "send",
         };
+      case "addListener":
       case "on":
         return { side: "renderer", operation: "on", mode: "listen" };
       case "once":
@@ -209,6 +210,7 @@ const ipcDescriptor = (
   }
   const main = object === "ipcMain" ? operation : undefined;
   switch (main) {
+    case "addListener":
     case "on":
       return { side: "main", operation: "on", mode: "listen" };
     case "once":

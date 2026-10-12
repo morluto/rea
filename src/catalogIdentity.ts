@@ -74,15 +74,4 @@ export const CATALOG_IDENTITY = {
   get digests() {
     return (catalogDigests ??= createCatalogDigests());
   },
-  tools: sortedToolContracts.map(({ name, kind, effects, annotations }) => ({
-    name,
-    surface: kind,
-    effects: { ...effects },
-    annotations: {
-      read_only: annotations.readOnlyHint ?? false,
-      destructive: annotations.destructiveHint ?? false,
-      idempotent: annotations.idempotentHint ?? false,
-      open_world: annotations.openWorldHint ?? true,
-    },
-  })),
 } as const;

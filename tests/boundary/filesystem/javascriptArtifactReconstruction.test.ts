@@ -1,6 +1,7 @@
-import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { expect, it } from "vitest";
 
@@ -135,6 +136,7 @@ it.each([
   ["a non-array sourcesContent value", { sourcesContent: "source" }],
   ["a non-string, non-null source entry", { sourcesContent: [42] }],
   ["a source-content array with the wrong length", { sourcesContent: [] }],
+  ["a non-string source name", { sources: [42] }],
 ])(
   "reports %s as an invalid local source map",
   async (_description, content) => {
@@ -187,7 +189,7 @@ it("accepts omitted and explicitly null source-map source contents", async () =>
       JSON.stringify({
         version: 3,
         sources: ["null.ts"],
-        sourcesContent: [null],
+        sourcesContent: null,
         names: [],
         mappings: "",
       }),
@@ -206,6 +208,77 @@ it("accepts omitted and explicitly null source-map source contents", async () =>
         observations[0]?.properties.content_available === false,
     ),
   ).toBe(true);
+  expect(result.graph.coverage.status).toBe("complete");
+});
+
+it("retains unnamed source declarations without shifting later source evidence", async () => {
+  const root = await createTestTempDirectory("rea-javascript-unnamed-source-");
+  const text = JSON.stringify({
+    version: 3,
+    sections: [
+      {
+        offset: { line: 0, column: 0 },
+        map: {
+          version: 3,
+          sources: ["prior.ts"],
+          sourcesContent: ["export const prior = 1;"],
+          names: [],
+          mappings: "",
+        },
+      },
+      {
+        offset: { line: 1, column: 0 },
+        map: {
+          version: 3,
+          sources: [null, "original.ts"],
+          sourcesContent: [null, "export const answer: number = 42;"],
+          names: [],
+          mappings: "ACAA",
+        },
+      },
+    ],
+  });
+  await writeFile(join(root, "bundle.js.map"), text);
+
+  const result = await reconstructJavaScriptArtifact({ input_path: root });
+  const nodes = result.graph.nodes;
+  const original = nodes.find(
+    ({ kind, identity }) =>
+      kind === "source-module" &&
+      identity.strategy === "source-map-original" &&
+      identity.original_source === "original.ts",
+  );
+  const unnamed = nodes.find(
+    ({ kind, observations }) =>
+      kind === "unknown" &&
+      observations.some(
+        ({ properties }) => properties.source_name_available === false,
+      ),
+  );
+
+  expect(original?.identity).toMatchObject({
+    strategy: "source-map-original",
+    source_sha256: createHash("sha256")
+      .update("export const answer: number = 42;")
+      .digest("hex"),
+  });
+  expect(original?.observations[0]?.properties).toMatchObject({
+    source_index: 1,
+    declaration_index: 2,
+    content_available: true,
+  });
+  expect(unnamed?.observations[0]?.properties).toMatchObject({
+    source_index: 0,
+    declaration_index: 1,
+    source_name_available: false,
+    content_available: false,
+    content_sha256: null,
+  });
+  expect(unnamed?.identity).toMatchObject({
+    strategy: "artifact-local-key",
+    namespace: "source-map-unnamed-declaration",
+    key: "1",
+  });
   expect(result.graph.coverage.status).toBe("complete");
 });
 

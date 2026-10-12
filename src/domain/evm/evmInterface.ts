@@ -1,14 +1,15 @@
 import { z } from "zod";
 
+import { localPathStringSchema } from "../localPath.js";
+
 const byteOffset = z.number().int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 
 /** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
 export const inspectEvmInterfaceInputSchema = z.strictObject({
-  path: z
-    .string()
-    .min(1)
-    .describe("Absolute path to caller-selected local bytecode carrier"),
+  path: localPathStringSchema.describe(
+    "Absolute path to caller-selected local bytecode carrier",
+  ),
   encoding: z
     .enum(["raw", "hex"])
     .describe(

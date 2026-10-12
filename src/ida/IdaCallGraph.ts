@@ -5,6 +5,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { ZodError } from "zod";
 import {
   idaAddressSchema,
@@ -48,6 +49,7 @@ export interface CallGraphCallees {
     readonly name: string;
   }[];
   readonly limitations: readonly string[];
+  readonly coverage: RelationshipCoverage;
 }
 
 /** No function edges can be observed when the server lacks the graph tool. */
@@ -57,6 +59,11 @@ export const unavailableCallGraph = (reason: string): CallGraphCallees => ({
     UNRECOGNIZED_CALLEE_LIMITATION,
     `Upstream callgraph was unavailable (${reason}); callee edges remain unknown.`,
   ],
+  coverage: {
+    status: "unknown",
+    reason: `Upstream callgraph was unavailable (${reason}); callee edges remain unknown.`,
+    diagnostics: [UNRECOGNIZED_CALLEE_LIMITATION],
+  },
 });
 
 /**
@@ -95,6 +102,8 @@ export const readCallGraphCallees = async (
     BigInt(left) < BigInt(right) ? -1 : BigInt(left) > BigInt(right) ? 1 : 0,
   );
   const limitations = [UNRECOGNIZED_CALLEE_LIMITATION];
+  const diagnostics = [UNRECOGNIZED_CALLEE_LIMITATION];
+  const coverageLimitations: string[] = [];
   const truncated =
     row.truncated === true ||
     row.per_func_capped === true ||
@@ -104,19 +113,25 @@ export const readCallGraphCallees = async (
   const saturated =
     row.max_edges_per_func !== undefined &&
     edges.length >= row.max_edges_per_func;
-  if (truncated) limitations.push(TRUNCATED_LIMITATION);
-  else if (saturated) limitations.push(POSSIBLY_TRUNCATED_LIMITATION);
+  if (truncated) {
+    limitations.push(TRUNCATED_LIMITATION);
+    coverageLimitations.push(TRUNCATED_LIMITATION);
+  } else if (saturated) {
+    limitations.push(POSSIBLY_TRUNCATED_LIMITATION);
+    coverageLimitations.push(POSSIBLY_TRUNCATED_LIMITATION);
+  }
 
   const names = new Map<string, string>();
   if (targets.length > 0) {
     try {
       const raw = await call("lookup_funcs", { queries: targets });
       const parsed = modernLookupBatchSchema.safeParse(raw);
-      if (!parsed.success)
-        limitations.push(
-          "IDA observed callee addresses but returned an unreadable name lookup result; the addresses are retained.",
-        );
-      else {
+      if (!parsed.success) {
+        const limitation =
+          "IDA observed callee addresses but returned an unreadable name lookup result; the addresses are retained.";
+        limitations.push(limitation);
+        diagnostics.push(limitation);
+      } else {
         const rows = new Map<string, (typeof parsed.data)[number] | null>();
         for (const item of parsed.data) {
           const query = idaAddressSchema.safeParse(item.query);
@@ -127,18 +142,19 @@ export const readCallGraphCallees = async (
           const item = rows.get(target);
           if (item?.fn?.address === target && item.error === null)
             names.set(target, item.fn.name);
-          else
-            limitations.push(
-              `IDA observed callee address ${target} but could not resolve its name${item?.error == null ? "" : `: ${item.error}`}; the address is retained.`,
-            );
+          else {
+            const limitation = `IDA observed callee address ${target} but could not resolve its name${item?.error == null ? "" : `: ${item.error}`}; the address is retained.`;
+            limitations.push(limitation);
+            diagnostics.push(limitation);
+          }
         }
       }
     } catch (cause: unknown) {
       if (cause instanceof AnalysisCancelledError) throw cause;
       if (!expectedReadFailure(cause)) throw cause;
-      limitations.push(
-        `IDA observed callee addresses but the name lookup failed (${errorReason(cause)}); the addresses are retained.`,
-      );
+      const limitation = `IDA observed callee addresses but the name lookup failed (${errorReason(cause)}); the addresses are retained.`;
+      limitations.push(limitation);
+      diagnostics.push(limitation);
     }
   }
   return {
@@ -149,5 +165,14 @@ export const readCallGraphCallees = async (
       };
     }),
     limitations,
+    coverage: {
+      ...(coverageLimitations.length === 0
+        ? { status: "complete" as const }
+        : {
+            status: "partial" as const,
+            limitations: coverageLimitations,
+          }),
+      diagnostics,
+    },
   };
 };

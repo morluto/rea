@@ -22,15 +22,32 @@ export const thinMach = (magic: number, cpu: number): Buffer => {
   return bytes;
 };
 
-/** Build a minimal FAT Mach-O table for binary-target parser tests. */
+/** Build a FAT Mach-O with in-bounds thin slices, or an explicitly truncated table. */
 export const fat = (
   cpus: readonly number[],
   declared = cpus.length,
 ): Buffer => {
-  const bytes = Buffer.alloc(8 + cpus.length * 20);
+  const tableSize = 8 + cpus.length * 20;
+  const slices = cpus.map((cpu) => {
+    const bytes = thinMach(0xfeedfacf, cpu);
+    bytes.writeUInt32BE(2, 12);
+    return bytes;
+  });
+  const sliceStart = Math.ceil(tableSize / 16) * 16;
+  const bytes = Buffer.alloc(
+    declared === cpus.length ? sliceStart + cpus.length * 32 : tableSize,
+  );
   bytes.writeUInt32BE(0xcafebabe, 0);
   bytes.writeUInt32BE(declared, 4);
-  cpus.forEach((cpu, index) => bytes.writeUInt32BE(cpu, 8 + index * 20));
+  cpus.forEach((cpu, index) => {
+    const entry = 8 + index * 20;
+    const offset = sliceStart + index * 32;
+    bytes.writeUInt32BE(cpu, entry);
+    bytes.writeUInt32BE(offset, entry + 8);
+    bytes.writeUInt32BE(32, entry + 12);
+    bytes.writeUInt32BE(4, entry + 16);
+    if (declared === cpus.length) slices[index]?.copy(bytes, offset);
+  });
   return bytes;
 };
 

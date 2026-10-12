@@ -113,6 +113,7 @@ it("runs every managed static inspection independently of an active native targe
       operation: "inspect_managed_members",
       subject: { local_path: otherPath, format: "pe" },
     });
+    await verifyManagedTypeSelection(client, path, otherPath);
     const boundaries = structured(
       await client.callTool({
         name: "inspect_managed_native_boundaries",
@@ -442,6 +443,58 @@ const verifyImport = async (
         },
       ],
     },
+  });
+};
+
+/** Selected type names reach the provider and unmatched names stay visible. */
+const verifyManagedTypeSelection = async (
+  client: Client,
+  path: string,
+  otherPath: string,
+): Promise<void> => {
+  const advertised = (await client.listTools()).tools.find(
+    (tool) => tool.name === "inspect_managed_members",
+  );
+  if (advertised === undefined) throw new Error("missing managed member tool");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
+  const validate = ajv.compile(advertised.inputSchema);
+  expect(
+    validate({ path, type_names: ["Fixture.Program", "Missing.Type"] }),
+  ).toBe(true);
+  expect(
+    validate({ path, type_names: ["Fixture.Program", "Fixture.Program"] }),
+  ).toBe(false);
+  const selected = structured(
+    await client.callTool({
+      name: "inspect_managed_members",
+      arguments: { path, type_names: ["Fixture.Program", "Missing.Type"] },
+    }),
+  );
+  expect(selected).toMatchObject({
+    parameters: { path, type_names: ["Fixture.Program", "Missing.Type"] },
+    normalized_result: {
+      types: [expect.objectContaining({ full_name: "Fixture.Program" })],
+      methods: [expect.objectContaining({ declaring_type: "Fixture.Program" })],
+      selection: {
+        type_names: ["Fixture.Program", "Missing.Type"],
+        unmatched_type_names: ["Missing.Type"],
+      },
+    },
+  });
+  const repeatedSelection = await client.callTool({
+    name: "inspect_managed_members",
+    arguments: { path, type_names: ["Fixture.Program", "Fixture.Program"] },
+  });
+  expect(repeatedSelection.isError).toBe(true);
+  const reselectedOtherTarget = structured(
+    await client.callTool({
+      name: "inspect_managed_artifact",
+      arguments: { path: otherPath },
+    }),
+  );
+  expect(reselectedOtherTarget).toMatchObject({
+    subject: { local_path: otherPath, format: "pe" },
   });
 };
 

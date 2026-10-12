@@ -1,4 +1,9 @@
 import * as t from "@babel/types";
+import { javascriptBootstrapAt } from "./javascriptBootstrap.js";
+import {
+  resolveSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 
@@ -70,6 +75,64 @@ export const inspectBundlerRegistration = (
     ),
     location: range(call),
   };
+  addFindingOnce(
+    accumulator,
+    `registration\0${registrationKey(registration)}`,
+    () => accumulator.registrations.push(registration),
+  );
+};
+
+/** Recover standalone Webpack tables whose factories are called by a local loader. */
+export const inspectBundlerBootstrap = (
+  source: string,
+  call: t.CallExpression,
+  accumulator: AnalysisAccumulator,
+  bindings: JavaScriptSemanticAnalysisState,
+): void => {
+  const bootstrap = javascriptBootstrapAt(call, bindings);
+  if (bootstrap === undefined) return;
+  const runtime = `webpack-bootstrap@${String(call.start ?? 0)}`;
+  const recovered = recoverBundlerModules(
+    source,
+    bootstrap.table,
+    runtime,
+    accumulator,
+  );
+  const entries: string[] = [];
+  let unknownEntries = 0;
+  traverseJavaScriptAst(bootstrap.body, {
+    enter: (node, _parent, ancestors) => {
+      if (
+        !t.isCallExpression(node) ||
+        ancestors().some((node) => t.isFunction(node)) ||
+        !t.isIdentifier(node.callee) ||
+        resolveSemanticBindingState(bindings, node.callee, node.callee.name)
+          ?.bindingId !== bootstrap.loaderBindingId
+      )
+        return;
+      const value = argumentValue(node.arguments[0]);
+      if (value === undefined) unknownEntries++;
+      else entries.push(value);
+    },
+  });
+  const registration: JavaScriptBundlerRegistration = {
+    bundler: "webpack",
+    runtime,
+    chunk_keys: [`bootstrap@${String(call.start ?? 0)}`],
+    unknown_chunk_keys: 0,
+    runtime_require_name: bootstrap.loaderName,
+    runtime_module_cache_status: "not-observed",
+    entry_module_keys: uniqueValues(entries).values,
+    unknown_entry_module_keys: unknownEntries,
+    async_chunk_keys: recovered.asyncChunkKeys,
+    unknown_async_chunk_keys: recovered.unknownAsyncChunkKeys,
+    modules: recovered.modules.sort((left, right) =>
+      compareUnicodeCodePoints(left.module_key, right.module_key),
+    ),
+    location: range(call),
+  };
+  accumulator.unknownFindings +=
+    unknownEntries + recovered.unknownAsyncChunkKeys;
   addFindingOnce(
     accumulator,
     `registration\0${registrationKey(registration)}`,

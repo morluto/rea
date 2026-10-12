@@ -34,6 +34,11 @@ import type {
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
+const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
+  "procedure_callers",
+  "procedure_callees",
+]);
+
 const STATEFUL_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "health",
   "current_address",
@@ -241,6 +246,7 @@ export class AnalysisSnapshotCache {
       readonly provider: AnalysisExecution["provider"];
       readonly analysisProfile: AnalysisProfileCommitment;
       readonly limitations: readonly string[];
+      readonly relationshipCoverage?: AnalysisExecution["relationshipCoverage"];
       readonly locations: AnalysisExecution["locations"];
       readonly subject: AnalysisExecution["subject"];
     };
@@ -302,6 +308,19 @@ export class AnalysisSnapshotCache {
         ...cached.execution.limitations,
         "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
       ],
+      ...(cached.execution.relationship_coverage === null &&
+      RELATIONSHIP_OPERATIONS.has(operation)
+        ? {
+            relationshipCoverage: {
+              status: "unknown",
+              reason: "Snapshot entry does not report relationship coverage.",
+            },
+          }
+        : cached.execution.relationship_coverage === null
+          ? {}
+          : {
+              relationshipCoverage: cached.execution.relationship_coverage,
+            }),
       locations: cached.execution.locations,
       subject,
     });

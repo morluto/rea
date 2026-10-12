@@ -21,6 +21,11 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 
+const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
+  fatal: true,
+  ignoreBOM: true,
+});
+
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
   #owner: OwnedFileHandle | undefined;
@@ -148,7 +153,9 @@ export class ZipArtifactReader implements ArtifactReader {
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
     let index = 0;
-    for await (const entry of this.#reader.getEntriesGenerator()) {
+    for await (const entry of this.#reader.getEntriesGenerator({
+      decodeText: decodeZipEntryText,
+    })) {
       abortIfNeeded(signal);
       // ZIP member identity is its directory occurrence, not its filename.
       // Logical path uniqueness belongs to the artifact inventory boundary.
@@ -207,7 +214,7 @@ export class ZipArtifactReader implements ArtifactReader {
 const projectZipEntry = (entry: Entry, index: number): ArtifactEntry => {
   const symlink = isSymlink(entry);
   return {
-    path: entry.filename,
+    path: zipEntryPath(entry),
     kind: entry.directory ? "directory" : symlink ? "symlink" : "file",
     declaredSize: entry.directory ? null : entry.uncompressedSize,
     compressedSize: entry.directory ? null : entry.compressedSize,
@@ -219,6 +226,34 @@ const projectZipEntry = (entry: Entry, index: number): ArtifactEntry => {
     limitations: symlink ? ["Archive symlink target was not read."] : [],
     adapterKey: `zip-entry:${index}`,
   };
+};
+
+const decodeZipEntryText = (
+  bytes: Uint8Array,
+  encoding: string,
+  type: "filename" | "comment",
+): string | undefined => {
+  if (type !== "filename" || encoding !== "utf-8") return undefined;
+  return decodeStrictZipUtf8(bytes, "ZIP filename is not valid UTF-8");
+};
+
+const zipEntryPath = (entry: Entry): string => {
+  const field = entry.extraFieldUnicodePath;
+  if (field?.valid !== true) return entry.filename;
+  return decodeStrictZipUtf8(
+    field.data.subarray(5),
+    "ZIP Unicode Path extra field is not valid UTF-8",
+  );
+};
+
+const decodeStrictZipUtf8 = (bytes: Uint8Array, message: string): string => {
+  try {
+    // Keep the adapter's path semantics aligned with zip.js's default decoder:
+    // a leading U+FEFF is part of a member name, not a transport signature.
+    return ZIP_UTF8_DECODER.decode(bytes);
+  } catch (cause: unknown) {
+    throw new ArtifactReaderFailure("format", message, { cause });
+  }
 };
 
 const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {

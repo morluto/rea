@@ -14,6 +14,7 @@ import { existingSkillDestinations } from "./SetupSkill.js";
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
 import { readRegularFileText } from "./RegularFileRead.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 /** Existing REA integrations selected for maintenance, without discovering new targets. */
 export interface MaintenanceScope {
@@ -58,9 +59,11 @@ export const existingMaintenanceScope = async (
   home: string,
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
+  resources?: ArtifactResourceScope,
 ): Promise<MaintenanceScope> => {
   const registrations = await readClientRegistrationStatuses(home, entryPoint, {
     environment,
+    ...(resources === undefined ? {} : { resources }),
   });
   const supported = supportedClients(home, process.platform, environment);
   const clients: string[] = [];
@@ -73,7 +76,10 @@ export const existingMaintenanceScope = async (
     const client = supported.find(({ name }) => name === registration.client);
     if (client === undefined) continue;
     const parsed = parseClientConfiguration(
-      await readRegularFileText(client.configPath),
+      await readRegularFileText(
+        client.configPath,
+        resources === undefined ? {} : { resources },
+      ),
       client.format,
     );
     const enabled = z
@@ -91,7 +97,12 @@ export const existingMaintenanceScope = async (
     )
       clients.push(client.name);
   }
-  const skillDestinations = await existingSkillDestinations(home, environment);
+  const skillDestinations = await existingSkillDestinations(
+    home,
+    environment,
+    process.platform,
+    resources,
+  );
   return {
     clients,
     skill: skillDestinations.length > 0,
@@ -105,9 +116,15 @@ export const planIntegrationMaintenance = async (
   entryPoint: string,
   environment: Readonly<NodeJS.ProcessEnv>,
   execute: (command: readonly string[]) => Promise<Result<string, string>>,
+  resources?: ArtifactResourceScope,
 ): Promise<IntegrationMaintenance> => {
   try {
-    const scope = await existingMaintenanceScope(home, entryPoint, environment);
+    const scope = await existingMaintenanceScope(
+      home,
+      entryPoint,
+      environment,
+      resources,
+    );
     const skillDestinations = scope.skillDestinations ?? [];
     if (scope.clients.length === 0 && !scope.skill)
       return { status: "current", plannedActions: [] };

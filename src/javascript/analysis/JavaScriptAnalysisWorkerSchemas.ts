@@ -23,13 +23,19 @@ const findingContext = {
   module_runtime: z.string().optional(),
   location: range,
 };
-const withRuntime = <Value extends { module_runtime?: string | undefined }>(
+const withRuntime = <
+  Value extends {
+    module_runtime?: string | undefined;
+    resolution_basis?: "wrapper-substitution" | undefined;
+  },
+>(
   value: Value,
 ) => {
-  const { module_runtime, ...rest } = value;
+  const { module_runtime, resolution_basis, ...rest } = value;
   return {
     ...rest,
     ...(module_runtime === undefined ? {} : { module_runtime }),
+    ...(resolution_basis === undefined ? {} : { resolution_basis }),
   };
 };
 const staticValue = z.discriminatedUnion("status", [
@@ -62,12 +68,16 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
       ...findingContext,
+      invocation_location: range.optional(),
+      resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
       channel: z.string(),
       channel_expression: z.null(),
     }),
     z.strictObject({
       ...findingContext,
+      invocation_location: range.optional(),
+      resolution_basis: z.literal("wrapper-substitution").optional(),
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -113,10 +123,13 @@ const ipc = z
     }),
   ])
   .transform((value) => {
-    const { module_runtime, ...rest } = value;
+    const { module_runtime, resolution_basis, invocation_location, ...rest } =
+      value;
     return {
       ...rest,
       ...(module_runtime === undefined ? {} : { module_runtime }),
+      ...(resolution_basis === undefined ? {} : { resolution_basis }),
+      ...(invocation_location === undefined ? {} : { invocation_location }),
     };
   });
 const windowShape = {
@@ -128,6 +141,7 @@ const windowShape = {
   ),
 };
 const bridgeShape = {
+  resolution_basis: z.literal("wrapper-substitution").optional(),
   ...findingContext,
   world: z.enum(["main", "isolated"]),
   world_id: staticValue.nullable(),
@@ -136,99 +150,134 @@ const bridgeShape = {
   unknown_members: count,
 };
 const utilityShape = { ...findingContext, service_name: z.string().nullable() };
-const electron = z.strictObject({
-  browser_windows: z.array(
-    z.union([
-      z
-        .strictObject({
-          ...windowShape,
-          preload_path: z.string(),
-          preload_resolution_context: pathContext,
-        })
-        .transform(withRuntime),
-      z
-        .strictObject({
-          ...windowShape,
-          preload_path: z.null(),
-          preload_resolution_context: z.null(),
-        })
-        .transform(withRuntime),
-    ]),
-  ),
-  context_bridge_apis: z.array(
-    z.union([
-      z
-        .strictObject({
-          ...bridgeShape,
-          api_key: z.string(),
-          api_key_expression: z.null(),
-        })
-        .transform(withRuntime),
-      z
-        .strictObject({
-          ...bridgeShape,
-          api_key: z.null(),
-          api_key_expression: z.string(),
-        })
-        .transform(withRuntime),
-      z
-        .strictObject({
-          ...bridgeShape,
-          api_key: z.null(),
-          api_key_expression: z.null(),
-        })
-        .transform(withRuntime),
-    ]),
-  ),
-  ipc: z.array(ipc),
-  sender_validations: z.array(
-    z.strictObject({
-      ...findingContext,
-      subject: z.enum([
-        "sender-url",
-        "sender-origin",
-        "sender-frame",
-        "sender-id",
-        "frame-id",
-        "process-id",
+const electron = z
+  .strictObject({
+    call_paths: z
+      .array(
+        z.strictObject({
+          entry_kind: z.enum(["bridge-member", "ipc-handler"]),
+          entry: z.string(),
+          channel: z.string().nullable(),
+          terminal: z.string(),
+          resolution: z.literal("candidate"),
+          steps: z.array(
+            z.strictObject({
+              kind: z.enum([
+                "exposure",
+                "factory",
+                "function",
+                "call",
+                "ipc",
+                "terminal",
+              ]),
+              label: z.string(),
+              location: range,
+              module_key: z.string().nullable(),
+              module_runtime: z.string().nullable(),
+            }),
+          ),
+          conditions: z.array(
+            z.strictObject({ expression: z.string(), location: range }),
+          ),
+        }),
+      )
+      .optional(),
+    browser_windows: z.array(
+      z.union([
+        z
+          .strictObject({
+            ...windowShape,
+            preload_path: z.string(),
+            preload_resolution_context: pathContext,
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...windowShape,
+            preload_path: z.null(),
+            preload_resolution_context: z.null(),
+          })
+          .transform(withRuntime),
       ]),
-      mechanism: z.string(),
-      expected: staticValue,
-      enforcement: z.literal("unknown"),
-    }),
-  ),
-  utility_processes: z.array(
-    z.union([
-      z
-        .strictObject({
-          ...utilityShape,
-          module_path: z.string(),
-          module_resolution_context: pathContext,
-          module_expression: z.null(),
-        })
-        .transform(withRuntime),
-      z
-        .strictObject({
-          ...utilityShape,
-          module_path: z.null(),
-          module_resolution_context: z.null(),
-          module_expression: z.string(),
-        })
-        .transform(withRuntime),
-    ]),
-  ),
-  native_addon_bindings: z.array(
-    z.strictObject({
-      ...findingContext,
-      specifier: z.string(),
-      binding_kind: z.enum(["import", "require", "re-export"]),
-      module_kind: z.enum(["import", "require"]),
-      members: strings,
-      namespace_access: z.boolean().optional(),
-      dynamic_member_access: z.boolean().optional(),
-    }),
-  ),
-});
+    ),
+    context_bridge_apis: z.array(
+      z.union([
+        z
+          .strictObject({
+            ...bridgeShape,
+            api_key: z.string(),
+            api_key_expression: z.null(),
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...bridgeShape,
+            api_key: z.null(),
+            api_key_expression: z.string(),
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...bridgeShape,
+            api_key: z.null(),
+            api_key_expression: z.null(),
+          })
+          .transform(withRuntime),
+      ]),
+    ),
+    ipc: z.array(ipc),
+    sender_validations: z.array(
+      z.strictObject({
+        ...findingContext,
+        subject: z.enum([
+          "sender-url",
+          "sender-origin",
+          "sender-frame",
+          "sender-id",
+          "frame-id",
+          "process-id",
+        ]),
+        mechanism: z.string(),
+        expected: staticValue,
+        enforcement: z.literal("unknown"),
+      }),
+    ),
+    utility_processes: z.array(
+      z.union([
+        z
+          .strictObject({
+            ...utilityShape,
+            module_path: z.string(),
+            module_resolution_context: pathContext,
+            module_expression: z.null(),
+          })
+          .transform(withRuntime),
+        z
+          .strictObject({
+            ...utilityShape,
+            module_path: z.null(),
+            module_resolution_context: z.null(),
+            module_expression: z.string(),
+          })
+          .transform(withRuntime),
+      ]),
+    ),
+    native_addon_bindings: z.array(
+      z.strictObject({
+        ...findingContext,
+        specifier: z.string(),
+        binding_kind: z.enum(["import", "require", "re-export"]),
+        module_kind: z.enum(["import", "require"]),
+        members: strings,
+        namespace_access: z.boolean().optional(),
+        dynamic_member_access: z.boolean().optional(),
+      }),
+    ),
+  })
+  .transform(({ call_paths, ...rest }) => ({
+    ...rest,
+    ...(call_paths === undefined ? {} : { call_paths }),
+  }));
 const referenceShape = {
   ...findingContext,
   kind: z.enum([

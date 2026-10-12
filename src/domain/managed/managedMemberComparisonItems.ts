@@ -26,7 +26,20 @@ interface ComparisonItemContext {
   readonly rightEvidenceId: string;
   readonly leftComplete: boolean;
   readonly rightComplete: boolean;
+  /** Declaring types each side selected; null when it inspected every type. */
+  readonly leftSelection: ReadonlySet<string> | null;
+  readonly rightSelection: ReadonlySet<string> | null;
 }
+
+/** Whether an inventory observed every member of this member's declaring type. */
+const inventoryCovers = (
+  complete: boolean,
+  selection: ReadonlySet<string> | null,
+  member: Method | Field,
+): boolean =>
+  complete &&
+  (selection === null ||
+    (member.declaring_type !== null && selection.has(member.declaring_type)));
 
 /** Declared type and name of each unpaired member, per side, whose signature was not decoded. */
 interface UndecodedOneSidedNames {
@@ -123,7 +136,11 @@ const methodOnlyItem = (
 ): MethodItem => {
   if (member.left !== undefined) {
     const limitations = absenceLimitations(member.left, {
-      oppositeComplete: context.rightComplete,
+      oppositeComplete: inventoryCovers(
+        context.rightComplete,
+        context.rightSelection,
+        member.left,
+      ),
       oppositeUndecodedNames: undecoded.right,
       opposite: "right",
       inventory: "method",
@@ -141,7 +158,11 @@ const methodOnlyItem = (
   }
 
   const limitations = absenceLimitations(member.right, {
-    oppositeComplete: context.leftComplete,
+    oppositeComplete: inventoryCovers(
+      context.leftComplete,
+      context.leftSelection,
+      member.right,
+    ),
     oppositeUndecodedNames: undecoded.left,
     opposite: "left",
     inventory: "method",
@@ -233,7 +254,11 @@ const fieldOnlyItem = (
 ): FieldItem => {
   if (member.left !== undefined) {
     const limitations = absenceLimitations(member.left, {
-      oppositeComplete: context.rightComplete,
+      oppositeComplete: inventoryCovers(
+        context.rightComplete,
+        context.rightSelection,
+        member.left,
+      ),
       oppositeUndecodedNames: undecoded.right,
       opposite: "right",
       inventory: "field",
@@ -250,7 +275,11 @@ const fieldOnlyItem = (
   }
 
   const limitations = absenceLimitations(member.right, {
-    oppositeComplete: context.leftComplete,
+    oppositeComplete: inventoryCovers(
+      context.leftComplete,
+      context.leftSelection,
+      member.right,
+    ),
     oppositeUndecodedNames: undecoded.left,
     opposite: "left",
     inventory: "field",

@@ -122,7 +122,7 @@ export const systemSetupHost = (
     nodeVersion: process.versions.node,
     macosVersion: () => doctorHost.macosVersion(),
     linuxDistribution: readLinuxDistribution,
-    close: () => closeSetupResources(resources, macHopperHost),
+    close: () => closeSetupResources(resources, macHopperHost, doctorHost),
     initialSetupState: async (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
@@ -181,9 +181,17 @@ export const systemSetupHost = (
         clientIds,
         environment,
         platform,
+        resources,
       ),
     installSkill: (clientIds) =>
-      installCanonicalSkill(homeDirectory, clientIds, environment, platform),
+      installCanonicalSkill(
+        homeDirectory,
+        clientIds,
+        environment,
+        platform,
+        undefined,
+        resources,
+      ),
     doctor: (scope) => runDoctor(undefined, doctorHost, scope),
   };
 };
@@ -226,11 +234,14 @@ const clientConfigurationOperations = (resources: ArtifactResourceScope) => ({
 const closeSetupResources = async (
   resources: ArtifactResourceScope,
   macHopperHost: ReturnType<typeof systemMacHopperInstallHost> | undefined,
+  doctorHost: DoctorHost,
 ): Promise<string | undefined> => {
-  const [resourceCleanup, hopperCleanup] = await Promise.allSettled([
-    resources.close(),
-    Promise.resolve().then(() => macHopperHost?.close()),
-  ]);
+  const [resourceCleanup, hopperCleanup, doctorCleanup] =
+    await Promise.allSettled([
+      resources.close(),
+      Promise.resolve().then(() => macHopperHost?.close()),
+      Promise.resolve().then(() => doctorHost.close?.()),
+    ]);
   const failures: string[] = [];
   if (hopperCleanup.status === "rejected")
     failures.push(
@@ -238,6 +249,12 @@ const closeSetupResources = async (
     );
   else if (hopperCleanup.value !== undefined)
     failures.push(hopperCleanup.value);
+  if (doctorCleanup.status === "rejected")
+    failures.push(
+      `Doctor host cleanup failed: ${errorMessage(doctorCleanup.reason)}`,
+    );
+  else if (doctorCleanup.value !== undefined)
+    failures.push(doctorCleanup.value);
   if (resourceCleanup.status === "rejected")
     failures.push(errorMessage(resourceCleanup.reason));
   return failures.length === 0 ? undefined : failures.join("; ");

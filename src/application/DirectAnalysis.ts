@@ -15,14 +15,14 @@ import {
   isManagedToolName,
   type ManagedToolName,
 } from "../contracts/managed/managedToolContracts.js";
-import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import {
+  EvidenceFileError,
+  EvidenceIntegrityError,
+} from "../domain/evidenceErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access } from "node:fs/promises";
-import {
-  readAnalysisSnapshot,
-  writeAnalysisSnapshot,
-} from "./binary/AnalysisSnapshotFiles.js";
+import { readAnalysisSnapshot } from "./binary/AnalysisSnapshotFiles.js";
 import { parseBinaryTarget } from "./BinaryTargetResolver.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -128,7 +128,7 @@ export const runProviderAnalysis = async (
   ]
 ): Promise<JsonValue> =>
   isManagedToolName(tool)
-    ? runManagedProviderAnalysis(dependencies, path, tool, signal)
+    ? runManagedProviderAnalysis(dependencies, path, tool, arguments_, signal)
     : withProcessCancellation(signal, (operationSignal) =>
         runAnalysis(dependencies, path, tool, arguments_, {
           logger,
@@ -143,6 +143,7 @@ export const runManagedProviderExecution = async (
   path: string,
   tool: ManagedToolName,
   signal?: AbortSignal,
+  parameters: Readonly<Record<string, JsonValue>> = {},
 ): Promise<Result<AnalysisExecution, AnalysisError>> =>
   withProcessCancellation(signal, async (operationSignal) => {
     const session = await dependencies.createManagedBinarySession();
@@ -151,7 +152,9 @@ export const runManagedProviderExecution = async (
       async () => {
         const opened = await session.open(path, { signal: operationSignal });
         if (!opened.ok) return opened;
-        return await session.execute(tool, {}, { signal: operationSignal });
+        return await session.execute(tool, parameters, {
+          signal: operationSignal,
+        });
       },
       managedAnalysisCleanupFailure,
     );
@@ -161,6 +164,7 @@ const runManagedProviderAnalysis = async (
   dependencies: DirectAnalysisDependencies,
   path: string,
   tool: ManagedToolName,
+  arguments_: Readonly<Record<string, JsonValue>>,
   signal?: AbortSignal,
 ): Promise<JsonValue> => {
   const execution = await runManagedProviderExecution(
@@ -168,15 +172,19 @@ const runManagedProviderAnalysis = async (
     path,
     tool,
     signal,
+    arguments_,
   );
   if (!execution.ok) return cliError(execution.error);
   const value = execution.value;
   return createEvidence(value.subject ?? undefined, value.provider, {
     operation: tool,
-    parameters: {},
+    parameters: arguments_,
     result: value.result,
     rawResult: value.rawResult,
     limitations: value.limitations,
+    ...(value.relationshipCoverage === undefined
+      ? {}
+      : { relationshipCoverage: value.relationshipCoverage }),
     locations: value.locations,
   });
 };
@@ -331,13 +339,19 @@ const runAnalysis = async (
         const snapshot = session.exportAnalysisSnapshot();
         if (!snapshot.ok)
           return cliError(snapshot.error.retainPartialObservation(evidence));
-        const written = await writeAnalysisSnapshot(
+        const written = await session.writeAnalysisSnapshot(
           snapshot.value,
           snapshotPath,
           true,
         );
-        if (!written.ok)
-          return cliError(written.error.retainPartialObservation(evidence));
+        if (!written.ok) {
+          const recovered =
+            written.error instanceof EvidenceFileError &&
+            written.error.published !== undefined &&
+            (await session.closeWriteResources()).ok;
+          if (!recovered)
+            return cliError(written.error.retainPartialObservation(evidence));
+        }
       }
       return output;
     },
@@ -436,6 +450,9 @@ const executeAnalysisTool = async (input: {
         : { analysisProfile: result.value.analysisProfile }),
       rawResult: result.value.rawResult,
       limitations: result.value.limitations,
+      ...(result.value.relationshipCoverage === undefined
+        ? {}
+        : { relationshipCoverage: result.value.relationshipCoverage }),
       locations: result.value.locations,
       evidenceLinks:
         tool === "inspect_artifact"
@@ -543,13 +560,8 @@ const analysisProfileForRoute = (
 const providerIdentityForRoute = (
   route: SessionProviderRoute,
   operation: string,
-): ProviderIdentity => {
-  const selected =
-    route.capabilities?.get(operation)?.provider ?? route.identity;
-  return route.profile?.provider.id === selected.id
-    ? route.profile.provider
-    : selected;
-};
+): ProviderIdentity =>
+  route.capabilities?.get(operation)?.provider ?? route.identity;
 
 const analysisProfileForEvidence = (
   session: BinarySession,

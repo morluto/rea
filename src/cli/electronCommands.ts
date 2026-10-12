@@ -200,6 +200,15 @@ const registerJavaScriptApplicationCommand = (
               input_path: args.path,
               format: options.artifactFormat,
               integrity_policy: options.integrityPolicy,
+              ...(options.maxSemanticNodes === undefined
+                ? {}
+                : { max_semantic_nodes: options.maxSemanticNodes }),
+              ...(options.maxSemanticNodesPerFile === undefined
+                ? {}
+                : {
+                    max_semantic_nodes_per_file:
+                      options.maxSemanticNodesPerFile,
+                  }),
               ...(options.sourcePath === undefined
                 ? {}
                 : { source_paths: options.sourcePath }),

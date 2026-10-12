@@ -19,7 +19,14 @@ export interface ManagedGraphCoverageSources {
 export interface ManagedGraphProjectionOmissions {
   readonly partialInput: boolean;
   readonly unscopedTokenRelationships: boolean;
+  /** Declaring types the member Evidence selected; null when it inspected every type. */
+  readonly selectedTypes: readonly string[] | null;
 }
+
+const omitsAny = (omissions: ManagedGraphProjectionOmissions): boolean =>
+  omissions.partialInput ||
+  omissions.unscopedTokenRelationships ||
+  omissions.selectedTypes !== null;
 
 const completeCoverage = (): ApplicationGraphEvidence["coverage"] => ({
   status: "complete",
@@ -61,13 +68,14 @@ export const assessManagedGraphOmissions = (
     sources.boundaries?.coverage.state,
     sources.artifact?.coverage.state,
   ].some((state) => state !== undefined && state !== "complete"),
+  selectedTypes: sources.members?.selection?.type_names ?? null,
 });
 
 /** Derive graph coverage solely from the coverage of supplied source evidence. */
 export const managedGraphEvidenceCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ): ApplicationGraphEvidence["coverage"] =>
-  omissions.partialInput || omissions.unscopedTokenRelationships
+  omitsAny(omissions)
     ? {
         status: "partial",
         truncated: false,
@@ -80,8 +88,7 @@ export const managedGraphEvidenceCoverage = (
 export const managedGraphResultCoverage = (
   omissions: ManagedGraphProjectionOmissions,
 ) => ({
-  status:
-    omissions.partialInput || omissions.unscopedTokenRelationships
-      ? ("partial" as const)
-      : ("complete-within-inputs" as const),
+  status: omitsAny(omissions)
+    ? ("partial" as const)
+    : ("complete-within-inputs" as const),
 });

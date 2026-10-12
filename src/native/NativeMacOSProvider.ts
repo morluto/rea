@@ -24,7 +24,10 @@ import {
   NATIVE_TOOL_CONTRACTS,
   type NativeToolName,
 } from "../contracts/native/nativeToolContracts.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isMachOFormat,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
@@ -36,7 +39,6 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -168,7 +170,10 @@ class NativeMacOSClient implements AnalysisClient {
             },
           ),
         );
-      if (this.target.kind !== "executable" || this.target.format !== "mach-o")
+      if (
+        this.target.kind !== "executable" ||
+        !isMachOFormat(this.target.format)
+      )
         return err(
           new AnalysisCapabilityUnavailableError(
             IDENTITY.id,
@@ -455,7 +460,7 @@ class NativeMacOSClient implements AnalysisClient {
   ): Promise<Result<NativeObservation, AnalysisError>> {
     // lipo reads only Mach-O; its refusal of a PE, ELF, or plist target is not
     // a tool failure that a retry or `rea doctor` could repair.
-    if (this.target.format !== "mach-o")
+    if (!isMachOFormat(this.target.format))
       return err(
         new AnalysisCapabilityUnavailableError(
           IDENTITY.id,
@@ -783,7 +788,7 @@ class NativeMacOSClient implements AnalysisClient {
   async #inspectMacho(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
-    if (this.target.format !== "mach-o")
+    if (!isMachOFormat(this.target.format))
       return err(
         new AnalysisCapabilityUnavailableError(
           IDENTITY.id,
@@ -996,7 +1001,7 @@ const codeSignArchitectures = (
       );
     if (architectures.length > 0) return [...new Set(architectures)];
   }
-  if (target.kind !== "executable" || target.format !== "mach-o") return [];
+  if (target.kind !== "executable" || !isMachOFormat(target.format)) return [];
   return target.availableArchitectures.map((architecture) =>
     architecture === "x86" ? "i386" : architecture,
   );

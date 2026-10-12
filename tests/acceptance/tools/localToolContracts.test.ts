@@ -96,6 +96,16 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     "export_web_scripts",
     { capture_path: nul, output_directory: "/tmp/exported-scripts" },
   ],
+  ["inspect_pe_resources", { path: nul }],
+  ["inspect_binary_layout", { path: nul }],
+  ["inspect_recorded_crash", { path: nul }],
+  ["inspect_wasm_artifact", { path: nul }],
+  ["inspect_wasm_artifact", { path: "/tmp/sample.wasm", glue_paths: [nul] }],
+  [
+    "inspect_wasm_artifact",
+    { path: "/tmp/sample.wasm", candidate_paths: [nul] },
+  ],
+  ["inspect_evm_interface", { path: nul, encoding: "raw" }],
   [
     "export_web_scripts",
     { capture_path: "/tmp/capture.json", output_directory: nul },

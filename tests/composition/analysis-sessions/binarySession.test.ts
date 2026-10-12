@@ -597,10 +597,19 @@ describe("provider health and availability", () => {
     expect(session.status()).toMatchObject({
       capabilities: expect.arrayContaining([
         expect.objectContaining({
-          operation: "address_name",
-          available: false,
-          reason:
-            "ProviderAdapterError: Provider fixture adapter failed during address_name",
+          provider: {
+            id: "fixture",
+            name: "Fixture analysis provider",
+            version: "1",
+          },
+          groups: expect.arrayContaining([
+            expect.objectContaining({
+              operations: expect.arrayContaining(["address_name"]),
+              available: false,
+              reason:
+                "ProviderAdapterError: Provider fixture adapter failed during address_name",
+            }),
+          ]),
         }),
       ]),
     });
@@ -609,9 +618,18 @@ describe("provider health and availability", () => {
     expect(session.status()).toMatchObject({
       capabilities: expect.arrayContaining([
         expect.objectContaining({
-          operation: "address_name",
-          available: true,
-          reason: null,
+          provider: {
+            id: "fixture",
+            name: "Fixture analysis provider",
+            version: "1",
+          },
+          groups: expect.arrayContaining([
+            expect.objectContaining({
+              operations: expect.arrayContaining(["address_name"]),
+              available: true,
+              reason: null,
+            }),
+          ]),
         }),
       ]),
     });
@@ -657,9 +675,18 @@ describe("provider health and availability", () => {
     expect(session.status()).toMatchObject({
       capabilities: expect.arrayContaining([
         expect.objectContaining({
-          operation: "address_name",
-          available: true,
-          reason: null,
+          provider: {
+            id: "fixture",
+            name: "Fixture analysis provider",
+            version: "1",
+          },
+          groups: expect.arrayContaining([
+            expect.objectContaining({
+              operations: expect.arrayContaining(["address_name"]),
+              available: true,
+              reason: null,
+            }),
+          ]),
         }),
       ]),
     });

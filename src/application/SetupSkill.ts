@@ -4,13 +4,18 @@ import { dirname, join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { err, ok, type Result } from "../domain/result.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
 } from "../filesystem/RegularFile.js";
-import { withRegularFile } from "./RegularFileRead.js";
+import {
+  RegularFileCleanupFailure,
+  withRegularFile,
+} from "./RegularFileRead.js";
 import { clientSkillDirectories } from "./SupportedClients.js";
 
 export const MANAGED_SKILL_FILES = [
@@ -27,15 +32,21 @@ export const isManagedSkillManifest = (content: string): boolean =>
   content.startsWith(`---\nname: ${PRODUCT_IDENTITY.skillName}\n`) ||
   content.startsWith(`---\r\nname: ${PRODUCT_IDENTITY.skillName}\r\n`);
 
-export const readSkillFile = (path: string): Promise<string> =>
-  readSkillFileState(path).then(({ content }) => content);
+export const readSkillFile = (
+  path: string,
+  resources?: ArtifactResourceScope,
+): Promise<string> =>
+  readSkillFileState(path, resources).then(({ content }) => content);
 
 interface SkillFileState {
   readonly content: string;
   readonly mode: number;
 }
 
-const readSkillFileState = async (path: string): Promise<SkillFileState> =>
+const readSkillFileState = async (
+  path: string,
+  resources?: ArtifactResourceScope,
+): Promise<SkillFileState> =>
   withRegularFile(
     path,
     async (handle, stats) => {
@@ -49,7 +60,10 @@ const readSkillFileState = async (path: string): Promise<SkillFileState> =>
         throw new RegularFileChangedError(path);
       return { content: bytes.toString("utf8"), mode: stats.mode & 0o7777 };
     },
-    { symlinks: "reject" },
+    {
+      symlinks: "reject",
+      ...(resources === undefined ? {} : { resources }),
+    },
   );
 
 interface CanonicalSkillFile {
@@ -173,6 +187,7 @@ export const existingSkillDestinations = async (
   home: string,
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
+  resources?: ArtifactResourceScope,
 ): Promise<readonly SkillDestination[]> => {
   const existing: SkillDestination[] = [];
   for (const destination of skillDestinations(
@@ -185,11 +200,16 @@ export const existingSkillDestinations = async (
       const root = await lstat(destination.path);
       if (root.isSymbolicLink() || !root.isDirectory()) continue;
       const manifest = join(destination.path, "SKILL.md");
-      const content = await readSkillFile(manifest);
+      const content = await readSkillFile(manifest, resources);
       if (isManagedSkillManifest(content)) existing.push(destination);
     } catch (cause: unknown) {
       if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
         continue;
+      if (
+        cause instanceof RegularFileCleanupFailure ||
+        cause instanceof ArtifactReaderFailure
+      )
+        throw cause;
       if (cause instanceof NonRegularFileReadError) continue;
       throw cause;
     }
@@ -199,9 +219,10 @@ export const existingSkillDestinations = async (
 
 const readOptionalSkillState = async (
   path: string,
+  resources?: ArtifactResourceScope,
 ): Promise<SkillFileState | undefined> => {
   try {
-    return await readSkillFileState(path);
+    return await readSkillFileState(path, resources);
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return undefined;
@@ -214,6 +235,7 @@ const canonicalSkillFiles = async (
   clientIds: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
+  resources?: ArtifactResourceScope,
 ): Promise<readonly CanonicalSkillFile[]> =>
   Promise.all(
     skillDestinations(home, clientIds, environment, platform).flatMap(
@@ -229,7 +251,7 @@ const canonicalSkillFiles = async (
               ),
               "utf8",
             ),
-            original: await readOptionalSkillState(destination),
+            original: await readOptionalSkillState(destination, resources),
           };
         }),
     ),
@@ -241,12 +263,24 @@ export const canonicalSkillNeedsInstall = async (
   clientIds: readonly string[] = [],
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
+  resources?: ArtifactResourceScope,
 ): Promise<boolean> => {
   try {
     return (
-      await canonicalSkillFiles(home, clientIds, environment, platform)
+      await canonicalSkillFiles(
+        home,
+        clientIds,
+        environment,
+        platform,
+        resources,
+      )
     ).some(({ content, original }) => original?.content !== content);
   } catch (cause: unknown) {
+    if (
+      cause instanceof RegularFileCleanupFailure ||
+      cause instanceof ArtifactReaderFailure
+    )
+      throw cause;
     // Unreadable skill state fails open to install so setup can repair it.
     void cause;
     return true;
@@ -277,7 +311,6 @@ const restoreSkillFiles = async (
   return failures;
 };
 
-/** Transactionally install or upgrade the canonical REA skill and references. */
 /** Transactionally install the canonical skill bundle and optional references. */
 export const installCanonicalSkill = async (
   home: string,
@@ -285,6 +318,7 @@ export const installCanonicalSkill = async (
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
   operations: SkillInstallFileOperations = systemSkillInstallFileOperations,
+  resources?: ArtifactResourceScope,
 ): Promise<SkillInstallResult> => {
   let attempted: CanonicalSkillFile[] = [];
   let stage: "prepare" | "backup" | "write" | "readback" = "prepare";
@@ -295,6 +329,7 @@ export const installCanonicalSkill = async (
       clientIds,
       environment,
       platform,
+      resources,
     );
     const changed = canonical.filter(
       ({ content, original }) => original?.content !== content,
@@ -323,7 +358,7 @@ export const installCanonicalSkill = async (
     stage = "readback";
     for (const { destination, content } of changed) {
       failingPath = destination;
-      if ((await readSkillFile(destination)) !== content)
+      if ((await readSkillFile(destination, resources)) !== content)
         throw new Error(`skill readback mismatch: ${destination}`);
     }
     return ok("installed");
@@ -351,6 +386,7 @@ export const readInstalledSkillIdentity = async (
   clientIds: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv> = {},
   platform: NodeJS.Platform = process.platform,
+  resources?: ArtifactResourceScope,
 ): Promise<InstalledSkillIdentity | undefined> => {
   const destinations = skillDestinations(
     home,
@@ -361,22 +397,38 @@ export const readInstalledSkillIdentity = async (
   let content: string | undefined;
   for (const destination of destinations) {
     try {
-      content = await readSkillFile(join(destination.path, "SKILL.md"));
+      content = await readSkillFile(
+        join(destination.path, "SKILL.md"),
+        resources,
+      );
       break;
-    } catch {
+    } catch (cause: unknown) {
+      if (
+        cause instanceof RegularFileCleanupFailure ||
+        cause instanceof ArtifactReaderFailure
+      )
+        throw cause;
       // Another selected copy may provide metadata; canonical validation below
       // still marks missing or unreadable copies as stale.
     }
   }
   if (content === undefined) return undefined;
   const toolCount = /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
-  return {
-    canonical: !(await canonicalSkillNeedsInstall(
+  let canonical: boolean;
+  try {
+    canonical = !(await canonicalSkillNeedsInstall(
       home,
       clientIds,
       environment,
       platform,
-    )),
+      resources,
+    ));
+  } catch (cause: unknown) {
+    if (!(cause instanceof ArtifactReaderFailure)) throw cause;
+    canonical = false;
+  }
+  return {
+    canonical,
     version: /^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null,
     toolCount: toolCount === undefined ? null : Number.parseInt(toolCount, 10),
   };

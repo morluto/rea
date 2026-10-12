@@ -54,9 +54,22 @@ const registerInspectManagedMembers = (
     args: z.object({
       path: z.string().describe("Managed PE executable or assembly path"),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      type: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Inspect only members declared by this exact type full name, such as System.Threading.Monitor; a nested type is named by its bare name, which selects every nested type of that name (repeatable)",
+        ),
+    }),
+    run: ({ args, options }) =>
       logCliCommand(logger, "inspect-managed-members", () =>
-        runProviderAnalysis(args.path, "inspect_managed_members", {}, logger),
+        runProviderAnalysis(
+          args.path,
+          "inspect_managed_members",
+          options.type === undefined ? {} : { type_names: options.type },
+          logger,
+        ),
       ),
   });
 };

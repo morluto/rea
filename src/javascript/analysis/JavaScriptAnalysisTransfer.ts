@@ -20,6 +20,7 @@ import {
 export const JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES = 8 * 1024 * 1024;
 const FRAME_BYTES = JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES;
 const TRANSFER_BYTES = 512 * 1024 * 1024;
+const MAX_TRANSFER_BYTES = 2 * 1024 * 1024 * 1024;
 const BATCH_BYTES = 1024 * 1024;
 const recordSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -36,7 +37,7 @@ const recordSchema = z.discriminatedUnion("kind", [
 
 /** Complete-file coordinates authenticated before adopting any worker facts. */
 export const javaScriptAnalysisTransferDescriptorSchema = z.strictObject({
-  bytes: z.number().int().nonnegative().max(TRANSFER_BYTES),
+  bytes: z.number().int().nonnegative().max(MAX_TRANSFER_BYTES),
   sha256: digestSchema,
   records: z.number().int().nonnegative(),
   module_bytes: z.number().int().nonnegative(),
@@ -52,11 +53,35 @@ export const javaScriptTransferRetentionBytes = (
   records: number,
 ): number => bytes * 8 + records * 64;
 
-const encodeTransferRecord = (input: unknown, previousBytes: number) => {
+/** Larger streamed files require corresponding parent admission capacity. */
+export const javaScriptTransferByteBudget = (
+  resultBudgetBytes: number,
+): number =>
+  Math.min(
+    MAX_TRANSFER_BYTES,
+    Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
+  );
+
+const assertTransferByteBudget = (transferBytes: number): void => {
+  if (
+    !Number.isSafeInteger(transferBytes) ||
+    transferBytes < 1 ||
+    transferBytes > MAX_TRANSFER_BYTES
+  )
+    throw new RangeError(
+      "JavaScript transfer requires a valid complete-file byte budget",
+    );
+};
+
+const encodeTransferRecord = (
+  input: unknown,
+  previousBytes: number,
+  transferBytes = TRANSFER_BYTES,
+) => {
   const record = recordSchema.parse(input);
   const line = `${JSON.stringify(record)}\n`;
   const size = Buffer.byteLength(line);
-  if (size > FRAME_BYTES || previousBytes + size > TRANSFER_BYTES)
+  if (size > FRAME_BYTES || previousBytes + size > transferBytes)
     throw new AnalysisResourceConstraintError(
       "analyze_javascript_application",
       "transport",
@@ -65,7 +90,7 @@ const encodeTransferRecord = (input: unknown, previousBytes: number) => {
         : "Complete JavaScript file facts exceed the transfer byte budget",
       {
         transfer_record_bytes: FRAME_BYTES,
-        transfer_file_bytes: TRANSFER_BYTES,
+        transfer_file_bytes: transferBytes,
         record_bytes: size,
         transfer_bytes_at_least: previousBytes + size,
       },
@@ -89,11 +114,13 @@ function* moduleTransferRecords(
 /** Measure actual validated module rows before allocating an unadmittable graph. */
 export const measureJavaScriptModuleTransfer = (
   module: JavaScriptModuleSemanticIr,
+  transferBytes = TRANSFER_BYTES,
 ) => {
+  assertTransferByteBudget(transferBytes);
   let bytes = 0;
   let records = 0;
   for (const record of moduleTransferRecords(module)) {
-    bytes += encodeTransferRecord(record, bytes).size;
+    bytes += encodeTransferRecord(record, bytes, transferBytes).size;
     records += 1;
   }
   return {
@@ -108,7 +135,9 @@ export const writeJavaScriptAnalysisTransfer = async (
   path: string,
   module: JavaScriptModuleSemanticIr,
   projection: JavaScriptSemanticFileProjection,
+  transferBytes = TRANSFER_BYTES,
 ): Promise<Descriptor> => {
+  assertTransferByteBudget(transferBytes);
   const output = await open(path, "wx", 0o600);
   const digest = createHash("sha256");
   let bytes = 0;
@@ -129,7 +158,11 @@ export const writeJavaScriptAnalysisTransfer = async (
     batchBytes = 0;
   };
   const append = async (input: unknown): Promise<void> => {
-    const { line, size, kind } = encodeTransferRecord(input, bytes);
+    const { line, size, kind } = encodeTransferRecord(
+      input,
+      bytes,
+      transferBytes,
+    );
     bytes += size;
     records += 1;
     if (

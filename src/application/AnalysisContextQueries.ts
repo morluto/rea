@@ -3,12 +3,11 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { analysisBookmarkSchema } from "../domain/hopperValues.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
-import { err, ok, type Result } from "../domain/result.js";
+import { ok, type Result } from "../domain/result.js";
 
 type Facet =
   | { readonly state: "available"; readonly value: JsonValue }

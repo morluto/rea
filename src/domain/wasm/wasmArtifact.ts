@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { localPathStringSchema } from "../localPath.js";
+
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.strictObject({
   path: z.string().min(1),
@@ -8,12 +10,11 @@ const artifact = z.strictObject({
 });
 /** All artifacts are explicitly selected local files; references never trigger acquisition. */
 export const inspectWasmArtifactInputSchema = z.strictObject({
-  path: z
-    .string()
-    .min(1)
-    .describe("Absolute selected local WASM artifact path"),
-  glue_paths: z.array(z.string().min(1)).max(16).default([]),
-  candidate_paths: z.array(z.string().min(1)).max(16).default([]),
+  path: localPathStringSchema.describe(
+    "Absolute selected local WASM artifact path",
+  ),
+  glue_paths: z.array(localPathStringSchema).max(16).default([]),
+  candidate_paths: z.array(localPathStringSchema).max(16).default([]),
 });
 /** Upstream output stays intact; import/export names are never split on ambiguous punctuation. */
 export const wasmArtifactSchema = z

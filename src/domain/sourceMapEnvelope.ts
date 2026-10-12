@@ -37,7 +37,8 @@ export const flattenSourceMapLeaves = (
     const map = pending.pop();
     if (!isVersion3Map(map)) return undefined;
     if (Array.isArray(map.sections)) {
-      for (const section of map.sections) {
+      for (let index = map.sections.length - 1; index >= 0; index -= 1) {
+        const section = map.sections[index];
         if (!isRecord(section) || !isRecord(section.map)) return undefined;
         pending.push(section.map);
       }

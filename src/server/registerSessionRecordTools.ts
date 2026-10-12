@@ -7,6 +7,7 @@ import {
 } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { EvidenceBundle } from "../domain/evidenceBundle.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectEvidenceBundle } from "../application/investigation/InspectEvidenceBundle.js";
@@ -15,6 +16,7 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 interface EvidenceToolRegistration {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
+  readonly resources: ArtifactResourceScope;
   readonly exportContract: ReturnType<
     typeof toolContract<"export_evidence_bundle">
   >;
@@ -38,6 +40,7 @@ export const registerEvidenceTools = (
 const registerExportEvidenceTool = ({
   server,
   session,
+  resources,
   exportContract,
 }: EvidenceToolRegistration): void => {
   server.registerTool(
@@ -49,6 +52,7 @@ const registerExportEvidenceTool = ({
         bundle,
         input.path,
         input.overwrite,
+        resources,
         context.mcpReq.signal,
       );
       return written.ok

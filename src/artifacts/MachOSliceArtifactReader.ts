@@ -8,6 +8,7 @@ import {
   type NativeCommandRunner,
 } from "../native/CommandRunner.js";
 import {
+  lipoSubtypeBits,
   parseLipoArchitectures,
   type LipoArchitecture,
 } from "../native/parsers/lipo.js";
@@ -451,12 +452,25 @@ const lipoMatchesSlice = (
     (reported.size === null || reported.size === observed.slice_size) &&
     (reported.cpu_type_code === null ||
       reported.cpu_type_code === observedCpuType) &&
-    (reported.cpu_subtype_code === null ||
-      reported.cpu_subtype_code === observedCpuSubtype) &&
+    lipoSubtypeMatches(reported, observedCpuSubtype) &&
     (reported.alignment === null ||
       observed.fat_alignment_exponent === null ||
       reported.alignment === 2 ** observed.fat_alignment_exponent)
   );
+};
+
+/**
+ * Compare the complete subtype when lipo printed its capability byte, and
+ * otherwise only the subtype bits its record names.
+ */
+const lipoSubtypeMatches = (
+  reported: LipoArchitecture,
+  observedCpuSubtype: number,
+): boolean => {
+  if (reported.cpu_subtype_code !== null)
+    return reported.cpu_subtype_code === observedCpuSubtype;
+  const bits = lipoSubtypeBits(reported.cpu_subtype);
+  return bits === null || bits === (observedCpuSubtype & 0x00ffffff);
 };
 
 /**

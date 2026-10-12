@@ -1,6 +1,7 @@
 import {
   addArtifactContainsEdge,
   addStaticInferenceEdge,
+  artifactLocalIdentity,
   createElectronRoleNode,
   linkElectronRoleToAsset,
   type JavaScriptArtifactGraphContext,
@@ -118,22 +119,34 @@ export const addJavaScriptSourceMapOriginals = (
     if (mapFile === undefined || mapNode === undefined) continue;
     const coverage = completeApplicationCoverage();
     for (const original of sourceMap.sources) {
+      const reference = original.reference;
       const node = context.accumulator.addNode({
-        kind: "source-module",
-        identity: {
-          strategy: "source-map-original",
-          stability: "source-map-exact",
-          source_map_sha256: mapFile.sha256,
-          original_source: original.reference.source_name,
-          source_root: original.reference.source_root,
-          source_sha256: original.content_sha256,
-        },
+        kind: reference === null ? "unknown" : "source-module",
+        identity:
+          reference === null
+            ? artifactLocalIdentity(
+                mapFile.sha256,
+                "source-map-unnamed-declaration",
+                String(original.declaration_index),
+              )
+            : {
+                strategy: "source-map-original",
+                stability: "source-map-exact",
+                source_map_sha256: mapFile.sha256,
+                original_source: reference.source_name,
+                source_root: reference.source_root,
+                source_sha256: original.content_sha256,
+              },
         observations: [
           {
-            label: original.reference.source_name || null,
-            source_map_reference: original.reference,
+            label: reference?.source_name || null,
+            source_map_reference: reference,
             properties: {
+              source_index: original.source_index,
+              declaration_index: original.declaration_index,
+              source_name_available: reference !== null,
               content_available: original.content !== null,
+              content_sha256: original.content_sha256,
             },
             evidence: artifactObservationEvidence({
               sha256: mapFile.sha256,
@@ -151,8 +164,10 @@ export const addJavaScriptSourceMapOriginals = (
         target_node_id: node.node_id,
         relation: "contains",
         properties: {
-          original_source: original.reference.source_name,
-          source_root: original.reference.source_root,
+          source_index: original.source_index,
+          declaration_index: original.declaration_index,
+          original_source: reference?.source_name ?? null,
+          source_root: reference?.source_root ?? null,
         },
         evidence: artifactObservationEvidence({
           sha256: mapFile.sha256,

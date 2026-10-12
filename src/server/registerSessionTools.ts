@@ -1,4 +1,5 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 import {
   getNavigationContext,
@@ -231,6 +232,7 @@ const registerOpenLifecycleTool = ({
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions {
+  readonly artifactResources: ArtifactResourceScope;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
   readonly androidAnalysisAvailability?: (
@@ -286,7 +288,7 @@ export const registerSessionTools = (
   server: EvidenceMcpServer,
   session: BinarySessionPort,
   logger: Logger,
-  options: SessionToolOptions = {},
+  options: SessionToolOptions,
 ): void => {
   const openContract = toolContract("open_binary");
   const closeContract = toolContract("close_binary");
@@ -339,6 +341,7 @@ export const registerSessionTools = (
   registerEvidenceTools({
     server,
     session,
+    resources: options.artifactResources,
     exportContract,
     importContract,
     snapshotContract,

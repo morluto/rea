@@ -3,7 +3,14 @@ import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  createBinarySessionTargets,
+  createTestBinarySession,
+} from "../../fixtures/binarySession.js";
+import {
+  createAnalysisExecution,
+  type AnalysisOperationPort,
+} from "../../../src/application/AnalysisProvider.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
@@ -20,6 +27,7 @@ import {
 } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
+import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 
 it("aggregates comparison Evidence and records an approved runtime gap", async () => {
   const { session, server, client } = await connected();
@@ -148,6 +156,183 @@ const dossierWithCallees = (addresses: readonly string[]) => {
     },
   );
 };
+
+it.each([
+  {
+    label: "complete",
+    coverage: { status: "complete" } as RelationshipCoverage,
+    providerLimitations: ["The provider version identity is unavailable."],
+    dossierLimitations: ["The dossier has no native value-flow observation."],
+    status: "not_found",
+    exhaustive: true,
+  },
+  {
+    label: "partial",
+    coverage: {
+      status: "partial",
+      limitations: ["Callee output was capped."],
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
+    status: "unknown",
+    exhaustive: false,
+  },
+  {
+    label: "unknown",
+    coverage: {
+      status: "unknown",
+      reason: "Callee coverage was not established.",
+    } as RelationshipCoverage,
+    providerLimitations: [],
+    dossierLimitations: [],
+    status: "unknown",
+    exhaustive: false,
+  },
+  {
+    label: "legacy limited",
+    coverage: undefined,
+    providerLimitations: [
+      "Legacy relationship completeness was not established.",
+    ],
+    dossierLimitations: [],
+    status: "unknown",
+    exhaustive: false,
+  },
+  {
+    label: "legacy unlimited",
+    coverage: undefined,
+    providerLimitations: [],
+    dossierLimitations: [],
+    status: "not_found",
+    exhaustive: true,
+  },
+])(
+  "preserves $label coverage through public analyze_function then build_call_path",
+  async (scenario) => {
+    const base = FUNCTION_COMPARISON_EXAMPLE.left;
+    if (base.subject === null) throw new Error("missing fixture subject");
+    const provider = {
+      id: "fixture",
+      name: "Fixture analysis provider",
+      version: "1",
+    };
+    const rawResult = { fixture_reply: scenario.label };
+    const execution = createAnalysisExecution(
+      {
+        ...jsonObjectSchema.parse(base.normalized_result),
+        callees: [],
+        limitations: scenario.dossierLimitations,
+      },
+      provider,
+      {
+        rawResult,
+        limitations: scenario.providerLimitations,
+        locations: base.locations,
+        ...(scenario.coverage === undefined
+          ? {}
+          : { relationshipCoverage: scenario.coverage }),
+      },
+    );
+    const { session, server, client } = await connected({
+      execute: async (operation, parameters) => {
+        if (operation === "health") return observed(null);
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        expect(parameters.procedure).toBe("0x1000");
+        return resultOk(execution);
+      },
+    });
+    try {
+      const [path] = await createBinarySessionTargets();
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: { path },
+      });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const analyzed = await client.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "0x1000" },
+      });
+      expect(analyzed.isError, JSON.stringify(analyzed)).not.toBe(true);
+      const dossier = inlineEvidence(analyzed.structuredContent);
+      expect(dossier).toMatchObject({
+        operation: "analyze_function",
+        parameters: { procedure: "0x1000" },
+        provider,
+        subject: {
+          local_path: path,
+          digest: { sha256: session.activeTarget()?.sha256 },
+          format: session.activeTarget()?.format,
+        },
+        raw_result: rawResult,
+        limitations: scenario.providerLimitations,
+        locations: base.locations,
+        normalized_result: {
+          callees: [],
+          limitations: scenario.dossierLimitations,
+        },
+      });
+      const response = await client.callTool({
+        name: "build_call_path",
+        arguments: {
+          functions: [dossier],
+          start: { address: "0x1000" },
+          goal: { address: "0x4000" },
+        },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const evidence = inlineEvidence(response.structuredContent);
+      const coverage = scenario.coverage;
+      const reasons =
+        coverage?.status === "partial"
+          ? coverage.limitations
+          : coverage?.status === "unknown"
+            ? [coverage.reason]
+            : [];
+      expect(evidence.normalized_result).toMatchObject({
+        status: scenario.status,
+        shortest_hops: null,
+        paths: [],
+        search_scope: { exhaustive: scenario.exhaustive },
+        limitations: expect.arrayContaining([
+          ...scenario.providerLimitations,
+          ...scenario.dossierLimitations,
+          ...reasons,
+        ]),
+      });
+      expect(evidence.evidence_links).toEqual([dossier.evidence_id]);
+      expect(dossier.relationship_coverage).toEqual(coverage ?? null);
+      if (coverage?.status === "partial") {
+        const tampered = {
+          ...dossier,
+          relationship_coverage: { status: "complete" },
+        };
+        expect(() => parseEvidence(tampered)).toThrow();
+        const rejected = await client.callTool({
+          name: "build_call_path",
+          arguments: {
+            functions: [tampered],
+            start: { address: "0x1000" },
+            goal: { address: "0x4000" },
+          },
+        });
+        expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+      }
+      if (scenario.exhaustive)
+        expect(session.listUnknowns({ domain: "call-path" })).toEqual([]);
+      else
+        expect(session.listUnknowns({ domain: "call-path" })).toMatchObject([
+          {
+            question:
+              "Can the requested call path be established from complete analysis?",
+            supporting_evidence_ids: [evidence.evidence_id],
+          },
+        ]);
+    } finally {
+      await close(session, server, client);
+    }
+  },
+);
 
 it("records a safe unresolved call-path question", async () => {
   const { session, server, client } = await connected();
@@ -326,10 +511,12 @@ it("cannot omit a session-owned active unknown from reconstruction input", async
   }
 });
 
-const connected = async () => {
+const connected = async (analysis?: AnalysisOperationPort) => {
   const session = createTestBinarySession(() => ({
     health: () => Promise.resolve(),
-    execute: () => Promise.resolve(observed(null)),
+    execute:
+      analysis?.execute.bind(analysis) ??
+      (() => Promise.resolve(observed(null))),
     close: () => Promise.resolve(resultOk(null)),
   }));
   const server = createServer({ kind: "session", session });

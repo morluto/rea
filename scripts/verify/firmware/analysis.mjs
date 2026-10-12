@@ -100,7 +100,9 @@ const verifyRegions = (evidence) => {
   );
   assert.equal(gzip.reported_size, oracle.length);
   assert.equal(gzip.size_basis, "provider_reported_validation_unknown");
-  return result.regions.map(({ provider_id, ...region }) => region);
+  return result.regions.map(
+    ({ provider_id: _provider_id, ...region }) => region,
+  );
 };
 const verifyFiles = async (evidence) => {
   const result = firmwareResultSchemas.extract_firmware.parse(

@@ -32,6 +32,10 @@ it("does not attribute the first universal slice's UUID and segments to the sele
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
+    selected_architecture: {
+      name: "arm64",
+      container_file_offset: 32768,
+    },
     architectures: { total: 2 },
   });
   const normalized = inspectMachoSchema.parse(result.value.result);
@@ -125,16 +129,19 @@ it("projects universal segment evidence into the selected slice's container offs
     start: 32768,
     end: 40960,
   });
+  expect(result.value.locations).toContainEqual({
+    kind: "file-offset",
+    offset: 36864,
+  });
   expect(result.value.locations).not.toContainEqual({
     kind: "file-offset-range",
     start: 0,
     end: 8192,
   });
-  // The normalized tool field remains slice-relative; only evidence is projected.
-  expect(
-    inspectMachoSchema.parse(result.value.result).segments.items[0]
-      ?.file_offset,
-  ).toBe(0);
+  // Normalized tool fields keep their slice-relative meaning.
+  const normalized = inspectMachoSchema.parse(result.value.result);
+  expect(normalized.segments.items[0]?.file_offset).toBe(0);
+  expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
 });
 
 it.each([
@@ -167,6 +174,12 @@ it.each([
       kind: "file-offset-range",
       start: offset,
       end: offset + 8192,
+    });
+    expect(result.value.result).toMatchObject({
+      selected_architecture: {
+        name: "arm64",
+        container_file_offset: offset,
+      },
     });
     if (offset > 0)
       expect(result.value.locations).not.toContainEqual({
@@ -206,7 +219,10 @@ it.each([
       end: 8192,
     });
     expect(result.value.limitations).toContain(
-      "Segment evidence file offsets are unavailable because the selected Mach-O slice's container offset was not observed.",
+      "The selected Mach-O slice's container file offset was not observed; slice-based evidence locations are unavailable.",
     );
+    expect(result.value.result).toMatchObject({
+      selected_architecture: { container_file_offset: null },
+    });
   },
 );

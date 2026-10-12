@@ -32,7 +32,7 @@ cliTest(
     });
     expect(missing.exitCode).toBe(1);
     expect(missing.json).toMatchObject({
-      code: "target_unavailable",
+      code: "invalid_request",
       details: { reason: expect.stringContaining("architecture") },
     });
   },
@@ -62,7 +62,7 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      code: "target_unavailable",
+      code: "invalid_request",
       details: { reason: expect.stringContaining("must be 4-byte aligned") },
     });
   },

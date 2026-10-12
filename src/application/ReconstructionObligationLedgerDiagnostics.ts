@@ -57,11 +57,6 @@ export const uniqueObligationDiagnostics = (
     ),
   );
 
-export const hasObligationDiagnostic = (
-  diagnostics: readonly Diagnostic[],
-  code: Diagnostic["code"],
-): boolean => diagnostics.some((diagnostic) => diagnostic.code === code);
-
 export const contradictionDiagnostics = (
   obligationId: string,
   contradictions: ReadonlyMap<string, readonly string[]>,

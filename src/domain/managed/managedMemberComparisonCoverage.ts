@@ -16,7 +16,9 @@ export const buildComparisonCoverage = ({
   const leftStatus = sideCoverageStatus(left);
   const rightStatus = sideCoverageStatus(right);
   const unknownInput =
-    left.coverage.state !== "complete" || right.coverage.state !== "complete";
+    left.coverage.state !== "complete" ||
+    right.coverage.state !== "complete" ||
+    !sameSelection(left, right);
   return {
     status:
       !unknownInput && leftStatus === "complete" && rightStatus === "complete"
@@ -25,6 +27,20 @@ export const buildComparisonCoverage = ({
     left_status: leftStatus,
     right_status: rightStatus,
   };
+};
+
+/** Whether both observations inspected the same declaring types. */
+const sameSelection = (
+  left: ManagedMemberInspection,
+  right: ManagedMemberInspection,
+): boolean => {
+  if (left.selection === null || right.selection === null)
+    return left.selection === right.selection;
+  const rightNames = new Set(right.selection.type_names);
+  return (
+    rightNames.size === new Set(left.selection.type_names).size &&
+    left.selection.type_names.every((name) => rightNames.has(name))
+  );
 };
 
 const sideCoverageStatus = (
@@ -96,6 +112,14 @@ export const comparisonLimitations = (
   ];
   if (left.coverage.state !== "complete" || right.coverage.state !== "complete")
     limitations.push("At least one managed member observation is partial.");
+  if (!sameSelection(left, right))
+    limitations.push(
+      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    );
+  else if (left.selection !== null)
+    limitations.push(
+      `Both observations cover only the selected declaring types (${left.selection.type_names.join(", ")}); member totals and statuses describe those types, not the whole assembly.`,
+    );
   if (left.exported_types === null || right.exported_types === null)
     limitations.push(
       "At least one managed member observation predates ExportedType inspection; its exported and forwarded types are unknown.",

@@ -123,7 +123,9 @@ registerHooks({
   resolve(specifier, context, next) {
     const resolved = next(specifier, context);
     const name = imports.find((item) =>
-      resolved.url.includes(item.path),
+      resolved.url.includes(item.path) ||
+      (item.path.startsWith("/dist/") && item.path.endsWith(".js") &&
+       resolved.url.includes("/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-")),
     );
     if (name !== undefined)
       process.stderr.write(${JSON.stringify(MARKER)} + name.name + "\\n");

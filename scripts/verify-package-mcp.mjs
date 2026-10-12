@@ -1,4 +1,7 @@
-import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -21,14 +24,14 @@ const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
 };
 
 const verifyMcpTargetFree = async (client, mcpOptions) => {
-  const status = await client.callTool(
+  const result = await client.callTool(
     { name: "binary_session", arguments: {} },
     mcpOptions,
   );
-  const currentDocument =
-    status.structuredContent?.result?.tool_availability?.find(
-      ({ name }) => name === "current_document",
-    );
+  const status = requireMcpLifecycleResult(result, "binary_session");
+  const currentDocument = status.tool_availability.find(
+    ({ name }) => name === "current_document",
+  );
   if (
     currentDocument?.available !== false ||
     currentDocument.reason !== "target_required"
@@ -67,15 +70,13 @@ const verifyMcpOpenAndBind = async (client, mcpOptions) => {
   );
   if (opened.isError === true)
     throw new Error("packaged MCP could not open a binary");
-  const providerStatusEnvelope = json(
-    prompts.mcpText(
-      await client.callTool(
-        { name: "binary_session", arguments: {} },
-        mcpOptions,
-      ),
+  const providerStatus = requireMcpLifecycleResult(
+    await client.callTool(
+      { name: "binary_session", arguments: {} },
+      mcpOptions,
     ),
+    "binary_session",
   );
-  const providerStatus = providerStatusEnvelope.result;
   if (
     providerStatus.analysis_provider_binding?.provider?.id !== "hopper" ||
     providerStatus.analysis_provider_binding?.selection_source !== "request"

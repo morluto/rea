@@ -5,15 +5,21 @@ import type {
 } from "./OptionalObservationProviders.js";
 
 import {
-  providerCapability,
+  expandProviderCapabilities,
+  providerCapabilitySet,
+  toolAvailabilityInventory,
+  TOOL_ANNOTATION_NAMES,
+  TOOL_EFFECT_NAMES,
   type ClientFeatureAvailability,
   type ProviderCapability,
+  type ToolAvailabilityInventory,
   type ToolAvailability,
   type ToolAvailabilityMode,
   type ToolUnavailabilityReason,
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import {
@@ -26,7 +32,9 @@ const statusSchema = z.object({
   open: z.boolean(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
-  capabilities: z.array(providerCapability),
+  capabilities: z
+    .array(providerCapabilitySet)
+    .transform(expandProviderCapabilities),
 });
 
 type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
@@ -212,6 +220,60 @@ export const buildCapabilityInventory = (
           remediation: availability.remediation,
         };
   }).sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
+};
+
+type ClientRequirements = ToolAvailability["client_requirements"];
+type MutableAvailabilityGroup = Omit<
+  ToolAvailabilityInventory["groups"][number],
+  "names"
+> & { names: string[] };
+
+const EMPTY_CLIENT_REQUIREMENTS: ClientRequirements = {
+  required: [],
+  optional: [],
+  missing_required: [],
+  missing_optional: [],
+};
+
+/** Compact repeated metadata while retaining every operation's current availability inline. */
+export const compactToolAvailability = (
+  availability: readonly ToolAvailability[],
+): ToolAvailabilityInventory => {
+  const clientRequirements =
+    availability[0]?.client_requirements ?? EMPTY_CLIENT_REQUIREMENTS;
+  const groups = new Map<string, MutableAvailabilityGroup>();
+
+  for (const entry of availability) {
+    const effects = TOOL_EFFECT_NAMES.filter((name) => entry.effects[name]);
+    const annotations = TOOL_ANNOTATION_NAMES.filter(
+      (name) => entry.annotations[name],
+    );
+    const groupFacts = {
+      surface: entry.surface,
+      effects,
+      annotations,
+      available: entry.available,
+      reason: entry.reason,
+      remediation: entry.remediation,
+      ...(entry.default_mode_available === undefined
+        ? {}
+        : { default_mode_available: entry.default_mode_available }),
+      ...(entry.modes === undefined ? {} : { modes: [...entry.modes] }),
+      ...(JSON.stringify(entry.client_requirements) ===
+      JSON.stringify(clientRequirements)
+        ? {}
+        : { client_requirements: entry.client_requirements }),
+    };
+    const key = JSON.stringify(groupFacts);
+    const existing = groups.get(key);
+    if (existing) existing.names.push(entry.name);
+    else groups.set(key, { ...groupFacts, names: [entry.name] });
+  }
+
+  return toolAvailabilityInventory.parse({
+    client_requirements: clientRequirements,
+    groups: [...groups.values()],
+  });
 };
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
@@ -488,7 +550,7 @@ const targetAvailability = ({
   if (
     targetOpen &&
     MACHO_TARGET_OPERATIONS.has(name) &&
-    (targetKind !== "executable" || targetFormat !== "mach-o")
+    (targetKind !== "executable" || !isMachOFormat(targetFormat))
   )
     return {
       reason: "target_unsupported",
@@ -626,14 +688,15 @@ const navigationContextAvailability = (
   };
   if (availableMode !== undefined)
     return { ...facts, reason: "available", remediation: null };
+  const missingOperations = [
+    ...new Set(modes.flatMap((mode) => mode.missing_operations)),
+  ];
   return {
     ...facts,
     reason: failure?.reason ?? "provider_missing",
     remediation:
       specificFailureRemediation ??
-      `Configure a provider for one of: ${modes
-        .flatMap((mode) => mode.missing_operations)
-        .join(", ")}.`,
+      `Configure a provider for one of: ${missingOperations.join(", ")}.`,
   };
 };
 

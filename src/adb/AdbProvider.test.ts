@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -50,6 +51,28 @@ const refusedBy = async (
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   return projectAnalysisError(result.error);
+};
+
+const namesAliasOnVolume = async (
+  parent: string,
+  firstName: string,
+  secondName: string,
+): Promise<boolean> => {
+  const probe = join(parent, "destination-name-probe");
+  await mkdir(probe);
+  try {
+    await mkdir(join(probe, firstName));
+    try {
+      await mkdir(join(probe, secondName));
+      return false;
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "EEXIST")
+        return true;
+      throw cause;
+    }
+  } finally {
+    await rm(probe, { recursive: true, force: true });
+  }
 };
 
 it("inspects the adb client without contacting the server", async () => {
@@ -283,6 +306,82 @@ it("refuses to reuse an existing package output directory", async () => {
   expect(result.error.message).toContain("already exists");
 });
 
+it.each([
+  ["an empty filename", "package:/data/app/x/"],
+  [
+    "duplicate local filenames",
+    "package:/data/app/x/base.apk\npackage:/data/app/y/base.apk",
+  ],
+])("refuses %s before creating output or pulling", async (_, pmOutput) => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "pm" ]; then printf '%b' '${pmOutput.replaceAll("'", "'\\''").replaceAll("\n", "\\n")}\\n'; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "pull" ]; then : > '${join(root, "pull-ran")}'; exit 0; fi
+exit 1`,
+  );
+  const output = join(root, "pulls");
+  const result = await providerOver(binary).execute({
+    operation: "pull_adb_package",
+    input: {
+      serial: "emulator-5554",
+      package: "com.example",
+      output_directory: output,
+    },
+  });
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error.capturedOutput?.stdout).toContain(
+    pmOutput.split("\n")[0],
+  );
+  await expect(readFile(join(root, "pull-ran"))).rejects.toThrow();
+  await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it.each([
+  ["case-only names", "base.apk", "BASE.APK"],
+  ["normalization-equivalent names", "caf\u00e9.apk", "cafe\u0301.apk"],
+])(
+  "checks %s against the actual destination filesystem before pulling",
+  async (_, firstName, secondName) => {
+    const { binary, root } = await writeAdbStub((root) =>
+      pullStub(
+        `'package:/data/app/x/${firstName}' 'package:/data/app/y/${secondName}'`,
+        `printf 'pulled\\n' >> '${join(root, "pull.log")}'
+  printf 'apk' > "$5"`,
+      ),
+    );
+    const aliases = await namesAliasOnVolume(root, firstName, secondName);
+    const result = await providerOver(binary).execute({
+      operation: "pull_adb_package",
+      input: {
+        serial: "emulator-5554",
+        package: "com.example",
+        output_directory: root,
+      },
+    });
+    const pullLog = join(root, "pull.log");
+    const packageDirectory = join(root, "com.example");
+    if (aliases) {
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("unique local destinations");
+      await expect(readFile(pullLog)).rejects.toThrow();
+      await expect(lstat(packageDirectory)).rejects.toThrow();
+      return;
+    }
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(
+      (
+        result.value.result as { artifacts: { file_name: string }[] }
+      ).artifacts.map((artifact) => artifact.file_name),
+    ).toEqual([firstName, secondName]);
+    expect((await readFile(pullLog, "utf8")).trim().split("\n")).toHaveLength(
+      2,
+    );
+  },
+);
+
 it("reports an uninstalled package from empty pm path output", async () => {
   const { binary } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
@@ -465,14 +564,14 @@ exit 1`,
     operation: "pull_adb_file",
     input: {
       serial: "emulator-5554",
-      device_path: "/data/local/tmp/notes.txt",
+      device_path: "/data/local/tmp/My Notes:r*sumé.txt",
       output_directory: output,
     },
   });
   const digest = createHash("sha256").update("file-bytes").digest("hex");
   expect(result).toMatchObject({
-    device_path: "/data/local/tmp/notes.txt",
-    local_path: join(output, "notes.txt"),
+    device_path: "/data/local/tmp/My Notes:r*sumé.txt",
+    local_path: join(output, "My Notes:r*sumé.txt"),
     bytes: 10,
     sha256: digest,
   });
@@ -480,10 +579,7 @@ exit 1`,
 
 it.each([
   ["/data/local/tmp/..", "dot_segment"],
-  ["/data/local/tmp/a\\b", "path_separator"],
-  ["/data/local/tmp/CON", "reserved_name"],
-  ["/data/local/tmp/report.", "trailing_dot_or_space"],
-  ["/data/local/tmp/report:2024", "alternate_data_stream"],
+  ["/data/local/tmp/", "empty_file_name"],
 ] as const)(
   "refuses the unsafe device path %s before pulling",
   async (devicePath, reason) => {
@@ -510,13 +606,19 @@ exit 0`,
         {
           path: ["device_path"],
           reason: "invalid_value",
-          message: expect.stringContaining(reason),
+          message: expect.stringContaining(
+            `${JSON.stringify(devicePath)} does not name`,
+          ),
         },
       ],
     });
+    expect(
+      (projected.details as { issues: { message: string }[] }).issues[0]!
+        .message,
+    ).toContain(reason);
     // No host directory and no adb invocation are effects of a refused pull.
     await expect(readFile(join(root, "pull-ran"))).rejects.toThrow();
-    await expect(readFile(output)).rejects.toThrow();
+    await expect(lstat(output)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 

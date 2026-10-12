@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";

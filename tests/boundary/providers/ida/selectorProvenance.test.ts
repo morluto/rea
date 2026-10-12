@@ -58,14 +58,17 @@ describe("provider-derived selectors in IDA composed workflows", () => {
         result.value,
         "the resolved root stays ok and only the derived node carries the producer fault",
       ).toMatchObject({
-        "0": [{ address: "0x1000", status: "ok" }],
-        "1": [
-          {
-            address: "0x2000",
-            status: "error",
-            error: { code: "unreadable_output" },
-          },
-        ],
+        graph: {
+          "0": [{ address: "0x1000", status: "ok" }],
+          "1": [
+            {
+              address: "0x2000",
+              status: "error",
+              error: { code: "unreadable_output" },
+            },
+          ],
+        },
+        limitations: expect.any(Array),
       });
     } finally {
       expect((await client.close()).ok).toBe(true);

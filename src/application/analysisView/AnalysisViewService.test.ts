@@ -1,3 +1,8 @@
+import {
+  analysisViewCaptureFixture,
+  analysisViewCaptureEvidence,
+  analysisViewObjectDenseCapture,
+} from "../../../tests/fixtures/analysisView.js";
 import { describe, expect, it } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -17,6 +22,9 @@ import {
 import type { Evidence } from "../../domain/evidence.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { err, ok } from "../../domain/result.js";
+import { EvidenceLedger } from "../investigation/EvidenceLedger.js";
+import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
 
 it.each(["/fixtures/unknown.exe", ""])(
   "preserves recorded empty native identity fields: path=%j",
@@ -345,4 +353,143 @@ describe("summarizeRetainedAnalysis", () => {
       }),
     ).toEqual(err(conflict));
   });
+});
+
+it("seals inferred and literal HAR pages, including a null artifact digest", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.artifact.sha256 = null;
+  const parent = analysisViewCaptureEvidence(capture);
+  // Any templated group in the full grouping makes every page inferred.
+  for (const [offset, confidence] of [
+    [0, "inferred"],
+    [11, "inferred"],
+  ] as const) {
+    const result = inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "api-surface", offset, limit: 1 },
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.confidence).toBe(confidence);
+    expect(result.value.subject).toBeNull();
+    expect(parseEvidence(result.value)).toEqual(result.value);
+  }
+  expect(
+    inspectAnalysisView({
+      source: { kind: "inline", evidence: analysisViewLayoutEvidence() },
+      view: { kind: "api-surface" },
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisUnsupportedTargetError" },
+  });
+});
+
+it("rejects a null projected digest under a present parent subject", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.artifact.sha256 = null;
+  const parent = createEvidence(
+    { path: capture.artifact.path, sha256: "a".repeat(64), format: "file" },
+    { id: "fixture", name: "fixture", version: "1" },
+    {
+      operation: "inspect_web_network_capture",
+      parameters: { sensitive_value_count: 0 },
+      result: capture,
+      confidence: "observed",
+    },
+  );
+  expect(
+    inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "api-surface" },
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "EvidenceIntegrityError" } });
+});
+
+it("refuses an object-dense borrowed capture before making a full schema clone", () => {
+  const capture = analysisViewObjectDenseCapture();
+  expect(Buffer.byteLength(JSON.stringify(capture))).toBeLessThan(
+    WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
+  );
+  const parent = analysisViewCaptureEvidence(capture);
+  const ledger = new EvidenceLedger();
+  const recorded = ledger.record(parent);
+  if (!recorded.ok) throw recorded.error;
+  const borrowed = ledger.forAnalysis(parent.evidence_id)!;
+  expect(Object.isFrozen(borrowed.normalized_result)).toBe(true);
+  const result = inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "api-surface", limit: 1 },
+    },
+    (id) => ledger.forAnalysis(id),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "memory",
+    },
+  });
+  expect(ledger.forAnalysis(parent.evidence_id)).toBe(borrowed);
+});
+
+it("borrows inline Evidence until admission without invoking nested accessors", () => {
+  let accessed = false;
+  const evidence = {
+    get normalized_result() {
+      accessed = true;
+      throw new Error("Evidence must be admitted before parsing");
+    },
+  };
+  const input = {
+    source: { kind: "inline", evidence },
+    view: { kind: "api-surface" },
+  };
+  const parsed = inspectAnalysisViewInputSchema.parse(input);
+  if (parsed.source.kind !== "inline") throw new Error("Expected inline input");
+  expect(parsed.source.evidence).toBe(evidence);
+  expect(inspectAnalysisView(input)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  expect(accessed).toBe(false);
+});
+
+it("keeps inline-envelope admission live alongside capture validation and grouping", () => {
+  // Each clone alone fits; both graphs coexist while the view is projected.
+  const capture = analysisViewObjectDenseCapture(40_000);
+  const parent = analysisViewCaptureEvidence(capture);
+  const retained = inspectAnalysisView(
+    {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "api-surface" },
+    },
+    () => parent,
+  );
+  if (!retained.ok) throw retained.error;
+  expect(
+    inspectAnalysisView({
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "api-surface" },
+    }),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+  });
+});
+
+it("admits raw_result and parameters before authenticating a portable capture", () => {
+  const dense = analysisViewObjectDenseCapture();
+  const parent = analysisViewCaptureEvidence();
+  for (const field of ["raw_result", "parameters"] as const) {
+    const result = inspectAnalysisView({
+      source: { kind: "inline", evidence: { ...parent, [field]: dense } },
+      view: { kind: "api-surface" },
+    });
+    // Refuse expansion before hashing can report the deliberately stale ID.
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+    });
+  }
 });

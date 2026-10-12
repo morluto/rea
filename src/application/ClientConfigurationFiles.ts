@@ -10,6 +10,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 /** A named source failure that setup can explain without losing the bad path. */
 export interface ClientConfigurationFileError {
@@ -22,9 +23,15 @@ export interface ClientConfigurationFileError {
 /** Preserve named read failures and distinguish a missing source from an empty file. */
 export const readConfigurationText = async (
   path: string,
+  resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
   try {
-    return ok(await readRegularFileText(path));
+    return ok(
+      await readRegularFileText(
+        path,
+        resources === undefined ? {} : { resources },
+      ),
+    );
   } catch (cause: unknown) {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return ok(undefined);
@@ -43,10 +50,11 @@ export const readConfigurationText = async (
 export const readConfigurationFile = async (
   path: string,
   format: SetupClient["format"],
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<ClientConfigurationDocument | undefined, ClientConfigurationFileError>
 > => {
-  const source = await readConfigurationText(path);
+  const source = await readConfigurationText(path, resources);
   if (!source.ok) return source;
   const content = source.value;
   if (content === undefined) return ok(undefined);
@@ -64,12 +72,17 @@ export const readConfigurationFile = async (
 /** Read every applicable user file; malformed lower-priority files also stop setup. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<readonly ClientConfigurationDocument[], ClientConfigurationFileError>
 > => {
   const documents: ClientConfigurationDocument[] = [];
   for (const path of client.configPaths ?? [client.configPath]) {
-    const document = await readConfigurationFile(path, client.format);
+    const document = await readConfigurationFile(
+      path,
+      client.format,
+      resources,
+    );
     if (!document.ok) return document;
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(document.value);

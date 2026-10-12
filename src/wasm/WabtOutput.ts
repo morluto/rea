@@ -1,3 +1,7 @@
+/** WABT prints names with %.*s, so an embedded NUL ends their display. */
+const wabtDisplayedName = (name: string | undefined): string | undefined =>
+  name?.split("\0", 1)[0];
+
 /** Frame WABT's raw custom names using the ordered names from its escaped WAT output. */
 export const parseWabtOutput = (
   text: string,
@@ -5,14 +9,10 @@ export const parseWabtOutput = (
   customSectionNames: readonly string[],
   debugModuleNames: readonly string[] = [],
 ) => {
-  // WABT prints module names with printf's %.*s: embedded NUL ends the display.
   const preamble =
     "\nmodule.wasm:\tfile format wasm 0x1\n" +
     debugModuleNames
-      .map((name) => {
-        const displayedName = name.split("\0", 1)[0];
-        return `module name: <${displayedName}>\n`;
-      })
+      .map((name) => `module name: <${wabtDisplayedName(name)}>\n`)
       .join("");
   const prefix = `${preamble}\nSections:\n\n`;
   if (!text.startsWith(prefix))
@@ -29,7 +29,7 @@ export const parseWabtOutput = (
     offset += match[0].length;
     let description: string;
     if (match[1] === "Custom") {
-      const name = customSectionNames[customIndex++];
+      const name = wabtDisplayedName(customSectionNames[customIndex++]);
       if (name === undefined || !text.startsWith(`"${name}"\n`, offset))
         throw new Error(
           "WABT custom-section header does not match decoded WAT.",

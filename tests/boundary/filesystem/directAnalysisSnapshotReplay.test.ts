@@ -2,7 +2,7 @@ import { parseConfig } from "../../../src/config/parseConfig.js";
 import { writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
@@ -33,11 +33,13 @@ import {
   createAnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshot,
 } from "../../../src/domain/analysisSnapshot.js";
+import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import {
   createTestBinarySession,
   createTestProviderRouter,
 } from "../../fixtures/binarySession.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   CAPABILITIES as GHIDRA_CAPABILITIES,
@@ -342,6 +344,58 @@ const withEarlierHistoricalEvidence = (
   };
 };
 
+describe("snapshot output cleanup lifecycle", () => {
+  it("returns completed analysis after retrying cleanup of a published snapshot", async () => {
+    const fixture = await createSnapshotReplayFixture(
+      "rea-snapshot-cleanup-retry-",
+    );
+    const cleanup = vi
+      .spyOn(OwnedStagedOutput.prototype, "close")
+      .mockRejectedValueOnce(new Error("transient staging cleanup failure"));
+    try {
+      const output = await runDirectAnalysis(
+        fixture.dependencies(fixture.createProvider()),
+        fixture.path,
+        "binary_overview",
+        {},
+        { snapshotPath: fixture.snapshotPath },
+      );
+      expect(parseEvidence(output).operation).toBe("binary_overview");
+      const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+      if (!saved.ok) throw saved.error;
+      expect(saved.value.workflow_entries).toHaveLength(1);
+      expect(cleanup).toHaveBeenCalledTimes(2);
+    } finally {
+      cleanup.mockRestore();
+    }
+  });
+
+  it("saves snapshots after closing and reopening the same session", async () => {
+    const fixture = await createSnapshotReplayFixture("rea-snapshot-reopen-");
+    const session = createTestBinarySession(fixture.createProvider());
+    try {
+      for (const index of [1, 2]) {
+        const opened = await session.open(fixture.path);
+        if (!opened.ok) throw opened.error;
+        const analyzed = await session.execute("list_segments", {});
+        if (!analyzed.ok) throw analyzed.error;
+        const path = join(
+          dirname(fixture.snapshotPath),
+          `snapshot-${index}.json`,
+        );
+        const saved = await session.closeWithSnapshot(path, false);
+        if (!saved.ok) throw saved.error;
+        const loaded = await readAnalysisSnapshot(path);
+        if (!loaded.ok) throw loaded.error;
+        expect(loaded.value.target.sha256).toBe(opened.value.sha256);
+      }
+    } finally {
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    }
+  });
+});
+
 describe("direct analysis composed snapshot replay", () => {
   it.each([
     {
@@ -530,15 +584,15 @@ describe("binary overview snapshot replay", () => {
     );
     if (current === undefined)
       throw new Error("composed Evidence was not saved");
-    expect(
-      (
-        await writeAnalysisSnapshot(
-          withEarlierHistoricalEvidence(loaded.value, fixture.path, current),
-          fixture.snapshotPath,
-          true,
-        )
-      ).ok,
-    ).toBe(true);
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        withEarlierHistoricalEvidence(loaded.value, fixture.path, current),
+        fixture.snapshotPath,
+        true,
+        resources,
+      ),
+    );
+    if (!written.ok) throw written.error;
 
     const second = await runDirectAnalysis(
       dependencies,
@@ -735,15 +789,15 @@ describe("workflow snapshot profile and cancellation binding", () => {
     );
     if (current === undefined)
       throw new Error("composed Evidence was not saved");
-    expect(
-      (
-        await writeAnalysisSnapshot(
-          withAlternateWorkflowProfile(loaded.value, fixture.path, current),
-          fixture.snapshotPath,
-          true,
-        )
-      ).ok,
-    ).toBe(true);
+    const written = await withArtifactResourceScope((resources) =>
+      writeAnalysisSnapshot(
+        withAlternateWorkflowProfile(loaded.value, fixture.path, current),
+        fixture.snapshotPath,
+        true,
+        resources,
+      ),
+    );
+    if (!written.ok) throw written.error;
 
     const refreshed = await runDirectAnalysis(
       dependencies,

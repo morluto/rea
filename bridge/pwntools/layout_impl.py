@@ -206,6 +206,11 @@ def inspect_elf(path, cache):
                             "visibility": raw.st_other.visibility, "section_index": raw.st_shndx,
                         })
                 if h.sh_type in ("SHT_REL", "SHT_RELA"):
+                    if h.sh_size % h.sh_entsize != 0:
+                        raise LayoutFailure(
+                            "format",
+                            f"ELF relocation section {index} size is not a multiple of its {h.sh_entsize}-byte entries.",
+                        )
                     if image.header.e_type == "ET_REL" and h.sh_info >= len(all_sections):
                         raise LayoutFailure("format", f"ELF relocation section {index} references missing target section {h.sh_info}.")
                     symbol_table = None

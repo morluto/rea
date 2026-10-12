@@ -1,0 +1,237 @@
+import {
+  mkdir,
+  open as fsOpen,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
+import { createDoctorHostFixture } from "../../../src/application/Doctor.fixture.js";
+import {
+  runDoctorOwned,
+  type DoctorHost,
+} from "../../../src/application/Doctor.js";
+import {
+  readSkillFile,
+  skillDestinations,
+} from "../../../src/application/SetupSkill.js";
+import { systemSetupHost } from "../../../src/application/SetupHost.js";
+import {
+  runUninstall,
+  systemUninstallHost,
+} from "../../../src/application/Uninstall.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
+
+const openMock = vi.mocked(fsOpen);
+let actualFs: typeof import("node:fs/promises");
+
+beforeEach(async () => {
+  actualFs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  openMock.mockImplementation((...args) => actualFs.open(...args));
+});
+
+afterEach(() => openMock.mockReset());
+
+const failFirstCloses = (path: string) => {
+  const attempts: FileHandle[] = [];
+  let allowClose = false;
+  openMock.mockImplementation(async (...args) => {
+    const handle = await actualFs.open(...args);
+    if (String(args[0]) !== path) return handle;
+    const nativeClose = handle.close.bind(handle);
+    vi.spyOn(handle, "close").mockImplementation(async () => {
+      attempts.push(handle);
+      if (!allowClose) throw new Error("test holds the skill handle open");
+      await nativeClose();
+    });
+    return handle;
+  });
+  return {
+    attempts,
+    release: () => {
+      allowClose = true;
+    },
+  };
+};
+
+describe("skill regular-file cleanup ownership", () => {
+  it("keeps setup skill reads owned until setup host disposal", async () => {
+    const home = await createTestTempDirectory("rea-setup-skill-close-");
+    const [destination] = skillDestinations(home, []);
+    if (destination === undefined) throw new Error("Shared skill root missing");
+    const manifest = join(destination.path, "SKILL.md");
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, "stale managed skill\n");
+    const close = failFirstCloses(manifest);
+    const host = systemSetupHost(
+      { platform: "linux", homeDirectory: home } as DoctorHost,
+      { HOME: home },
+    );
+
+    try {
+      expect(await host.skillNeedsInstall([])).toBe(true);
+      expect(close.attempts.length).toBeGreaterThan(0);
+      expect(new Set(close.attempts).size).toBe(1);
+      const attemptsBeforeClose = close.attempts.length;
+      close.release();
+      expect(await host.close?.()).toBeUndefined();
+      expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
+      expect(new Set(close.attempts).size).toBe(1);
+      expect(close.attempts[0]?.fd).toBe(-1);
+    } finally {
+      close.release();
+      await host.close?.();
+    }
+  });
+
+  it("waits for an admitted skill read before its resource scope closes", async () => {
+    const home = await createTestTempDirectory("rea-setup-skill-inflight-");
+    const [destination] = skillDestinations(home, []);
+    if (destination === undefined) throw new Error("Shared skill root missing");
+    const manifest = join(destination.path, "SKILL.md");
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, "stale managed skill\n");
+    const resources = new ArtifactResourceScope();
+    let beginRead!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      beginRead = resolve;
+    });
+    let unblockRead!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      unblockRead = resolve;
+    });
+    let heldRead = false;
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actualFs.open(...args);
+      if (String(args[0]) !== manifest || heldRead) return handle;
+      heldRead = true;
+      const nativeRead = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+        beginRead();
+        await readGate;
+        return nativeRead(...readArgs);
+      });
+      return handle;
+    });
+
+    try {
+      const reading = readSkillFile(manifest, resources);
+      await readStarted;
+      let closed = false;
+      const closing = resources.close().then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      unblockRead();
+      expect(await reading).toBe("stale managed skill\n");
+      await closing;
+      expect(closed).toBe(true);
+    } finally {
+      unblockRead();
+      await resources.close();
+    }
+  });
+});
+
+describe("skill cleanup diagnostics", () => {
+  it("preserves a doctor report and cleanup diagnostic when host close still fails", async () => {
+    const home = await createTestTempDirectory("rea-doctor-skill-close-");
+    const [destination] = skillDestinations(home, []);
+    if (destination === undefined) throw new Error("Shared skill root missing");
+    const manifest = join(destination.path, "SKILL.md");
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(manifest, "managed skill fixture\n");
+    const close = failFirstCloses(manifest);
+    const resources = new ArtifactResourceScope();
+    const host = createDoctorHostFixture({
+      installedSkillIdentity: async () => {
+        await readSkillFile(manifest, resources);
+        return { version: null, toolCount: null, canonical: true };
+      },
+      close: async () => {
+        try {
+          await resources.close();
+          return undefined;
+        } catch (cause: unknown) {
+          return cause instanceof Error ? cause.message : String(cause);
+        }
+      },
+    });
+
+    try {
+      const report = await runDoctorOwned(undefined, host, { skill: true });
+
+      expect(report.healthy).toBe(false);
+      expect(report.identity?.skill.installed_version).toBeNull();
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({
+          name: "doctor-resource-cleanup",
+          ok: false,
+          detail: expect.stringContaining(manifest),
+        }),
+      );
+      expect(close.attempts.length).toBeGreaterThan(0);
+      expect(new Set(close.attempts).size).toBe(1);
+      const attemptsBeforeClose = close.attempts.length;
+      close.release();
+      expect(await host.close?.()).toBeUndefined();
+      expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
+      expect(new Set(close.attempts).size).toBe(1);
+      expect(close.attempts[0]?.fd).toBe(-1);
+    } finally {
+      close.release();
+      await host.close?.();
+    }
+  });
+
+  it("returns uninstall changes with a failed cleanup item for a retained handle", async () => {
+    const home = await createTestTempDirectory("rea-uninstall-skill-close-");
+    const [destination] = skillDestinations(home, []);
+    if (destination === undefined) throw new Error("Shared skill root missing");
+    const manifest = join(destination.path, "SKILL.md");
+    await mkdir(dirname(manifest), { recursive: true });
+    await writeFile(
+      manifest,
+      `---\nname: ${PRODUCT_IDENTITY.skillName}\n---\nmanaged fixture\n`,
+    );
+    const close = failFirstCloses(manifest);
+    const host = systemUninstallHost(home, undefined, { HOME: home });
+
+    try {
+      const result = await runUninstall(false, host);
+
+      expect(result.status).toBe("failed");
+      expect(result.items).toContainEqual(
+        expect.objectContaining({
+          name: "uninstall_cleanup",
+          status: "failed",
+          detail: expect.stringContaining(manifest),
+        }),
+      );
+      expect(close.attempts.length).toBeGreaterThan(0);
+      expect(new Set(close.attempts).size).toBe(1);
+      const attemptsBeforeClose = close.attempts.length;
+      close.release();
+      expect(await host.close?.()).toBeUndefined();
+      expect(close.attempts.length).toBeGreaterThan(attemptsBeforeClose);
+      expect(new Set(close.attempts).size).toBe(1);
+      expect(close.attempts[0]?.fd).toBe(-1);
+    } finally {
+      close.release();
+      await host.close?.();
+    }
+  });
+});

@@ -15,6 +15,10 @@ import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../contracts/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
+import {
+  relationshipCoverageSchema,
+  type RelationshipCoverage,
+} from "../domain/relationshipCoverage.js";
 
 export interface ExecutionOptions {
   readonly signal?: AbortSignal;
@@ -44,6 +48,8 @@ export interface AnalysisExecution {
   readonly provider: ProviderIdentity;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations: readonly string[];
+  /** Provider-owned completeness assessment for caller/callee observations. */
+  readonly relationshipCoverage?: RelationshipCoverage;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
 }
@@ -62,6 +68,7 @@ export const createAnalysisExecution = (
     readonly rawResult?: unknown;
     readonly analysisProfile?: AnalysisProfileCommitment;
     readonly limitations?: readonly string[];
+    readonly relationshipCoverage?: RelationshipCoverage;
     readonly locations?: readonly EvidenceLocation[];
     readonly subject?: EvidenceSubjectTarget;
   } = {},
@@ -76,6 +83,13 @@ export const createAnalysisExecution = (
     ? {}
     : { analysisProfile: structuredClone(options.analysisProfile) }),
   limitations: [...(options.limitations ?? [])],
+  ...(options.relationshipCoverage === undefined
+    ? {}
+    : {
+        relationshipCoverage: relationshipCoverageSchema.parse(
+          options.relationshipCoverage,
+        ),
+      }),
   locations: [...(options.locations ?? [])],
   subject: options.subject ?? null,
 });

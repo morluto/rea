@@ -191,6 +191,38 @@ describe("target-bound provider routing", () => {
   });
 });
 
+describe("selected provider capability provenance", () => {
+  it("labels selected-provider capabilities with the resolved identity", async () => {
+    const target = await databaseTarget();
+    const alpha = deepProvider("alpha");
+    const session = selectableSession([alpha.provider], auxiliaryProvider());
+
+    expect((await session.open(target, { providerId: "alpha" })).ok).toBe(true);
+    const resolved = { id: "alpha", name: "alpha provider", version: "1" };
+    const status = bindingStatus(session);
+    expect(status).toMatchObject({
+      analysis_provider_binding: { provider: resolved },
+      analysis_provider_candidates: [
+        {
+          provider: resolved,
+          selected: true,
+          capabilities: [{ provider: resolved }],
+        },
+      ],
+    });
+    expect(
+      z
+        .object({ capabilities: z.array(z.object({ provider: z.unknown() })) })
+        .parse(status)
+        .capabilities.map(({ provider }) => provider),
+    ).toEqual([
+      { id: "alpha", name: "alpha provider", version: "1" },
+      { id: "auxiliary", name: "auxiliary provider", version: "1" },
+    ]);
+    await session.close();
+  });
+});
+
 interface ClientState {
   readonly calls: string[];
   closed: boolean;

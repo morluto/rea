@@ -158,7 +158,7 @@ try {
     observations: {
       ...x.observations,
       source_files: x.observations.source_files.map(
-        ({ name, ...file }) => file,
+        ({ name: _name, ...file }) => file,
       ),
     },
   });

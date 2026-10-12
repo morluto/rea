@@ -14,6 +14,7 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../../../src/contracts/toolContracts.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { run } from "../../../src/main.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { optionalObservationFactories } from "../../fixtures/optionalObservationProviders.js";
@@ -154,33 +155,37 @@ mcpTest.for(failedAdapters)(
       name: "binary_session",
       arguments: {},
     });
-    expect(status.structuredContent).toMatchObject({
-      result: {
-        tool_availability: expect.arrayContaining([
-          expect.objectContaining({
-            name: operation,
-            available: false,
-            reason: "provider_unavailable",
-            remediation: expect.stringContaining(failure),
-          }),
-          expect.objectContaining({
-            name: "analyze_javascript_application",
-            available: true,
-          }),
-          expect.objectContaining({
-            name: "reconcile_javascript_runtime",
-            available: true,
-          }),
-          expect.objectContaining({
-            name:
-              port === "electronActiveObservation"
-                ? "list_electron_targets"
-                : "capture_electron_scenario",
-            available: true,
-          }),
-        ]),
-      },
-    });
+    const sessionStatus = toolContract("binary_session").outputSchema.parse(
+      status.structuredContent,
+    );
+    const availability = expandToolAvailability(
+      sessionStatus.result.tool_availability,
+    );
+    expect(availability).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: operation,
+          available: false,
+          reason: "provider_unavailable",
+          remediation: expect.stringContaining(failure),
+        }),
+        expect.objectContaining({
+          name: "analyze_javascript_application",
+          available: true,
+        }),
+        expect.objectContaining({
+          name: "reconcile_javascript_runtime",
+          available: true,
+        }),
+        expect.objectContaining({
+          name:
+            port === "electronActiveObservation"
+              ? "list_electron_targets"
+              : "capture_electron_scenario",
+          available: true,
+        }),
+      ]),
+    );
     const healthy =
       port === "javascriptRuntimeObservation"
         ? "list_browser_targets"

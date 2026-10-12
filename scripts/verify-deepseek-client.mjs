@@ -5,11 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { parse as parseYaml } from "yaml";
 import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
-import { exec } from "./lib/verify-package-core.mjs";
+import { exec, pathExists } from "./lib/verify-package-core.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -32,6 +33,7 @@ const skillPath = join(
   "SKILL.md",
 );
 const cli = join(runtimeRoot, "scripts", "rea.mjs");
+const configPath = join(profile, "cordis.patch.yml");
 const verifier = createVerifierRun();
 await Promise.all([
   mkdir(account),
@@ -66,32 +68,32 @@ const clientVersion = (
     timeout: 30_000,
   })
 ).stdout.trim();
-for (const args of [
-  ["setup", "--skill", "--dry-run"],
-  ["setup", "--skill", "--yes"],
-]) {
+const lifecycle = [];
+const runRea = async (args, artifact) => {
   const result = await exec(process.execPath, [cli, ...args, "--json"], {
     env: environment,
     cwd: workspace,
     timeout: 60_000,
   });
-  const parsed = JSON.parse(result.stdout);
-  assert.equal(parsed.status, args.includes("--dry-run") ? "planned" : "ready");
-  if (args.includes("--dry-run")) {
-    assert.equal(parsed.plannedActions.length, 1);
-    assert.equal(parsed.plannedActions[0].kind, "install_skill");
-    assert.equal(parsed.plannedActions[0].target, dirname(skillPath));
-  }
-  await writeFile(
-    join(lab, args.includes("--dry-run") ? "setup-plan.json" : "setup.json"),
-    result.stdout,
-  );
-}
-assert(
-  (await readFile(skillPath, "utf8")).includes(
-    "name: reverse-engineer-anything",
-  ),
-);
+  await writeFile(join(lab, `${artifact}.json`), result.stdout);
+  return JSON.parse(result.stdout);
+};
+const patches = (text) =>
+  parseYaml(text, {
+    customTags: [
+      {
+        tag: "tag:yaml.org,2002:js",
+        resolve: (source) => ({ __jsExpr: source }),
+      },
+    ],
+  });
+const withoutRea = (text) =>
+  patches(text).flatMap((op) => {
+    if (op.id === "rea-mcp") return [];
+    if (!Array.isArray(op.insert)) return [op];
+    const insert = op.insert.filter((entry) => entry.id !== "rea-mcp");
+    return insert.length === 0 ? [] : [{ ...op, insert }];
+  });
 
 let catalog;
 let patternCount = 0;
@@ -247,10 +249,9 @@ const fixture = await createOpenAiModelFixture({
 });
 let failure;
 try {
-  // Use the client's native Cordis patch DSL; generic `rea setup --client` does not edit it.
-  await writeFile(
-    join(profile, "cordis.patch.yml"),
-    `
+  // Seed model settings and a stale registration; the public setup workflow
+  // must produce the registration this native client actually boots.
+  const original = `
 - id: llm-pi-ai
   config:
     providers:
@@ -275,13 +276,59 @@ try {
       config:
         serverName: rea
         transport: stdio
-        command: ${JSON.stringify(process.execPath)}
-        args: ${JSON.stringify([cli, "mcp"])}
+        command: stale-launcher
+        args: [mcp]
         cwd: !!js process.cwd()
         env:
           REA_PROCESS_RUN_ID: ${JSON.stringify(verifier.run_id)}
-`,
+`;
+  await writeFile(configPath, original);
+  const planned = await runRea(
+    ["setup", "--client", "dsh", "--dry-run"],
+    "setup-plan",
   );
+  assert.equal(planned.status, "planned");
+  assert(planned.plannedActions.some((action) => action.target === configPath));
+  assert(
+    planned.plannedActions.some(
+      (action) => action.target === dirname(skillPath),
+    ),
+  );
+  assert(
+    planned.plannedActions.every(
+      (action) =>
+        action.target === configPath || action.target === dirname(skillPath),
+    ),
+  );
+  assert.equal(await readFile(configPath, "utf8"), original);
+  assert.equal(await pathExists(`${configPath}.rea.backup`), false);
+  lifecycle.push("dry-run");
+  const setup = await runRea(["setup", "--client", "dsh", "--yes"], "setup");
+  assert.equal(setup.status, "ready");
+  assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+  const configured = await readFile(configPath, "utf8");
+  assert.deepEqual(withoutRea(configured), withoutRea(original));
+  assert(configured.includes("!!js process.cwd()"));
+  assert(
+    (await readFile(skillPath, "utf8")).includes(
+      "name: reverse-engineer-anything",
+    ),
+  );
+  lifecycle.push("setup");
+  const repeated = await runRea(
+    ["setup", "--client", "dsh", "--yes"],
+    "setup-repeat",
+  );
+  assert.deepEqual(repeated.appliedActions, []);
+  assert.equal(await readFile(configPath, "utf8"), configured);
+  assert.equal(await readFile(`${configPath}.rea.backup`, "utf8"), original);
+  lifecycle.push("idempotent-setup");
+  const doctor = await runRea(
+    ["doctor", "--client", "dsh", "--skill"],
+    "doctor",
+  );
+  assert.equal(doctor.healthy, true);
+  lifecycle.push("doctor");
   const execution = exec(
     command,
     [
@@ -304,6 +351,20 @@ try {
   assert.equal(fixture.failure, undefined);
   assert(finalSeen && result.stdout.includes("REA_CLIENT_COMPATIBILITY_OK"));
   if (mode === "call") assert(evidenceSeen && skillLoaded);
+  lifecycle.push(mode === "call" ? "native-tool-invocation" : "native-chat");
+  const uninstall = await runRea(["uninstall"], "uninstall");
+  assert.equal(uninstall.status, "complete");
+  assert(
+    uninstall.items.some(
+      (item) => item.name === "dsh" && item.status === "removed",
+    ),
+  );
+  assert.deepEqual(
+    patches(await readFile(configPath, "utf8")),
+    withoutRea(original),
+  );
+  assert.equal(await pathExists(skillPath), false);
+  lifecycle.push("uninstall");
 } catch (cause) {
   failure = cause;
   if (typeof cause?.stdout === "string")
@@ -316,6 +377,7 @@ try {
     client: "deepseek-harness",
     clientVersion,
     mode,
+    lifecycle,
     passed: failure === undefined,
     artifacts: lab,
     runtimeRoot,

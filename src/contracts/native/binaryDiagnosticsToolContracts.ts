@@ -6,6 +6,7 @@ import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
+import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
@@ -46,7 +47,10 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     description:
       "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Initial profile: ELF64 x86-64 little-endian EXEC/DYN/REL on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view.",
     inputSchema: inspectBinaryLayoutRequestSchema,
-    outputSchema: analysisDetailOutputSchemaOf(binaryLayoutSchema),
+    outputSchema: analysisDetailOutputSchemaOf(
+      binaryLayoutSchema,
+      binaryLayoutSummaryViewResultSchema,
+    ),
     examples: [
       {
         title: "Inspect ELF linked and file layout",

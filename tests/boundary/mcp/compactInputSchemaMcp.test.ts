@@ -4,7 +4,6 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
-import { compactAdvertisedInputSchema } from "../../../src/contracts/compactInputSchema.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   parseMcpInputSchemaProfile,
@@ -119,29 +118,6 @@ describe("MCP compact input schema profile", () => {
           true,
         );
     }
-  });
-
-  it("reduces at most the structurally oversized tools", async () => {
-    const full = fullServer();
-    registerCatalog(full);
-    const tools = await listToolsThroughTransport(full);
-    const reduced: string[] = [];
-    for (const tool of tools) {
-      const { presentation } = compactAdvertisedInputSchema(
-        tool.inputSchema,
-        COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-      );
-      if (presentation === "reduced") reduced.push(tool.name);
-    }
-    expect(reduced.sort()).toEqual([
-      "build_reconstruction_obligation_ledger",
-      "capture_browser_scenario",
-      "compare_application_versions",
-      "compare_web_captures",
-      "evaluate_reconstruction_coverage",
-      "project_managed_application_graph",
-    ]);
-    expect(tools.length).toBe(TOOL_CONTRACTS.length);
   });
 
   it("retains parameter types and avoids client-side reference expansion", async () => {

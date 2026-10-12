@@ -4,6 +4,7 @@ import { stripComments } from "jsonc-parser";
 import { z } from "zod";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   clientConfigurationValuesEqual,
@@ -61,6 +62,7 @@ const normalizedPath = async (
 const workspaceTrusted = async (
   settings: NonNullable<SetupClient["geminiSettings"]>,
   sources: readonly SettingsSource[],
+  resources?: ArtifactResourceScope,
 ): Promise<Result<boolean, ClientConfigurationFileError>> => {
   let enabled = true;
   for (const { path, document } of sources) {
@@ -70,7 +72,10 @@ const workspaceTrusted = async (
   }
   if (settings.trustOverride !== undefined) return ok(settings.trustOverride);
   if (!enabled) return ok(true);
-  const text = await readConfigurationText(settings.trustedFoldersPath);
+  const text = await readConfigurationText(
+    settings.trustedFoldersPath,
+    resources,
+  );
   if (!text.ok) return text;
   if (text.value === undefined) return ok(false);
   let rules: z.output<typeof trustRulesSchema>;
@@ -110,6 +115,7 @@ export const readClientPolicyBlock = async (
   client: SetupClient,
   userDocument?: ClientConfigurationDocument,
   desiredRegistration?: unknown,
+  resources?: ArtifactResourceScope,
 ): Promise<Result<string | undefined, ClientConfigurationFileError>> => {
   if (client.name !== "gemini_cli" || client.geminiSettings === undefined)
     return ok(undefined);
@@ -124,7 +130,7 @@ export const readClientPolicyBlock = async (
     const parsed =
       path === client.configPath && userDocument !== undefined
         ? ok(userDocument)
-        : await readConfigurationFile(path, "json");
+        : await readConfigurationFile(path, "json", resources);
     if (!parsed.ok) return parsed;
     if (parsed.value !== undefined)
       sources.push({ path, document: parsed.value });
@@ -143,10 +149,10 @@ export const readClientPolicyBlock = async (
       ".gemini",
       "settings.json",
     );
-    const document = await readConfigurationFile(path, "json");
+    const document = await readConfigurationFile(path, "json", resources);
     if (!document.ok) return document;
     if (document.value !== undefined) {
-      const trusted = await workspaceTrusted(settings, sources);
+      const trusted = await workspaceTrusted(settings, sources, resources);
       if (!trusted.ok) return trusted;
       if (trusted.value) {
         const source = { path, document: document.value };

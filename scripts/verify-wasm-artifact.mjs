@@ -247,6 +247,7 @@ try {
           '"test\nline"',
           '"fake"\nSection Details:\n   Type start=0x0000000a end=0x0000000b (size=0x00000001) count: 0\n"end"',
           '"unicode-é\\\t"',
+          '"visible"',
         ],
       );
     if (debugNames) {

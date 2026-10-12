@@ -27,6 +27,10 @@ import {
 } from "./immutableJson.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import {
+  relationshipCoverageSchema,
+  type RelationshipCoverage,
+} from "./relationshipCoverage.js";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.object({
@@ -118,6 +122,7 @@ const evidenceBaseSchema = z
     authority: evidenceAuthoritySchema,
     environment: executionEnvironmentSchema.nullable(),
     limitations: z.array(z.string()),
+    relationship_coverage: relationshipCoverageSchema.nullable().default(null),
     locations: z.array(evidenceLocationSchema),
     evidence_links: z.array(prefixedDigestSchema("ev")),
   })
@@ -163,9 +168,11 @@ const authenticatedEvidenceSchema = evidenceSchema.superRefine(
 );
 
 /** Complete observation whose normalized payload retains its operation-specific type. */
-export type Evidence<Result extends JsonValue = JsonValue> = z.infer<
-  typeof evidenceSchema
-> & { readonly normalized_result: Result };
+type EvidenceSchemaValue = z.infer<typeof evidenceSchema>;
+export type Evidence<Result extends JsonValue = JsonValue> =
+  EvidenceSchemaValue & {
+    readonly normalized_result: Result;
+  };
 const immutableEvidenceSnapshots = new WeakMap<object, Evidence>();
 const immutableResultSchema = z
   .custom<JsonValue>(isImmutableJsonSnapshot)
@@ -215,13 +222,14 @@ export interface EvidenceObservation {
   readonly authority?: EvidenceAuthority;
   readonly environment?: ExecutionEnvironment | null;
   readonly limitations?: readonly string[];
+  readonly relationshipCoverage?: RelationshipCoverage;
   /** Reason the subject identity is unavailable, when no target identity is supplied. */
   readonly subjectUnavailableReason?: string;
   readonly locations?: readonly EvidenceLocation[];
   readonly evidenceLinks?: readonly string[];
 }
 
-type EvidenceWithoutId = Omit<Evidence, "evidence_id">;
+type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
 const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   subject:
@@ -243,6 +251,9 @@ const semanticProjection = (evidence: EvidenceWithoutId): JsonValue => ({
   authority: evidence.authority,
   environment: evidence.environment,
   limitations: evidence.limitations,
+  ...(evidence.relationship_coverage === null
+    ? {}
+    : { relationship_coverage: evidence.relationship_coverage }),
   locations: evidence.locations,
   evidence_links: evidence.evidence_links,
 });
@@ -404,6 +415,9 @@ const normalizeEvidenceObservation = (
         : []),
       ...(observation.limitations ?? []),
     ],
+    ...(observation.relationshipCoverage === undefined
+      ? { relationship_coverage: null }
+      : { relationship_coverage: observation.relationshipCoverage }),
     locations: [...(observation.locations ?? [])],
     evidence_links: [...(observation.evidenceLinks ?? [])],
   } satisfies JsonValue;

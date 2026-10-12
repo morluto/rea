@@ -46,6 +46,14 @@ describe("managed artifact failure classification", () => {
     ]);
   });
 
+  it("rejects a ReadyToRun OS-override machine without a CLI directory", () => {
+    const bytes = buildNativePeFixture();
+    bytes.writeUInt16LE(0x014c ^ 0x7b79, bytes.readUInt32LE(0x3c) + 4);
+    expect(() =>
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
+    ).toThrow("Unsupported PE machine 0x7a35");
+  });
+
   it("keeps malformed reference and attribute issues across inventory callers", () => {
     const bytes = buildManagedPeFixture({
       references: [
@@ -66,6 +74,7 @@ describe("managed artifact failure classification", () => {
       "System.Runtime",
       "System.Runtime",
     ]);
+    expect(artifact.attributes).toEqual([]);
     expect(artifact.coverage.issues.map(({ code }) => code)).toEqual(
       issueCodes,
     );

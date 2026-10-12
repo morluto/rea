@@ -9,7 +9,10 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { writeJavaScriptAnalysisTransfer } from "./JavaScriptAnalysisTransfer.js";
+import {
+  javaScriptTransferByteBudget,
+  writeJavaScriptAnalysisTransfer,
+} from "./JavaScriptAnalysisTransfer.js";
 import { javaScriptWorkerStaticAnalysisSchema } from "./JavaScriptAnalysisWorkerSchemas.js";
 import {
   JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS as DEFAULTS,
@@ -95,6 +98,7 @@ const analyzeJob = async (
   requests: AsyncIterator<string>,
 ): Promise<void> => {
   try {
+    let resultBudgetBytes = 0;
     const source = await readFile(join(root, `${request.id}.source`), "utf8");
     if (
       createHash("sha256").update(source).digest("hex") !== request.text_sha256
@@ -148,7 +152,8 @@ const analyzeJob = async (
             throw new TypeError(
               "JavaScript worker admission names a different source job",
             );
-          return admission.semantic_result_budget_bytes;
+          resultBudgetBytes = admission.semantic_result_budget_bytes;
+          return resultBudgetBytes;
         },
       },
     );
@@ -160,6 +165,7 @@ const analyzeJob = async (
             join(root, `${request.id}.records`),
             result.module,
             result.projection,
+            javaScriptTransferByteBudget(resultBudgetBytes),
           );
     await send({ kind: "complete", id: request.id, descriptor });
   } catch (cause: unknown) {

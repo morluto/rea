@@ -1,3 +1,5 @@
+import { apiSurfaceHar } from "./historicalHar.js";
+import { webNetworkCaptureSchema } from "../../src/domain/webNetworkCapture.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "./binaryDiagnostics/layout.js";
 import { binaryLayoutFixture } from "./binaryDiagnostics/layout.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -193,3 +195,75 @@ export const analysisViewJavaScriptEvidence = (
       limitations: analysis.limitations,
     },
   );
+
+/** Capture parent with explicit producer ordinals, including excluded URL values. */
+export const analysisViewCaptureFixture = () =>
+  webNetworkCaptureSchema.parse({
+    artifact: {
+      path: "/fixtures/surface.har",
+      sha256: "c".repeat(64),
+      bytes: 1024,
+    },
+    format: "har",
+    decoder: { id: "fixture", name: "fixture", version: "1" },
+    container: {
+      reported: {},
+      numeric_literals: [],
+      redactions: [],
+      records_pointer: "/log/entries",
+    },
+    total_records: 15,
+    records: [
+      ...apiSurfaceHar().log.entries,
+      { request: { method: "GET", url: null } },
+      { request: { method: "GET", url: "invalid URL" } },
+    ].map((reported, ordinal) => ({
+      ordinal,
+      location: { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
+      reported,
+      binary_fields: [],
+      numeric_literals: [],
+      redactions: [],
+      limitations: [],
+    })),
+    runtime_attribution: "unknown",
+    limitations: [],
+  });
+
+export const analysisViewCaptureEvidence = (
+  capture = analysisViewCaptureFixture(),
+): Evidence =>
+  createEvidence(
+    capture.artifact.sha256 === null
+      ? undefined
+      : {
+          path: capture.artifact.path,
+          sha256: capture.artifact.sha256,
+          format: "file",
+        },
+    { id: "fixture", name: "fixture", version: "1" },
+    {
+      operation: "inspect_web_network_capture",
+      parameters: { sensitive_value_count: 0 },
+      result: capture,
+      confidence: "observed",
+    },
+  );
+
+/** A small encoded capture whose many short objects expand during validation. */
+export const analysisViewObjectDenseCapture = (headerCount = 100_000) => {
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 1);
+  capture.total_records = 1;
+  capture.records[0]!.reported = {
+    request: {
+      method: "GET",
+      url: "https://api.test/items/1",
+      headers: Array.from({ length: headerCount }, () => ({
+        name: "x",
+        value: "y",
+      })),
+    },
+  };
+  return capture;
+};

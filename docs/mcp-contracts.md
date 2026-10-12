@@ -113,17 +113,48 @@ Schema does not express those cross-field invariants.
 
 Call `binary_session` with `{}` and read `result.tool_availability` to choose a
 callable operation for the current target, provider, host, and negotiated client
-capabilities. The default result includes the complete inventory with each
-tool's availability, reason, and remediation. Each entry also reports required
-and optional negotiated client features plus the currently missing features.
-The optional inputs `expected_package_version`, `expected_catalog_digest`, and
+capabilities. The default result contains the complete inventory in groups that
+share status facts. `tool_availability.client_requirements` is the baseline for
+each group; a group's optional `client_requirements` replaces that baseline for
+the group's tools. Expand each group's `names` into one tool entry, carrying its
+surface, availability, reason, remediation, default-mode status, modes, and
+client requirements. Compare the union of group names with `tools/list` when
+checking that a client received the full catalog. An operation absent from all
+groups is missing from the complete inventory; it is not an implicit
+unavailable entry.
+
+The `effects` and `annotations` arrays list the true members of their fixed
+vocabularies. A known member omitted from either array is false. This applies
+only to these closed flag sets; it does not make an omitted tool, provider, mode,
+or limitation false. Keep availability reasons, remediation, client-feature
+requirements, and mode facts inline with the grouped tool names. The optional
+inputs `expected_package_version`, `expected_catalog_digest`, and
 `expected_server_path` compare the live session with the caller's expectations.
 
+`server_identity.catalog` contains catalog counts and schema digests. Grouped
+tool availability carries the name set and current per-tool facts; `tools/list`
+is the canonical source for complete tool definitions, including input and
+output schemas. Clients that previously read `server_identity.catalog.tools`
+should expand `tool_availability.groups` and use `tools/list` for schemas. The
+same catalog identity summary is returned by CLI `capabilities` and `providers`;
+MCP tool definitions remain available through `tools/list`.
+
+Provider capabilities are grouped by provider identity and shared facts. In each
+set, `shared_limitations` is the ordered common prefix; append a group's ordered
+`limitations` suffix to recover each operation's exact limitations. Group
+`effects` arrays use the same true-only closed-vocabulary rule as tool
+availability. Expand every group operation while retaining its provider
+identity, availability, reason, rejection code, effects, and ordered
+limitations.
+
 `binary_session.analysis_provider_candidates` is authoritative for deep-engine
-discovery. Target-free discovery is sorted by provider ID, reports host
-availability and `unknown` target support, and does not create an analysis
-client. `open_binary.provider_id` accepts a concrete provider ID or `auto`; it
-uses the same parser and selection policy as CLI `--provider` and
+discovery. Each candidate's capability sets describe that possible provider;
+they do not select it. The top-level `capabilities` describe the current route,
+while `analysis_provider_binding` identifies the concrete selected route. These
+fields are not interchangeable. Target-free discovery is sorted by provider ID,
+reports host availability and `unknown` target support, and does not create an
+analysis client. `open_binary.provider_id` accepts a concrete provider ID or
+`auto`; it uses the same parser and selection policy as CLI `--provider` and
 `REA_ANALYSIS_PROVIDER`. A successful deep open exposes one immutable provider,
 concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
@@ -165,6 +196,11 @@ Provider calls receive the request cancellation signal. Artifact traversal,
 hashing, version comparisons, Hopper requests, and process capture
 check the same signal. Cancellation is distinct from timeout. A cleanup failure
 uses `cleanup_incomplete` and lists only the owned resource kinds that remain.
+An atomic Evidence bundle or snapshot write can publish its complete output
+before staging cleanup fails. In that case, `details.published: true`,
+`details.published_path`, and `details.bytes` retain the publication receipt.
+Use that receipt to distinguish completed publication from a write that never
+committed. Staging resources remain owned until cleanup is verified.
 Native call tracing and process capture retain available observations in
 `details.partial_observation` on failure, including when cleanup succeeds.
 The observation reports its partial coverage; cleanup details describe host
@@ -310,9 +346,12 @@ directly to `compare_functions`, and `inspect_artifact` Evidence to
 `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
-`get_call_graph` keeps provider-limited relationship reads on their node as
-`limitations`, alongside any observed `calls`. An empty call list with such a
-limitation is incomplete coverage, not proof that the function has no calls.
+`get_call_graph` returns a `graph` keyed by traversal depth and a top-level
+`limitations` array with deduplicated execution caveats. Each node keeps its
+relationship coverage and read-specific `limitations`, alongside observed
+`calls`. When a provider does not classify its caveats, they remain on that
+node and coverage is `unknown`. An empty call list with partial or unknown
+coverage is not proof that the function has no calls.
 `trace_call_path` reports each limited expansion in `residual_unknowns` and
 sets `truncated: true`; any path already supported by observed edges remains
 visible. Tool errors remain in their existing error or failure fields.
@@ -379,6 +418,13 @@ that complete Evidence in the session and returns the derived
 analysis, so later views and application workflows read it without repeating
 analysis or moving the complete record through the response. A server without
 session retention refuses summary detail with `capability_unavailable`.
+
+`inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
+grouping request lines by method, origin and format-rule path template. Templated
+segments are inferences. Because paging follows the full grouping, every page is
+inferred Evidence whenever any group is templated, and derived Evidence only when
+no group was templated.
+See [derived API surfaces](web-network-captures.md#derived-api-surface).
 
 `inspect_analysis_view` projects a caller-selected view of already completed
 `inspect_binary_layout`, `analyze_javascript_application`, or `analyze_function`

@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { digestSchema } from "../../domain/digests.js";
-import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
+import {
+  JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_SEMANTIC_NODE_MAXIMUM,
+} from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { javaScriptAnalysisTransferDescriptorSchema } from "./JavaScriptAnalysisTransfer.js";
 
 /** Independent worker execution budget; source length is not an admission rule. */
@@ -14,7 +17,7 @@ export const JAVASCRIPT_ANALYSIS_WORKER_DEFAULTS = {
 /** Caller-selected artifact identity, separate from the decoded source-text digest. */
 export const javaScriptWorkerRequestSchema = z.strictObject({
   id: z.uuid(),
-  node_budget: z.number().int().min(0).max(20_000),
+  node_budget: z.number().int().min(0).max(JAVASCRIPT_SEMANTIC_NODE_MAXIMUM),
   text_sha256: digestSchema,
   file: z.strictObject({
     path: z.string(),

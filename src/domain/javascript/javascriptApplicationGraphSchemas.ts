@@ -24,6 +24,7 @@ export const JAVASCRIPT_APPLICATION_NODE_KINDS = [
   "javascript-asset",
   "javascript-chunk",
   "javascript-module",
+  "javascript-expression",
   "source-map",
   "source-module",
   "browser-window",

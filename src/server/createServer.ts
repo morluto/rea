@@ -348,6 +348,7 @@ export const createServer = (
   if (session !== undefined) {
     registerSessionTools(server, session, toolLogger, {
       ...selectedOptions,
+      artifactResources,
       ...(availability === undefined
         ? {}
         : { availabilityPolicy: availability.policy }),

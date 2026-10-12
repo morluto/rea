@@ -61,6 +61,10 @@ export const electronPageInspectionOptions = z.object({
 });
 
 export const javascriptApplicationOptions = z.object({
+  maxSemanticNodes:
+    javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes,
+  maxSemanticNodesPerFile:
+    javaScriptAnalysisResourceControlsSchema.shape.max_semantic_nodes_per_file,
   sourcePath: javaScriptSourcePathsSchema
     .optional()
     .describe(

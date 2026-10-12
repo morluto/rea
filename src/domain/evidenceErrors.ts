@@ -3,6 +3,12 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 
+/** Receipt retained when publication succeeded but staging cleanup did not. */
+export interface PublishedEvidenceFile {
+  readonly path: string;
+  readonly bytes: number;
+}
+
 /** Evidence identity, schema, or bundle manifests failed integrity checks. */
 export class EvidenceIntegrityError extends AnalysisError {
   readonly _tag = "EvidenceIntegrityError";
@@ -42,13 +48,19 @@ export class EvidenceFileError extends AnalysisError {
 
   /** Caller-selected path that failed, resolved against the working directory. */
   readonly path: string | undefined;
+  /** Present only when a write committed before cleanup failed. */
+  readonly published: PublishedEvidenceFile | undefined;
 
   constructor(
     readonly operation: "read" | "write",
     readonly reason: "not-file" | "exists" | "invalid-json" | "missing" | "io",
-    options?: ErrorOptions & { readonly path?: string },
+    options?: AnalysisErrorOptions & {
+      readonly path?: string;
+      readonly published?: PublishedEvidenceFile;
+    },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
     this.path = options?.path;
+    this.published = options?.published;
   }
 }

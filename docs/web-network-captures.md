@@ -100,6 +100,11 @@ resources follow the same explicit declarations without changing error types;
 sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known
 transport URL userinfo are excluded structurally, including native backups.
+HAR redaction and API-surface projection share the same recorded-URL parser.
+Canonical userinfo spans are removed without rewriting the remaining source
+text. Credential-bearing spellings without a safe raw span, such as slashless
+or extra-slash HTTP URLs, are excluded as a whole transport field. Ordinary
+extension text and noncredential path/query values remain unchanged.
 
 Generated free-text limitations follow the same literal declarations, including
 global, per-record and Evidence explanations added during projection. Contract
@@ -111,6 +116,74 @@ authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
 wire fragments. Native dictionary duplicate keys have the unchanged upstream
 decoder's last-value semantics; this adapter does not claim to recover discarded
 duplicates or the original numeric spelling of parsed native floats.
+
+## Derived API surface
+
+Pass retained HAR Evidence to `inspect_analysis_view` with
+`view: {"kind":"api-surface","offset":0,"limit":50}`. Omitted offset and limit
+are 0 and 50. The view groups request lines by method, WHATWG URL origin and
+path template, sorted by origin, template and method. Query strings, fragments,
+credentials, headers and bodies are not copied into groups.
+
+| Rule       | Exact segment format                                 | Placeholder  |
+| ---------- | ---------------------------------------------------- | ------------ |
+| `numeric`  | ASCII digits only                                    | `{numeric}`  |
+| `uuid`     | RFC 9562 textual UUID, any version, case-insensitive | `{uuid}`     |
+| `hex`      | At least 32 hexadecimal digits                       | `{hex}`      |
+| `iso-date` | Valid calendar date `YYYY-MM-DD`                     | `{iso-date}` |
+
+Rules apply in table order to the recorded, still-encoded request path, read
+before WHATWG dot-segment removal, so `/a/%2e%2e/admin` and `/admin` stay distinct. Segment indexes start
+at zero after the leading slash. Each matched segment lists its observed literals
+and `basis: "inferred"`. `templated_groups` counts templated groups across every
+page. Because paging follows the full grouping, every page is inferred Evidence
+when that count is nonzero, and derived Evidence only when no group was templated. Version prefixes, short opaque IDs
+and digit-bearing route names stay literal. Samples merge only when method,
+origin, and exact segment rules match. The view does not infer further
+cross-sample patterns.
+
+Groups cite parent record ordinals and distinct statuses and MIME types (lowercase
+type/subtype without parameters). A malformed media type is unknown, not a content
+type. Flags report single samples, mixed statuses or mixed content types.
+`coverage` pages groups; `records` separately reports examined, total and excluded
+parent records. Ordinal subsets carry a limitation. Null URLs are excluded as
+`url-redacted`; unparseable URLs, URLs without an origin, spellings without
+`scheme://authority` (such as `https:host/path`), and authorities containing a
+tab or newline as `url-unparseable`.
+Unavailable request objects or methods are explicitly excluded. Unavailable
+response fields, including HAR's `status: 0` and an empty `mimeType`, remain
+unknown, not invented statuses or MIME types.
+
+The view makes no handler-identity, schema or causality claim. It performs no
+network activity. Native mitmproxy captures return a typed unsupported error.
+Parents inspected with `sensitive_values`, or whose Evidence does not record
+`sensitive_value_count`, return a typed unsupported error whose reason is the
+canonical token `sensitive_values_unretained`. The view would write path
+templates and limitation text that it cannot check against declarations the
+parent does not retain, so the refusal does not repeat declaration text.
+
+One accumulator owns group identity, observed-value/status/MIME sets, ordinals,
+exclusions and deduplicated limitations. It scans path spans without splitting
+literal paths into arrays. Before schema parsing, it reserves the capture clone
+and validation scratch by walking the parent without cloning it. Inline requests
+borrow the Evidence value through CLI/MCP envelope validation; the application
+admits the entire portable envelope before authenticated parsing or hashing.
+The envelope clone, hash scratch and capture clone stay charged during grouping.
+Temporary URL/path/MIME work and retained state must
+fit together within a 96 MiB projection representation budget. A whole group or
+merge is admitted before allocating its retained sets, map entries or array
+values. Fixed group storage, distinct text, exclusions and limitations count as
+well as matched segments. Per-record reservations are released after each
+record; repeated values do not accumulate another retained charge. Only the
+requested page is materialized as output groups.
+
+The representation budget uses conservative storage and worst-case JSON-escaping
+allowances; it is not an enforced V8 heap or process-memory limit. It is separate
+from the decoder's actual reply-byte limit and MCP transport admission. Exceeding
+it returns `resource_constraint` without a partial view. Limitations on the
+parent envelope, capture and examined records are deduplicated onto the view.
+Portable captures must retain unique ordinals within their declared total;
+caller-selected subsets can preserve any requested ordinal order.
 
 ## Resource and lifecycle boundaries
 

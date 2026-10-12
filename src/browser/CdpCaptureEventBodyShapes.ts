@@ -15,19 +15,19 @@ export const ingestResponseBodyShape = (
 ): void => {
   const result = recordValue(value);
   const body = cdpStringValue(result?.body);
-  if (body === undefined) {
+  const base64Encoded = result?.base64Encoded;
+  if (body === undefined || typeof base64Encoded !== "boolean") {
     invalidResponseBodyShape(state, requestId);
     return;
   }
-  const decoded =
-    result?.base64Encoded === true
-      ? decodeBase64(body)?.toString("utf8")
-      : body;
+  const decoded = base64Encoded ? decodeBase64(body)?.toString("utf8") : body;
   if (decoded === undefined) {
     invalidResponseBodyShape(state, requestId);
     return;
   }
-  updateResponseBodyShape(state, requestId, inferJsonShape(decoded));
+  const shape = inferJsonShape(decoded);
+  if (shape === null) state.completeness.unavailable("json_body_shapes");
+  updateResponseBodyShape(state, requestId, shape);
 };
 
 export const requestBodyShape = (
@@ -40,6 +40,7 @@ export const requestBodyShape = (
   if (!isJsonContentType(recordValue(request.headers)) || body === undefined)
     return { status: "unavailable", request: null, response: null };
   const shape = inferJsonShape(body);
+  if (shape === null) state.completeness.unavailable("json_body_shapes");
   return {
     status: shape === null ? "unavailable" : "included",
     request: shape,

@@ -10,6 +10,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { ok, type Result } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
+import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 
 type AnalysisCall = (
   name: AnalysisOperation,
@@ -51,6 +52,7 @@ interface TraceState {
   }>;
   readonly residual: Set<string>;
   readonly limitations: Set<string>;
+  readonly relationshipCoverage: Map<string, RelationshipCoverage>;
   queueIndex: number;
   traversalPath: string[];
 }
@@ -117,6 +119,7 @@ const createTraceState = (input: CallPathTraceInput): TraceState => ({
   failures: [],
   residual: new Set(),
   limitations: new Set(),
+  relationshipCoverage: new Map(),
   queueIndex: 0,
   traversalPath: input.goal === input.start ? [input.start] : [],
 });
@@ -147,12 +150,27 @@ const expandAddress = async (
     state.residual.add(`Call relationships were unreadable for ${address}.`);
     return false;
   }
-  for (const limitation of result.value.limitations) {
+  for (const limitation of result.value.limitations)
     state.limitations.add(limitation);
+  const coverage = result.value.relationshipCoverage ?? {
+    status: "unknown",
+    reason: "Provider did not report relationship coverage.",
+  };
+  state.relationshipCoverage.set(address, coverage);
+  for (const diagnostic of "diagnostics" in coverage &&
+  Array.isArray(coverage.diagnostics)
+    ? coverage.diagnostics
+    : [])
+    state.limitations.add(diagnostic);
+  if (coverage.status === "partial")
+    for (const limitation of coverage.limitations)
+      state.residual.add(
+        `Call relationships for ${address} are limited: ${limitation}`,
+      );
+  else if (coverage.status === "unknown")
     state.residual.add(
-      `Call relationships for ${address} are limited: ${limitation}`,
+      `Call relationship coverage is unknown for ${address}: ${coverage.reason}`,
     );
-  }
   for (const relatedAddress of sortedUniqueAddresses(related.value)) {
     recordEdge(input, state, {
       address,
@@ -228,6 +246,11 @@ const projectTrace = (input: CallPathTraceInput, state: TraceState) => ({
   traversal: {
     nodes_visited: state.visited.size,
   },
+  relationship_coverage: Object.fromEntries(
+    [...state.relationshipCoverage.entries()].sort(([left], [right]) =>
+      compareAddress(left, right),
+    ),
+  ),
   truncated: state.residual.size > 0,
   residual_unknowns: [...state.residual],
   limitations: [

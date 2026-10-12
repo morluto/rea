@@ -52,6 +52,7 @@ export type ElectronContextBridgeApiKey =
 
 /** One contextBridge API declaration without executing its API object. */
 export type ElectronContextBridgeFinding = ElectronContextBridgeApiKey & {
+  readonly resolution_basis?: "wrapper-substitution";
   readonly world: "main" | "isolated";
   readonly world_id: ElectronStaticValue | null;
   readonly api_status: "object-literal" | "dynamic" | "missing";
@@ -112,10 +113,14 @@ type ElectronIpcHandler =
     };
 
 interface ElectronIpcFindingContext {
+  /** Absent on direct syntax observations; wrappers require inferred evidence. */
+  readonly resolution_basis?: "wrapper-substitution";
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */
   readonly module_runtime?: string;
   readonly location: JavaScriptSourceRange;
+  /** Outer syntax invocation when a wrapper produced this underlying IPC call. */
+  readonly invocation_location?: JavaScriptSourceRange;
 }
 
 /** One statically visible Electron IPC send, invocation, listener, or handler. */
@@ -192,4 +197,34 @@ export interface ElectronStaticFindings {
   readonly sender_validations: readonly ElectronSenderValidationFinding[];
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
+  /** Source-bound candidate paths through bundled exports and IPC closures. */
+  readonly call_paths?: readonly ElectronCallPath[];
+}
+
+export interface ElectronCallPathStep {
+  readonly kind:
+    | "exposure"
+    | "factory"
+    | "function"
+    | "call"
+    | "ipc"
+    | "terminal";
+  readonly label: string;
+  readonly location: JavaScriptSourceRange;
+  readonly module_key: string | null;
+  readonly module_runtime: string | null;
+}
+
+/** A statically substituted candidate, never a runtime reachability claim. */
+export interface ElectronCallPath {
+  readonly entry_kind: "bridge-member" | "ipc-handler";
+  readonly entry: string;
+  readonly channel: string | null;
+  readonly terminal: string;
+  readonly resolution: "candidate";
+  readonly steps: readonly ElectronCallPathStep[];
+  readonly conditions: readonly {
+    readonly expression: string;
+    readonly location: JavaScriptSourceRange;
+  }[];
 }

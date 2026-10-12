@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCapabilityInventory } from "./CapabilityInventory.js";
+import {
+  buildCapabilityInventory,
+  compactToolAvailability,
+} from "./CapabilityInventory.js";
+import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import {
+  expandToolAvailability,
+  toolAvailabilityInventory,
+  type ToolAvailability,
+} from "../contracts/toolOutputSchemaPrimitives.js";
 
 it("reports module syntax and native resolution availability separately", () => {
   const input = { open: false, capabilities: [] };
@@ -55,22 +64,25 @@ const status = (
   open: options.open ?? false,
   ...(options.kind === undefined ? {} : { kind: options.kind }),
   ...(options.format === undefined ? {} : { format: options.format }),
-  capabilities: (options.capabilities ?? []).map((capability) => ({
-    ...capability,
-    availability_code: capability.available
-      ? null
-      : (capability.availability_code ?? null),
-    effects: {
-      mutates_artifact: false,
-      launches_process: false,
-      may_show_ui: false,
-      may_access_network: false,
-      may_write_filesystem: false,
-      changes_permissions: false,
-      requires_root: false,
-    },
-    limitations: [],
-  })),
+  capabilities:
+    options.capabilities === undefined || options.capabilities.length === 0
+      ? []
+      : [
+          {
+            provider: { id: "fixture", name: "Fixture", version: "1" },
+            shared_limitations: [],
+            groups: options.capabilities.map((capability) => ({
+              operations: [capability.operation],
+              effects: [],
+              limitations: [],
+              available: capability.available,
+              reason: capability.reason,
+              availability_code: capability.available
+                ? null
+                : (capability.availability_code ?? null),
+            })),
+          },
+        ],
 });
 
 const entry = (
@@ -86,6 +98,26 @@ const entry = (
 };
 
 describe("capability failure reasons", () => {
+  it("admits physical universal Mach-O targets for native Mach-O operations", () => {
+    expect(
+      entry(
+        "inspect_native_dispatch_metadata",
+        status({
+          open: true,
+          kind: "executable",
+          format: "mach-o-universal",
+          capabilities: [
+            {
+              operation: "inspect_native_dispatch_metadata",
+              available: true,
+              reason: null,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ available: false, reason: "provider_missing" });
+  });
+
   it.each([
     {
       label: "requires a target",
@@ -168,6 +200,152 @@ describe("capability failure reasons", () => {
     });
     if (remediation === null) expect(availability.remediation).toBeNull();
     else expect(availability.remediation).toContain(remediation);
+  });
+});
+
+describe("compact tool availability", () => {
+  it("round-trips complete facts, omitted modes, and per-group client requirements", () => {
+    const full = buildCapabilityInventory(status(), enabledPolicy);
+    const alternateRequirements = {
+      required: ["roots"],
+      optional: [],
+      missing_required: ["roots"],
+      missing_optional: [],
+    } satisfies ToolAvailability["client_requirements"];
+    const withOverride = full.map((entry, index) =>
+      index === 1
+        ? {
+            ...entry,
+            available: false as const,
+            reason: "client_capability_missing" as const,
+            remediation: "Use an MCP client with roots support.",
+            client_requirements: alternateRequirements,
+          }
+        : entry,
+    );
+    const compact = compactToolAvailability(withOverride);
+    const expanded = expandToolAvailability(compact).toSorted((left, right) =>
+      left.name.localeCompare(right.name),
+    );
+
+    expect(expanded).toEqual(
+      withOverride.toSorted((left, right) =>
+        left.name.localeCompare(right.name),
+      ),
+    );
+    expect(compact.client_requirements).toEqual(
+      withOverride[0]?.client_requirements,
+    );
+    expect(
+      compact.groups.find((group) => group.client_requirements !== undefined)
+        ?.client_requirements,
+    ).toEqual(alternateRequirements);
+    expect(compact.groups.every((group) => group.names.length > 0)).toBe(true);
+    const names = compact.groups.flatMap((group) => group.names).sort();
+    expect(names).toEqual(TOOL_CONTRACTS.map(({ name }) => name).sort());
+    expect(new Set(names).size).toBe(names.length);
+    expect(expanded.some((entry) => !Object.hasOwn(entry, "modes"))).toBe(true);
+  });
+
+  it("preserves an empty inventory with an explicit empty client baseline", () => {
+    const compact = compactToolAvailability([]);
+    expect(compact).toEqual({
+      client_requirements: {
+        required: [],
+        optional: [],
+        missing_required: [],
+        missing_optional: [],
+      },
+      groups: [],
+    });
+    expect(expandToolAvailability(compact)).toEqual([]);
+  });
+
+  it("rejects malformed compact facts and accepts an equivalent explicit baseline", () => {
+    const compact = compactToolAvailability(
+      buildCapabilityInventory(status(), enabledPolicy),
+    );
+    const firstGroup = compact.groups[0];
+    expect(firstGroup).toBeDefined();
+    if (firstGroup === undefined) throw new Error("Expected tool groups");
+    const availableIndex = compact.groups.findIndex((group) => group.available);
+    if (availableIndex < 0) throw new Error("Expected an available tool group");
+
+    const malformedInventories = [
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === 0
+            ? { ...group, effects: [...group.effects, "unknown_effect"] }
+            : group,
+        ),
+      },
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === 0
+            ? {
+                ...group,
+                annotations: [...group.annotations, "unknown_hint"],
+              }
+            : group,
+        ),
+      },
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === 0 ? { ...group, names: [] } : group,
+        ),
+      },
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === 0 ? { ...group, names: [""] } : group,
+        ),
+      },
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === availableIndex
+            ? { ...group, reason: "provider_missing" }
+            : group,
+        ),
+      },
+      {
+        ...compact,
+        groups: compact.groups.map((group, index) =>
+          index === availableIndex
+            ? { ...group, remediation: "unexpected remediation" }
+            : group,
+        ),
+      },
+    ];
+    for (const malformed of malformedInventories)
+      expect(toolAvailabilityInventory.safeParse(malformed).success).toBe(
+        false,
+      );
+
+    const inheritedGroup = compact.groups.find(
+      (group) => group.client_requirements === undefined,
+    );
+    expect(inheritedGroup).toBeDefined();
+    if (inheritedGroup === undefined)
+      throw new Error("Expected an inherited client-requirements group");
+    const explicitBaseline = {
+      ...compact,
+      groups: compact.groups.map((group) =>
+        group === inheritedGroup
+          ? { ...group, client_requirements: compact.client_requirements }
+          : group,
+      ),
+    };
+    const parsedOverride =
+      toolAvailabilityInventory.safeParse(explicitBaseline);
+    expect(parsedOverride.success).toBe(true);
+    if (parsedOverride.success)
+      expect(expandToolAvailability(parsedOverride.data)).toEqual(
+        expandToolAvailability(compact),
+      );
   });
 });
 
@@ -256,6 +434,36 @@ describe("partial navigation availability", () => {
       available: false,
       reason: "unsupported_host",
       remediation: "Navigation requires macOS.",
+    });
+  });
+
+  it("lists shared missing operations once in combined remediation", () => {
+    const availability = entry(
+      "get_navigation_context",
+      status({ open: true, kind: "executable" }),
+    );
+
+    expect(availability).toMatchObject({
+      reason: "provider_missing",
+      remediation:
+        "Configure a provider for one of: current_document, current_address, resolve_containing_procedure.",
+      modes: [
+        {
+          name: "current_selection",
+          missing_operations: [
+            "current_document",
+            "current_address",
+            "resolve_containing_procedure",
+          ],
+        },
+        {
+          name: "explicit_document",
+          missing_operations: [
+            "current_address",
+            "resolve_containing_procedure",
+          ],
+        },
+      ],
     });
   });
 });

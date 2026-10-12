@@ -16,6 +16,7 @@ import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js"
 export interface RegularFileReadOptions {
   readonly signal?: AbortSignal | undefined;
   readonly symlinks?: "follow" | "reject";
+  readonly resources?: ArtifactResourceScope;
 }
 
 export type RegularFileReadOutcome<Value> =
@@ -68,6 +69,15 @@ export const withRegularFile = async <Value>(
   path: string,
   read: (handle: FileHandle, stats: Stats) => Promise<Value>,
   options: RegularFileReadOptions = {},
+): Promise<Value> =>
+  options.resources === undefined
+    ? withRegularFileOwned(path, read, options)
+    : options.resources.run(() => withRegularFileOwned(path, read, options));
+
+const withRegularFileOwned = async <Value>(
+  path: string,
+  read: (handle: FileHandle, stats: Stats) => Promise<Value>,
+  options: RegularFileReadOptions,
 ): Promise<Value> => {
   const { signal } = options;
   let handle: FileHandle;
@@ -78,12 +88,15 @@ export const withRegularFile = async <Value>(
     });
   } catch (cause: unknown) {
     if (!(cause instanceof RegularFileAdmissionFailure)) throw cause;
-    throw new RegularFileCleanupFailure(
+    const failure = new RegularFileCleanupFailure(
       path,
       cause.owner,
       { kind: "failed", cause: cause.cause },
       cause.cleanupCause,
     );
+    if (options.resources === undefined) throw failure;
+    await retryRegularFileCleanup(failure, options.resources);
+    throw cause.cause;
   }
   const owner = new OwnedFileHandle(handle);
   let outcome: RegularFileReadOutcome<Value>;
@@ -108,7 +121,16 @@ export const withRegularFile = async <Value>(
   try {
     await owner.close();
   } catch (cleanupCause: unknown) {
-    throw new RegularFileCleanupFailure(path, owner, outcome, cleanupCause);
+    const failure = new RegularFileCleanupFailure(
+      path,
+      owner,
+      outcome,
+      cleanupCause,
+    );
+    if (options.resources === undefined) throw failure;
+    const cleanup = await retryRegularFileCleanup(failure, options.resources);
+    if (cleanup.outcome.kind === "failed") throw cleanup.outcome.cause;
+    return cleanup.outcome.value;
   }
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;

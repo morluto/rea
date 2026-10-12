@@ -107,7 +107,11 @@ the same source byte limit and explicit truncation reporting.
   upstream engine and should be checked against the retained XML when needed.
   Signature verification is explicitly `not_performed`.
 - Class search consumes all pages and checks their counts. An empty `query`
-  inventories all class names; class names are decompiler representations.
+  inventories all class-name rows; class names are decompiler representations.
+  Repeated names remain repeated in `matches` so the inventory row count and
+  producer evidence stay visible. `duplicate_names` identifies matching names
+  with multiple rows and their occurrence counts; a name alone does not
+  distinguish which provider class node a later lookup selects.
 - Class inventories read parsed metadata without generating source and return
   full reported display types, fields and inner class names. Synthetic members
   that code generation hides can appear in the inventory; it stays consistent

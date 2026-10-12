@@ -1,3 +1,4 @@
+import { API_SURFACE_EXAMPLE } from "./analysisViewApiSurfaceExample.js";
 import {
   analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
@@ -15,10 +16,14 @@ export const ANALYSIS_VIEW_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_analysis_view"),
     kind: "application",
     description:
-      "Inspect selected views of completed binary-layout, JavaScript application or native analyze_function Evidence without repeating analysis. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page. Module pages include assets, bundled and source modules; use node_id for ambiguous or unavailable paths. Native views select procedure, pseudocode, assembly, basic blocks, comments, callers/callees, references, unresolved calls, referenced strings/names, native API and high-pcode. Use nonnegative offset and a positive caller-selected limit (defaults 0 and 64); pseudocode uses UTF-16 code units, other native pages use rows. Returns artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the complete retained Evidence if needed.",
+      "Inspect selected views of completed binary-layout, JavaScript application or native analyze_function Evidence without repeating analysis. The api-surface view groups retained HAR requests by method, origin and format-rule path template; templated segments are inferences. It reads no headers or bodies and reports no query values. Use an exact same-session retained evidence_id or portable inline Evidence. Select a summary, layout mitigations/linkage facet, one section/symbol/module, or a stable page. Module pages include assets, bundled and source modules; use node_id for ambiguous or unavailable paths. Native views select procedure, pseudocode, assembly, basic blocks, comments, callers/callees, references, unresolved calls, referenced strings/names, native API and high-pcode. Use nonnegative offset and a positive caller-selected limit (defaults 0 and 64); pseudocode uses UTF-16 code units, other native pages use rows. Returns artifact identity, parent Evidence ID, a distinct view digest, coverage, limitations and unknowns. Actual serialized size determines MCP transport admission; choose a smaller page or export the complete retained Evidence if needed.",
     inputSchema: inspectAnalysisViewInputSchema,
     outputSchema: evidenceResultOf(analysisViewResultSchema),
     examples: [
+      {
+        title: "Group requests from retained HAR Evidence",
+        input: API_SURFACE_EXAMPLE.input,
+      },
       {
         title: "Summarize retained JavaScript application Evidence",
         input: {

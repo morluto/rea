@@ -42,6 +42,52 @@ it("preserves the same URL-looking text in an ordinary extension", () => {
   expect(redactor.redactions).toEqual([]);
 });
 
+it.each([
+  "https:user:password@example.test/path",
+  "https:///user:password@example.test/path",
+  "https://\\user:password@example.test/path",
+  "https://\t/user:password@example.test/path",
+  "https://\n/user:password@example.test/path",
+  "https://\r/user:password@example.test/path",
+  "ht\ttps://user:password@example.test/path",
+  "\\\\user:password@example.test/path",
+  "/\\user:password@example.test/path",
+  "\\/user:password@example.test/path",
+  "/\t/user:password@example.test/path",
+])("excludes credentials whose raw URL span is ambiguous: %s", (value) => {
+  const redactor = new CaptureRedaction([]);
+  expect(redactor.text(value, "/request/url", true)).toBeNull();
+  expect(redactor.redactions).toEqual([
+    { pointer: "/request/url", reason: "transport-credential" },
+  ]);
+  expect(new CaptureRedaction([]).text(value, "/_extension")).toBe(value);
+});
+
+it("uses non-special URL authority rules to remove the complete userinfo span", () => {
+  const value = "custom://user:secret@part\\more:password@host/path";
+  const redactor = new CaptureRedaction([]);
+  expect(redactor.text(value, "/response/redirectURL", true)).toBe(
+    "custom://host/path",
+  );
+  expect(redactor.redactions).toEqual([
+    { pointer: "/response/redirectURL", reason: "transport-credential" },
+  ]);
+});
+
+it("preserves noncanonical URLs and path/query userinfo lookalikes without parsed credentials", () => {
+  for (const value of [
+    "https:example.test/path?token=ordinary",
+    "https://example.test/a/%2e%2e/user:password@literal?url=user:password@literal",
+    "https://example.test\\user:password@literal",
+    "https://invalid host\\user:password@literal",
+    "//invalid host\\user:password@literal",
+  ]) {
+    const redactor = new CaptureRedaction([]);
+    expect(redactor.text(value, "/request/url", true)).toBe(value);
+    expect(redactor.redactions).toEqual([]);
+  }
+});
+
 it.each(["\ud800", "\udfff"])(
   "does not invent replacement UTF-8 bytes for a non-scalar declaration",
   (literal) => {

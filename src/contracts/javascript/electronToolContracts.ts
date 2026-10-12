@@ -11,6 +11,7 @@ import {
   electronActiveObservationInputSchema,
   electronActiveObservationResultSchema,
 } from "../../domain/javascript/electronActiveObservation.js";
+import { javascriptApplicationSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import {
   analysisDetailOutputSchemaOf,
   analysisDetailSchema,
@@ -34,6 +35,7 @@ export const analyzeJavaScriptApplicationRequestSchema =
   });
 const applicationOutputSchema = analysisDetailOutputSchemaOf(
   javascriptApplicationAnalysisResultSchema,
+  javascriptApplicationSummaryViewResultSchema,
 );
 const reconciliationOutputSchema = evidenceResultOf(
   javascriptRuntimeReconciliationResultSchema,

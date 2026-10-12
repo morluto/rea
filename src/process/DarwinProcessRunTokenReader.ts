@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { safeParseJson } from "../domain/safeJson.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { execFileOutput, execFileOutputFailure } from "./ExecFileOutput.js";
 import type {
   ProcessIdentityObservation,
   ProcessRunTokenObservation,
@@ -72,13 +73,123 @@ const sourceFiles = [
  */
 export const SWIFTC_INTERRUPT = "SIGINT";
 
+/** Deadline for the one-shot helper compilation. */
+const COMPILER_TIMEOUT_MS = 60_000;
+
+/** Bound on compiler diagnostics embedded in the inspection failure text. */
+const STDERR_EXCERPT_LIMIT = 512;
+
 /** The native Darwin process-ownership reader could not be prepared. */
 export class DarwinProcessOwnershipInspectionError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
+  constructor(
+    message: string,
+    options?: ErrorOptions & {
+      readonly compilerOutcome?: DarwinCompilerOutcome;
+    },
+  ) {
+    const { compilerOutcome, ...errorOptions } = options ?? {};
+    super(message, errorOptions);
     this.name = "DarwinProcessOwnershipInspectionError";
+    this.compilerOutcome = compilerOutcome;
   }
+
+  readonly compilerOutcome: DarwinCompilerOutcome | undefined;
 }
+
+/** Explicit, bounded outcome from compiling REA's Darwin ownership helper. */
+export interface DarwinCompilerOutcome {
+  readonly outcome:
+    | "exited"
+    | "signaled"
+    | "timed_out"
+    | "spawn_failed"
+    | "failed";
+  readonly code: string | number | null;
+  readonly signal: string | null;
+  readonly stderr: string;
+  readonly stderrBytes: number;
+  readonly stderrTruncated: boolean;
+  readonly outputTruncated: boolean;
+  readonly killed: boolean;
+  readonly timeoutMs?: number;
+}
+
+const MAX_COMPILER_STDERR_BYTES = 8 * 1024;
+
+const compilerOutcome = (
+  cause: unknown,
+  timeoutMs: number,
+): DarwinCompilerOutcome | undefined => {
+  const failure = execFileOutputFailure(cause);
+  if (failure === undefined) return undefined;
+  const stderr = boundedUtf8Text(failure.stderr, MAX_COMPILER_STDERR_BYTES);
+  const outcome =
+    failure.code === "ETIMEDOUT"
+      ? "timed_out"
+      : typeof failure.code === "number"
+        ? "exited"
+        : failure.signal !== null
+          ? "signaled"
+          : failure.code === "ENOENT"
+            ? "spawn_failed"
+            : "failed";
+  return {
+    outcome,
+    code: failure.code,
+    signal: failure.signal,
+    stderr: stderr.text,
+    stderrBytes: Buffer.byteLength(failure.stderr, "utf8"),
+    stderrTruncated: stderr.truncated,
+    outputTruncated: failure.outputTruncated,
+    killed: failure.killed,
+    ...(outcome === "timed_out" ? { timeoutMs } : {}),
+  };
+};
+
+const compilerOutcomeDescription = (
+  outcome: DarwinCompilerOutcome | undefined,
+  fallbackCode: string | number,
+): string => {
+  if (outcome === undefined) return `compiler result: ${String(fallbackCode)}`;
+  if (outcome.outcome === "exited")
+    return `compiler result: exit code ${String(outcome.code)}`;
+  if (outcome.outcome === "timed_out")
+    return `compiler result: timed out after ${String(outcome.timeoutMs)} ms`;
+  if (outcome.outcome === "signaled")
+    return `compiler result: stopped by signal ${outcome.signal ?? "an unknown signal"}`;
+  return `compiler result: ${String(outcome.code)}`;
+};
+
+const compilerInspectionError = (
+  cause: unknown,
+  timeoutMs: number,
+): DarwinProcessOwnershipInspectionError => {
+  const outcome = compilerOutcome(cause, timeoutMs);
+  const code = outcome?.code ?? "unknown";
+  const description = compilerOutcomeDescription(outcome, code);
+  const prefix =
+    code === "ENOENT"
+      ? "macOS process ownership inspection requires the Apple Swift compiler via xcrun"
+      : "macOS process ownership helper compilation failed via xcrun";
+  const stderr = boundedUtf8Text(outcome?.stderr ?? "", STDERR_EXCERPT_LIMIT);
+  const diagnostics = stderr.text.trim();
+  const truncated =
+    stderr.truncated ||
+    outcome?.stderrTruncated === true ||
+    outcome?.outputTruncated === true;
+  const suffix = diagnostics
+    ? `: ${diagnostics}${truncated ? "… [diagnostics truncated]" : ""}`
+    : outcome === undefined
+      ? `: ${cause instanceof Error ? cause.message : String(cause)}`
+      : ": no compiler diagnostics were captured";
+  return new DarwinProcessOwnershipInspectionError(
+    `${prefix} (${description})${suffix}`,
+    {
+      cause,
+      ...(outcome === undefined ? {} : { compilerOutcome: outcome }),
+    },
+  );
+};
 
 interface ProcessReaderCompilation {
   readonly controller: AbortController;
@@ -126,8 +237,13 @@ const waitForCompilation = async (
 
 /** Compile and retain the narrow Darwin sysctl reader for this REA process. */
 export const createDarwinProcessRunTokenReader = (
-  options: { readonly xcrun?: string } = {},
+  options: {
+    readonly xcrun?: string;
+    /** Deadline for the helper compilation; the default keeps verification fast. */
+    readonly compileTimeoutMs?: number;
+  } = {},
 ) => {
+  const compilerTimeoutMs = options.compileTimeoutMs ?? COMPILER_TIMEOUT_MS;
   let root: string | undefined;
   let executable: string | undefined;
   let compilation: ProcessReaderCompilation | undefined;
@@ -171,7 +287,7 @@ export const createDarwinProcessRunTokenReader = (
           options.xcrun ?? "/usr/bin/xcrun",
           ["swiftc", ...sourceFiles, "-o", output],
           {
-            timeout: 60_000,
+            timeout: compilerTimeoutMs,
             maxBuffer: 1024 * 1024,
             signal,
             stopSignal: SWIFTC_INTERRUPT,
@@ -180,16 +296,7 @@ export const createDarwinProcessRunTokenReader = (
         );
       } catch (cause: unknown) {
         if (isExpectedAbort(cause, signal)) throw cause;
-        const code =
-          cause instanceof Error && "code" in cause
-            ? String(cause.code)
-            : "unknown";
-        throw new DarwinProcessOwnershipInspectionError(
-          code === "ENOENT"
-            ? `macOS process ownership inspection requires the Apple Swift compiler via xcrun (compiler result: ${code})`
-            : `macOS process ownership helper compilation failed via xcrun (compiler result: ${code}): ${cause instanceof Error ? cause.message : String(cause)}`,
-          { cause },
-        );
+        throw compilerInspectionError(cause, compilerTimeoutMs);
       }
       if (signal.aborted || closed) throw abortReason(signal);
       executable = output;

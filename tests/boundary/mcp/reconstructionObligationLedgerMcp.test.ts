@@ -40,10 +40,6 @@ describe("reconstruction obligation ledger MCP parity", () => {
           summary: { total: 0 },
         },
       });
-      expect(result.structuredContent).toHaveProperty(
-        "normalized_result.schema",
-        "ReconstructionObligationLedger",
-      );
     } finally {
       await client.close();
       await server.close();

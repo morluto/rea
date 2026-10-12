@@ -1,5 +1,11 @@
 import { analysisErrorProjectionSchema } from "../../dist/contracts/errorSchemas.js";
 import { toolContract } from "../../dist/contracts/toolContracts.js";
+import {
+  expandProviderCapabilities,
+  expandToolAvailability,
+  providerCapabilitySet,
+} from "../../dist/contracts/toolOutputSchemaPrimitives.js";
+import { compareUnicodeCodePoints } from "../../dist/domain/unicodeCodePointOrder.js";
 
 /** Read the textual JSON projection from one MCP tool call. */
 export const mcpTextValue = (result) => {
@@ -9,6 +15,10 @@ export const mcpTextValue = (result) => {
 };
 
 const jsonValue = (result) => JSON.parse(mcpTextValue(result));
+
+/** Sort canonical contract names using REA's code-point ordering. */
+export const sortVerifierNames = (names) =>
+  [...names].sort(compareUnicodeCodePoints);
 
 /** Read the complete canonical diagnostic from an MCP tool failure. */
 export const requireMcpToolError = (result) => {
@@ -35,6 +45,44 @@ const operationResultKey = (contract) => {
   return evidence ? "normalized_result" : "result";
 };
 
+/** Expand compact session metadata once at the verifier boundary. */
+export const expandMcpSessionStatus = (status) => ({
+  ...status,
+  capabilities: expandProviderCapabilities(status.capabilities),
+  analysis_provider_candidates: expandProviderCandidates(
+    status.analysis_provider_candidates,
+  ),
+  tool_availability: expandToolAvailability(status.tool_availability),
+});
+
+/** Expand provider capability groups while retaining candidate identity/state. */
+export const expandProviderCandidates = (candidates) =>
+  candidates.map((candidate) => ({
+    ...candidate,
+    capabilities: expandProviderCapabilities(
+      providerCapabilitySet.array().parse(candidate.capabilities),
+    ),
+  }));
+
+/** Expand CLI provider capability groups at the same owning boundary. */
+export const expandProviderOutput = (providers) => ({
+  ...providers,
+  capabilities: expandProviderCapabilities(
+    providerCapabilitySet.array().parse(providers.capabilities),
+  ),
+  analysis_provider_candidates: expandProviderCandidates(
+    providers.analysis_provider_candidates,
+  ),
+});
+
+/** Expand the CLI capabilities command's compact provider descriptor groups. */
+export const expandCapabilitiesOutput = (capabilities) => ({
+  ...capabilities,
+  capabilities: expandProviderCapabilities(
+    providerCapabilitySet.array().parse(capabilities.capabilities),
+  ),
+});
+
 /** Validate an Evidence-producing tool output and return its normalized result. */
 export const requireMcpEvidenceResult = (result, operation) => {
   const contract = toolContract(operation);
@@ -48,7 +96,10 @@ export const requireMcpLifecycleResult = (result, operation) => {
   const contract = toolContract(operation);
   if (operationResultKey(contract) !== "result")
     throw new Error(`${operation} requires the Evidence result extractor`);
-  return requireOutput(result, operation, contract).result;
+  const projected = requireOutput(result, operation, contract).result;
+  return operation === "binary_session"
+    ? expandMcpSessionStatus(projected)
+    : projected;
 };
 
 /** Project a mixed verifier call using its exact named canonical output schema. */
@@ -58,7 +109,10 @@ export const requireMcpOperationResult = (
   contract = toolContract(operation),
 ) => {
   const key = operationResultKey(contract);
-  return requireOutput(result, operation, contract)[key];
+  const projected = requireOutput(result, operation, contract)[key];
+  return operation === "binary_session"
+    ? expandMcpSessionStatus(projected)
+    : projected;
 };
 
 /** Verify provider identity directly from the tool result. */

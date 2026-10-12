@@ -139,7 +139,14 @@ export const reconstructJavaScriptArtifact = async (
         "parse_javascript_sources",
         `Parsing and projecting ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application source files`,
       );
-      const semanticProjection = createJavaScriptSemanticGraphProjection();
+      const semanticProjection = createJavaScriptSemanticGraphProjection({
+        ...(input.max_semantic_nodes === undefined
+          ? {}
+          : { totalNodes: input.max_semantic_nodes }),
+        ...(input.max_semantic_nodes_per_file === undefined
+          ? {}
+          : { fileNodes: input.max_semantic_nodes_per_file }),
+      });
       const worker = createJavaScriptSourceAnalysis(
         {
           heapMb:

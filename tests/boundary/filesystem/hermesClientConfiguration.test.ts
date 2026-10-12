@@ -185,4 +185,28 @@ mcp_servers:
       },
     });
   });
+
+  it.each(["", "\n"])(
+    "configures an empty config.yaml %j as a new document",
+    async (original) => {
+      const { home, client } = await hermesClient();
+      await writeFile(client.configPath, original);
+      expect(
+        (await configureClientConfiguration(client, {}, command)).status,
+      ).toBe("configured");
+      expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual({
+        mcp_servers: {
+          rea: { command: command[0], args: command.slice(1), enabled: true },
+        },
+      });
+      expect(
+        (
+          await readClientRegistrationStatuses(home, undefined, {
+            platform: process.platform,
+            environment: {},
+          })
+        ).find(({ client: name }) => name === "hermes"),
+      ).toMatchObject({ state: "aligned", command });
+    },
+  );
 });

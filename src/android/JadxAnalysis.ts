@@ -167,16 +167,26 @@ const searchClasses = async (
         "JADX class pagination is incomplete",
       );
   } while (classes.length < total);
-  if (new Set(classes).size !== classes.length || total !== loaded.class_count)
+  if (total !== loaded.class_count)
     throw new AnalysisOutputError(
       request.operation,
-      "JADX class inventory is duplicated or differs from the loaded class count",
+      "JADX class inventory count differs from the loaded class count",
     );
+  const occurrences = new Map<string, number>();
+  for (const name of classes)
+    occurrences.set(name, (occurrences.get(name) ?? 0) + 1);
+  const matchingNames = classes.filter((name) =>
+    name.includes(request.input.query),
+  );
+  const duplicateNames = [...occurrences]
+    .filter(([name, count]) => count > 1 && name.includes(request.input.query))
+    .map(([name, count]) => ({ name, occurrences: count }));
   return androidResultSchemas.search_android_classes.parse({
     engine,
     query: request.input.query,
     total_classes: total,
-    matches: classes.filter((name) => name.includes(request.input.query)),
+    matches: matchingNames,
+    duplicate_names: duplicateNames,
     coverage: "complete",
   });
 };

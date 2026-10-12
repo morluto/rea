@@ -8,9 +8,23 @@ import { describe, expect, it } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
 import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
+import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import {
   createCacheProvider,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
+
+const assertCompleteToolAvailability = (structuredContent: unknown): void => {
+  const status =
+    toolContract("binary_session").outputSchema.parse(structuredContent);
+  const availability = expandToolAvailability(status.result.tool_availability);
+  expect(availability.map(({ name }) => name).sort()).toEqual(
+    TOOL_CONTRACTS.map(({ name }) => name).sort(),
+  );
+};
 
 describe("per-request client capability reporting", () => {
   it.each([
@@ -39,6 +53,7 @@ describe("per-request client capability reporting", () => {
             [CLIENT_CAPABILITIES_META_KEY]: capabilities,
           },
         });
+        assertCompleteToolAvailability(status.structuredContent);
         expect(status.structuredContent).toMatchObject({
           result: {
             client_features: { elicitation_form: form, elicitation_url: url },
@@ -71,13 +86,15 @@ describe("initialize-scoped client metadata", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      return (
+      const result = (
         await client.callTool({
           name: "binary_session",
           arguments: {},
           ...(meta === undefined ? {} : { _meta: meta }),
         })
       ).structuredContent;
+      assertCompleteToolAvailability(result);
+      return result;
     } finally {
       await Promise.allSettled([
         client.close(),

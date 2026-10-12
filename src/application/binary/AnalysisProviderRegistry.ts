@@ -50,6 +50,8 @@ export interface AnalysisProviderBinding {
   readonly identity: ProviderIdentity & { readonly version: string };
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
+  /** The provider's capabilities, attributed to its resolved identity. */
+  readonly capabilities: readonly CapabilityDescriptor[];
 }
 
 /** Complete result used for both a bound and intentionally unbound target. */
@@ -361,18 +363,25 @@ const selectedResult = (
   },
   statuses: readonly AnalysisProviderCandidateStatus[],
 ): AnalysisProviderSelection => {
+  const identity = evaluated.profile.provider;
+  const capabilities = evaluated.status.capabilities.map((capability) => ({
+    ...capability,
+    provider: structuredClone(identity),
+  }));
   const selectedStatus = {
     ...evaluated.status,
-    provider: structuredClone(evaluated.profile.provider),
+    provider: structuredClone(identity),
     selected: true,
+    capabilities,
   } satisfies AnalysisProviderCandidateStatus;
   return {
     requestedProviderId,
     binding: {
       provider: evaluated.candidate,
-      identity: structuredClone(evaluated.profile.provider),
+      identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      capabilities,
     },
     candidates: replaceCandidate(statuses, selectedStatus),
   };

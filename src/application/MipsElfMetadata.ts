@@ -4,24 +4,29 @@ import type {
   MipsElfMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
+import {
+  readMipsElfSharedLoad,
+  type MipsElfRelocationSection,
+} from "./MipsElfSharedLoad.js";
 
-/** Observed ABI declarations and coverage of their source tables. */
-export interface MipsAbiFlagsInspection {
+/** Observed ABI and load declarations, retaining unavailable source coverage. */
+export interface MipsElfInspection {
   readonly abiFlags: MipsAbiFlags | null;
   readonly limitations: readonly string[];
+  readonly sharedLoad?: MipsElfMetadata["sharedLoad"];
 }
 
 /**
- * Read ELF32 MIPS ABI declarations from the caller's already-open file.
+ * Read ELF32 MIPS ABI and shared-load declarations from the caller's already-open file.
  * Inspect both typed tables (not section names), including records beyond the
  * initial header probe. A missing record is unknown, not a default FP ABI.
  * The caller supplies its cancellation check so its tagged error is preserved.
  */
-export const readMipsElfAbiFlags = async (
+export const readMipsElfMetadata = async (
   handle: FileHandle,
   metadata: MipsElfMetadata,
   checkCancelled: () => void,
-): Promise<Result<MipsAbiFlagsInspection, string>> => {
+): Promise<Result<MipsElfInspection, string>> => {
   checkCancelled();
   if (metadata.elfClass !== 32)
     return err("MIPS ABI record inspection currently supports ELF32 only");
@@ -107,6 +112,9 @@ export const readMipsElfAbiFlags = async (
   if (u16(bytes, 44) === 0xffff || u16(bytes, 48) >= 0xff00)
     return err("extended or reserved MIPS ELF table numbering is unsupported");
   let record: Buffer | undefined;
+  let sharedLoad: MipsElfMetadata["sharedLoad"];
+  let programHeaders: Buffer | undefined;
+  const relocationSections: MipsElfRelocationSection[] = [];
   const limitations: string[] = [];
   for (const table of tables) {
     if (table.count === 0) {
@@ -135,12 +143,20 @@ export const readMipsElfAbiFlags = async (
       table.label,
     );
     if (!contents.ok) return contents;
+    if (!table.optional && metadata.type === 3) programHeaders = contents.value;
     let found = false;
     for (let i = 0; i < count; i += 1) {
       checkCancelled();
       const position = i * table.entrySize;
-      if (u32(contents.value, position + table.typeOffset) !== table.recordType)
-        continue;
+      const type = u32(contents.value, position + table.typeOffset);
+      if (metadata.type === 3 && table.optional && (type === 4 || type === 9))
+        relocationSections.push({
+          type,
+          offset: u32(contents.value, position + 16),
+          size: u32(contents.value, position + 20),
+          entrySize: u32(contents.value, position + 36),
+        });
+      if (type !== table.recordType) continue;
       if (found) return err(`duplicate MIPS ABI records in ${table.label}`);
       found = true;
       const offset = u32(contents.value, position + table.dataOffset);
@@ -154,7 +170,37 @@ export const readMipsElfAbiFlags = async (
       record = candidate.value;
     }
   }
-  if (record === undefined) return ok({ abiFlags: null, limitations });
+  if (metadata.type === 3 && programHeaders !== undefined) {
+    if (limitations.length > 0)
+      sharedLoad = {
+        status: "unavailable",
+        reason: `MIPS shared-image relocation declaration sources are incomplete. ${limitations.join(" ")}`,
+      };
+    else {
+      const shared = await readMipsElfSharedLoad(
+        programHeaders,
+        little,
+        fileSize,
+        read,
+        checkCancelled,
+        relocationSections,
+      );
+      sharedLoad = shared.ok
+        ? shared.value
+        : { status: "unavailable", reason: shared.error };
+    }
+  }
+  const shared =
+    metadata.type === 3
+      ? {
+          sharedLoad: sharedLoad ?? {
+            status: "unavailable" as const,
+            reason: "MIPS shared image has no inspected program header table",
+          },
+        }
+      : {};
+  if (record === undefined)
+    return ok({ abiFlags: null, limitations, ...shared });
   // Preserve declarations verbatim, including unknown versions/values. Provider
   // admission, not parsing, decides which interpretations have been verified.
   const abiFlags: MipsAbiFlags = {
@@ -170,5 +216,5 @@ export const readMipsElfAbiFlags = async (
     flags1: u32(record, 16),
     flags2: u32(record, 20),
   };
-  return ok({ abiFlags, limitations });
+  return ok({ abiFlags, limitations, ...shared });
 };

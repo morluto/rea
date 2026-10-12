@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
 
@@ -50,10 +51,9 @@ const supportedRegisters = new Set(RECORDED_LINUX_AMD64_REGISTERS);
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
-  path: z
-    .string()
-    .min(1)
-    .describe("Absolute filesystem path to a supplied Linux ELF core"),
+  path: localPathStringSchema.describe(
+    "Absolute filesystem path to a supplied Linux ELF core",
+  ),
   include_debugger_context: z
     .boolean()
     .default(false)

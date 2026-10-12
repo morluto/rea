@@ -7,6 +7,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
+import type { RelationshipCoverage } from "../../../src/domain/relationshipCoverage.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";
@@ -17,12 +18,16 @@ afterEach(closeEnhancedToolResources);
 const relationshipExecution = (
   result: unknown,
   limitations: readonly string[] = [],
+  relationshipCoverage?: RelationshipCoverage,
 ) =>
   resultOk(
     createAnalysisExecution(
       result,
       { id: "fixture", name: "Fixture analysis provider", version: "1" },
-      { limitations },
+      {
+        limitations,
+        ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
+      },
     ),
   );
 
@@ -38,6 +43,9 @@ describe("enhanced MCP tools", () => {
         return relationshipExecution(
           arguments_.procedure === "0x1" ? ["0x2"] : [],
           arguments_.procedure === "0x1" ? [limitation] : [],
+          arguments_.procedure === "0x1"
+            ? { status: "partial", limitations: [limitation] }
+            : { status: "complete" },
         );
       },
     });
@@ -48,17 +56,23 @@ describe("enhanced MCP tools", () => {
     expect(graph.isError).not.toBe(true);
     expect(graph.structuredContent).toMatchObject({
       normalized_result: {
-        "0": [
-          {
-            address: "0x1",
-            status: "ok",
-            calls: ["0x2"],
-            limitations: [limitation],
-          },
-        ],
+        graph: {
+          "0": [
+            {
+              address: "0x1",
+              status: "ok",
+              calls: ["0x2"],
+              limitations: [limitation],
+              relationship_coverage: {
+                status: "partial",
+                limitations: [limitation],
+              },
+            },
+          ],
+        },
+        limitations: [limitation],
       },
     });
-
     const trace = await client.callTool({
       name: "trace_call_path",
       arguments: { start: "0x1", goal: "0x2" },
@@ -77,6 +91,94 @@ describe("enhanced MCP tools", () => {
     });
   });
 
+  it("keeps generic provider caveats visible without truncating complete relationships", async () => {
+    const caveat = "Decompiler output may omit indirect calls.";
+    const client = await connect({
+      execute: async (name, arguments_) => {
+        if (name === "procedure_address")
+          return relationshipExecution(String(arguments_.procedure));
+        if (name !== "procedure_callees")
+          throw new Error(`Unexpected operation: ${name}`);
+        return relationshipExecution(
+          arguments_.procedure === "0x1" ? ["0x2"] : [],
+          [caveat],
+          { status: "complete" },
+        );
+      },
+    });
+
+    const graph = await client.callTool({
+      name: "get_call_graph",
+      arguments: { address: "0x1", direction: "forward" },
+    });
+    expect(graph.structuredContent).toMatchObject({
+      normalized_result: {
+        graph: {
+          "0": [
+            { status: "ok", relationship_coverage: { status: "complete" } },
+          ],
+          "1": [
+            { status: "ok", relationship_coverage: { status: "complete" } },
+          ],
+        },
+        limitations: [caveat],
+      },
+    });
+    expect(JSON.stringify(graph.structuredContent)?.split(caveat)).toHaveLength(
+      2,
+    );
+
+    const trace = await client.callTool({
+      name: "trace_call_path",
+      arguments: { start: "0x1", goal: "0x2" },
+    });
+    expect(trace.structuredContent).toMatchObject({
+      normalized_result: {
+        truncated: false,
+        residual_unknowns: [],
+        limitations: expect.arrayContaining([expect.stringContaining(caveat)]),
+        relationship_coverage: { "0x1": { status: "complete" } },
+      },
+    });
+  });
+
+  it("keeps unclassified legacy caveats on nodes with unknown coverage", async () => {
+    const caveat = "This legacy provider does not classify call limitations.";
+    const client = await connect({
+      execute: async (name, arguments_) => {
+        if (name === "procedure_address")
+          return relationshipExecution(String(arguments_.procedure));
+        if (name !== "procedure_callees")
+          throw new Error(`Unexpected operation: ${name}`);
+        return relationshipExecution([], [caveat]);
+      },
+    });
+
+    const graph = await client.callTool({
+      name: "get_call_graph",
+      arguments: { address: "0x1", direction: "forward" },
+    });
+    expect(graph.structuredContent).toMatchObject({
+      normalized_result: {
+        graph: {
+          "0": [
+            {
+              status: "ok",
+              relationship_coverage: { status: "unknown" },
+              limitations: [
+                "Provider did not report relationship coverage.",
+                caveat,
+              ],
+            },
+          ],
+        },
+        limitations: [caveat],
+      },
+    });
+  });
+});
+
+describe("enhanced MCP batches", () => {
   it("returns every batch item in caller order with its own result", async () => {
     const addresses = Array.from(
       { length: 37 },

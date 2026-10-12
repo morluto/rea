@@ -1,3 +1,11 @@
+import { API_SURFACE_EXAMPLE } from "../../../src/contracts/analysisViewApiSurfaceExample.js";
+import { createHash } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { WebNetworkCaptureService } from "../../../src/application/WebNetworkCaptureService.js";
+import { decodeHarCapture } from "../../../src/browser/history/HarCapture.js";
+import { join } from "node:path";
+import { apiSurfaceHar } from "../../fixtures/historicalHar.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
@@ -25,17 +33,26 @@ import {
   analysisViewBindJavaScriptGraphs,
   analysisViewLayoutEvidence,
   analysisViewLayoutFixture,
+  analysisViewCaptureFixture,
+  analysisViewCaptureEvidence,
+  analysisViewObjectDenseCapture,
 } from "../../fixtures/analysisView.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { BINARY_LAYOUT_TEST_PROVIDER } from "../../fixtures/binaryDiagnostics/layout.js";
 
-const connect = async (binaryLayout?: BinaryLayoutService) => {
+const connect = async (
+  binaryLayout?: BinaryLayoutService,
+  webNetworkCapture?: WebNetworkCaptureService,
+) => {
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
   });
   const server = createServer(
     { kind: "session", session },
-    binaryLayout === undefined ? {} : { binaryLayout },
+    {
+      ...(binaryLayout === undefined ? {} : { binaryLayout }),
+      ...(webNetworkCapture === undefined ? {} : { webNetworkCapture }),
+    },
   );
   const client = new Client({ name: "analysis-view-mcp", version: "1" });
   onTestFinished(async () => {
@@ -178,6 +195,18 @@ it("advertises exact schemas and projects one layout section from retained Evide
   expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(
     ajv.validate(inputSchema, {
+      source: { kind: "inline", evidence: analysisViewLayoutEvidence() },
+      view: { kind: "summary" },
+    }),
+  ).toBe(true);
+  expect(
+    ajv.validate(inputSchema, {
+      source: { kind: "inline", evidence: {} },
+      view: { kind: "summary" },
+    }),
+  ).toBe(false);
+  expect(
+    ajv.validate(inputSchema, {
       source: {
         kind: "retained-evidence",
         evidence_id: `ev_${"a".repeat(64)}`,
@@ -251,6 +280,100 @@ it("reports a tampered inline Evidence ID at its full MCP source path", async ()
         },
       ],
     },
+  });
+});
+
+it("admits portable captures before SDK Evidence parsing and preserves capture caveats", async () => {
+  const { client } = await connect();
+  const dense = analysisViewCaptureEvidence(analysisViewObjectDenseCapture());
+  const refused = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: dense },
+      view: { kind: "api-surface" },
+    },
+  });
+  expect(parseMcpToolError(refused).error).toMatchObject({
+    code: "resource_constraint",
+    details: { resource: "memory" },
+  });
+  await client.ping();
+
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 1);
+  capture.total_records = 1;
+  const caveat = "Producer omitted exchanges before capture startup.";
+  capture.limitations = [caveat, caveat];
+  capture.records[0]!.reported = {
+    request: { method: "GET", url: "https://api.test/a" },
+    response: { status: 200, content: { mimeType: "\u00a0text/plain\u00a0" } },
+  };
+  const parent = analysisViewCaptureEvidence(capture);
+  expect(parent.limitations).not.toContain(caveat);
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "inline", evidence: parent },
+      view: { kind: "api-surface" },
+    },
+  });
+  const result = parseEvidence(response.structuredContent);
+  expect(result.limitations.filter((value) => value === caveat)).toEqual([
+    caveat,
+  ]);
+  expect(result.normalized_result).toMatchObject({
+    groups: [{ content_types: [], flags: ["single-sample"] }],
+    limitations: expect.arrayContaining([caveat]),
+    unknowns: [
+      "Some retained records have unavailable status or content type values.",
+    ],
+  });
+});
+
+it("rejects inconsistent portable coverage and accepts caller-ordered ordinal subsets", async () => {
+  const { client } = await connect();
+  for (const [total, ordinals] of [
+    [0, [0]],
+    [2, [0, 0]],
+    [2, [2]],
+  ] as const) {
+    const capture = analysisViewCaptureFixture();
+    capture.total_records = total;
+    capture.records = ordinals.map((ordinal) => ({
+      ...capture.records[0]!,
+      ordinal,
+    }));
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "inline",
+          evidence: analysisViewCaptureEvidence(capture),
+        },
+        view: { kind: "api-surface" },
+      },
+    });
+    expect(parseMcpToolError(response).error.code).toBe("invalid_request");
+  }
+  const capture = analysisViewCaptureFixture();
+  capture.records = [capture.records[8]!, capture.records[1]!];
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: {
+        kind: "inline",
+        evidence: analysisViewCaptureEvidence(capture),
+      },
+      view: { kind: "api-surface" },
+    },
+  });
+  expect(
+    parseEvidence(response.structuredContent).normalized_result,
+  ).toMatchObject({
+    records: { examined: 2, total: 15 },
+    limitations: expect.arrayContaining([
+      "Parent contains an ordinal subset; the surface covers only retained records.",
+    ]),
   });
 });
 
@@ -623,4 +746,88 @@ it("accepts a transport-constraint retained reference as the view source", async
       path: "renderer.js",
     },
   ]);
+});
+
+it("projects an actual HAR capture retained by the public MCP workflow", async () => {
+  const root = await createTestTempDirectory("rea-surface-mcp-");
+  const path = join(root, "surface.har");
+  await writeFile(path, JSON.stringify(apiSurfaceHar()));
+  const service = new WebNetworkCaptureService({
+    inspect: async (input) => {
+      const bytes = await readFile(input.capture_path);
+      return ok({
+        ...decodeHarCapture(bytes.toString("utf8"), input.sensitive_values),
+        artifact: {
+          path: input.capture_path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+        format: "har",
+        runtime_attribution: "unknown",
+        limitations: [],
+      });
+    },
+  });
+  const { client } = await connect(undefined, service);
+  const captureResponse = await client.callTool({
+    name: "inspect_web_network_capture",
+    arguments: { capture_path: path, format: "har" },
+  });
+  expect(captureResponse.isError).not.toBe(true);
+  const parent = parseEvidence(captureResponse.structuredContent);
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: {
+      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+      view: { kind: "api-surface" },
+    },
+  });
+  expect(response.isError).not.toBe(true);
+  const evidence = parseEvidence(response.structuredContent);
+  expect(evidence.confidence).toBe("inferred");
+  expect(evidence.normalized_result).toMatchObject({
+    records: { examined: 13, total: 13, excluded: 0 },
+    coverage: { total: 12, exhausted: true },
+    groups: expect.arrayContaining([
+      expect.objectContaining({
+        path_template: "/users/{numeric}",
+        record_ordinals: [0, 1],
+      }),
+    ]),
+  });
+});
+
+it("reproduces the published API surface example from decoded fixture bytes", async () => {
+  const fixture = apiSurfaceHar();
+  fixture.log.entries = fixture.log.entries.slice(0, 2);
+  const bytes = Buffer.from(JSON.stringify(fixture));
+  const service = new WebNetworkCaptureService({
+    inspect: async () =>
+      ok({
+        ...decodeHarCapture(bytes.toString("utf8"), []),
+        artifact: {
+          path: "/fixtures/api-surface.har",
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+        format: "har",
+        runtime_attribution: "unknown",
+        limitations: [],
+      }),
+  });
+  const { client } = await connect(undefined, service);
+  const capture = await client.callTool({
+    name: "inspect_web_network_capture",
+    arguments: { capture_path: "/fixtures/api-surface.har", format: "har" },
+  });
+  expect(parseEvidence(capture.structuredContent).evidence_id).toBe(
+    API_SURFACE_EXAMPLE.input.source.evidence_id,
+  );
+  const response = await client.callTool({
+    name: "inspect_analysis_view",
+    arguments: API_SURFACE_EXAMPLE.input,
+  });
+  expect(parseEvidence(response.structuredContent).normalized_result).toEqual(
+    API_SURFACE_EXAMPLE.output,
+  );
 });

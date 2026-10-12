@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   reconstructionObligationLedgerSchema,
   reconstructionObligationManifestSchema,
+  type ReconstructionObligationLedger,
 } from "./reconstructionObligationLedgerSchemas.js";
+import {
+  reconstructionObligationLedgerClosureDigest,
+  summarizeReconstructionObligations,
+} from "./reconstructionObligationLedgerIntegrity.js";
 
 const digest = "a".repeat(64);
 
@@ -32,20 +37,13 @@ describe("reconstruction obligation ledger schemas", () => {
       reconstructionObligationManifestSchema.parse(manifest).bindings,
     ).toHaveLength(10_001);
 
-    const ledger = {
+    const ledgerBase: Omit<ReconstructionObligationLedger, "closure_digest"> = {
       schema: "ReconstructionObligationLedger",
       ledger_id: `rol_${digest}`,
-      closure_digest: digest,
-      status: "ready",
+      status: "unknown",
       coverage: { status: "complete" },
       summary: {
-        total: 0,
-        required: 0,
-        verified: 0,
-        required_open: 0,
-        by_status: [],
-        by_application_layer: [],
-        by_evidence_authority: [],
+        ...summarizeReconstructionObligations([]),
       },
       reports: {
         missing_owner_obligation_ids: [],
@@ -61,6 +59,10 @@ describe("reconstruction obligation ledger schemas", () => {
         (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
       ),
       limitations: [],
+    };
+    const ledger = {
+      ...ledgerBase,
+      closure_digest: reconstructionObligationLedgerClosureDigest(ledgerBase),
     };
 
     expect(

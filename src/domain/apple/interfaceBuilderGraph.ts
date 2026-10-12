@@ -30,8 +30,6 @@ export const interfaceBuilderAnalysisSchema = z.strictObject({
   limitations: z.array(z.string()),
 });
 
-type InterfaceBuilderAnalysis = z.infer<typeof interfaceBuilderAnalysisSchema>;
-
 export interface InterfaceBuilderDocumentInput {
   readonly relativePath: string;
   readonly archiveSha256: string;
