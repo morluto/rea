@@ -70,4 +70,5 @@ const universalTarget = (path: string): BinaryTarget => ({
   format: "mach-o-universal",
   architecture: "arm64",
   availableArchitectures: ["arm64"],
+  universalSlice: { offset: 0, size: 32 },
 });

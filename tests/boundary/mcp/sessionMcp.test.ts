@@ -281,7 +281,7 @@ describe("target-free MCP workflow", () => {
     );
     expect(
       beforeTools.find(({ name }) => name === "inspect_artifact")?.description,
-    ).toContain("Returns the complete content-addressed artifact graph");
+    ).toMatch(/\breturns the complete content-addressed artifact graph\b/iu);
     expect(beforeNames).toContain("open_binary");
     expect(beforeNames).toContain("binary_session");
     expect(beforeNames).toContain("current_document");

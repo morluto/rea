@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 
 import { localPathStringSchema } from "../localPath.js";
 
@@ -83,6 +84,15 @@ export const wasmArtifactSchema = z
     limitations: z.array(z.string()),
   })
   .superRefine((value, context) => {
+    if (
+      createHash("sha256").update(value.wat.text, "utf8").digest("hex") !==
+      value.wat.sha256
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["wat", "sha256"],
+        message: "Decoded WAT digest does not match its UTF-8 text.",
+      });
     const selected = value.candidates[0];
     if (
       selected?.path !== value.artifact.path ||
@@ -125,3 +135,13 @@ export const wasmArtifactSchema = z
 export type InspectWasmArtifactInput = z.infer<
   typeof inspectWasmArtifactInputSchema
 >;
+export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
+
+/** A WASM observation must identify the exact selected path and byte digest. */
+export const wasmArtifactMatchesSubject = (
+  artifact: WasmArtifact["artifact"],
+  subject: Pick<WasmArtifact["artifact"], "path" | "sha256"> | null | undefined,
+): subject is Pick<WasmArtifact["artifact"], "path" | "sha256"> =>
+  subject != null &&
+  subject.path === artifact.path &&
+  subject.sha256 === artifact.sha256;

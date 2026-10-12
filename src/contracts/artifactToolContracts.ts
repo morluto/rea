@@ -9,10 +9,22 @@ import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { analysisDetailSchema } from "./analysisDetail.js";
 /** Exact caller boundary for deterministic artifact inventory. */
 export const artifactInventoryInputSchema = z.strictObject({
   integrity_policy: artifactIntegrityPolicySchema,
 });
+
+/** Delivery selection belongs to the adapter, not the inventory producer. */
+export const artifactInspectionInputSchema =
+  artifactInventoryInputSchema.extend({
+    detail: analysisDetailSchema
+      .unwrap()
+      .optional()
+      .describe(
+        "Omitted or complete returns the complete inspection Evidence. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; use normalized_result.parent_evidence_id for inventory views.",
+      ),
+  });
 
 /** Extraction needs no selector: it materializes every regular child file. */
 export const artifactExtractionInputSchema = z.strictObject({
@@ -67,8 +79,8 @@ const artifact = <
 export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_artifact",
-    "Inspect an active archive or application package in one call. Returns the complete content-addressed artifact graph once, as the nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
-    artifactInventoryInputSchema,
+    "Inspect an active archive or application package in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. Optional detail summary retains the complete inspection and returns its derived summary view; read exact paths or inventory pages with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize its regular contents.",
+    artifactInspectionInputSchema,
   ),
   artifact(
     "extract_artifact",

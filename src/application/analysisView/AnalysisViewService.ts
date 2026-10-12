@@ -69,6 +69,7 @@ export const inspectAnalysisViewValidated = (
       evidenceId: parent.evidence_id,
       operation: parent.operation,
       normalizedResult: parent.normalized_result,
+      subject: parent.subject,
       limitations: parent.limitations,
       parameters: parent.parameters,
       artifact:

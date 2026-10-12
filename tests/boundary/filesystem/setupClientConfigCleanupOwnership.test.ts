@@ -31,6 +31,66 @@ beforeEach(async () => {
 
 afterEach(() => openMock.mockReset());
 
+describe("ZCode fallback cleanup ownership", () => {
+  it.each(["preflight", "configure"])(
+    "retains a failed ZCode fallback close during %s until host cleanup",
+    async (operation) => {
+      const home = await createTestTempDirectory("rea-zcode-fallback-close-");
+      const host = systemSetupHost(
+        { platform: "linux", homeDirectory: home } as DoctorHost,
+        { HOME: home },
+      );
+      const client = (await host.supportedClients()).find(
+        ({ name }) => name === "zcode",
+      );
+      if (client?.zcodeFallbackPath === undefined)
+        throw new Error("ZCode fallback path missing");
+      const fallback = client.zcodeFallbackPath;
+      await mkdir(dirname(fallback), { recursive: true });
+      const original = '{"mcpServers":{"other":{"command":"other"}}}\n';
+      await writeFile(fallback, original);
+      const closeAttempts: object[] = [];
+      let allowClose = false;
+      openMock.mockImplementation(async (...args) => {
+        const handle = await actualFs.open(...args);
+        if (String(args[0]) !== fallback) return handle;
+        const nativeClose = handle.close.bind(handle);
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          closeAttempts.push(handle);
+          if (!allowClose) throw new Error("held fallback handle");
+          await nativeClose();
+        });
+        return handle;
+      });
+      try {
+        const action =
+          operation === "preflight"
+            ? host.inspectClientConfiguration?.(client, {}, ["rea", "mcp"])
+            : host.configureClient(client, {}, ["rea", "mcp"]);
+        if (action === undefined) throw new Error("setup preflight missing");
+        await expect(action).rejects.toMatchObject({
+          _tag: "ConfigurationError",
+          cause: expect.any(RegularFileCleanupFailure),
+          cleanup: { resources: [fallback] },
+        });
+        expect(closeAttempts).toHaveLength(2);
+        expect(closeAttempts[0]).toBe(closeAttempts[1]);
+        expect(await readFile(fallback, "utf8")).toBe(original);
+        await expect(readFile(client.configPath)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        allowClose = true;
+        expect(await host.close?.()).toBeUndefined();
+        expect(closeAttempts).toHaveLength(3);
+        expect(closeAttempts[2]).toBe(closeAttempts[0]);
+      } finally {
+        allowClose = true;
+        await host.close?.();
+      }
+    },
+  );
+});
+
 describe("setup client configuration cleanup ownership", () => {
   it("stops client configuration and retries the same alignment handle from host close", async () => {
     const home = await createTestTempDirectory("rea-setup-config-close-");

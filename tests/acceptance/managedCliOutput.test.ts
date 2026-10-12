@@ -307,3 +307,36 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "managed CLI reports a section table past EOF as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-sections-");
+    const path = join(root, "fixture.dll");
+    const bytes = buildManagedPeFixture();
+    const pe = bytes.readUInt32LE(0x3c);
+    const sections = pe + 24 + bytes.readUInt16LE(pe + 20);
+    bytes.writeUInt32LE(bytes.length + 0x1000, sections + 20);
+    await writeFile(path, bytes);
+    for (const command of [
+      "inspect-managed-artifact",
+      "inspect-managed-members",
+      "inspect-managed-native-boundaries",
+    ]) {
+      const result = await cli.run({ arguments: [command, path, "--json"] });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining("pe.section-data"),
+            },
+          ],
+        },
+      });
+    }
+  },
+);

@@ -31,6 +31,7 @@ export const startMcpTransport = async (
       readonly ok: true;
       readonly handle: StdioServerHandle;
       readonly closeAndroid: () => Promise<void>;
+      readonly closeOptionalProviders: () => Promise<void>;
     }
   | { readonly ok: false }
 > => {
@@ -61,6 +62,11 @@ export const startMcpTransport = async (
     );
     for (const result of results)
       if (result.status === "rejected") throw result.reason;
+  };
+  // Optional providers are shared by every server instance the SDK creates,
+  // including a discarded discovery probe, so only process shutdown closes them.
+  const closeOptionalProviders = async (): Promise<void> => {
+    await optionalProviders.browserScenarioCapture?.close?.();
   };
   let handle: StdioServerHandle;
   try {
@@ -124,5 +130,5 @@ export const startMcpTransport = async (
     }
     return { ok: false };
   }
-  return { ok: true, handle, closeAndroid };
+  return { ok: true, handle, closeAndroid, closeOptionalProviders };
 };

@@ -30,7 +30,7 @@ type CaptureOutcome =
   | { readonly kind: "partial"; readonly partial: unknown };
 
 const captureScenario = (
-  mode: "cooperative" | "ignoring" | "descendant",
+  mode: "cooperative" | "ignoring" | "delayed-ignoring" | "descendant",
   root: string,
   additions: CaptureScenario = {},
   finalExitCode?: number,
@@ -453,11 +453,13 @@ captureTest(
       "rea-finalization-cli-cancel-",
     );
     const cliScenarioPath = join(cliRoot, "scenario.json");
+    // Match the other finalization cases' observation window. The old 300 ms
+    // deadline could signal the fixture before it installed its handlers.
     await writeFile(
       cliScenarioPath,
       JSON.stringify(
-        captureScenario("ignoring", cliRoot, {
-          timeout_ms: 300,
+        captureScenario("delayed-ignoring", cliRoot, {
+          timeout_ms: 1_500,
           finalization_ms: 20_000,
         }),
       ),
@@ -527,18 +529,36 @@ captureTest(
     const mcpRoot = await createTestTempDirectory(
       "rea-finalization-mcp-cancel-",
     );
-    const { client } = await connectLocalToolsMcp();
+    const { client, call: callTool } = await connectLocalToolsMcp();
     const controller = new AbortController();
-    const call = client.callTool(
-      {
-        name: "capture_process_scenario",
-        arguments: captureScenario("ignoring", mcpRoot, {
-          timeout_ms: 300,
-          finalization_ms: 20_000,
-        }),
-      },
-      { signal: controller.signal },
+    let reportStarted: (() => void) | undefined;
+    const captureStarted = new Promise<void>((resolve) => {
+      reportStarted = resolve;
+    });
+    const call = callTool(
+      "capture_process_scenario",
+      captureScenario("delayed-ignoring", mcpRoot, {
+        timeout_ms: 1_500,
+        finalization_ms: 20_000,
+      }),
+      { signal: controller.signal, onprogress: () => reportStarted?.() },
     );
+    // Observe rejection immediately: a failed readiness wait must not leave a
+    // pending request to reject unhandled when the fixture closes its client.
+    // The original promise remains available for the cancellation assertion.
+    const observedCall = call.catch(() => undefined);
+    onTestFinished(async () => {
+      controller.abort();
+      await observedCall;
+    });
+    // Start the fixture's readiness wait after the server begins this capture;
+    // SDK schema preparation before dispatch is not target startup time.
+    await Promise.race([
+      captureStarted,
+      call.then(() => {
+        throw new Error("MCP capture completed before reporting startup");
+      }),
+    ]);
     const mcpFixturePid = await waitForFinalization(mcpRoot);
     const mcpStarted = Date.now();
     controller.abort(new Error("cancel finalization acceptance fixture"));
@@ -548,7 +568,7 @@ captureTest(
     ).rejects.toThrow("cancel finalization acceptance fixture");
     await waitForProcessExit(mcpFixturePid);
     await expect(
-      client.listTools(),
+      client.listTools(undefined, { cacheMode: "refresh" }),
       "the server accepts a follow-up request after cancelling the capture",
     ).resolves.toMatchObject({ tools: expect.any(Array) });
     expect(

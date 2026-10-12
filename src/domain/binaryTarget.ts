@@ -1,6 +1,7 @@
 import type {
   BinaryArchitecture,
   MipsElfMetadata,
+  UniversalMachOSlice,
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
@@ -15,17 +16,22 @@ export type ExecutableMetadata =
       readonly mips: MipsElfMetadata;
     }
   | {
-      readonly format:
-        | "mach-o"
-        | "mach-o-universal"
-        | "elf"
-        | "dos-mz"
-        | "dos-com";
+      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
       readonly architecture: Exclude<BinaryArchitecture, "mips">;
       readonly availableArchitectures: readonly Exclude<
         BinaryArchitecture,
         "mips"
       >[];
+      readonly universalSlice?: never;
+    }
+  | {
+      readonly format: "mach-o-universal";
+      readonly architecture: Exclude<BinaryArchitecture, "mips">;
+      readonly availableArchitectures: readonly Exclude<
+        BinaryArchitecture,
+        "mips"
+      >[];
+      readonly universalSlice: UniversalMachOSlice;
     }
   | {
       readonly format: "pe";
@@ -157,10 +163,15 @@ const parseFatMachO = (
     return err(
       `truncated FAT slice: the ${preferred} slice ends at byte ${sliceEnd}; the file has ${fileSize}`,
     );
+  const sliceOffset = Number(slice.offset);
+  const sliceSize = Number(slice.size);
+  if (!Number.isSafeInteger(sliceOffset) || !Number.isSafeInteger(sliceSize))
+    return err(`FAT slice for ${preferred} exceeds addressable byte bounds`);
   return ok({
     format: "mach-o-universal",
     architecture: preferred,
     availableArchitectures: architectures,
+    universalSlice: { offset: sliceOffset, size: sliceSize },
   });
 };
 

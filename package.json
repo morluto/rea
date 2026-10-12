@@ -110,7 +110,7 @@
     "precheck:test": "npm run deps:check",
     "check:test": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint:built format:check knip metadata:check test:run",
     "precheck:pr": "npm run deps:check",
-    "check:pr": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint:built format:check knip metadata:check test:run && npm run docs:check && npm run jscpd && npm run scan:todos",
+    "check:pr": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint:built format:check knip metadata:check test:run && npm run test:python && npm run docs:check && npm run jscpd && npm run scan:todos",
     "precheck:ci": "npm run deps:check",
     "check:ci": "node scripts/run-exclusive.mjs artifacts turbo run typecheck lint:built format:check knip metadata:check jscpd scan:todos && npm run verify:architecture-guards",
     "build:cached": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts turbo run artifacts:skills",
@@ -128,6 +128,7 @@
     "test": "npm run test:with-build",
     "test:with-build": "npm run test:prepare && vitest run",
     "test:run": "vitest run",
+    "test:python": "python3 -m unittest bridge/native/test_rea_lldb_tracer.py -v",
     "test:local": "node scripts/run-development-tests.mjs local",
     "test:fast": "vitest run --project domain --project services --project adapters --project composition --project conformance --project evaluation",
     "pretest:boundary": "npm run test:prepare",
@@ -164,6 +165,7 @@
     "verify:legacy-simulator": "npm run build:cached && node scripts/verify/apple/legacy-simulator.mjs",
     "verify:architecture-guards": "node scripts/verify/architecture-guards.mjs",
     "verify:apktool": "npm run build:cached && node scripts/verify-apktool.mjs",
+    "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",
@@ -181,6 +183,8 @@
     "verify:ghidra:cross-format": "npm run build:cached && node scripts/verify-real-ghidra.mjs --cross-format",
     "verify:ghidra:windows": "npm run build:cached && npm run build:ghidra-windows-fixture && node scripts/verify-real-ghidra-windows.mjs",
     "verify:browser": "npm run build:cached && node scripts/verify-real-browser.mjs",
+    "verify:frida": "npm run build:cached && node scripts/verify-frida.mjs",
+    "verify:frida:bindings": "tsc --noEmit -p tsconfig.frida-verification.json",
     "verify:browser:dom": "node scripts/verify-browser-dom-destinations.mjs",
     "verify:browser:network": "npm run build:cached && node scripts/verify-browser-network.mjs",
     "verify:electron": "npm run build:cached && node scripts/verify-real-electron.mjs",
@@ -228,7 +232,7 @@
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "docs:generate": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts npm run docs:prepare",
-    "docs:check": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts turbo run docs:check:built",
+    "docs:check": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts turbo run docs:check:built && npm run test:local -- tests/conformance/readmeConsistency.test.ts",
     "docs:check:built": "node scripts/generate-package-metadata.mjs --check && node scripts/generate-skill-metadata.mjs --check && node scripts/generate-product-catalog.mjs --check && node scripts/generate-completion-ledger.mjs --check && node scripts/check-doc-facts.mjs && node scripts/generate-error-schema.mjs --check",
     "docs:error-schema": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts turbo run artifacts:error-schema",
     "prepack": "node scripts/prepack.mjs",
@@ -341,5 +345,11 @@
     "typescript-termux": "npm:typescript@5.9.3",
     "vitepress": "1.6.4",
     "vitest": "5.0.3"
+  },
+  "optionalDependencies": {
+    "frida": "17.23.2"
+  },
+  "allowScripts": {
+    "frida@17.23.2": true
   }
 }

@@ -22,6 +22,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type { ProviderAvailability } from "./AnalysisProvider.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import {
   clientRequirementsFor,
   NO_CLIENT_FEATURES,
@@ -131,6 +132,9 @@ const ACTIVE_TARGET_KINDS: ReadonlySet<ToolKind> = new Set([
   "native-provider",
   "artifact-provider",
 ]);
+const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
+);
 
 /** Native contracts defined only for an active Mach-O executable. */
 const MACHO_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
@@ -316,6 +320,7 @@ const optionalProviderFailureFor = ({
   if (kind === "electron-provider") return failures?.electronObservation;
   if (kind === "runtime-provider")
     return failures?.javascriptRuntimeObservation;
+  if (FRIDA_OPERATION_NAMES.has(name)) return failures?.fridaInstrumentation;
   return undefined;
 };
 
@@ -448,6 +453,8 @@ const workflowAvailabilityFor = ({
       remediation: "Run process capture on a supported Linux or macOS host.",
     };
   if (kind === "application") return { reason: "available", remediation: null };
+  if (kind === "flutter-provider")
+    return { reason: "available", remediation: null };
   const electron = electronProviderAvailability(name, kind, policy);
   if (electron !== null) return electron;
   if (kind === "runtime-provider")
@@ -533,6 +540,7 @@ const targetAvailability = ({
   targetFormat,
   targetOpen,
 }: AvailabilityContext): Availability | null => {
+  if (FRIDA_OPERATION_NAMES.has(name)) return null;
   if (!targetOpen && ACTIVE_TARGET_KINDS.has(kind))
     return {
       reason: "target_required",

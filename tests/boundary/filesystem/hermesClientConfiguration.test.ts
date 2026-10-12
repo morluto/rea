@@ -6,9 +6,15 @@ import { parse as parseYaml } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
-import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import { supportedClients } from "../../../src/application/SupportedClients.js";
-import { systemUninstallHost } from "../../../src/application/Uninstall.js";
+import {
+  runUninstall,
+  systemUninstallHost,
+} from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
@@ -90,18 +96,75 @@ describe("Hermes configuration paths", () => {
   });
 });
 
-describe("Hermes YAML registration", () => {
-  const hermesClient = async () => {
-    const home = await createTestTempDirectory("rea-hermes-");
-    const client = supportedClients(home, process.platform, {}).find(
-      ({ name }) => name === "hermes",
-    );
-    if (client?.markerPath === undefined)
-      throw new Error("missing Hermes client");
-    await mkdir(client.markerPath, { recursive: true });
-    return { home, client };
-  };
+const hermesClient = async () => {
+  const home = await createTestTempDirectory("rea-hermes-");
+  const client = supportedClients(home, process.platform, {}).find(
+    ({ name }) => name === "hermes",
+  );
+  if (client?.markerPath === undefined)
+    throw new Error("missing Hermes client");
+  await mkdir(client.markerPath, { recursive: true });
+  return { home, client };
+};
 
+describe("Hermes YAML shape diagnostics", () => {
+  it.each(
+    [
+      "!!set {rea: null}",
+      "!!omap [{rea: {command: rea, args: [mcp]}}]",
+      "!!timestamp 2001-12-15",
+      "!!binary cmVh",
+    ].flatMap((value) => [
+      {
+        original: `${value}\n`,
+        problem: "The configuration root must be an object",
+      },
+      {
+        original: `mcp_servers: ${value}\n`,
+        problem: '"mcp_servers" must be an object',
+      },
+    ]),
+  )(
+    "blocks setup and uninstall before changes for tagged non-record YAML: $original",
+    async ({ original, problem }) => {
+      const { home, client } = await hermesClient();
+      const cursor = join(home, ".cursor", "mcp.json");
+      const cursorOriginal =
+        '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}';
+      await mkdir(join(home, ".cursor"));
+      await writeFile(cursor, cursorOriginal);
+      await writeFile(client.configPath, original);
+      expect(
+        await inspectClientConfiguration(client, {}, command),
+      ).toMatchObject({
+        status: "invalid",
+        remediation: `Configuration ${client.configPath} is malformed: ${problem}`,
+      });
+      expect(await configureClientConfiguration(client, {}, command)).toEqual({
+        status: "failed",
+        reason: "readback",
+      });
+      const result = await runUninstall(
+        false,
+        systemUninstallHost(home, undefined, {}),
+      );
+      expect(result.status).toBe("failed");
+      expect(result.items).toContainEqual({
+        name: "hermes",
+        status: "failed",
+        detail: `Configuration was not changed: ${problem}. Repair it, then rerun uninstall.`,
+      });
+      expect(await readFile(client.configPath, "utf8")).toBe(original);
+      expect(await readFile(cursor, "utf8")).toBe(cursorOriginal);
+      await expect(
+        readFile(`${client.configPath}.rea.backup`, "utf8"),
+      ).rejects.toThrow();
+      await expect(readFile(`${cursor}.rea.backup`, "utf8")).rejects.toThrow();
+    },
+  );
+});
+
+describe("Hermes YAML registration", () => {
   it("writes mcp_servers, preserves comments, reads back, and uninstalls", async () => {
     const { home, client } = await hermesClient();
     await writeFile(

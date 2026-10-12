@@ -365,6 +365,41 @@ export function verifyReleaseNotes(raw, text, body) {
   };
 }
 
+const VERSION_ONLY_PLUGIN_MANIFESTS = new Set([
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
+  ".cursor-plugin/mcp.json",
+]);
+
+/** Serialize a plugin manifest with its release-owned version fields blanked. */
+function pluginManifestWithoutVersions(text) {
+  const manifest = JSON.parse(text);
+  if (manifest === null || typeof manifest !== "object") return text;
+  if ("version" in manifest) manifest.version = "";
+  const launch = manifest.mcpServers?.rea?.args;
+  if (Array.isArray(launch) && launch.length > 1) launch[1] = "";
+  return JSON.stringify(manifest);
+}
+
+/**
+ * A plugin manifest also carries plugin behavior, so a release may change only
+ * its version and pinned server launch. Any other difference, an unreadable
+ * side, or a manifest added by the release counts as a product change.
+ */
+async function changesOnlyPluginVersions(run, path, from, to) {
+  try {
+    return (
+      pluginManifestWithoutVersions(
+        await run("git", ["show", `${from}:${path}`]),
+      ) ===
+      pluginManifestWithoutVersions(await run("git", ["show", `${to}:${path}`]))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Reject stale inventories and product changes made after the editorial target. */
 export async function verifyInventoryHistory(run, raw, source) {
   const inventory = releaseInventorySchema.parse(raw);
@@ -417,10 +452,6 @@ export async function verifyInventoryHistory(run, raw, source) {
       "package.json",
       "package-lock.json",
       "server.json",
-      ".claude-plugin/plugin.json",
-      ".codex-plugin/plugin.json",
-      ".cursor-plugin/plugin.json",
-      ".cursor-plugin/mcp.json",
       "src/generatedPackageMetadata.ts",
       "docs/installation.md",
       `docs/releases/${inventory.version}.contributions.json`,
@@ -437,7 +468,16 @@ export async function verifyInventoryHistory(run, raw, source) {
     )
       .split("\0")
       .filter(Boolean);
-    const product = paths.filter((path) => !allowed.has(path));
+    const product = [];
+    for (const path of paths) {
+      if (allowed.has(path)) continue;
+      if (
+        VERSION_ONLY_PLUGIN_MANIFESTS.has(path) &&
+        (await changesOnlyPluginVersions(run, path, inventory.target, resolved))
+      )
+        continue;
+      product.push(path);
+    }
     if (product.length)
       throw new Error(
         `Product changed after notes target; regenerate inventory: ${product.join(", ")}`,

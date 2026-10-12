@@ -5,7 +5,11 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { resolveClientConfigTransactionPath } from "../../../src/application/ClientConfigPath.js";
-import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 const pinnedPackage = PRODUCT_IDENTITY.registrationPackageSpecifier;
@@ -329,4 +333,88 @@ describe("JSON client configuration migration and provider paths", () => {
       readFile(`${configPath}.rea.backup`, "utf8"),
     ).rejects.toThrow();
   });
+});
+
+describe("JSON client configuration shape diagnostics", () => {
+  it.each([
+    {
+      format: "json" as const,
+      original:
+        '{"__proto__":{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}}',
+      serversKey: "mcpServers",
+    },
+    {
+      format: "opencode" as const,
+      original:
+        '{"mcp":{"__proto__":{"servers":{"rea":{"type":"local","command":["rea","mcp"]}}}}}',
+      serversKey: "mcp",
+    },
+  ])(
+    "registers an own server instead of trusting inherited $format settings",
+    async ({ format, original, serversKey }) => {
+      const directory = await createTestTempDirectory("rea-setup-prototype-");
+      const configPath = join(directory, "mcp.json");
+      const client = {
+        name: format === "json" ? "cursor" : "opencode",
+        configPath,
+        format,
+      };
+      await writeFile(configPath, original);
+      expect(
+        await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({ status: "update" });
+      expect(
+        await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({ status: "configured" });
+      const document = JSON.parse(await readFile(configPath, "utf8"));
+      expect(Object.hasOwn(document, serversKey)).toBe(true);
+      expect(Object.hasOwn(document[serversKey], "rea")).toBe(true);
+      expect(document[serversKey].rea.command).toEqual(
+        format === "json" ? "rea" : ["rea", "mcp"],
+      );
+      const originalDocument = JSON.parse(original);
+      expect(
+        format === "json" ? document.__proto__ : document[serversKey].__proto__,
+      ).toEqual(
+        format === "json"
+          ? originalDocument.__proto__
+          : originalDocument[serversKey].__proto__,
+      );
+      expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(original);
+      expect(
+        await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toMatchObject({ status: "already_current" });
+    },
+  );
+
+  it.each([
+    ['{"mcpServers":null,"keep":1}', '"mcpServers" must be an object'],
+    ["[]", "The configuration root must be an object"],
+    ['{"mcpServers":"x"}', '"mcpServers" must be an object'],
+  ] as const)(
+    "names structural shape problems in setup remediation: %s",
+    async (original, problem) => {
+      const directory = await createTestTempDirectory("rea-setup-shape-");
+      const configPath = join(directory, "mcp.json");
+      const client = {
+        name: "cursor",
+        configPath,
+        format: "json" as const,
+      };
+      await writeFile(configPath, original);
+      const read = await readConfigurationFile(configPath, "json");
+      expect(read.ok).toBe(false);
+      if (read.ok) throw new Error("expected malformed configuration");
+      expect(read.error.detail).toBe(
+        `Configuration ${configPath} is malformed: ${problem}`,
+      );
+      expect(
+        await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+      ).toEqual({
+        status: "invalid",
+        remediation: `Configuration ${configPath} is malformed: ${problem}`,
+      });
+      expect(await readFile(configPath, "utf8")).toBe(original);
+    },
+  );
 });

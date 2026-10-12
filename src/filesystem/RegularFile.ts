@@ -95,5 +95,8 @@ export const sameRegularFileState = (
   expected.ino === observed.ino &&
   expected.size === observed.size &&
   expected.mode === observed.mode &&
-  expected.mtimeMs === observed.mtimeMs &&
-  expected.ctimeMs === observed.ctimeMs;
+  ("mtimeNs" in expected && "mtimeNs" in observed
+    ? expected.mtimeNs === observed.mtimeNs &&
+      expected.ctimeNs === observed.ctimeNs
+    : expected.mtimeMs === observed.mtimeMs &&
+      expected.ctimeMs === observed.ctimeMs);

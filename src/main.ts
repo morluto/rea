@@ -82,6 +82,7 @@ export const run = async (
   createShutdown({
     handle: transport.handle,
     closeAndroid: transport.closeAndroid,
+    closeOptionalProviders: transport.closeOptionalProviders,
     session,
     dependencies,
     serverLogger,

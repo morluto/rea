@@ -43,6 +43,19 @@ interface ReleaseNotesSeed {
 let seed: ReleaseNotesSeed | undefined;
 let seedWorkspaceRoot: string | undefined;
 
+const pluginManifests = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
+  ".cursor-plugin/mcp.json",
+] as const;
+
+const pluginManifest = (version: string, skills = ["./skill"]) => ({
+  version,
+  skills,
+  mcpServers: { rea: { args: ["-y", `rea-agents@${version}`, "mcp"] } },
+});
+
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
   seedWorkspaceRoot = workspace.root;
@@ -58,6 +71,13 @@ beforeAll(async () => {
     join(directory, ".release-please-manifest.json"),
     JSON.stringify({ ".": "6.3.0" }),
   );
+  for (const path of pluginManifests) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginManifest("6.3.0")),
+    );
+  }
   await git(directory, ["add", "."]);
   await git(directory, ["commit", "-m", "chore: baseline"]);
   const base = await git(directory, ["rev-parse", "HEAD"]);
@@ -368,23 +388,15 @@ it("rejects lost grouped credits, fabricated references, bots, and stale PR bodi
 
 it("binds publication to complete recorded history and the reviewed base", async () => {
   const f = await fixture();
-  const pluginManifests = [
-    ".claude-plugin/plugin.json",
-    ".codex-plugin/plugin.json",
-    ".cursor-plugin/plugin.json",
-    ".cursor-plugin/mcp.json",
-  ];
-  for (const path of pluginManifests) {
-    await mkdir(join(f.directory, dirname(path)), { recursive: true });
+  for (const path of pluginManifests)
     await writeFile(
       join(f.directory, path),
-      JSON.stringify({ version: "6.4.0" }),
+      JSON.stringify(pluginManifest("6.4.0")),
     );
-  }
   await git(f.directory, ["add", "CHANGELOG.md", ...pluginManifests]);
   await git(f.directory, ["commit", "-m", "chore: release notes"]);
   const source = await git(f.directory, ["rev-parse", "HEAD"]);
-  // Release PRs bump the plugin manifest versions, so they are release-only metadata.
+  // Release PRs bump the plugin manifest version and pinned launch only.
   await f.invoke(["check", "--manifest", f.manifest, "--source", source]);
   await writeFile(join(f.directory, "product.txt"), "later product change");
   await git(f.directory, ["add", "product.txt"]);
@@ -404,6 +416,26 @@ it("binds publication to complete recorded history and the reviewed base", async
     stderr: expect.stringContaining("complete local Git history"),
   });
 });
+
+it.each(pluginManifests)(
+  "treats a release that changes plugin behavior in %s as a product change",
+  async (path) => {
+    const f = await fixture();
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify(pluginManifest("6.4.0", ["./another-skill"])),
+    );
+    await git(f.directory, ["add", "CHANGELOG.md", path]);
+    await git(f.directory, ["commit", "-m", "chore: release notes"]);
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        `Product changed after notes target; regenerate inventory: ${path}`,
+      ),
+    });
+  },
+);
 
 it("checks the live merged PR and exact Git snapshot before either publication route", async () => {
   const f = await fixture();

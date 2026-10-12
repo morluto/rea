@@ -11,6 +11,7 @@ it("routes physical universal Mach-O containers through Hopper's FAT loader", ()
       format: "mach-o-universal",
       architecture: "arm64",
       availableArchitectures: ["x86_64", "arm64"],
+      universalSlice: { offset: 0, size: 32 },
     },
     "fat64",
   );

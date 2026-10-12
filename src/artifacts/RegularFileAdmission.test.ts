@@ -1,4 +1,4 @@
-import type { Stats } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -6,6 +6,7 @@ import {
   NonRegularFileReadError,
   openRegularFile,
   RegularFileAdmissionFailure,
+  sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
 const { mockOpen } = vi.hoisted(() => ({ mockOpen: vi.fn() }));
@@ -66,3 +67,24 @@ it.each(["cancellation after open", "non-regular metadata", "stat failure"])(
     else expect(cause.cause).toBe(cancellation);
   },
 );
+
+it("compares available nanosecond timestamps without rounding away source changes", () => {
+  const before = {
+    dev: 1n,
+    ino: 2n,
+    size: 3n,
+    mode: 0o100400n,
+    mtimeMs: 10n,
+    ctimeMs: 20n,
+    mtimeNs: 10_000_001n,
+    ctimeNs: 20_000_001n,
+    isFile: () => true,
+  } as BigIntStats;
+  expect(sameRegularFileState(before, { ...before })).toBe(true);
+  expect(
+    sameRegularFileState(before, { ...before, mtimeNs: before.mtimeNs + 1n }),
+  ).toBe(false);
+  expect(
+    sameRegularFileState(before, { ...before, ctimeNs: before.ctimeNs + 1n }),
+  ).toBe(false);
+});

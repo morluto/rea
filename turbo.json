@@ -104,31 +104,12 @@
       ]
     },
     "test:run": {
+      "cache": false,
       "dependsOn": [
         "artifacts:mcp-catalog",
         "artifacts:product-catalog",
         "artifacts:managed-evidence",
         "artifacts:skills"
-      ],
-      "inputs": [
-        ".nvmrc",
-        "package.json",
-        "package-lock.json",
-        "src/**",
-        "tests/**",
-        "scripts/**",
-        "bridge/**",
-        "vitest.config.ts",
-        {
-          "mode": "dependencyOutputs",
-          "globs": [
-            ".cache/mcp-tool-catalog.json",
-            "skills/**",
-            "docs/public/product-catalog.json",
-            "docs/verification/managed-conformance-manifest.json",
-            "docs/verification/managed-conformance-ledger.json"
-          ]
-        }
       ]
     },
     "docs:check:built": {

@@ -506,7 +506,8 @@ export class IdaSessionClient implements AnalysisClient {
       onObserved?.(raw);
       if (
         !sameIdaHostPath(metadata.input_path, this.#workspace.inputPath) ||
-        (await idaFileDigest(this.#workspace.inputPath)) !== this.target.sha256
+        (await idaFileDigest(this.#workspace.inputPath)) !==
+          this.#workspace.inputSha256
       )
         throw new AnalysisProtocolError(
           "IDA headless input identity changed after target admission.",

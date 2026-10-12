@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { WasmArtifactPort } from "./WasmArtifactPort.js";
@@ -12,6 +11,7 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectWasmArtifactInputSchema,
   wasmArtifactSchema,
+  wasmArtifactMatchesSubject,
 } from "../../domain/wasm/wasmArtifact.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -66,10 +66,7 @@ export class WasmArtifactService {
     if (
       !report.success ||
       report.data.artifact.path !== input.data.path ||
-      execution.subject?.path !== input.data.path ||
-      execution.subject.sha256 !== report.data.artifact.sha256 ||
-      createHash("sha256").update(report.data.wat.text).digest("hex") !==
-        report.data.wat.sha256 ||
+      !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||
       JSON.stringify(report.data.glue.map((item) => item.artifact.path)) !==
         JSON.stringify(input.data.glue_paths) ||
       JSON.stringify(report.data.candidates.map((item) => item.path)) !==

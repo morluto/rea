@@ -43,4 +43,26 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 
 See [installation and setup](./installation.md) for requirements and configuration.
 
+For runtime instrumentation, see the [Frida guide](./frida-instrumentation.md).
+
+## Choose a guide
+
+| Task                                                | Guides                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inspect native functions, references, or types      | [Native binaries](native-investigation.md), [Go metadata](go-binaries.md), [offline ELF layout](binary-diagnostics.md), [recorded crashes](recorded-crashes.md)                                                                                                                                                             |
+| Select a native provider or import format           | [Ghidra semantics](ghidra-provider.md), [Windows](windows-ghidra-p0.md), [DOS](ghidra-dos.md), [raw bytes](raw-binary.md), [MIPS](ghidra-mips.md), [PSP](ghidra-psp.md), [NativeAOT](ghidra-nativeaot.md), [IDA](ida-provider.md), [JEB](jeb-analysis.md)                                                                   |
+| Analyze JavaScript or Electron artifacts            | [Static analysis](javascript-artifact-reconstruction.md), [tracing and comparisons](javascript-application-workflows.md), [application graph](javascript-application-graph.md), [source recovery](javascript-recovery.md)                                                                                                   |
+| Compare static JavaScript with runtime observations | [Runtime attribution](javascript-runtime-observation.md), [reconciliation](javascript-runtime-reconciliation.md), [Electron observation](electron-observation.md)                                                                                                                                                           |
+| Inspect assemblies, packages, or firmware           | [.NET](managed-code-analysis.md), [Android](android-analysis.md), [Apktool resources](apktool-resource-analysis.md), [ADB acquisition](adb-device-analysis.md), [Apple](apple-application-analysis.md), [Harmony](harmony-analysis.md), [firmware](firmware-analysis.md), [WASM](wasm-artifacts.md), [EVM](evm-bytecode.md) |
+| Observe or compare a browser scenario               | [CDP observation](browser-observation.md), [scenarios](browser-scenario-contract.md), [runtime evidence](web-runtime.md), [historical captures](web-network-captures.md)                                                                                                                                                    |
+| Trace captured website source                       | [Source locations](web-source-location.md), [module traces](website-module-trace.md), [script export](website-script-export.md)                                                                                                                                                                                             |
+| Capture and compare a command                       | [Process capture](process-capture.md)                                                                                                                                                                                                                                                                                       |
+| Use CLI/MCP and retain evidence                     | [CLI](cli.md), [MCP contracts](mcp-contracts.md), [agent prompts](mcp-prompts.md), [obligation ledgers](reconstruction-obligation-ledgers.md)                                                                                                                                                                               |
+
+For development, use [testing](testing.md), [client verification](client-verification.md),
+[tool design](tool-design.md), and [releasing](releasing.md).
+[Reconstruction readiness](reconstruction-readiness.md) describes a development
+conformance verifier. [The 6.2 migration](migration-6.2.md) records that release's
+compatibility changes; [the roadmap](roadmap.md) tracks future work.
+
 ![REA inspecting a native binary in Hopper](./assets/rea-hopper-analysis.png)

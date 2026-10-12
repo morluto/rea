@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "artifacts": [
+    {
+      "id": "sharex.dll",
+      "file": "ShareX.dll",
+      "bytes": 2162688,
+      "sha256": "191a191be964e434daf0f9d76d1e0d8ddce90d7e248cba2a6b5ac9577f288d53",
+      "provenance": {
+        "project": "ShareX",
+        "version": "19.0.2",
+        "upstreamFile": "ShareX-19.0.2-portable.zip",
+        "url": "https://github.com/ShareX/ShareX/releases/download/v19.0.2/ShareX-19.0.2-portable.zip",
+        "transport_sha256": "967b5d838df5ce25fb5fd7cbd16f1bd797427e2df16907b022b74a4bc0fb9d54",
+        "transport_bytes": 168796487,
+        "derivation": "selected regular ZIP member ShareX.dll"
+      }
+    },
+    {
+      "id": "sqlite.wasm",
+      "file": "sqlite3.wasm",
+      "bytes": 868907,
+      "sha256": "2ee8f3dab694532afc8840e07703127287662d08b74e6ff50491ce63f00d5752",
+      "provenance": {
+        "project": "SQLite Wasm",
+        "version": "3.53.4-build1",
+        "upstreamFile": "sqlite-wasm-3.53.4-build1.tgz",
+        "url": "https://registry.npmjs.org/@sqlite.org/sqlite-wasm/-/sqlite-wasm-3.53.4-build1.tgz",
+        "transport_sha256": "24f46db4ce5248fa8f8f24b67e81909ab1a9c152f42a4796a32c6d385a6fb62b",
+        "transport_bytes": 977616,
+        "transport_integrity": "sha512-U8pvL0patYHMgieD8JxxYJTlh9m1LUX8+BDYb7MiKQzBI89f2qbdmdcG/PvnPaLm9wsBbv4VlVG453ixnxBOnA==",
+        "derivation": "selected regular tar member package/dist/sqlite3.wasm"
+      }
+    },
+    {
+      "id": "obsidian.asar",
+      "file": "obsidian-1.14.4.asar",
+      "bytes": 27477966,
+      "sha256": "146ef8470d8cbb4a6db209bdc19bf2bad13350444186c0fd93c31087b142b92f",
+      "provenance": {
+        "project": "Obsidian",
+        "version": "1.14.4",
+        "upstreamFile": "obsidian-1.14.4.asar",
+        "transport": {
+          "file": "obsidian-1.14.4.asar.gz",
+          "url": "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.4/obsidian-1.14.4.asar.gz",
+          "sha256": "d1ed428c363968774f0f3906e67d8a53a058ece0b6cdd924b07865977b2ada21",
+          "bytes": 9200670
+        },
+        "derivation": "gzip decompression"
+      }
+    },
+    {
+      "id": "newpipe.apk",
+      "file": "NewPipe_v0.29.1.apk",
+      "bytes": 11507122,
+      "sha256": "18447bfb1e06d113edc88df93f471827280de06f6f3d4dc42f56f28b9c1bab79",
+      "provenance": {
+        "project": "NewPipe",
+        "version": "0.29.1",
+        "upstreamFile": "NewPipe_v0.29.1.apk",
+        "url": "https://github.com/TeamNewPipe/NewPipe/releases/download/v0.29.1/NewPipe_v0.29.1.apk"
+      }
+    },
+    {
+      "id": "jq",
+      "file": "jq-linux-amd64",
+      "bytes": 2267912,
+      "sha256": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f",
+      "provenance": {
+        "project": "jq",
+        "version": "1.8.2",
+        "upstreamFile": "jq-linux-amd64",
+        "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64"
+      }
+    },
+    {
+      "id": "openwrt.bin",
+      "file": "openwrt-25.12.5-ath79-generic-tplink_archer-c7-v5-squashfs-sysupgrade.bin",
+      "bytes": 7405862,
+      "sha256": "f15b16b36df7fce8a5cf1302320fdb428c3bb6fbc2949a4858afa257f4f364a2",
+      "provenance": {
+        "project": "OpenWrt Archer C7 v5",
+        "version": "25.12.5",
+        "upstreamFile": "openwrt-25.12.5-ath79-generic-tplink_archer-c7-v5-squashfs-sysupgrade.bin",
+        "url": "https://downloads.openwrt.org/releases/25.12.5/targets/ath79/generic/openwrt-25.12.5-ath79-generic-tplink_archer-c7-v5-squashfs-sysupgrade.bin"
+      }
+    },
+    {
+      "id": "weth.hex",
+      "file": "weth-published.hex",
+      "bytes": 6251,
+      "sha256": "eb67ea4da28b88358df0385358bad3a58b131317835b45b3ede85c61851335e4",
+      "provenance": {
+        "project": "Published historical WETH runtime code example",
+        "url": "https://ethereum.org/developers/docs/apis/json-rpc/",
+        "contract_address": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "published_block": "0x5daf3b",
+        "transport_sha256": "98c131a1bd99a0c2051dd6d6716fd306c36cdd45995d5ffd559bd9c690569c0f",
+        "derivation": "Parse the named eth_getCode JSON result from the official published example and preserve the hex carrier with one trailing LF",
+        "authority": "published historical RPC example; live retrieval returned HTTP 403; deployment authenticity remains unverified"
+      }
+    },
+    {
+      "id": "sharex.helpers.dll",
+      "file": "ShareX.HelpersLib.dll",
+      "bytes": 1076224,
+      "sha256": "e91bd1ec904e2bb8a1add4bb6187443b878bf33d24fe9e27f0b799bfee9de33d",
+      "provenance": {
+        "project": "ShareX HelpersLib",
+        "version": "19.0.2",
+        "upstreamFile": "ShareX-19.0.2-portable.zip",
+        "url": "https://github.com/ShareX/ShareX/releases/download/v19.0.2/ShareX-19.0.2-portable.zip",
+        "transport_sha256": "967b5d838df5ce25fb5fd7cbd16f1bd797427e2df16907b022b74a4bc0fb9d54",
+        "transport_bytes": 168796487,
+        "derivation": "selected regular ZIP member ShareX.HelpersLib.dll; no target execution"
+      }
+    },
+    {
+      "id": "sharex.exe",
+      "file": "ShareX.exe",
+      "bytes": 198656,
+      "sha256": "46af1ccc514b395cb703633abb5a505a771942b7db9b1915f31aeea541b3685f",
+      "provenance": {
+        "project": "ShareX native executable component",
+        "version": "19.0.2",
+        "upstreamFile": "ShareX-19.0.2-portable.zip",
+        "url": "https://github.com/ShareX/ShareX/releases/download/v19.0.2/ShareX-19.0.2-portable.zip",
+        "transport_sha256": "967b5d838df5ce25fb5fd7cbd16f1bd797427e2df16907b022b74a4bc0fb9d54",
+        "transport_bytes": 168796487,
+        "derivation": "selected regular ZIP member ShareX.exe; PE32+ x86-64 with no CLR directory; no target execution"
+      }
+    },
+    {
+      "id": "freedos.edlin.exe",
+      "file": "EDLIN.EXE",
+      "bytes": 31492,
+      "sha256": "96b2b6d543e2d8bdc83e313756444e103339eb5ee2c1229abe3607539b31ad6e",
+      "provenance": {
+        "project": "FreeDOS EDLIN",
+        "version": "2.24",
+        "upstreamFile": "edlin.zip",
+        "url": "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/base/edlin.zip",
+        "transport_sha256": "9db8a0b50bc4be5c2358cd0fa1fb6fc77342c6d5175a6b1084547c370e428f8a",
+        "transport_bytes": 377009,
+        "derivation": "selected regular ZIP member BIN/EDLIN.EXE; original UPX-compressed DOS MZ; APPINFO/EDLIN.LSM reports version; no execution or unpacking"
+      }
+    },
+    {
+      "id": "vscode.tree-sitter.wasm",
+      "file": "tree-sitter.wasm",
+      "bytes": 206218,
+      "sha256": "3a31af706ffdf4a7116b064cdd4988df6791823298615009fc5b6bccbd42909b",
+      "provenance": {
+        "project": "VS Code Tree-sitter published WASM package",
+        "version": "0.3.1",
+        "project_url": "https://github.com/microsoft/vscode-tree-sitter-wasm",
+        "upstreamFile": "tree-sitter-wasm-0.3.1.tgz",
+        "url": "https://registry.npmjs.org/@vscode/tree-sitter-wasm/-/tree-sitter-wasm-0.3.1.tgz",
+        "transport_sha256": "985684b2cfbe5e8f90499a9f36e37519887c7d4e2697d0457d0f1e923ce5184c",
+        "transport_bytes": 2053205,
+        "transport_integrity": "sha512-RJFoomET6FajjG511fmQxeBQfU6M24a0aFZPqpid+ttIxanWf1VGytBG0UmsGjt07qmIPJS8U31D+aecuCucsQ==",
+        "derivation": "selected regular tar member package/wasm/tree-sitter.wasm; no target execution"
+      }
+    },
+    {
+      "id": "vscode.tree-sitter-css.wasm",
+      "file": "tree-sitter-css.wasm",
+      "bytes": 128668,
+      "sha256": "8a23977fe271357cce6f254ef88c9bebf3854602d8046605aef6a45c02135c59",
+      "provenance": {
+        "project": "VS Code Tree-sitter published WASM package",
+        "version": "0.3.1",
+        "project_url": "https://github.com/microsoft/vscode-tree-sitter-wasm",
+        "upstreamFile": "tree-sitter-wasm-0.3.1.tgz",
+        "url": "https://registry.npmjs.org/@vscode/tree-sitter-wasm/-/tree-sitter-wasm-0.3.1.tgz",
+        "transport_sha256": "985684b2cfbe5e8f90499a9f36e37519887c7d4e2697d0457d0f1e923ce5184c",
+        "transport_bytes": 2053205,
+        "transport_integrity": "sha512-RJFoomET6FajjG511fmQxeBQfU6M24a0aFZPqpid+ttIxanWf1VGytBG0UmsGjt07qmIPJS8U31D+aecuCucsQ==",
+        "derivation": "selected regular tar member package/wasm/tree-sitter-css.wasm; no target execution"
+      }
+    }
+  ]
+}

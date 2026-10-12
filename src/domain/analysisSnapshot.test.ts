@@ -127,14 +127,25 @@ describe("analysis snapshot contract", () => {
   ] as const)(
     "preserves %s target and subject formats",
     (format, architecture) => {
-      const target = {
-        path: ANALYSIS_SNAPSHOT_TARGET.path,
-        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
-        kind: "executable" as const,
-        format,
-        architecture,
-        availableArchitectures: [architecture],
-      };
+      const target: BinaryTarget =
+        format === "mach-o-universal"
+          ? {
+              path: ANALYSIS_SNAPSHOT_TARGET.path,
+              sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+              kind: "executable",
+              format,
+              architecture,
+              availableArchitectures: [architecture],
+              universalSlice: { offset: 0, size: 32 },
+            }
+          : {
+              path: ANALYSIS_SNAPSHOT_TARGET.path,
+              sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+              kind: "executable",
+              format,
+              architecture,
+              availableArchitectures: [architecture],
+            };
       const evidence = createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
         operation: "analyze_function",
         parameters: {},

@@ -8,12 +8,13 @@ import type {
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { jsonObjectSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
-import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 
 interface EvidenceToolRegistration {
@@ -28,6 +29,15 @@ interface EvidenceToolRegistration {
     operation: Exclude<AnalysisOperation, "health">,
     result: import("../domain/jsonValue.js").JsonValue,
   ) => readonly Evidence[];
+  readonly parametersForExecution?: (
+    operation: Exclude<AnalysisOperation, "health">,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ) => Readonly<Record<string, JsonValue>>;
+  readonly projectEvidence?: (
+    operation: Exclude<AnalysisOperation, "health">,
+    parameters: Readonly<Record<string, JsonValue>>,
+    evidence: Evidence,
+  ) => Result<Evidence, AnalysisError>;
 }
 
 /** Register provider-backed contracts that return atomic Evidence observations. */
@@ -57,12 +67,8 @@ export const registerEvidenceTools = (
             });
             const parameters = jsonObjectSchema.parse(input);
             const executionParameters =
-              contract.name === "extract_artifact"
-                ? {
-                    ...parameters,
-                    output_root: createArtifactExtractionDestination(),
-                  }
-                : parameters;
+              options.parametersForExecution?.(contract.name, parameters) ??
+              parameters;
             const execution = await logToolExecution(
               options.logger,
               contract.name,
@@ -108,9 +114,14 @@ export const registerEvidenceTools = (
                   contract,
                 );
             }
-            const recorded = options.recordEvidence?.(evidence);
+            const projected =
+              options.projectEvidence?.(contract.name, parameters, evidence) ??
+              ok(evidence);
+            if (!projected.ok)
+              return server.delivery.toCallToolResult(projected, contract);
+            const recorded = options.recordEvidence?.(projected.value);
             return server.delivery.toEvidenceToolResult(
-              evidence,
+              projected.value,
               contract,
               recorded,
             );

@@ -30,3 +30,14 @@ it("validates decompile item input before contacting the engine", async () => {
     ],
   });
 });
+
+it("reports an invalid endpoint without breaking other commands", async () => {
+  const environment = { REA_JEB_MCP_URL: "http://localhost:8425/mcp" };
+  const jeb = await serveCli(["inspect-jeb-client", "--json"], environment);
+  expect(JSON.parse(jeb.stdout)).toMatchObject({
+    code: "configuration_invalid",
+    details: { settings: [{ setting: "REA_JEB_MCP_URL" }] },
+  });
+  const capabilities = await serveCli(["capabilities", "--json"], environment);
+  expect(capabilities.exitCode).toBe(0);
+});

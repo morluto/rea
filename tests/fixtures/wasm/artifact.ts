@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { WasmArtifact } from "../../../src/domain/wasm/wasmArtifact.js";
 /** Source-owned transport seam; upstream binaries are verified in a separate lane. */
-export const wasmArtifactFixture = (path = "/artifacts/module.wasm") => ({
+export const wasmArtifactFixture = (
+  path = "/artifacts/module.wasm",
+): WasmArtifact => ({
   artifact: { path, sha256: "a".repeat(64), bytes: 8 },
   validation: "valid" as const,
   sections: [],
@@ -18,16 +21,18 @@ export const wasmArtifactFixture = (path = "/artifacts/module.wasm") => ({
     source: "https://github.com/WebAssembly/wabt" as const,
     release: "1.0.42" as const,
     source_commit: "ff0ef7e0009402740c805a9744c09b05be063e48" as const,
-    commands: ["wasm-validate", "wasm-objdump", "wasm2wat"].map((tool) => ({
-      tool,
-      path: `/tools/${tool}`,
-      sha256: "b".repeat(64),
-      version_banner: "1.0.42\n",
-      arguments:
-        tool === "wasm-objdump"
-          ? ["-h", "-x", "module.wasm"]
-          : ["--enable-all", "module.wasm"],
-    })),
+    commands: (["wasm-validate", "wasm-objdump", "wasm2wat"] as const).map(
+      (tool) => ({
+        tool,
+        path: `/tools/${tool}`,
+        sha256: "b".repeat(64),
+        version_banner: "1.0.42\n",
+        arguments:
+          tool === "wasm-objdump"
+            ? ["-h", "-x", "module.wasm"]
+            : ["--enable-all", "module.wasm"],
+      }),
+    ),
     timeout_ms: 30_000,
     output_budget_bytes: 32 * 1024 * 1024,
   },
