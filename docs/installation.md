@@ -1007,8 +1007,12 @@ only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
-Code, `codex plugin list` in Codex), and check analysis engines with
-`rea doctor --provider <id> --json`.
+Code, `codex plugin list` in Codex). A plugin does not put `rea` on your
+`PATH`, so check analysis engines through the package runner:
+
+```bash
+npx -y rea-agents@latest doctor --provider ghidra --json
+```
 
 ## MCP Registry
 
