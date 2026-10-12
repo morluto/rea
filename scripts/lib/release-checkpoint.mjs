@@ -4,6 +4,16 @@ import { z } from "zod";
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
 const manifestSchema = z.object({ ".": z.string() });
+const PLUGIN_MANIFEST_PATHS = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+];
+const PLUGIN_PACKAGE_SPECIFIER_PREFIX = "rea-agents@";
+const pluginManifestSchema = versionSchema.extend({
+  mcpServers: z.object({
+    rea: z.object({ args: z.array(z.string()) }),
+  }),
+});
 const sectionsSchema = z.object({
   versioning: z.string().optional(),
   "changelog-sections": z.array(
@@ -189,6 +199,21 @@ async function validateCandidate(git, sha, version, commits) {
     ["server.json", server.version],
     ["server.json rea-agents package", npmPackage.version],
   );
+  // A stale manifest keeps the previous plugin cache key or launches the
+  // previous server, so both are version authority like server.json.
+  for (const path of PLUGIN_MANIFEST_PATHS) {
+    const manifest = await readJson(git, sha, path, pluginManifestSchema);
+    const specifier = manifest.mcpServers.rea.args[1];
+    versions.push(
+      [path, manifest.version],
+      [
+        `${path} rea-agents server launch`,
+        specifier?.startsWith(PLUGIN_PACKAGE_SPECIFIER_PREFIX)
+          ? specifier.slice(PLUGIN_PACKAGE_SPECIFIER_PREFIX.length)
+          : specifier,
+      ],
+    );
+  }
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
   const generated = await git([
