@@ -4,12 +4,19 @@ import { z } from "zod";
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
 const manifestSchema = z.object({ ".": z.string() });
-const PLUGIN_MANIFEST_PATHS = [
+const PLUGIN_VERSION_PATHS = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
+];
+// Cursor reads its server entry from a separate file beside the manifest.
+const PLUGIN_LAUNCH_PATHS = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".cursor-plugin/mcp.json",
 ];
 const PLUGIN_PACKAGE_NAME = "rea-agents";
-const pluginManifestSchema = versionSchema.extend({
+const pluginLaunchSchema = z.object({
   mcpServers: z.object({
     rea: z.object({ args: z.array(z.string()) }),
   }),
@@ -202,10 +209,15 @@ async function validateCandidate(git, sha, version, commits) {
   // A stale manifest keeps the previous plugin cache key or launches the
   // previous server, so both are version authority like server.json.
   const launches = [];
-  for (const path of PLUGIN_MANIFEST_PATHS) {
-    const manifest = await readJson(git, sha, path, pluginManifestSchema);
-    versions.push([path, manifest.version]);
-    launches.push([path, manifest.mcpServers.rea.args[1]]);
+  for (const path of PLUGIN_VERSION_PATHS) {
+    versions.push([
+      path,
+      (await readJson(git, sha, path, versionSchema)).version,
+    ]);
+  }
+  for (const path of PLUGIN_LAUNCH_PATHS) {
+    const launch = await readJson(git, sha, path, pluginLaunchSchema);
+    launches.push([path, launch.mcpServers.rea.args[1]]);
   }
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.

@@ -371,6 +371,8 @@ it("binds publication to complete recorded history and the reviewed base", async
   const pluginManifests = [
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
+    ".cursor-plugin/mcp.json",
   ];
   for (const path of pluginManifests) {
     await mkdir(join(f.directory, dirname(path)), { recursive: true });

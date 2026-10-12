@@ -419,6 +419,8 @@ export async function verifyInventoryHistory(run, raw, source) {
       "server.json",
       ".claude-plugin/plugin.json",
       ".codex-plugin/plugin.json",
+      ".cursor-plugin/plugin.json",
+      ".cursor-plugin/mcp.json",
       "src/generatedPackageMetadata.ts",
       "docs/installation.md",
       `docs/releases/${inventory.version}.contributions.json`,

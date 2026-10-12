@@ -997,6 +997,13 @@ In Codex, add the marketplace and then install REA from the plugin list:
 codex plugin marketplace add morluto/rea
 ```
 
+The repository root is also a Cursor plugin (`.cursor-plugin/plugin.json`).
+It registers the same pinned stdio server from `.cursor-plugin/mcp.json` and
+does not bundle the skill: Cursor loads plugin skills from a directory of
+skill folders, and `.agents/skills/` also holds maintainer-only skills. Run
+`rea setup --client cursor` instead when you want the workflow instructions
+installed with the server.
+
 Each release updates both manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider

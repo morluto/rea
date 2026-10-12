@@ -1,0 +1,20 @@
+{
+  "name": "rea",
+  "displayName": "REA",
+  "version": "6.4.0",
+  "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+  "author": {
+    "name": "morluto"
+  },
+  "homepage": "https://rea.tools/",
+  "repository": "https://github.com/morluto/rea",
+  "license": "MIT",
+  "keywords": [
+    "reverse-engineering",
+    "binary-analysis",
+    "decompiler",
+    "mcp-server"
+  ],
+  "category": "developer-tools",
+  "mcpServers": "./.cursor-plugin/mcp.json"
+}

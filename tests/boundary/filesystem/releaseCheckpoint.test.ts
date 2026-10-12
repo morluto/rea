@@ -29,6 +29,12 @@ const pluginManifest = (version: string, launch = `rea-agents@${version}`) => ({
   mcpServers: { rea: { args: ["-y", launch, "mcp"] } },
 });
 
+const cursorManifestPath = ".cursor-plugin/plugin.json";
+const cursorLaunchPath = ".cursor-plugin/mcp.json";
+const cursorLaunch = (launch: string) => ({
+  mcpServers: { rea: { args: ["-y", launch, "mcp"] } },
+});
+
 async function metadata(
   directory: string,
   version: string,
@@ -37,9 +43,11 @@ async function metadata(
 ) {
   await mkdir(join(directory, "docs"), { recursive: true });
   await mkdir(join(directory, "src"), { recursive: true });
-  for (const path of pluginManifestPaths)
+  for (const path of [...pluginManifestPaths, cursorManifestPath])
     await mkdir(join(directory, dirname(path)), { recursive: true });
   const files = {
+    [cursorManifestPath]: { version },
+    [cursorLaunchPath]: cursorLaunch(`rea-agents@${version}`),
     ...Object.fromEntries(
       pluginManifestPaths.map((path) => [path, pluginManifest(version)]),
     ),
@@ -580,8 +588,27 @@ it.each([
   });
 });
 
-it.each(
-  pluginManifestPaths.flatMap((path) => [
+it.each([
+  {
+    path: cursorManifestPath,
+    stale: "version",
+    manifest: { version: "5.1.0" },
+    failure: "declares 5.1.0; release branch requires 6.0.0",
+  },
+  {
+    path: cursorLaunchPath,
+    stale: "server launch",
+    manifest: cursorLaunch("rea-agents@5.1.0"),
+    failure:
+      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
+  },
+  {
+    path: cursorLaunchPath,
+    stale: "server launch without the package name",
+    manifest: cursorLaunch("6.0.0"),
+    failure: "launches 6.0.0; release branch requires rea-agents@6.0.0",
+  },
+  ...pluginManifestPaths.flatMap((path) => [
     {
       path,
       stale: "version",
@@ -602,7 +629,7 @@ it.each(
       failure: "launches 6.0.0; release branch requires rea-agents@6.0.0",
     },
   ]),
-)("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
+])("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
   const f = await fixture();
   await candidate(f, "6.0.0");
   await writeFile(join(f.directory, path), JSON.stringify(manifest));

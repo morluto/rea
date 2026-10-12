@@ -12,6 +12,8 @@
     "package-lock.json",
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
+    ".cursor-plugin/mcp.json",
     "_reference/**",
     "third_party/**"
   ]

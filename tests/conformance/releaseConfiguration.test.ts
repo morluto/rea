@@ -13,6 +13,10 @@ const pluginManifests = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
 ] as const;
+const cursorPluginFiles = [
+  ".cursor-plugin/plugin.json",
+  ".cursor-plugin/mcp.json",
+] as const;
 
 describe("release configuration", () => {
   it("keeps doctor and setup runtime support aligned with package engines", async () => {
@@ -54,6 +58,16 @@ describe("release configuration", () => {
                 jsonpath,
               })),
             ),
+            {
+              type: "json",
+              path: ".cursor-plugin/plugin.json",
+              jsonpath: "$.version",
+            },
+            {
+              type: "json",
+              path: ".cursor-plugin/mcp.json",
+              jsonpath: "$.mcpServers.rea.args[1]",
+            },
           ],
         },
       },
@@ -154,7 +168,28 @@ describe("plugin manifests", () => {
     },
   );
 
-  it.each(pluginManifests)(
+  it("pins the Cursor plugin and the server file its manifest names to the package version", async () => {
+    const packageJson = (await readJson("package.json")) as {
+      name: string;
+      version: string;
+    };
+
+    expect(await readJson(".cursor-plugin/plugin.json")).toMatchObject({
+      name: "rea",
+      version: packageJson.version,
+      mcpServers: "./.cursor-plugin/mcp.json",
+    });
+    expect(await readJson(".cursor-plugin/mcp.json")).toEqual({
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", `${packageJson.name}@${packageJson.version}`, "mcp"],
+        },
+      },
+    });
+  });
+
+  it.each([...pluginManifests, ...cursorPluginFiles])(
     "stores %s in the form Release Please rewrites it to",
     async (path) => {
       // Release Please reserializes JSON extra-files, so any other layout
