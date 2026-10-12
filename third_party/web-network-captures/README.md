@@ -32,5 +32,6 @@ null retained. The upstream schemas themselves remain unchanged.
 
 The strict JSON visitor supplies member events before object materialization;
 REA rejects all duplicate names and retains original numeric token spelling.
-The shared JSON schema currently drops `__proto__` members, so both adapters
-report that representation as unsupported instead of returning incomplete data.
+The shared JSON representation preserves all own members, including `__proto__`,
+`constructor`, and `prototype`, without invoking prototype setters. These names
+do not make a capture unsupported.

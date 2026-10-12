@@ -19,6 +19,101 @@ boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
 
+## Contribution scope
+
+REA focuses on software structure, runtime behavior, and evidence through
+general-purpose reverse-engineering workflows. Evaluate a proposal by its actual
+capabilities, side effects, defaults, and complete workflow. A tool name or a
+reference to vulnerability research, malware analysis, or CTFs does not determine
+whether it belongs in REA.
+
+Supported contributions include format inspection, ordinary archive and standard
+compression extraction, disassembly, decompilation, cross-references, general
+static deobfuscation, vulnerability analysis, and evidence reporting. Static
+protection detection is distinct from defeating that protection. Security fixes
+and isolated regression tests remain in scope.
+
+Runtime investigation needs explicit boundaries. Launching or attaching to a
+process, injecting instrumentation, running scripts, and changing memory or
+registers require review of target selection, execution and mutation authority,
+provenance, resource limits, cancellation, and cleanup. General Frida or debugger
+support is not inherently read-only, and existing support does not authorize
+every workflow built on it. General-purpose interfaces are not classified as
+dedicated bypass workflows solely because caller-provided code could be misused;
+their execution and mutation authority must still be reviewed.
+
+REA does not integrate or officially distribute:
+
+- Purpose-built workflows to defeat commercial packing or code-virtualization
+  protections and automatically recover protected code.
+- Anti-debugging or anti-instrumentation evasion, or DRM, license, anti-cheat, or
+  access-control bypass workflows.
+- Exploit or attack-payload automation, credential theft, covert persistence,
+  unauthorized access, or bulk attack workflows.
+
+These boundaries apply to first-party providers, adapters, plugins, bundled
+scripts, defaults, examples, and documentation. Moving a capability into an
+optional dependency or plugin does not exempt it. Review what the integration
+exposes, including upstream defaults and raw-command or script execution paths.
+Ordinary extraction and general static deobfuscation are not excluded merely
+because the input is packed or obfuscated; assess added bypass or execution
+behavior separately.
+
+This is a product and maintenance boundary, not a judgment about a contributor's
+intentions or a declaration that all excluded research is unlawful. Contributors
+must have the rights and authorization needed for their work. A local-only design
+or an "authorized use only" disclaimer does not establish containment or settle
+legal and scope questions.
+
+### Fail-closed integration
+
+If scope fit, target or authorization boundaries, side effects, or the verification
+needed to establish those boundaries remain materially unresolved, **do not merge,
+enable, or include the capability in official packages or distributions**. Keep
+the proposal pending, narrow it, or decline it. Record unknowns explicitly; do not
+turn them into "none" or assumed safety. Passing CI, completed implementation,
+upstream popularity, or silence from maintainers is not scope approval.
+
+For a new provider or a capability involving target execution, injection,
+mutation, or protection recovery, seek an explicit maintainer scope decision in
+the linked issue or design discussion before substantial implementation intended
+for integration. Small exploratory prototypes and draft PRs may help inform that
+decision; they do not authorize integration. The decision must cover the final
+proposed behavior; a scope expansion needs a new decision. Routine fixes and
+documentation changes within existing boundaries do not need a separate advance
+decision, but must not silently expand those boundaries.
+
+### Starting a proposal
+
+To open a feature request or design discussion, describe the problem and desired
+outcome or decision. Short answers and the forms' "Not sure yet" options are
+welcome. You do not need code, a complete design or test plan, legal analysis, or
+private proof-of-authorization documents to start a discussion. Share what you
+know and leave optional details blank when you need help.
+
+Form selections guide triage; they are not proof of authorization or scope
+approval. Unselected effects must not be treated as established absence.
+Maintainers and implementers work together to resolve the following before
+integration:
+
+- The concrete analyst question, requested inputs and outputs, and why existing
+  REA operations are insufficient.
+- Why the workflow fits this scope, its non-goals, and any protection recovery,
+  bypass, or attack automation it would expose.
+- The selected targets and every execution, injection, mutation, network, or
+  persistence effect, including behavior inherited from upstream tools.
+- How the boundaries and outcome will be verified with self-owned or appropriately
+  licensed samples; identify real CLI/MCP and provider coverage, cleanup and
+  resource checks, and remaining unknowns. Do not publish private binaries,
+  credentials, or sensitive target data; follow [SECURITY.md](SECURITY.md) for
+  private vulnerability reports.
+
+Mixed proposals should separate acceptable analysis capabilities from excluded
+workflows so each can be decided independently. An issue may discuss unresolved
+questions; opening an issue or PR does not authorize integration. This is a
+maintainer integration gate, not a per-call confirmation requirement or a sandbox
+guarantee.
+
 ## Development setup
 
 Use the development toolchain pinned in `.nvmrc` and
@@ -86,6 +181,10 @@ coverage. `npm run check:pr` is an optional full local gate for broad changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.
+
+`check:pr` reuses build and static-check outputs while executing the test suite
+fresh, including the fast Python producer checks. `docs:check` also runs the
+onboarding example consistency suite for README-only changes.
 
 Pre-commit formats and lints staged files; pre-push runs `check:fast`.
 

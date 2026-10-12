@@ -98,6 +98,119 @@ it("preserves OpenStep dictionary and array autodetection", () => {
   });
 });
 
+/** The single-member chain of a nested dictionary, down to its deepest value. */
+const deepestValue = (value: unknown): unknown => {
+  let cursor = value;
+  while (
+    cursor !== null &&
+    typeof cursor === "object" &&
+    !Array.isArray(cursor) &&
+    "k" in cursor
+  ) {
+    cursor = (cursor as Record<string, unknown>).k;
+  }
+  return cursor;
+};
+
+/** The single-member chain of a nested array, down to its deepest value. */
+const deepestEntry = (value: unknown): unknown => {
+  let cursor = value;
+  while (Array.isArray(cursor) && cursor.length === 1) cursor = cursor[0];
+  return cursor;
+};
+
+const nestedDictionaries = (depth: number) =>
+  plist(
+    "<dict><key>k</key>".repeat(depth) +
+      "<string>x</string>" +
+      "</dict>".repeat(depth),
+  );
+
+const nestedArrays = (depth: number) =>
+  plist(
+    "<array>".repeat(depth) + "<string>x</string>" + "</array>".repeat(depth),
+  );
+
+it("rejects XML nesting beyond the projection limit with the limit diagnostic", () => {
+  // `plist` and the prototype-key traversal recurse once per level, so the
+  // depth check must report the same bounded-resource error as the projection
+  // instead of letting those recursive passes exhaust the call stack.
+  const limit = new RangeError("Plist exceeds 128 nesting levels");
+  expect(() => parseXmlPropertyList(nestedDictionaries(129))).toThrow(limit);
+  expect(() => parseXmlPropertyList(nestedArrays(129))).toThrow(limit);
+  expect(() => parseXmlPropertyList(nestedDictionaries(3000))).toThrow(limit);
+  expect(() => parseXmlPropertyList(nestedArrays(4000))).toThrow(limit);
+});
+
+it("decodes XML property lists exactly at the projection nesting limit", () => {
+  expect(
+    deepestValue(parseXmlPropertyList(nestedDictionaries(128)).value),
+  ).toBe("x");
+  expect(deepestEntry(parseXmlPropertyList(nestedArrays(128)).value)).toBe("x");
+  expect(
+    parseXmlPropertyList(
+      plist("<array>".repeat(128) + "<array/>" + "</array>".repeat(128)),
+    ).value,
+  ).toBeDefined();
+});
+
+it("does not count markup inside comments, CDATA, or the doctype as nesting", () => {
+  const text = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd" [<!ENTITY deep "<dict/>">]>
+<plist version="1.0"><dict>
+  <key>a</key><string><![CDATA[<dict><array><dict>]]></string>
+  <!-- <dict><key>k</key> -->
+  <key>b</key><array><!-- <array> --><string>x</string></array>
+</dict></plist>`;
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: { a: "<dict><array><dict>", b: ["x"] },
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it.each(['"', "'"])(
+  "counts containers with quoted XML delimiters using %s attributes",
+  (quote) => {
+    const opening = `<dict note=${quote}/>${quote}><key>k</key>`;
+    const text = plist(
+      opening.repeat(3000) + "<string>x</string>" + "</dict>".repeat(3000),
+    );
+    expect(() => parseXmlPropertyList(text)).toThrow(
+      new RangeError("Plist exceeds 128 nesting levels"),
+    );
+    expect(
+      parseXmlPropertyList(
+        plist(
+          "<array>" + `<dict note=${quote}>${quote}/>`.repeat(130) + "</array>",
+        ),
+      ).value,
+    ).toEqual(Array.from({ length: 130 }, () => ({})));
+  },
+);
+
+it("ignores complete DOCTYPE internal subsets when checking value depth", () => {
+  const text = `<!DOCTYPE plist [
+<!ENTITY first "unused">
+<!-- <dict><array> -->
+<!ENTITY second "${"<dict>".repeat(130)}">
+]><plist><string>x</string></plist>`;
+  expect(parseXmlPropertyList(text)).toEqual({
+    value: "x",
+    omittedPrototypeKeys: 0,
+  });
+});
+
+it("bounds nested plist wrappers before recursive decoding", () => {
+  const text =
+    "<plist>".repeat(3000) + "<string>x</string>" + "</plist>".repeat(3000);
+  expect(() => parseXmlPropertyList(text)).toThrow(
+    new RangeError("Plist exceeds 128 nesting levels"),
+  );
+  expect(
+    parseXmlPropertyList(plist("<plist><string>x</string></plist>")).value,
+  ).toEqual(["x"]);
+});
+
 it.each(["\n", "\r\n", "\r", "\u0085", "\u2028", "\u2029"])(
   "preserves unrelated source values around %j line endings",
   (newline) => {

@@ -226,7 +226,9 @@ const registrationAligned = (
   const command = [registration.command, ...registration.args];
   if (
     (client.format !== "grok" && registration.disabled === true) ||
-    (registration.enabled === false && !forcedEnabled)
+    (registration.enabled === false && !forcedEnabled) ||
+    // ZCode's native flag is `enable`; other dialects leave that field opaque.
+    (client.format === "zcode" && registration.enable === false)
   )
     return false;
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))

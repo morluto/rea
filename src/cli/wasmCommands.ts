@@ -1,7 +1,6 @@
 import { z } from "incur";
 import { resolve } from "node:path";
-import { createWasmArtifactService } from "../composition/wasm.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
@@ -14,8 +13,8 @@ export const registerWasmCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  const service = createWasmArtifactService(environment);
-  cli.command(CLI_COMMANDS.inspectWasmArtifact, {
+  const service = wasmArtifactModule.create(environment);
+  cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",
     args: z.object({
       path: z.string().describe("Local WASM artifact"),
@@ -35,7 +34,7 @@ export const registerWasmCommands = (
         try {
           return await logCliCommand(
             logger,
-            CLI_COMMANDS.inspectWasmArtifact,
+            wasmArtifactModule.cliCommand,
             async () => {
               const result = await service.inspect(
                 {

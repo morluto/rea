@@ -5,9 +5,12 @@ import { registerEvmCommands } from "./cli/evmCommands.js";
 import { registerGoCommands } from "./cli/goCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
+import { registerFridaCommands } from "./cli/fridaCommands.js";
+import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
 import { Cli } from "incur";
 
 import { createLogger, parseLogLevel } from "./logger.js";
+import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { npxRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
 import { registerSetupCommands } from "./cli/setupCommands.js";
@@ -18,6 +21,7 @@ import { registerManagedCommands } from "./cli/managedCommands.js";
 import { registerFirmwareCommands } from "./cli/firmwareCommands.js";
 import { registerAndroidCommands } from "./cli/androidCommands.js";
 import { registerApktoolCommands } from "./cli/apktoolCommands.js";
+import { registerFlutterCommands } from "./cli/flutterCommands.js";
 import { registerJebCommands } from "./cli/jebCommands.js";
 import { registerAdbCommands } from "./cli/adbCommands.js";
 import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
@@ -41,6 +45,16 @@ import {
   type CliResultOutput,
 } from "./cli/streamedJsonOutput.js";
 
+/** Describe CLI settings that are invalid before any command runs, as MCP does. */
+export const cliConfigurationError = (
+  selectedEnvironment: Readonly<Record<string, string | undefined>>,
+): string | undefined => {
+  const value = selectedEnvironment.REA_LOG_LEVEL;
+  if (value === undefined) return undefined;
+  const level = parseLogLevel(value);
+  return level.ok ? undefined : projectAnalysisError(level.error).message;
+};
+
 /**
  * Build the one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
@@ -51,14 +65,18 @@ export const createCli = (
     Record<string, string | undefined>
   > = process.env,
   resultOutput?: CliResultOutput,
+  fridaInstrumentation?: FridaInstrumentationPort,
 ): CliInstance => {
   const environment = snapshotEnvironment(selectedEnvironment);
   const analysis = createDirectAnalysis(environment);
+  // The executable reports an invalid level through cliConfigurationError.
+  const level =
+    environment.REA_LOG_LEVEL === undefined
+      ? undefined
+      : parseLogLevel(environment.REA_LOG_LEVEL);
   const logger = createLogger(
     "cli",
-    environment.REA_LOG_LEVEL === undefined
-      ? "silent"
-      : parseLogLevel(environment.REA_LOG_LEVEL),
+    level?.ok === true ? level.value : "silent",
   );
   const cli = Cli.create(PRODUCT_IDENTITY.cliBinary, {
     version: PRODUCT_IDENTITY.packageVersion,
@@ -81,11 +99,13 @@ export const createCli = (
   registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
   registerAndroidCommands(cli, logger, environment);
   registerApktoolCommands(cli, logger, environment);
+  registerFlutterCommands(cli, logger);
   registerJebCommands(cli, logger, environment);
   registerAdbCommands(cli, logger, environment);
   registerFirmwareCommands(cli, logger, environment);
   registerBinaryDiagnosticsCommands(cli, logger, environment);
   registerAnalysisViewCommands(cli, logger);
+  registerFridaCommands(cli, logger, fridaInstrumentation);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);

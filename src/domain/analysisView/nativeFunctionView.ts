@@ -1,3 +1,4 @@
+import { analysisTextPage } from "./analysisViewText.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import type { FunctionDossier } from "../hopperValues.js";
@@ -5,7 +6,6 @@ import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
   analysisViewInputError,
-  type AnalysisViewCoverage,
   type AnalysisViewParent,
   type AnalysisViewRequest,
   type UnsignedAnalysisView,
@@ -57,47 +57,6 @@ const parentFields = (
     ]),
     unknowns: uniqueSorted(unknowns),
   };
-};
-
-const pseudocodePage = (
-  body: string,
-  offset: number,
-  limit: number,
-): Result<
-  {
-    readonly item: { readonly text: string; readonly unit: "utf16-code-units" };
-    readonly coverage: AnalysisViewCoverage;
-  },
-  AnalysisError
-> => {
-  const start = Math.min(offset, body.length);
-  const high = (n: number) => n >= 0xd800 && n <= 0xdbff;
-  const low = (n: number) => n >= 0xdc00 && n <= 0xdfff;
-  if (
-    start > 0 &&
-    start < body.length &&
-    high(body.charCodeAt(start - 1)) &&
-    low(body.charCodeAt(start))
-  )
-    return err(viewError("Pseudocode offset splits a UTF-16 surrogate pair."));
-  let end = Math.min(start + limit, body.length);
-  if (
-    end > start &&
-    end < body.length &&
-    high(body.charCodeAt(end - 1)) &&
-    low(body.charCodeAt(end))
-  )
-    end--;
-  if (end === start && start < body.length)
-    return err(
-      viewError(
-        "Increase pseudocode limit to include the next complete Unicode character.",
-      ),
-    );
-  return ok({
-    item: { text: body.slice(start, end), unit: "utf16-code-units" },
-    coverage: pageViewCoverage(start, end - start, body.length),
-  });
 };
 
 const nativeRows = (
@@ -193,7 +152,7 @@ export const projectNativeFunctionView = (
     return ok(singleton(status));
   }
   if (view.facet === "pseudocode") {
-    const page = pseudocodePage(dossier.pseudocode, view.offset, view.limit);
+    const page = analysisTextPage(dossier.pseudocode, view.offset, view.limit);
     return page.ok
       ? ok({ kind: "native", view, ...page.value, ...common })
       : page;

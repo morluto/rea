@@ -22,7 +22,10 @@ export interface OptionalProviderLoadFailure {
 
 export type OptionalProviderLoadFailures = Readonly<
   Partial<
-    Record<keyof OptionalObservationProviders, OptionalProviderLoadFailure>
+    Record<
+      keyof OptionalObservationProviders | "fridaInstrumentation",
+      OptionalProviderLoadFailure
+    >
   >
 >;
 

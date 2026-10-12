@@ -36,6 +36,20 @@ retained, call `inspect_analysis_view` for a summary, mitigations or linkage
 facet, one section or symbol, or a stable page. Do not re-run the decoder to
 read a single object.
 
+## Offline WASM
+
+Use `inspect_wasm_artifact` with caller-supplied WABT for selected local bytes.
+For counts, validation and WAT identity, select `detail: "summary"` on the first
+MCP call. The complete original Evidence stays retained; use
+`normalized_result.parent_evidence_id` for exact exports or text pages. Omitted
+or complete detail keeps the existing complete result.
+For a completed result, use `inspect_analysis_view` with its reported retained
+reference for a summary or `view: {kind: "wasm", facet: "exports", offset: 0, limit: 32}`.
+Facets also include sections, imports, candidates, glue, WAT, headers, details
+and tool profile. Text offsets count UTF-16 code units; follow `next_offset`.
+The complete source remains retained after an oversized MCP reply. No target
+execution or network acquisition is implied, and WAT is decoded representation.
+
 ## Native targets
 
 After `open_binary`, use focused search, procedure, or function tools directly.
@@ -121,15 +135,15 @@ them. For packaged apps, inventory/extract with REA's artifact tools and retain
 the exact contained image identity. PDB, ELF debug, or dSYM sidecars are
 additional evidence only when the provider accepts and matches them.
 
-For deeper type recovery, the optional third-party
-[Ghidra NativeAOT analyzer](https://github.com/Washi1337/ghidra-nativeaot)
-rehydrates ReadyToRun metadata and can recover method tables, type relationships,
-frozen objects, and strings. This is a Ghidra extension with its own install and
-interactive workflow; it is not currently part of REA's managed parser or
-headless Ghidra bridge. Treat its annotations as analysis evidence, retain the
-binary identity, and do not present recovered types as original source. Header
-discovery may require a symbol or analyst identification of the ReadyToRun
-header, depending on the binary and analyzer version.
+REA has a built-in read-only snapshot parser for x64 PE targets with .NET 8 RTR
+9.1 metadata. An optional headless Ghidra adapter adds database annotations and
+broader metadata recovery on Linux; it requires an explicitly configured
+NativeAOT JAR. These are separate routes. See the
+[NativeAOT guide](https://github.com/morluto/rea/blob/main/docs/ghidra-nativeaot.md)
+for setup, supported layouts, and host restrictions. Preserve binary identity
+and distinguish derived metadata from Ghidra database observations. Recovered
+types and native pseudocode are not original C# source. Windows Ghidra P0 has
+no database mutation authority.
 
 ## Packages and extraction
 

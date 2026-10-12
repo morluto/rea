@@ -11,6 +11,19 @@ returned inline. When complete `inspect_binary_layout` or
 `inspect_analysis_view` for a summary, one section/symbol/module, or a stable
 page instead of repeating the producer.
 
+Completed `inspect_artifact` inventory also supports a summary and
+`view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.
+Omit `logical_paths` to page all available occurrences; `[]` selects none.
+Other inventory collections are `nodes`, `edges` and
+`integrity_contradictions`. Keep `source_complete` separate from page exhaustion:
+a missing match in partial source Evidence does not establish absence. Use the
+returned parent Evidence ID for subsequent views and export before closing the
+session when the source must survive it.
+When `tools/list` advertises `inspect_artifact.detail`, request `"summary"` to
+retain its complete source and receive that view immediately. Without that
+advertised choice, keep the existing complete call. CLI inspection returns
+portable complete Evidence; save it before projecting a selected inline view.
+
 Use `record_unknown` to track unresolved questions in the user's investigation
 and name the authority or environment still required. Supply supporting and
 contradicting evidence IDs. It updates the session registry directly.

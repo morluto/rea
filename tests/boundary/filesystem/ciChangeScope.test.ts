@@ -6,7 +6,7 @@ import {
   rename,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, matchesGlob } from "node:path";
 
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -157,7 +157,7 @@ it("retains complete checks when implementation is renamed into documentation", 
   const head = await commit(directory);
   expect(await classify(directory, base, head)).toMatchObject({
     code: true,
-    package: true,
+    runtime: true,
   });
 });
 
@@ -268,6 +268,62 @@ it.each([
     { code: false, evm: true, browser: false, package: false },
   ],
   ["unknown-input", { code: true, package: true, evm: true, browser: true }],
+  [
+    "src/application/Example.ts",
+    {
+      code: true,
+      runtime: true,
+      package: false,
+      apple: false,
+      evm: false,
+      browser: false,
+    },
+  ],
+  [
+    "bridge/ghidra/Example.java",
+    { code: true, runtime: true, package: false, apple: false },
+  ],
+  [
+    "src/native/AppleExample.ts",
+    { code: true, runtime: true, apple: true, package: false, evm: false },
+  ],
+  [
+    "scripts/verify/apple/example.mjs",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "src/windows/Example.ts",
+    { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  ["install.sh", { code: true, runtime: true, package: true, evm: false }],
+  [
+    ".agents/skills/reverse-engineer-anything/SKILL.md",
+    { code: true, runtime: true, docs: true, package: false, evm: false },
+  ],
+  [
+    "scripts/verify-real-ghidra.mjs",
+    { code: true, runtime: false, package: false, apple: false, evm: false },
+  ],
+  [
+    "scripts/verify-claude-client.mjs",
+    { code: true, runtime: false, package: false, browser: false },
+  ],
+  [
+    "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/cli/nativePlistCli.test.ts",
+    { code: true, apple: true, package: false, runtime: false },
+  ],
+  [
+    "tests/boundary/filesystem/windowsNpxRegistration.test.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/process/ProcessOwnership.test.ts",
+    { code: true, package: true, apple: false, evm: false, browser: false },
+  ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
   const { directory, base } = await fixture();
   const head = await change(directory, [path]);
@@ -404,6 +460,14 @@ it.each([
     { code: true, package: true, browser: true, evm: true },
   ],
   ["docs/.vitepress/config.ts", { code: false, docs: true, package: false }],
+  ["CHANGELOG.md", { code: false, docs: true, package: false }],
+  ["SECURITY.md", { code: false, docs: true, package: false }],
+  [".github/pull_request_template.md", { code: false, docs: true }],
+  [
+    ".github/ISSUE_TEMPLATE/bug.yml",
+    { code: false, docs: true, workflows: false },
+  ],
+  ["native/windows/README.md", { code: false, docs: true, package: false }],
   [
     "src/contracts/evm/tools.ts",
     { code: true, docs: true, evm: true, package: false },
@@ -461,6 +525,43 @@ it("fails without emitting a plan when package metadata is malformed", async () 
   });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
 });
+
+it.each([
+  [
+    "verify:keyed-archive",
+    "npm run build:cached && node scripts/verify/apple/keyed-archive.mjs",
+    { apple: true, package: false, evm: false, browser: false },
+  ],
+  [
+    "verify:inspector",
+    "npm run build:cached && node scripts/verify/inspector/runtime-observation.mjs",
+    { package: true, apple: false, evm: false, browser: false },
+  ],
+  [
+    "verify:windows-native",
+    "node scripts/verify-windows-native.mjs",
+    { package: true, apple: false, evm: false, browser: false },
+  ],
+])(
+  "routes the %s script to its glob-owned lane",
+  async (script, command, expected) => {
+    const { directory } = await fixture();
+    const base = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: command } }),
+    );
+    const head = await change(
+      directory,
+      ["package.json"],
+      JSON.stringify({ scripts: { [script]: `${command} --verbose` } }),
+    );
+    expect(await classify(directory, base, head)).toMatchObject({
+      code: true,
+      ...expected,
+    });
+  },
+);
 
 it("retains a broad fallback when a provider script adds shared shell work", async () => {
   const { directory } = await fixture();
@@ -538,3 +639,119 @@ it.each(["compile:termux", "build:termux", "build:termux:run"])(
     });
   },
 );
+
+const INTEL_HOST = {
+  os: "macos-15-intel",
+  platform: "darwin",
+  architecture: "x64",
+};
+
+it("keeps macOS x64 package verification for ci:full and non-PR events", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, ["src/windows/Example.ts"]);
+  const matrix = z.object({ include: z.array(z.unknown()) });
+  const hosts = async (event: string, full: boolean) =>
+    matrix.parse((await classify(directory, base, head, event, full)).matrix)
+      .include;
+  const pullRequest = await hosts("pull_request", false);
+  expect(pullRequest).toHaveLength(3);
+  expect(pullRequest).not.toContainEqual(INTEL_HOST);
+  expect(await hosts("pull_request", true)).toContainEqual(INTEL_HOST);
+  for (const event of ["push", "schedule", "workflow_dispatch"])
+    expect(await hosts(event, false)).toContainEqual(INTEL_HOST);
+});
+
+const workflowFile = async (name: string): Promise<unknown> =>
+  parse(
+    await readFile(
+      new URL(`../../../.github/workflows/${name}`, import.meta.url),
+      "utf8",
+    ),
+  );
+
+const scopesSchema = z.object({
+  SCOPES: z.record(z.string(), z.array(z.string())),
+  MANUAL_VERIFIERS: z.array(z.string()),
+});
+
+const loadScopes = async () =>
+  scopesSchema.parse(
+    await import(
+      new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
+    ),
+  );
+
+const stepRuns = z.object({
+  on: z.unknown(),
+  jobs: z.record(
+    z.string(),
+    z.object({
+      steps: z.array(z.object({ run: z.string().optional() })).optional(),
+    }),
+  ),
+});
+
+it("owns every explicit native-host test path with the lane that runs it", async () => {
+  const { SCOPES } = await loadScopes();
+  const ci = stepRuns.parse(await workflowFile("ci.yml"));
+  const listed = (job: string) =>
+    (ci.jobs[job]?.steps ?? [])
+      .flatMap((step) => step.run?.split(/\s+/) ?? [])
+      .filter((token) => token.endsWith(".test.ts"));
+  const unowned = (job: string, scope: string) =>
+    listed(job).filter(
+      (path) =>
+        !(SCOPES[scope] ?? []).some((pattern) => matchesGlob(path, pattern)),
+    );
+  expect(listed("apple-artifacts").length).toBeGreaterThan(0);
+  expect(listed("windows-curated").length).toBeGreaterThan(0);
+  expect(unowned("apple-artifacts", "apple")).toEqual([]);
+  expect(unowned("windows-curated", "package")).toEqual([]);
+});
+
+it("never runs a manual-only verifier from an automatic workflow", async () => {
+  const { MANUAL_VERIFIERS } = await loadScopes();
+  const scripts = z
+    .object({ scripts: z.record(z.string(), z.string()) })
+    .parse(
+      JSON.parse(
+        await readFile(
+          new URL("../../../package.json", import.meta.url),
+          "utf8",
+        ),
+      ),
+    ).scripts;
+  const directory = new URL("../../../.github/workflows/", import.meta.url);
+  const commands: string[] = [];
+  for (const name of await readdir(directory)) {
+    const workflow = stepRuns.parse(await workflowFile(name));
+    const triggers = JSON.stringify(workflow.on);
+    if (
+      name !== "ci.yml" &&
+      !triggers.includes("workflow_call") &&
+      !triggers.includes("pull_request")
+    )
+      continue;
+    for (const job of Object.values(workflow.jobs))
+      for (const step of job.steps ?? []) if (step.run) commands.push(step.run);
+  }
+  const files = new Set<string>();
+  const seen = new Set<string>();
+  while (commands.length) {
+    const command = commands.pop() ?? "";
+    for (const [, file] of command.matchAll(/\b(scripts\/[\w./-]+\.mjs)\b/g))
+      if (file) files.add(file);
+    for (const [, script] of command.matchAll(/npm run ([\w:.-]+)/g)) {
+      if (!script || seen.has(script)) continue;
+      seen.add(script);
+      const body = scripts[script];
+      if (body) commands.push(body);
+    }
+  }
+  expect(files.size).toBeGreaterThan(0);
+  expect(
+    [...files].filter((file) =>
+      MANUAL_VERIFIERS.some((pattern) => matchesGlob(file, pattern)),
+    ),
+  ).toEqual([]);
+});

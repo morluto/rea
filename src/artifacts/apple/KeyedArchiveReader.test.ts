@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { build, buildBinary } from "plist";
+import { build, buildBinary, type PlistValue } from "plist";
 import { decodeKeyedArchiveBytes } from "./KeyedArchiveReader.js";
+import { deeplyNestedXmlPlist } from "../../../tests/fixtures/keyedArchiveXmlNesting.js";
 
 const archive = {
   $archiver: "NSKeyedArchiver",
@@ -321,5 +322,68 @@ describe("binary plist reference preflight", () => {
     expect(graph.limitations).toContain(
       "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
     );
+  });
+});
+
+describe("XML plist nesting preflight", () => {
+  const selection = { offset: 0, limit: 1 };
+
+  /** A valid XML NSKeyedArchiver envelope whose object 1 nests `depth` dictionaries. */
+  const deeplyNestedArchive = (depth: number) => {
+    let payload: PlistValue = "leaf";
+    for (let level = 0; level < depth; level += 1) payload = { k: payload };
+    return Buffer.from(
+      build({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null", payload],
+        $top: { root: { UID: 1 } },
+      }),
+    );
+  };
+
+  /** Follow the single-member chain of a decoded object to its deepest value. */
+  const deepestValue = (value: unknown): unknown => {
+    let cursor = value;
+    while (
+      cursor !== null &&
+      typeof cursor === "object" &&
+      !Array.isArray(cursor) &&
+      "k" in cursor
+    ) {
+      cursor = (cursor as Record<string, unknown>).k;
+    }
+    return cursor;
+  };
+
+  it.each([129, 200, 3000, 4000])(
+    "rejects %i-level XML nesting as the documented resource limit",
+    (depth) => {
+      // Recursive decoding exceeds the call stack before the projection limit
+      // can report it, so the decoder must reject the nesting up front with
+      // the same bounded-resource error an in-reach document would produce.
+      expect(() =>
+        decodeKeyedArchiveBytes(
+          Buffer.from(deeplyNestedXmlPlist(depth)),
+          selection,
+        ),
+      ).toThrow(new RangeError("Plist exceeds 128 nesting levels"));
+    },
+  );
+
+  it("decodes a valid XML keyed archive exactly at the nesting limit", () => {
+    const graph = decodeKeyedArchiveBytes(deeplyNestedArchive(126), {
+      root: "root",
+      offset: 1,
+      limit: 1,
+    });
+    expect(graph.objects).toHaveLength(1);
+    expect(deepestValue(graph.objects[0]?.value)).toBe("leaf");
+  });
+
+  it("rejects one nesting level past the limit before decoding", () => {
+    expect(() =>
+      decodeKeyedArchiveBytes(deeplyNestedArchive(127), selection),
+    ).toThrow(new RangeError("Plist exceeds 128 nesting levels"));
   });
 });

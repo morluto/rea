@@ -11,7 +11,7 @@ runs:
       id: plan
       shell: bash
       env:
-        BUILD_CACHE_PREFIX: rea-portable-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.npmrc') }}
+        BUILD_CACHE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.npmrc', '.nvmrc', 'package-lock.json') }}
       run: |
         npm run --silent test:prepare -- --dry=json |
           node --input-type=module -e '
@@ -25,6 +25,7 @@ runs:
             }).sort();
             const hash = createHash("sha256").update(hashes.join("\n")).digest("hex");
             console.log(`key=${process.env.BUILD_CACHE_PREFIX}-${hash}`);
+            console.log(`prefix=${process.env.BUILD_CACHE_PREFIX}-`);
           ' >> "$GITHUB_OUTPUT"
     - name: Restore portable build outputs
       if: inputs.save != 'true'
@@ -32,9 +33,11 @@ runs:
       with:
         path: .turbo/cache/
         key: ${{ steps.plan.outputs.key }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Restore and save portable build outputs
       if: inputs.save == 'true'
       uses: actions/cache@v4
       with:
         path: .turbo/cache/
         key: ${{ steps.plan.outputs.key }}
+        restore-keys: ${{ steps.plan.outputs.prefix }}

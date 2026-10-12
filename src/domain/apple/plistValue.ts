@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
 
-const MAX_PLIST_DEPTH = 128;
+/**
+ * Maximum plist value nesting the JSON projection supports. The XML decode
+ * preflight shares this limit so oversized documents are rejected before any
+ * recursive pass rather than during one.
+ */
+export const MAX_PLIST_DEPTH = 128;
 
 /** A decoded plist projected into JSON, with values JSON cannot express. */
 export interface ProjectedPlistValue {

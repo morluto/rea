@@ -101,7 +101,9 @@ Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
 and 30-second owned command deadline. The reply budget applies to the decoder
 record; the CLI/MCP Evidence envelope adds copies and encoding overhead. The
 pinned MCP SDK defaults to a 10 MiB receive buffer. Large complete results need
-a caller-configured `StdioClientTransport({ maxBufferSize: ... })`; the large
+a caller-configured `StdioClientTransport({ maxBufferSize: ... })` and a matching
+server `REA_MCP_MAX_RESPONSE_BYTES`. See [MCP delivery budgets](mcp-contracts.md#tool-results).
+These settings affect delivery, not decoder coverage or limits. The large
 extended-index verification uses 256 MiB and an explicit five-minute request
 timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to at most 3 GiB virtual address space,
 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are

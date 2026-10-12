@@ -141,3 +141,45 @@ it("preserves JEB provider failure reasons through the MCP boundary", async () =
   expect(text).toContain("ECONNREFUSED");
   expect(text).toContain("REA_JEB_MCP_URL");
 });
+
+it("keeps the MCP server usable when REA_JEB_MCP_URL is invalid", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("deep provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    { environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" } },
+  );
+  const client = new Client({ name: "jeb-invalid-endpoint", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  expect((await client.listTools()).tools.length).toBeGreaterThan(0);
+  const failed = await client.callTool({
+    name: "inspect_jeb_client",
+    arguments: {},
+  });
+  expect(failed.isError).toBe(true);
+  const text = (failed.content ?? [])
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("");
+  expect(JSON.parse(text)).toMatchObject({
+    error: {
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_JEB_MCP_URL",
+            constraint: expect.stringContaining("loopback"),
+          },
+        ],
+      },
+    },
+  });
+});

@@ -1,4 +1,5 @@
 import {
+  ClientConfigurationShapeError,
   parseClientConfiguration,
   serializeClientConfiguration,
   clientServerPath,
@@ -6,7 +7,7 @@ import {
   withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
-import { copyFile, lstat, realpath, rm } from "node:fs/promises";
+import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { join } from "node:path";
@@ -50,6 +51,8 @@ export interface UninstallFileSystem {
   stat(path: string): Promise<ManagedPathStats>;
   realpath?(path: string): Promise<string>;
   remove(path: string, recursive?: boolean): Promise<void>;
+  /** Remove a directory only if it is empty; a non-empty one is kept. */
+  removeEmptyDirectory?(path: string): Promise<void>;
 }
 
 const systemFileSystem = (
@@ -64,6 +67,7 @@ const systemFileSystem = (
   stat: (path) => lstat(path),
   realpath: (path) => realpath(path),
   remove: (path, recursive = true) => rm(path, { recursive }),
+  removeEmptyDirectory: (path) => rmdir(path),
 });
 
 /** One explicitly classified uninstall action. */
@@ -279,12 +283,13 @@ const readClientConfiguration = async (
     const parsed = parseClientConfiguration(original, client.format);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
-    void cause;
     return itemRead(
       item(
         client.name,
         "failed",
-        `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
+        cause instanceof ClientConfigurationShapeError
+          ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
+          : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
       ),
     );
   }
@@ -600,10 +605,20 @@ const removeManagedSkill = async (
         "REA ownership manifest was retained because a managed file could not be safely removed.",
       ),
     );
-  else
-    results.push(
-      await removeManagedSkillFile(path, manifestName, name, fileSystem),
+  else {
+    const manifest = await removeManagedSkillFile(
+      path,
+      manifestName,
+      name,
+      fileSystem,
     );
+    results.push(manifest);
+    const directories =
+      manifest.status === "removed"
+        ? await removeEmptyManagedDirectories(path, name, fileSystem)
+        : undefined;
+    if (directories !== undefined) results.push(directories);
+  }
   const failed = results.find(({ status }) => status === "failed");
   if (failed !== undefined)
     return item(name, "failed", results.map(({ detail }) => detail).join(" "));
@@ -614,6 +629,46 @@ const removeManagedSkill = async (
     "REA-managed skill files were removed; other files were preserved.",
   );
 };
+
+/** Directories setup creates for managed files, deepest first, then the root. */
+const MANAGED_SKILL_DIRECTORIES = [
+  ...new Set(
+    MANAGED_SKILL_FILES.map((relativePath) =>
+      relativePath.split("/").slice(0, -1).join("/"),
+    ).filter((directory) => directory.length > 0),
+  ),
+].sort((left, right) => right.split("/").length - left.split("/").length);
+
+/** Remove managed directories left empty; any remaining user file keeps them. */
+const removeEmptyManagedDirectories = async (
+  root: string,
+  name: string,
+  fileSystem: UninstallFileSystem,
+): Promise<UninstallItem | undefined> => {
+  if (fileSystem.removeEmptyDirectory === undefined) return undefined;
+  for (const directory of [
+    ...MANAGED_SKILL_DIRECTORIES.map((relative) => join(root, relative)),
+    root,
+  ]) {
+    try {
+      await fileSystem.removeEmptyDirectory(directory);
+    } catch (cause: unknown) {
+      // User files, an absent directory, or a non-directory keep it as is.
+      if (!isKeptDirectory(cause))
+        return item(
+          name,
+          "failed",
+          `Managed skill directory could not be removed: ${directory}.`,
+        );
+    }
+  }
+  return undefined;
+};
+
+const isKeptDirectory = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  ["ENOTEMPTY", "EEXIST", "ENOENT", "ENOTDIR"].includes(String(cause.code));
 
 const removeManagedSkillFile = async (
   root: string,

@@ -44,6 +44,12 @@ export interface MipsAbiFlags {
   readonly flags2: number;
 }
 
+/** Byte range of the selected slice inside its universal Mach-O container. */
+export interface UniversalMachOSlice {
+  readonly offset: number;
+  readonly size: number;
+}
+
 interface BinaryTargetIdentity {
   readonly path: string;
   readonly sourcePath?: string;
@@ -83,12 +89,15 @@ export type BinaryTarget =
       readonly managed?: never;
     })
   | (ExecutableTarget & {
-      readonly format:
-        | "mach-o"
-        | "mach-o-universal"
-        | "elf"
-        | "dos-mz"
-        | "dos-com";
+      readonly format: "mach-o" | "elf" | "dos-mz" | "dos-com";
+      readonly universalSlice?: never;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
+  | (ExecutableTarget & {
+      readonly format: "mach-o-universal";
+      /** Selected slice range a provider must analyze instead of the container. */
+      readonly universalSlice: UniversalMachOSlice;
       readonly executableRole?: never;
       readonly managed?: never;
     })

@@ -91,6 +91,12 @@ identifiers only; they do not retrieve or replace the inline Evidence result.
 
 Completion sources are live projections of the current session:
 
+Document and procedure completion in a binary session reads an already-ready
+provider; it does not start analysis. A cold provider, a target transition, or
+unavailable inventory can return no suggestions. Run an analysis query first
+when you need inventory from a provider that supplies it. An empty completion
+list does not establish that the target has no procedures.
+
 | Argument family     | Source and filtering                                                                                                                                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Document            | Current provider `list_documents` result.                                                                                                            |

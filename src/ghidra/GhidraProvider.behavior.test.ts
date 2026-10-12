@@ -242,6 +242,7 @@ describe("Ghidra Mach-O slice support", () => {
       format: "mach-o-universal",
       architecture: "arm64",
       availableArchitectures: ["x86_64", "arm64"],
+      universalSlice: { offset: 0, size: 32 },
     };
 
     expect(ghidra.inspectTargetSupport(universal)).toMatchObject({

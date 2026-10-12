@@ -334,13 +334,18 @@ describe("native macOS installer", { timeout: 20_000 }, () => {
 });
 
 describe("installer semantic version parsing", { timeout: 20_000 }, () => {
-  it.each(["1.2.3-01"])(
+  it.each([
+    "1.2.3-01",
+    "1.2.3-$(printf unexpected)",
+    '1.2.3-"; printf unexpected; #',
+  ])(
     "rejects malformed semantic versions before invoking npm: %s",
     async (version) => {
       const fixture = await createFixture();
       await expect(
         runInstaller(fixture, ["--version", version, "--dry-run"]),
       ).rejects.toMatchObject({
+        stdout: "",
         stderr:
           "REA installation failed: version must be an exact semantic version.\n",
       });

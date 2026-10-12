@@ -1,5 +1,12 @@
-import { DOMParser, normalizeLineEndings } from "@xmldom/xmldom";
+import {
+  DOMParser,
+  normalizeLineEndings,
+  type Document,
+  type Node,
+} from "@xmldom/xmldom";
 import { parse } from "plist";
+
+import { MAX_PLIST_DEPTH } from "./apple/plistValue.js";
 
 /** The dictionary key REA results cannot carry: validation strips it. */
 const PROTOTYPE_KEY = "__proto__";
@@ -88,18 +95,64 @@ export const parseXmlPropertyList = (
   // by app Info.plist resolution. Only XML needs the key-element substitution.
   const first = text.trimStart()[0];
   if (first === "{" || first === "(") return omitPrototypeKeys(parse(text));
+  // Normalize only the literal line endings the pinned decoder normalizes.
+  // Preserve character references in the source: serializing a DOM would turn
+  // e.g. an encoded carriage return into a literal newline on the second parse.
+  const normalized = normalizeLineEndings(text);
+  // The pinned XML parser is iterative. Reuse its document for the depth
+  // preflight and key lookup so quoted attributes and declarations have the
+  // same meaning at both boundaries, before plist's recursive value decode.
+  const document = new DOMParser().parseFromString(normalized, "text/xml");
+  assertXmlPlistDepthWithinLimit(document);
   const { substituted, placeholder } = substitutePrototypeKeys(
-    normalizeLineEndings(text),
+    normalized,
+    document,
   );
   return withoutKey(parse(substituted), placeholder);
 };
 
+/** Elements whose children the pinned plist value decoder visits recursively. */
+const PLIST_CONTAINER_ELEMENTS = new Set(["plist", "dict", "array"]);
+
+/**
+ * Reject XML plists nested deeper than the projection supports before any
+ * recursive value pass runs. `plist` and the prototype-key traversal recurse once
+ * per nesting level, so a deeply nested document exhausts the call stack
+ * before the projection limit can report the resource bound. The failure
+ * matches `projectPlistValue` so callers classify it as a limit failure.
+ *
+ * Depth counts values the way the projection does: the root value is level 0
+ * and every container member is one level deeper. A dictionary key names a
+ * member instead of nesting one, and a self-closing element is the value at
+ * its own level. The outer plist envelope is unwrapped by the decoder;
+ * nested plist elements decode as arrays and must count toward the bound.
+ */
+const assertXmlPlistDepthWithinLimit = (document: Document): void => {
+  const root = document.documentElement;
+  if (root === null) return;
+  const pending: Array<{ node: Node; depth: number }> = [
+    { node: root, depth: -1 },
+  ];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry === undefined) break;
+    const { node, depth } = entry;
+    // Schedule only the next sibling, keeping traversal storage proportional
+    // to depth rather than the number of members in a wide container.
+    if (node.nextSibling !== null)
+      pending.push({ node: node.nextSibling, depth });
+    if (node.nodeType !== node.ELEMENT_NODE) continue;
+    if (node.nodeName !== "key" && depth > MAX_PLIST_DEPTH)
+      throw new RangeError(
+        `Plist exceeds ${String(MAX_PLIST_DEPTH)} nesting levels`,
+      );
+    if (PLIST_CONTAINER_ELEMENTS.has(node.nodeName) && node.firstChild !== null)
+      pending.push({ node: node.firstChild, depth: depth + 1 });
+  }
+};
+
 /** Locate keys with the same XML parser and first-child semantics as plist. */
-const substitutePrototypeKeys = (text: string) => {
-  // Normalize only the literal line endings the pinned decoder normalizes.
-  // Preserve character references in the source: serializing a DOM would turn
-  // e.g. an encoded carriage return into a literal newline on the second parse.
-  const document = new DOMParser().parseFromString(text, "text/xml");
+const substitutePrototypeKeys = (text: string, document: Document) => {
   const keys = Array.from(document.getElementsByTagName("key"));
   const decodedKeys = new Set(keys.map((key) => key.firstChild?.nodeValue));
   let placeholder = "__rea_prototype_key__";

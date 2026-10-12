@@ -193,7 +193,15 @@ validation and resource bounds. Omitted script metadata makes its affected
 section explicitly truncated.
 Disallowed-origin entries are filtered before retention.
 
-CDP discovery, WebSocket connection, and commands continue until the peer responds or the caller cancels the operation; REA has no internal byte, message-count, or pending-command quota for these exchanges. Without caller cancellation, a stalled peer can leave an operation waiting. On cancellation, REA closes only its own WebSocket, waiting up to one second before terminating it. Malformed unsolicited events and malformed replies to pending commands poison the connection so later commands fail closed. When a correlated reply reports a session ID, it must match the command's selected session. An optional method is reported unavailable only when the browser rejects it as unknown; other command rejections retain their reported failure.
+CDP discovery, connection, and commands wait for the peer or caller cancellation;
+a stalled peer can leave an operation waiting. WebSocket messages remain subject
+to the [64 MiB limit](#request-boundary). REA does not impose a message-count or
+pending-command quota. On cancellation, it closes only its own WebSocket,
+waiting up to one second before terminating it. Malformed unsolicited events
+and malformed replies to pending commands poison the connection so later
+commands fail closed. A correlated reply's session ID must match the command's
+selected session. An optional method is unavailable only when the browser
+rejects it as unknown; other command rejections retain their reported failure.
 
 Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
 
