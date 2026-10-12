@@ -1,8 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
@@ -13,12 +13,10 @@ import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 describe("artifact extraction identity", () => {
   it("uses code-point order for path-independent extraction identities", async () => {
     const root = await createTestTempDirectory("rea-extract-order-");
-    const source = join(root, "source");
-    await mkdir(source);
-    for (const name of ["ä.js", "a.js", "Z.js"])
-      await writeFile(join(source, name), `${name}\n`);
+    const source = join(root, "source.zip");
+    await writeOrderedZip(source, ["ä.js", "a.js", "Z.js"]);
     const result = await new ArtifactProvider(process.env)
-      .createClient(directoryTarget(source))
+      .createClient(archiveTarget(source))
       .execute(
         "extract_artifact",
         artifactExtractionExecutionSchema.parse({
@@ -36,10 +34,10 @@ describe("artifact extraction identity", () => {
   });
 });
 
-const directoryTarget = (path: string): BinaryTarget => ({
+const archiveTarget = (path: string): BinaryTarget => ({
   path,
   sourcePath: path,
   sha256: "0".repeat(64),
   kind: "archive",
-  format: "asar",
+  format: "zip",
 });

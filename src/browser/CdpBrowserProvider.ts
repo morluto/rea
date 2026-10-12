@@ -107,6 +107,11 @@ export class CdpBrowserProvider implements BrowserObservationPort {
               : [
                   `${String(selected.unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
                 ]),
+            ...(selected.allowed.some((target) => target.attached === null)
+              ? [
+                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                ]
+              : []),
           ],
         }),
       );

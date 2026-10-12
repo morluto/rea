@@ -117,14 +117,17 @@ describe("Unblob multi-file extraction diagnostics", () => {
       },
     ]);
   });
+});
 
-  it("retains nested MultiFile extraction failures in partial coverage", () => {
+describe("Unblob task derivation identities", () => {
+  it("joins chunk and MultiFile derivations to their producer blob reports", () => {
     const outputPath = `${context.outputRoot}/multi`;
+    const chunkPath = `${context.outputRoot}/chunk-child`;
     const childTask = {
       path: outputPath,
       depth: 1,
       blob_id: "multi-id",
-      is_multi_file: true,
+      is_multi_file: false,
     };
     const extractionFailure = {
       __typename__: "ExtractorDependencyNotFoundReport",
@@ -144,10 +147,51 @@ describe("Unblob multi-file extraction diagnostics", () => {
       [
         {
           ...parent,
-          reports: parent.reports.filter(
-            (item) => item.__typename__ !== "UnknownChunkReport",
-          ),
-          subtasks: [childTask],
+          reports: [
+            ...parent.reports.filter(
+              (item) => item.__typename__ !== "UnknownChunkReport",
+            ),
+            {
+              __typename__: "ChunkReport",
+              id: "chunk-id",
+              start_offset: 4,
+              end_offset: 10,
+              size: 6,
+              handler_name: "gzip",
+              is_encrypted: false,
+              extraction_reports: [],
+            },
+            multiFileReport,
+          ],
+          subtasks: [
+            {
+              path: chunkPath,
+              depth: 1,
+              blob_id: "chunk-id",
+              is_multi_file: false,
+            },
+            childTask,
+          ],
+        },
+        {
+          task: {
+            path: chunkPath,
+            depth: 1,
+            blob_id: "chunk-id",
+            is_multi_file: false,
+          },
+          reports: [
+            {
+              __typename__: "StatReport",
+              path: chunkPath,
+              size: 4,
+              is_file: true,
+              is_dir: false,
+              is_link: false,
+              link_target: null,
+            },
+          ],
+          subtasks: [],
         },
         {
           task: childTask,
@@ -161,7 +205,6 @@ describe("Unblob multi-file extraction diagnostics", () => {
               is_link: false,
               link_target: null,
             },
-            multiFileReport,
           ],
           subtasks: [],
         },
@@ -170,14 +213,157 @@ describe("Unblob multi-file extraction diagnostics", () => {
     );
 
     expect(normalized.coverage).toBe("partial");
+    expect(normalized.derivations).toEqual([
+      {
+        parent_path: "$input",
+        child_path: "$output/chunk-child",
+        provider_blob_id: "chunk-id",
+        handler: "gzip",
+        parent_file_range: { offset: 4, length: 6 },
+      },
+      {
+        parent_path: "$input",
+        child_path: "$output/multi",
+        provider_blob_id: "multi-id",
+        handler: "multipart-firmware",
+        parent_file_range: null,
+      },
+    ]);
     expect(normalized.diagnostics).toEqual([
       {
-        input_path: "$output/multi",
+        input_path: "$input",
         stage: "multipart-firmware",
         missing_dependencies: ["sasquatch"],
         report: multiFileReport,
       },
     ]);
+  });
+});
+
+describe("Unblob blob identity validation", () => {
+  it("joins reports within each parent, allows missing provenance and rejects local duplicates", () => {
+    const rootChild = {
+      path: `${context.outputRoot}/root-child`,
+      depth: 1,
+      blob_id: "shared-id",
+      is_multi_file: false,
+    };
+    const containerTask = {
+      path: `${context.outputRoot}/container`,
+      depth: 1,
+      blob_id: "container-id",
+      is_multi_file: false,
+    };
+    const nestedChild = {
+      path: `${context.outputRoot}/container/nested-child`,
+      depth: 2,
+      blob_id: "shared-id",
+      is_multi_file: false,
+    };
+    const fileRecord = <T extends { path: string }>(task: T) => ({
+      task,
+      reports: [
+        {
+          __typename__: "StatReport",
+          path: task.path,
+          size: 1,
+          is_file: true,
+          is_dir: false,
+          is_link: false,
+          link_target: null,
+        },
+      ],
+      subtasks: [],
+    });
+    const chunk = (
+      id: string,
+      handler: string,
+      start: number,
+      end: number,
+    ) => ({
+      __typename__: "ChunkReport",
+      id,
+      start_offset: start,
+      end_offset: end,
+      size: end - start,
+      handler_name: handler,
+      is_encrypted: false,
+      extraction_reports: [],
+    });
+    const base = root();
+    const rootReports = [
+      ...base.reports.filter(
+        (report) => report.__typename__ !== "UnknownChunkReport",
+      ),
+      chunk("shared-id", "root-handler", 0, 4),
+      chunk("container-id", "container-handler", 4, 10),
+    ];
+    const normalized = normalizeUnblobReport(
+      [
+        {
+          ...base,
+          reports: rootReports,
+          subtasks: [rootChild, containerTask],
+        },
+        fileRecord(rootChild),
+        {
+          task: containerTask,
+          reports: [
+            {
+              __typename__: "StatReport",
+              path: containerTask.path,
+              size: 10,
+              is_file: true,
+              is_dir: false,
+              is_link: false,
+              link_target: null,
+            },
+            chunk("shared-id", "nested-handler", 2, 5),
+          ],
+          subtasks: [nestedChild],
+        },
+        fileRecord(nestedChild),
+      ],
+      context,
+    );
+
+    expect(normalized.derivations).toMatchObject([
+      { handler: "root-handler", parent_file_range: { offset: 0, length: 4 } },
+      {
+        handler: "container-handler",
+        parent_file_range: { offset: 4, length: 6 },
+      },
+      {
+        handler: "nested-handler",
+        parent_file_range: { offset: 2, length: 3 },
+      },
+    ]);
+
+    const noOrigin = {
+      ...base,
+      reports: base.reports.filter(
+        (report) => report.__typename__ !== "UnknownChunkReport",
+      ),
+      subtasks: [rootChild],
+    };
+    expect(
+      normalizeUnblobReport([noOrigin, fileRecord(rootChild)], context)
+        .derivations[0],
+    ).toMatchObject({ handler: null, parent_file_range: null });
+
+    expect(() =>
+      normalizeUnblobReport(
+        [
+          {
+            ...base,
+            reports: [...rootReports, chunk("shared-id", "duplicate", 10, 12)],
+            subtasks: [rootChild],
+          },
+          fileRecord(rootChild),
+        ],
+        context,
+      ),
+    ).toThrow("Duplicate blob identity in parent task");
   });
 });
 

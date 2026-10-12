@@ -152,7 +152,7 @@ const classifyRootFormat = async (
   if (hasZipSignature(prefix)) return zipRootPackageFormat(lower);
   if (
     lower.endsWith(".pkg") &&
-    prefix.subarray(0, 4).toString("ascii") === "xar!"
+    prefix.subarray(0, 4).equals(Buffer.from("xar!"))
   )
     return "pkg";
   if (lower.endsWith(".dmg") && (await hasKolyTrailer(handle))) return "dmg";
@@ -172,5 +172,5 @@ const hasKolyTrailer = async (handle: FileHandle): Promise<boolean> => {
   if (size < 512) return false;
   const trailer = Buffer.alloc(4);
   const read = await handle.read(trailer, 0, trailer.length, size - 512);
-  return read.bytesRead === 4 && trailer.toString("ascii") === "koly";
+  return read.bytesRead === 4 && trailer.equals(Buffer.from("koly"));
 };

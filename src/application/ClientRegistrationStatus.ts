@@ -154,6 +154,20 @@ export const readClientRegistrationStatuses = async (
       const policyBlock = policy.value;
       const raw = effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey);
       if (raw === undefined) {
+        const editabilityError =
+          parsed.dialect === "dsh"
+            ? dshDocument(parsed.document).editabilityError
+            : undefined;
+        if (editabilityError !== undefined) {
+          statuses.push({
+            client: client.name,
+            config_path: client.configPath,
+            command: [],
+            state: "invalid",
+            remediation: editabilityError.message,
+          });
+          continue;
+        }
         statuses.push(
           unavailableStatus(client.name, client.configPath, "missing"),
         );

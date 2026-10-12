@@ -149,7 +149,9 @@ export const adbInputSchemas = {
       .string()
       .min(1)
       .regex(/^\/[^\x00]*$/u, "Device path must be absolute")
-      .describe("Absolute device directory path to list (ls -la)"),
+      .describe(
+        "Absolute device directory path to list, including hidden children",
+      ),
   }),
   list_adb_features: z.strictObject({
     serial: deviceSerialSchema.describe(

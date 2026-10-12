@@ -260,7 +260,7 @@ npx rea-agents@latest setup
 
 ## سجل النجوم
 
-🎉 **90,000 نجمة على GitHub — شكرًا لكم!**
+🎉 **110,000 نجمة على GitHub — شكرًا لكم!**
 
 شكرًا لكل من يستخدم REA، ويبلّغ عن الأخطاء، ويقترح ميزات، ويختبر إصدارات البناء، ويساهم بالإصلاحات.
 
@@ -274,7 +274,13 @@ npx rea-agents@latest setup
 
 ## إخلاء المسؤولية
 
-يوفّر REA أدوات لأبحاث الهندسة العكسية والتحليل وإعادة البناء المشروعة. أنت مسؤول عن الحصول على أي تفويض مطلوب والالتزام بالقوانين المعمول بها. لا يؤيد المشروع الاستخدام غير القانوني أو غير المصرّح به.
+راجع [DISCLAIMER.md](DISCLAIMER.md) للحصول على إرشادات الاستخدام المسؤول.
+
+REA مخصص للبحث والتعليم والتشغيل البيني وحفظ البرمجيات بشكل قانوني، ولتحليل البرمجيات التي تملكها أو لديك تفويض لفحصها.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## المساهمة
 
@@ -285,3 +291,15 @@ npx rea-agents@latest setup
 ## الترخيص
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

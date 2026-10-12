@@ -7,6 +7,10 @@ import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import {
+  providerRetryAction,
+  type ProviderOperationHealth,
+} from "../domain/providerOperationHealth.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
@@ -111,6 +115,7 @@ export class GhidraClient {
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #startupController: AbortController | undefined;
   #startPromise: Promise<GhidraStartResult> | undefined;
+  #ready = false;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(
     () => this.#diagnostics(),
@@ -212,7 +217,8 @@ export class GhidraClient {
     void started.then(
       (result) => {
         signal?.removeEventListener("abort", onAbort);
-        if (!result.ok) reset();
+        if (result.ok) this.#ready = true;
+        else reset();
       },
       (cause: unknown) => {
         this.#logger.debug(
@@ -282,6 +288,20 @@ export class GhidraClient {
   ): Promise<Result<JsonValue, GhidraSessionError>> {
     const started = await this.start(options.signal, options.progress);
     if (!started.ok) return started;
+    return this.#requestQueue.run(
+      operation,
+      parameters,
+      options.signal === undefined ? {} : { signal: options.signal },
+    );
+  }
+
+  /** Dispatch against the connected bridge without invoking startup or retry. */
+  callToolIfReady(
+    operation: GhidraOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<JsonValue, GhidraSessionError> | undefined> {
+    if (!this.isReady()) return Promise.resolve(undefined);
     return this.#requestQueue.run(
       operation,
       parameters,
@@ -412,6 +432,16 @@ export class GhidraClient {
     }
   }
 
+  /** True only after the authenticated startup handshake has completed. */
+  isReady(): boolean {
+    return (
+      this.#ready &&
+      this.#socket !== undefined &&
+      !this.#socket.destroyed &&
+      this.#closePromise === undefined
+    );
+  }
+
   #cleanupError(cause: unknown): AnalysisError {
     if (cause instanceof AnalysisError && cause.cleanupIncomplete) return cause;
     return new ProviderCleanupError(
@@ -458,6 +488,7 @@ export class GhidraClient {
   }
 
   #requestClose(forceStop: boolean): Promise<void> {
+    this.#ready = false;
     const starting = this.#startPromise;
     const controller = this.#startupController;
     controller?.abort();
@@ -475,6 +506,32 @@ export class GhidraClient {
       );
       throw cause;
     });
+  }
+
+  /** Observed failures that prevent a retained session from being reused. */
+  operationHealthSnapshot(): ProviderOperationHealth | undefined {
+    const exit = this.#process?.observedExit();
+    const state =
+      exit !== undefined
+        ? "exited"
+        : this.#socket?.destroyed === true
+          ? "unreachable"
+          : this.#startPromise === undefined &&
+              (this.#process !== undefined ||
+                this.#socket !== undefined ||
+                this.#runtimeRoot !== undefined ||
+                this.#socketRoot !== undefined ||
+                this.#snapshotOwners.size > 0)
+            ? "unknown"
+            : undefined;
+    if (state === undefined) return undefined;
+    return {
+      state,
+      stage: null,
+      retryAction: providerRetryAction(state),
+      exitCode: exit?.code ?? null,
+      requests: [],
+    };
   }
 
   /** Latest bounded local diagnostics, with bearer material redacted. */
@@ -633,7 +690,7 @@ export class GhidraClient {
       deadline,
       failure: this.#failure,
       isClosed: () => this.#closing,
-      processExited: () => this.#process?.snapshot().exitCode !== undefined,
+      processExited: () => this.#process?.observedExit() !== undefined,
       startupTimeoutMs: this.#options.startupTimeoutMs,
       handlers: {
         data: this.#onSocketData,

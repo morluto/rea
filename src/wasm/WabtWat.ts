@@ -147,9 +147,11 @@ export const parseWabtWat = (text: string) => {
           if (prefix === null)
             throw new Error("Unsupported WABT custom-section name.");
           const nameString = watString(form, prefix[0].length);
-          const name = new TextDecoder("utf-8", { fatal: true }).decode(
-            nameString.bytes,
-          );
+          // A WASM name is length-delimited UTF-8; leading U+FEFF is name data.
+          const name = new TextDecoder("utf-8", {
+            fatal: true,
+            ignoreBOM: true,
+          }).decode(nameString.bytes);
           customSectionNames.push(name);
           if (name === "name") {
             const payloadPrefix = /^\s+"/u.exec(form.slice(nameString.end));

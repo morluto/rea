@@ -150,6 +150,26 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
+describe("GhidraClient ready-only dispatch", () => {
+  it("does not start cold and preserves the normal result once ready", async () => {
+    const launcher = new FixtureLauncher();
+    const client = clientFor(launcher);
+
+    await expect(client.callToolIfReady("list_strings", {})).resolves.toBe(
+      undefined,
+    );
+    expect(launcher.processes).toEqual([]);
+
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    await expect(client.callToolIfReady("list_strings", {})).resolves.toEqual({
+      ok: true,
+      value: [expect.objectContaining({ value: "fixture value" })],
+    });
+    expect(launcher.processes).toHaveLength(1);
+  });
+});
+
 it("reports unknown startup work and stops notifications when cancellation releases the process", async () => {
   vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
   const launcher = new FixtureLauncher("silent");
@@ -232,6 +252,7 @@ describe("GhidraClient captured source snapshot", () => {
     if (!started.ok) throw started.error;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
+      .mockRejectedValueOnce(new Error("snapshot descriptor close failed"))
       .mockRejectedValueOnce(new Error("snapshot descriptor close failed"));
     try {
       await expect(client.hashTargetSnapshot()).resolves.toMatchObject({
@@ -240,11 +261,19 @@ describe("GhidraClient captured source snapshot", () => {
       });
       const owner = close.mock.contexts[0];
       expect(owner).toBeInstanceOf(OwnedFileHandle);
+      await expect(client.close()).resolves.toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      expect(client.operationHealthSnapshot()).toMatchObject({
+        state: "unknown",
+      });
       const closed = await client.close();
       if (!closed.ok) throw closed.error;
+      expect(client.operationHealthSnapshot()).toBeUndefined();
       expect(
         close.mock.contexts.filter((context) => context === owner),
-      ).toHaveLength(2);
+      ).toHaveLength(3);
     } finally {
       close.mockRestore();
     }
@@ -591,11 +620,15 @@ describe("GhidraClient runtime removal failures", () => {
           },
         });
         await expect(access(runtimeRoot)).resolves.toBeUndefined();
+        expect(client.operationHealthSnapshot()).toMatchObject({
+          state: "unknown",
+        });
       } finally {
         await chmod(runtimeRoot, 0o700);
       }
 
       await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+      expect(client.operationHealthSnapshot()).toBeUndefined();
       await expect(access(runtimeRoot)).rejects.toMatchObject({
         code: "ENOENT",
       });
@@ -626,16 +659,21 @@ describe("GhidraClient cleanup and diagnostics", () => {
     const client = clientFor(launcher, {
       runId: "11111111-1111-4111-8111-111111111111",
     });
+    expect(client.operationHealthSnapshot()).toBeUndefined();
     await expect(client.start()).resolves.toMatchObject({ ok: true });
+    expect(client.operationHealthSnapshot()).toBeUndefined();
+    const child = await launcher.started;
 
     await client.close();
 
+    expect(client.operationHealthSnapshot()).toBeUndefined();
     expect(client.diagnostics()).toMatchObject({
       runtime_root: launcher.runtimeRoots[0],
       transport: HOST_TRANSPORT,
       endpoint_path: launcher.endpointPaths[0],
       project_root: join(launcher.runtimeRoots[0] ?? "", "project"),
       process_id: expect.any(Number),
+      exit_code: child.exitCode,
       run_id: "11111111-1111-4111-8111-111111111111",
     });
     await expect(access(launcher.runtimeRoots[0] ?? "")).rejects.toMatchObject({

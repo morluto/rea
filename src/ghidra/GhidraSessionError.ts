@@ -2,11 +2,13 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { GhidraLaunchError } from "./GhidraLauncher.js";
 
 const MAX_CAUSE_DEPTH = 3;
 const MAX_CAUSE_MESSAGE_BYTES = 2 * 1024;
 const MAX_CAUSE_FIELD_BYTES = 1024;
 const MAX_COMPILER_STDERR_BYTES = 8 * 1024;
+const MAX_LAUNCH_COMMAND_OUTPUT_BYTES = 8 * 1024;
 
 /** Stable failure phase for one private Ghidra headless session. */
 export type GhidraSessionFailureKind =
@@ -149,6 +151,7 @@ const describeErrorCause = (
     ...causeCode(cause, redact),
     ...causeSignal(cause, redact),
     ...causeCompilerOutcome(cause, redact),
+    ...causeLaunchOutcome(cause, redact),
     ...nestedErrorCause(cause, redact, depth),
   };
 };
@@ -218,6 +221,42 @@ const boundedCompilerField = (
   if (typeof value !== "string") return { value, truncated: false };
   const bounded = boundedUtf8Text(redact(value), MAX_CAUSE_FIELD_BYTES);
   return { value: bounded.text, truncated: bounded.truncated };
+};
+
+/** Retain a launch failure's launcher command outcome in its cause envelope. */
+const causeLaunchOutcome = (
+  cause: Error,
+  redact: (value: string) => string,
+): Record<string, JsonValue> => {
+  if (!(cause instanceof GhidraLaunchError)) return {};
+  const output = cause.capturedOutput;
+  if (output === undefined) return {};
+  const stdout = boundedUtf8Text(
+    redact(output.stdout),
+    MAX_LAUNCH_COMMAND_OUTPUT_BYTES,
+  );
+  const stderr = boundedUtf8Text(
+    redact(output.stderr),
+    MAX_LAUNCH_COMMAND_OUTPUT_BYTES,
+  );
+  const truncated = output.truncated || stdout.truncated || stderr.truncated;
+  return {
+    launch_outcome: {
+      stdout: stdout.text,
+      stderr: stderr.text,
+      truncated,
+      ...(truncated
+        ? {
+            stdout_bytes: Buffer.byteLength(output.stdout),
+            stderr_bytes: Buffer.byteLength(output.stderr),
+          }
+        : {}),
+      ...(output.exit_code === undefined
+        ? {}
+        : { exit_code: output.exit_code }),
+      ...(output.signal === undefined ? {} : { signal: output.signal }),
+    },
+  };
 };
 
 const nestedErrorCause = (

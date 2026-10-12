@@ -19,6 +19,8 @@ import {
 
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import { execFileOutputFailure } from "../process/ExecFileOutput.js";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
@@ -73,22 +75,54 @@ export interface GhidraLauncher {
 /** Local launch failure retained as the cause of a provider-neutral error. */
 export class GhidraLaunchError extends Error {
   readonly #partialLaunch: GhidraLaunch | undefined;
+  readonly #capturedOutput: AnalysisCapturedOutput | undefined;
 
   constructor(
     message: string,
-    options?: ErrorOptions & { readonly partialLaunch?: GhidraLaunch },
+    options?: ErrorOptions & {
+      readonly partialLaunch?: GhidraLaunch;
+      readonly capturedOutput?: AnalysisCapturedOutput;
+    },
   ) {
-    const { partialLaunch, ...errorOptions } = options ?? {};
+    const { partialLaunch, capturedOutput, ...errorOptions } = options ?? {};
     super(message, errorOptions);
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
+    this.#capturedOutput =
+      capturedOutput === undefined ? undefined : { ...capturedOutput };
   }
 
   /** Process ownership retained for the client to retry an incomplete rollback. */
   get partialLaunch(): GhidraLaunch | undefined {
     return this.#partialLaunch;
   }
+
+  /** Launcher command outcome retained when a launch command reported one. */
+  get capturedOutput(): AnalysisCapturedOutput | undefined {
+    return this.#capturedOutput === undefined
+      ? undefined
+      : { ...this.#capturedOutput };
+  }
 }
+
+/**
+ * Retain a failed launcher command's exit/signal and output in the shared
+ * captured-output envelope. Bounds apply at projection; truncation there stays
+ * explicit, matching the compiler-outcome diagnostics.
+ */
+const ghidraLaunchCommandOutput = (
+  cause: unknown,
+): AnalysisCapturedOutput | undefined => {
+  const failure = execFileOutputFailure(cause);
+  if (failure === undefined) return undefined;
+  return {
+    stdout: failure.stdout,
+    stderr: failure.stderr,
+    truncated: failure.outputTruncated,
+    exit_code: typeof failure.code === "number" ? failure.code : null,
+    signal: failure.signal,
+  };
+};
 
 /** Static coordinates for an extracted Ghidra release and packaged script. */
 export interface GhidraHeadlessLauncherOptions {
@@ -295,9 +329,13 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       }
       return ok(partialLaunch);
     } catch (cause: unknown) {
+      const capturedOutput = ghidraLaunchCommandOutput(cause);
       const primary = isAborted(options.signal)
         ? new AnalysisCancelledError("open_binary", { cause })
-        : new GhidraLaunchError("Ghidra headless launch failed", { cause });
+        : new GhidraLaunchError("Ghidra headless launch failed", {
+            cause,
+            ...(capturedOutput === undefined ? {} : { capturedOutput }),
+          });
       if (started === undefined) return err(primary);
 
       let cleanupFailure: unknown;
@@ -325,6 +363,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
                 { cause: primary },
               ),
               partialLaunch,
+              ...(capturedOutput === undefined ? {} : { capturedOutput }),
             },
           ),
         );

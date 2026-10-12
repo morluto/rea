@@ -67,6 +67,27 @@ cliTest(
 );
 
 cliTest(
+  "reports a standalone Evidence record as the wrong input file kind",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-record-input-");
+    const path = join(root, "record.json");
+    const record = revisionBundle().records[0];
+    if (record === undefined) throw new Error("Missing fixture Evidence");
+    await writeFile(path, JSON.stringify(record));
+    const result = await cli.run({
+      arguments: ["evidence-import", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: { path },
+      message: expect.stringContaining("this JSON is one Evidence record"),
+    });
+  },
+);
+
+cliTest(
   "rejects altered Evidence and incomplete unknown history before reporting counts",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-evidence-import-invalid-");

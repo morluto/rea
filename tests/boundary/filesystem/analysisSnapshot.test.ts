@@ -1,10 +1,11 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import {
@@ -29,6 +30,8 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { readJsonObjectFile } from "../../../src/application/JsonInputFile.js";
 import { RegularFileChangedError } from "../../../src/filesystem/RegularFile.js";
+import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
+import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 
 const snapshotFixture = (): AnalysisSnapshot => {
   const target = snapshotTarget(TARGET);
@@ -227,20 +230,67 @@ describe("analysis snapshot member decoding", () => {
       `${" ".repeat(9 * 1024 * 1024)}${JSON.stringify(snapshot)}`,
     );
     const controller = new AbortController();
+    const reads = await holdFirstFileRead(path);
+    onTestFinished(() => {
+      controller.abort();
+      reads.release();
+    });
     const pending = readAnalysisSnapshot(path, controller.signal);
-    const timer = setTimeout(() => controller.abort(), 1);
+    await reads.firstRead;
+    controller.abort();
+    reads.release();
     try {
       expect(await pending).toMatchObject({
         ok: false,
         error: { _tag: "AnalysisCancelledError" },
       });
+      expect(reads.readCount).toBe(1);
     } finally {
-      clearTimeout(timer);
+      vi.restoreAllMocks();
     }
     const loaded = await readAnalysisSnapshot(path);
     if (!loaded.ok) throw loaded.error;
     expect(loaded.value).toEqual(snapshot);
   });
+});
+
+describe("analysis snapshot file ownership", () => {
+  it.each([false, true])(
+    "retains the file owner when snapshot close fails (cancelled: %s)",
+    async (cancelDuringClose) => {
+      const directory = await createTestTempDirectory("rea-snapshot-cleanup-");
+      const path = join(directory, "snapshot.json");
+      await writeFile(path, JSON.stringify(snapshotFixture()));
+      const controller = new AbortController();
+      const cleanupCause = new Error("injected snapshot file close failure");
+      const close = vi
+        .spyOn(OwnedFileHandle.prototype, "close")
+        .mockImplementationOnce(async () => {
+          if (cancelDuringClose) controller.abort();
+          throw cleanupCause;
+        });
+      let failure: unknown;
+      try {
+        try {
+          await readAnalysisSnapshot(
+            path,
+            cancelDuringClose ? controller.signal : undefined,
+          );
+        } catch (cause: unknown) {
+          failure = cause;
+        }
+        expect(failure).toBeInstanceOf(RegularFileCleanupFailure);
+        if (!(failure instanceof RegularFileCleanupFailure))
+          throw new Error("Expected the retained snapshot file handle owner");
+        expect(failure.cleanupCause).toBe(cleanupCause);
+        expect(failure.owner.handle.fd).toBeGreaterThanOrEqual(0);
+      } finally {
+        close.mockRestore();
+        if (failure instanceof RegularFileCleanupFailure)
+          await failure.owner.close();
+      }
+    },
+  );
 
   it("rejects changed bytes between scans on the same descriptor", async () => {
     const directory = await createTestTempDirectory("rea-snapshot-changed-");

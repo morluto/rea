@@ -23,7 +23,7 @@ const endpointTargetSchema = z.object({
   type: z.string().min(1),
   title: z.string().default(""),
   url: z.string(),
-  attached: z.boolean().default(false),
+  attached: z.boolean().nullable().optional(),
   webSocketDebuggerUrl: z.string().min(1).optional(),
 });
 const endpointTargetsSchema = z.array(endpointTargetSchema);
@@ -46,7 +46,7 @@ export interface CdpEndpointTarget {
   readonly type: string;
   readonly title: string;
   readonly url: string;
-  readonly attached: boolean;
+  readonly attached: boolean | null;
   readonly webSocket?: CdpPageWebSocketEndpoint;
 }
 
@@ -106,7 +106,7 @@ export const discoverCdpEndpoint = async (
       type: target.type,
       title: sanitizeTargetTitle(target.title, target.url),
       url: target.url,
-      attached: target.attached,
+      attached: target.attached ?? null,
       ...targetWebSocket(endpoint, target, operation),
     })),
   };

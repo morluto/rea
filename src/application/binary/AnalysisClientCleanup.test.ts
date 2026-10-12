@@ -71,5 +71,9 @@ it("preserves the original explanation and collected output alongside cleanup un
       },
     },
   });
-  expect(combined.cause).toBe(primary);
+  expect(combined.cause).toBeInstanceOf(AggregateError);
+  expect(combined.cause).toMatchObject({
+    cause: primary,
+    errors: [primary, cleanup],
+  });
 });

@@ -21,7 +21,7 @@ const targetSchema = z
     id: z.string().min(1),
     type: z.string().min(1),
     url: z.string(),
-    attached: z.boolean().default(false),
+    attached: z.boolean().nullable().optional(),
     webSocketDebuggerUrl: z.string().min(1),
   })
   .passthrough();
@@ -31,7 +31,7 @@ export interface V8InspectorTarget {
   readonly id: string;
   readonly type: string;
   readonly url: string;
-  readonly attached: boolean;
+  readonly attached: boolean | null;
   readonly webSocketUrl: string;
 }
 
@@ -62,7 +62,7 @@ export const discoverV8Inspector = async (
       id: target.id,
       type: target.type,
       url: target.url,
-      attached: target.attached,
+      attached: target.attached ?? null,
       webSocketUrl: validatedInspectorWebSocket(
         endpoint,
         target.id,

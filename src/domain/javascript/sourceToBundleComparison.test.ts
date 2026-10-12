@@ -159,7 +159,8 @@ describe("source to bundle digest changes", () => {
             "dist/main.js.map",
           ),
           properties: {
-            source_sha256: HASH.unchanged,
+            content_available: true,
+            content_sha256: HASH.unchanged,
             source: "src/removed.ts",
           },
           evidence: artifactEvidence(HASH.artifact, "dist/main.js.map"),

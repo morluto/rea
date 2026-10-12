@@ -17,6 +17,19 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execFileAsync = promisify(execFile);
 
+// install.sh:fail_node_version emits this recovery block verbatim. The fake
+// `uname` in createFixture reports `x86_64` / `Linux`, so the host labels
+// resolve to `linux/x64`.
+const UNSUPPORTED_NODE_RECOVERY_LINUX_X64 =
+  "REA installation failed: Node.js 20.0.0 is unsupported.\n" +
+  "\n" +
+  "REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:\n" +
+  "  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\n" +
+  "  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)\n" +
+  "  Direct download for linux/x64:\n" +
+  "    https://nodejs.org/dist/latest-v24.x/  (grab the linux-x64 tarball)\n" +
+  "Then rerun this installer.\n";
+
 describe("curl installer scenarios", { timeout: 20_000 }, () => {
   it("installs only a pinned REA CLI with closed stdin", async () => {
     const fixture = await createFixture();
@@ -87,7 +100,7 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
       "unsupported Node",
       ["--version", "0.3.0"],
       { FAKE_NODE_VERSION: "20.0.0" },
-      "REA installation failed: Node.js 20.0.0 is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.\n",
+      UNSUPPORTED_NODE_RECOVERY_LINUX_X64,
     ],
     [
       "unreadable Node version",

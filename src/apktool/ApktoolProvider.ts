@@ -649,7 +649,9 @@ export class ApktoolProvider {
       );
       const manifest = manifestRead.text;
       const packageName =
-        manifest === null ? null : parseManifestPackage(manifest);
+        manifest === null || manifestRead.truncated
+          ? null
+          : parseManifestPackage(manifest);
       const stringsDirectory =
         input.locale === undefined
           ? "values"

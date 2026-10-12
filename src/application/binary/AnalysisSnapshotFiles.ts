@@ -15,6 +15,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
+import { RegularFileCleanupFailure } from "../RegularFileRead.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
@@ -24,6 +25,7 @@ type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 export const readAnalysisSnapshot = async (
   path: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<
     AnalysisSnapshot,
@@ -61,6 +63,7 @@ export const readAnalysisSnapshot = async (
         metadata,
       ],
       signal,
+      resources,
     );
     if (!loaded.ok) return loaded;
     signal?.throwIfAborted();
@@ -74,6 +77,7 @@ export const readAnalysisSnapshot = async (
     signal?.throwIfAborted();
     return ok(snapshot);
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError("read_evidence_file", { cause }));
     return err(

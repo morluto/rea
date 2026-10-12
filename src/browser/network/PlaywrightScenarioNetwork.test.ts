@@ -178,6 +178,9 @@ it("associates out-of-order same-URL responses by request identity", async () =>
       (event) =>
         event.phase === "response" && bodyText(event) === `reply:${marker}`,
     );
+    expect(response).toMatchObject({
+      body: { representation: "playwright-response-body-bytes" },
+    });
     expect(request?.transaction_id).toBe(response?.transaction_id);
     expect(request?.source_event_sequence).not.toBe(
       response?.source_event_sequence,

@@ -503,6 +503,38 @@ it("resolves renamed default and namespace import helpers from their syntax", ()
       .every((step) => step.label.length > 0),
   ).toBe(true);
 });
+it("resolves an empty bootstrap module key through an exported Electron bridge", () => {
+  const result = analyzeJavaScriptStaticSource(`(() => {
+    const modules = {
+      ""(module) { module.exports = require("electron"); },
+      9(module, exports, load) {
+        const electron = load("");
+        electron.contextBridge.exposeInMainWorld("desktop", {
+          copy: () => electron.ipcRenderer.send("test:empty-module"),
+        });
+      },
+    };
+    function load(id) {
+      const module = { exports: {} };
+      modules[id].call(module.exports, module, module.exports, load);
+      return module.exports;
+    }
+    load(9);
+  })();`);
+  expect(result.bundler_registrations).toMatchObject([
+    {
+      entry_module_keys: ["9"],
+      modules: [{ module_key: "" }, { module_key: "9" }],
+    },
+  ]);
+  expect(result.electron.call_paths).toContainEqual(
+    expect.objectContaining({
+      entry: "desktop.copy",
+      channel: "test:empty-module",
+      terminal: "electron.ipcRenderer.send",
+    }),
+  );
+});
 it("does not trust helper names or follow returns after a definite throw", () => {
   for (const helper of [
     `function __toESM() {return {ipcRenderer:{send(){}}}}`,

@@ -2,6 +2,7 @@ import { registerWasmCommands } from "./cli/wasmCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import { createDirectAnalysis } from "./composition/directAnalysis.js";
 import { registerEvmCommands } from "./cli/evmCommands.js";
+import { registerGoCommands } from "./cli/goCommands.js";
 import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
 import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { Cli } from "incur";
@@ -75,6 +76,7 @@ export const createCli = (
   registerUtilityCommands(cli, logger, environment, analysis);
   registerWasmCommands(cli, logger, environment);
   registerEvmCommands(cli, logger, environment);
+  registerGoCommands(cli, logger);
   registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
   registerManagedCommands(cli, logger, analysis.runProviderAnalysis);
   registerAndroidCommands(cli, logger, environment);

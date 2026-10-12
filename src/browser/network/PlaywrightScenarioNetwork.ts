@@ -128,7 +128,7 @@ export class PlaywrightScenarioNetwork {
     transaction.response = { source: response, sequence };
   }
 
-  /** Record completion and read the original completed response, never a later refetch. */
+  /** Record completion and read selected content through the response API. */
   finished(request: ScenarioNetworkRequest): void {
     if (!this.accepting) return;
     const transaction = this.transaction(request);

@@ -72,7 +72,10 @@ export async function connectLocalToolsMcp() {
   const call = async (name: string, arguments_: Record<string, unknown>) => {
     const definition = definitions.get(name);
     if (definition !== undefined) compileValidator(definition.inputSchema);
-    const response = await client.callTool({ name, arguments: arguments_ });
+    const response = await client.callTool(
+      { name, arguments: arguments_ },
+      definition === undefined ? undefined : { toolDefinition: definition },
+    );
     if (
       response.structuredContent !== undefined &&
       definition?.outputSchema !== undefined

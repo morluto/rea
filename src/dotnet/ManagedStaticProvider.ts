@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -9,6 +7,8 @@ import {
   type ExecutionOptions,
   type ProviderIdentity,
 } from "../application/AnalysisProvider.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
 import { MANAGED_STATIC_PROVIDER } from "../application/InvestigationProviders.js";
 import {
@@ -22,10 +22,10 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
-  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type {
@@ -37,23 +37,12 @@ import { err, ok, type Result } from "../domain/result.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
-
-import { openRegularFile } from "../filesystem/RegularFile.js";
-import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-
-// This provider eagerly retains the full PE snapshot. Keep its input resource
-// policy separate from decoded metadata/output capacity; it is not a PE format limit.
-const MAX_MANAGED_SNAPSHOT_BYTES = 128 * 1024 * 1024;
-
-const snapshotCapacityError = (
-  operation: string,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
-    operation,
-    "memory",
-    "Managed static inspection requires an eagerly retained PE snapshot within its input byte budget.",
-    { max_snapshot_bytes: MAX_MANAGED_SNAPSHOT_BYTES },
-  );
+import { RegularFileCleanupFailure } from "../application/RegularFileRead.js";
+import {
+  hashManagedSource,
+  managedCleanupError,
+  readManagedSnapshot,
+} from "./ManagedSnapshot.js";
 
 /** Execution-free managed PE/CLI auxiliary provider. */
 export class ManagedStaticProvider implements AnalysisProvider {
@@ -75,6 +64,7 @@ export class ManagedStaticProvider implements AnalysisProvider {
 
 class ManagedStaticClient implements AnalysisClient {
   #snapshotBytes: Buffer | undefined;
+  readonly #resources = new ArtifactResourceScope();
 
   constructor(private readonly target: BinaryTarget) {}
 
@@ -107,16 +97,14 @@ class ManagedStaticClient implements AnalysisClient {
       const snapshot = this.#snapshotBytes;
       const observed =
         snapshot === undefined
-          ? await readManagedSnapshot(
-              this.target.path,
-              operation,
-              options?.signal,
-            )
-          : await hashManagedSource(
-              this.target.path,
-              operation,
-              options?.signal,
-            );
+          ? await readManagedSnapshot(this.target.path, operation, {
+              signal: options?.signal,
+              resources: this.#resources,
+            })
+          : await hashManagedSource(this.target.path, operation, {
+              signal: options?.signal,
+              resources: this.#resources,
+            });
       if (observed.sha256 !== this.target.sha256)
         return err(
           new EvidenceIntegrityError(
@@ -142,9 +130,11 @@ class ManagedStaticClient implements AnalysisClient {
         }),
       );
     } catch (cause: unknown) {
+      if (isCleanupFailure(cause))
+        return err(this.#cleanupError(operation, cause));
+      if (cause instanceof AnalysisError) return err(cause);
       if (options?.signal?.aborted === true)
         return err(new AnalysisCancelledError(operation));
-      if (cause instanceof AnalysisError) return err(cause);
       return err(
         new ProviderAdapterError(MANAGED_STATIC_PROVIDER.id, operation, {
           cause,
@@ -153,74 +143,37 @@ class ManagedStaticClient implements AnalysisClient {
     }
   }
 
-  close(): Promise<Result<null, AnalysisError>> {
+  async close(): Promise<Result<null, AnalysisError>> {
     this.#snapshotBytes = undefined;
-    return Promise.resolve(ok(null));
-  }
-}
-
-interface ManagedSourceObservation {
-  readonly byteLength: number;
-  readonly sha256: string;
-  readonly bytes?: Buffer;
-}
-
-const readManagedSnapshot = async (
-  path: string,
-  operation: string,
-  signal?: AbortSignal,
-): Promise<ManagedSourceObservation> => {
-  const handle = await openRegularFile(path, { symlinks: "follow", signal });
-  try {
-    const metadata = await handle.stat();
-    if (metadata.size > MAX_MANAGED_SNAPSHOT_BYTES)
-      throw snapshotCapacityError(operation);
-    const bytes = await readBoundedFileBytes(
-      handle,
-      MAX_MANAGED_SNAPSHOT_BYTES,
-      signal,
-    );
-    if (bytes === undefined) throw snapshotCapacityError(operation);
-    signal?.throwIfAborted();
-    return {
-      byteLength: bytes.length,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      bytes,
-    };
-  } finally {
-    await handle.close();
-  }
-};
-
-const hashManagedSource = async (
-  path: string,
-  operation: string,
-  signal?: AbortSignal,
-): Promise<ManagedSourceObservation> => {
-  const handle = await openRegularFile(path, { symlinks: "follow", signal });
-  try {
-    if ((await handle.stat()).size > MAX_MANAGED_SNAPSHOT_BYTES)
-      throw snapshotCapacityError(operation);
-    const digest = createHash("sha256");
-    let byteLength = 0;
-    const stream = handle.createReadStream({
-      autoClose: false,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    for await (const chunk of stream) {
-      signal?.throwIfAborted();
-      if (!Buffer.isBuffer(chunk))
-        throw new TypeError("Managed source stream returned non-buffer data");
-      if (chunk.length > MAX_MANAGED_SNAPSHOT_BYTES - byteLength)
-        throw snapshotCapacityError(operation);
-      byteLength += chunk.length;
-      digest.update(chunk);
+    try {
+      await this.#resources.close();
+      return ok(null);
+    } catch (cause: unknown) {
+      return err(this.#cleanupError("close", cause));
     }
-    return { byteLength, sha256: digest.digest("hex") };
-  } finally {
-    await handle.close();
   }
-};
+
+  #cleanupError(operation: string, cause: unknown): ProviderCleanupError {
+    const failure = managedCleanupError(cause, this.target.path, operation);
+    if (failure instanceof ProviderCleanupError) return failure;
+    const cleanup =
+      cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+    return new ProviderCleanupError(
+      MANAGED_STATIC_PROVIDER.id,
+      cleanup?.resources ?? [this.target.path],
+      {
+        reason:
+          cleanup?.reason ??
+          (cause instanceof Error ? cause.message : String(cause)),
+      },
+      { cause, operation },
+    );
+  }
+}
+
+const isCleanupFailure = (cause: unknown): boolean =>
+  cause instanceof RegularFileCleanupFailure ||
+  (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined);
 
 const isManagedOperation = (
   operation: AnalysisOperation,

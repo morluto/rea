@@ -12,12 +12,14 @@ import { BUNDLE_COMPARISON_PROVIDER } from "../application/InvestigationProvider
 import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 /** Register canonical Evidence bundle comparison. */
 export const registerBundleComparisonTool = (
   server: EvidenceMcpServer,
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"compare_bundles">>,
+  resources: ArtifactResourceScope,
 ): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
@@ -31,8 +33,16 @@ export const registerBundleComparisonTool = (
         context.mcpReq.signal,
         async () => {
           const [left, right] = await Promise.all([
-            readEvidenceBundle(input.left_bundle_path),
-            readEvidenceBundle(input.right_bundle_path),
+            readEvidenceBundle(
+              input.left_bundle_path,
+              context.mcpReq.signal,
+              resources,
+            ),
+            readEvidenceBundle(
+              input.right_bundle_path,
+              context.mcpReq.signal,
+              resources,
+            ),
           ]);
           if (!left.ok) return server.delivery.toCallToolResult(left, contract);
           if (!right.ok)

@@ -132,7 +132,7 @@ export const methodBody = (
       "utf8",
     );
     const methodEnd = ilOffset + header.ilSize;
-    const sectionOffset = (methodEnd + 3) & ~3;
+    const sectionOffset = Math.ceil(methodEnd / 4) * 4;
     const exceptionRegions =
       header.format === "fat" && (header.flags & 8) !== 0
         ? validateExceptionRegionRanges(

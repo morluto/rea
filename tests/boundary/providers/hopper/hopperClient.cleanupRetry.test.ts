@@ -107,7 +107,7 @@ const failedStartup = async (launcher: RetryCleanupLauncher) => {
     error: {
       _tag: "ProviderAdapterError",
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
     },
   });
   const session = launcher.sessions[0];
@@ -233,7 +233,7 @@ it("blocks a fresh launch while cleanup remains unverified", async () => {
     ok: false,
     error: {
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
       diagnostics: { primary_error: { code: "provider_timeout" } },
     },
   });
@@ -263,7 +263,7 @@ it("preserves failed startup state through a blocked retry until cleanup succeed
     error: {
       _tag: "ProviderAdapterError",
       cleanupIncomplete: true,
-      cause: { _tag: "HopperTimeoutError" },
+      cause: { cause: { _tag: "HopperTimeoutError" } },
     },
   });
   // ...but must not wipe the failed-startup state: the client still

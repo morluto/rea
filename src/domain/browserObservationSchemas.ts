@@ -20,7 +20,12 @@ const browserTargetSchema = z.object({
   title: z.string(),
   url: z.string(),
   origin: z.string(),
-  attached: z.boolean(),
+  attached: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Discovery-reported debugger attachment state; null means unknown",
+    ),
 });
 
 /** Complete policy-filtered browser target discovery result. */

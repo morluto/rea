@@ -77,6 +77,8 @@ async function verifyTarget(child, targetPath, name) {
   assert.equal(discovery.length, 1);
   const raw = discovery[0];
   assert.equal(typeof raw.id, "string");
+  const expectedAttached =
+    typeof raw.attached === "boolean" ? raw.attached : null;
   // Independent oracle: the fixture owns the pathname, and Node's discovery
   // serialization loses quotes/backslashes. Never decode underscores into it.
   const unresolved = process.platform === "win32" || /[_"\\]/u.test(targetPath);
@@ -96,6 +98,7 @@ async function verifyTarget(child, targetPath, name) {
   const inventory = listed.normalized_result;
   assert.equal(inventory.targets.length, 1);
   assert.equal(inventory.targets[0].target_id, raw.id);
+  assert.equal(inventory.targets[0].attached, expectedAttached);
   assert.deepEqual(inventory.targets[0].location, expectedLocation);
   assert.equal(inventory.excluded.unsupported_location, 0);
   const mcpList = await runMcp("list_javascript_runtime_targets", {
@@ -122,7 +125,13 @@ async function verifyTarget(child, targetPath, name) {
     observation_ms: 100,
   });
   for (const result of [observed.normalized_result, mcpObservation])
-    verifyObservation(result, raw.id, expectedLocation, targetPath);
+    verifyObservation(
+      result,
+      raw.id,
+      expectedLocation,
+      targetPath,
+      expectedAttached,
+    );
   assert.deepEqual(mcpObservation.target, observed.normalized_result.target);
   process.stdout.write(
     `${JSON.stringify({
@@ -133,6 +142,7 @@ async function verifyTarget(child, targetPath, name) {
       target_id: raw.id,
       discovery_url: raw.url,
       target_location: expectedLocation,
+      attached: inventory.targets[0].attached,
       cli_scripts: observed.normalized_result.scripts.items.length,
       mcp_scripts: mcpObservation.scripts.items.length,
       listed_evidence_id: listed.evidence_id,
@@ -141,9 +151,16 @@ async function verifyTarget(child, targetPath, name) {
   );
 }
 
-function verifyObservation(result, targetId, expectedLocation, targetPath) {
+function verifyObservation(
+  result,
+  targetId,
+  expectedLocation,
+  targetPath,
+  expectedAttached,
+) {
   assert.equal(result.target.target_id, targetId);
   assert.equal(result.target.runtime_kind, "node");
+  assert.equal(result.target.attached, expectedAttached);
   assert.deepEqual(result.target.location, expectedLocation);
   assert.equal(result.capture.truncated, false);
   assert.ok(Array.isArray(result.directly_observed));

@@ -57,6 +57,11 @@ export const inspectCdpElectronPage = async (
       "Local file paths exposed by the selected CDP target are retained in the observation.",
       "REA does not evaluate renderer JavaScript, invoke Electron APIs, navigate, click, or close the page.",
       "Select include_script_sources to retain script contents.",
+      ...(context.target.attached === null
+        ? [
+            "CDP discovery omitted the target attachment state; attached is reported as unknown.",
+          ]
+        : []),
     ],
     mainFrameId: undefined,
     navigationDuringCapture: false,

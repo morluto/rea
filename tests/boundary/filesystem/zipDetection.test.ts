@@ -199,3 +199,38 @@ describe("nested container family", () => {
     },
   );
 });
+
+describe("package signature byte identity", () => {
+  it.each([
+    { extension: "pkg", signature: "xar!", offset: 0, size: 4 },
+    { extension: "dmg", signature: "koly", offset: 0, size: 512 },
+  ])(
+    "rejects high-bit aliases of $extension magic at both admission boundaries",
+    async ({ extension, signature, offset, size }) => {
+      const root = await createTestTempDirectory("rea-package-magic-");
+      const path = join(root, `input.${extension}`);
+      const bytes = Buffer.alloc(size);
+      bytes.write(signature, offset, "ascii");
+      await writeFile(path, bytes);
+      expect(
+        (await classifyAndHashRoot(path, false, await lstat(path))).format,
+      ).toBe(extension);
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { format: extension },
+      });
+      for (let index = 0; index < signature.length; index += 1) {
+        const changed = Buffer.from(bytes);
+        changed[offset + index] = changed[offset + index]! | 0x80;
+        await writeFile(path, changed);
+        expect(
+          (await classifyAndHashRoot(path, false, await lstat(path))).format,
+        ).toBe("file");
+        expect(await parseBinaryTarget(path)).toMatchObject({
+          ok: false,
+          error: { _tag: "BinaryTargetError" },
+        });
+      }
+    },
+  );
+});

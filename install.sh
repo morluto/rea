@@ -25,6 +25,38 @@ fail() {
   exit 1
 }
 
+# Resolve the current host's Node.js tarball label pair; a label we cannot map
+# is kept verbatim so the operator can still read it. Falls back on the raw
+# `uname` outputs rather than inventing a label the Node.js release index does
+# not publish, so a mismatch is obvious instead of silently wrong.
+node_host_labels() {
+  case "$(uname -m)" in
+    arm64|aarch64) node_arch_label="arm64" ;;
+    x86_64|amd64) node_arch_label="x64" ;;
+    *) node_arch_label="$(uname -m)" ;;
+  esac
+  case "$(uname -s)" in
+    Darwin) node_os_label="darwin" ;;
+    Linux) node_os_label="linux" ;;
+    *) node_os_label="$(uname -s | tr '[:upper:]' '[:lower:]')" ;;
+  esac
+}
+
+# Exit with actionable remediation when the active Node.js is unsupported.
+# The engine floor stays in sync with package.json#engines.node — change both.
+fail_node_version() {
+  local observed="$1"
+  node_host_labels
+  printf 'REA installation failed: Node.js %s is unsupported.\n\n' "$observed" >&2
+  printf 'REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:\n' >&2
+  printf '  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\n' >&2
+  printf '  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)\n' >&2
+  printf '  Direct download for %s/%s:\n' "$node_os_label" "$node_arch_label" >&2
+  printf '    https://nodejs.org/dist/latest-v24.x/  (grab the %s-%s tarball)\n' "$node_os_label" "$node_arch_label" >&2
+  printf 'Then rerun this installer.\n' >&2
+  exit 1
+}
+
 usage() {
   cat <<'EOF'
 Usage: install.sh [--version VERSION] [--dry-run] [--no-setup] [--no-prompt] [--verbose]
@@ -78,7 +110,7 @@ main() {
   [[ "$node_major" =~ ^[0-9]+$ && "$node_minor" =~ ^[0-9]+$ ]] || fail "the active Node.js version could not be read. Check that node works and is on PATH, then retry."
   if ! [[ "$_node_patch" =~ ^[0-9]+(\+[0-9A-Za-z.-]+)?$ ]] ||
     ! ((node_major == 22 && node_minor >= 19 || node_major == 24 && node_minor >= 11 || node_major >= 26)); then
-    fail "Node.js $node_version is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+."
+    fail_node_version "$node_version"
   fi
 
   if [[ -n "$version" ]]; then

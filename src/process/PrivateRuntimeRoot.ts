@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,7 +23,7 @@ export type PrivateRuntimeRootCapability =
   | {
       readonly available: true;
       readonly reason: null;
-      readonly proof: "posix-mode-0700";
+      readonly proof: "posix-mkdtemp-owner-only";
     };
 
 /** Report whether this process can establish a private runtime root. */
@@ -32,7 +32,7 @@ export const privateRuntimeRootCapability = (
 ): PrivateRuntimeRootCapability =>
   platform === "win32"
     ? windowsNativeCapabilities(platform).private_runtime_dacl
-    : { available: true, reason: null, proof: "posix-mode-0700" };
+    : { available: true, reason: null, proof: "posix-mkdtemp-owner-only" };
 
 /** Expected failure when a runtime root's privacy boundary is unavailable. */
 export class PrivateRuntimeRootUnavailableError extends Error {
@@ -77,13 +77,9 @@ export class PrivateRuntimeRoot {
     const path = await mkdtemp(
       join(options.parent ?? tmpdir(), options.prefix ?? "rea-provider-"),
     );
-    try {
-      await chmod(path, 0o700);
-      return new PrivateRuntimeRoot(path);
-    } catch (cause: unknown) {
-      await rm(path, { recursive: true, force: true });
-      throw cause;
-    }
+    // POSIX mkdtemp establishes owner-only access atomically. Return its owner
+    // without a fallible permission rewrite and rollback after allocation.
+    return new PrivateRuntimeRoot(path);
   }
 
   /**

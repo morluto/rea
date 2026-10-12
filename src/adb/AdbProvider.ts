@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import {
@@ -38,7 +37,7 @@ import { err, ok, type Result } from "../domain/result.js";
 import { hashStableFile } from "../filesystem/StableFileHash.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
-  execFileOutput,
+  execFileBytes,
   execFileOutputFailure,
 } from "../process/ExecFileOutput.js";
 import {
@@ -57,11 +56,14 @@ import {
 } from "./AdbDeviceOutput.js";
 import { adbHostFileName } from "./AdbHostFileName.js";
 import {
+  ADB_DIRECTORY_BATCH_SCRIPT,
+  parseAdbDirectoryListing,
+} from "./AdbDirectoryListing.js";
+import {
   parseAmStartOutput,
   parseBugreportCopiedPath,
   parseDumpsysPackageOutput,
   parseFeatureListOutput,
-  parseLsOutput,
   parsePackageChangeOutput,
   parseProcessListOutput,
   parsePngDimensions,
@@ -105,7 +107,6 @@ const BUGREPORT_TIMEOUT_MS = 600_000;
 const BUGREPORT_MAX_OUTPUT_BYTES = 1024 * 1024;
 const STDERR_EXCERPT_BYTES = 512;
 const UNPARSED_LINES_REPORTED = 10;
-const STOP_GRACE_MS = 5_000;
 
 const hashAdbFile = async (
   path: string,
@@ -144,19 +145,19 @@ interface AdbRunLimits {
 }
 
 /** Run one bounded adb invocation and keep its exact failure shape. */
-const runAdb = async (
+const runAdbCapture = async (
   operation: string,
   targetPath: string,
   binary: string,
   arguments_: readonly string[],
   limits: AdbRunLimits,
   signal: AbortSignal | undefined,
-): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
+): Promise<Result<{ stdout: Buffer; stderr: Buffer }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation));
   try {
     return ok(
-      await execFileOutput(binary, arguments_, {
+      await execFileBytes(binary, arguments_, {
         timeout: limits.timeoutMs,
         maxBuffer: limits.maxOutputBytes,
         stopSignal: "SIGTERM",
@@ -223,61 +224,17 @@ const runAdb = async (
   }
 };
 
-/** Capture one adb invocation's raw binary stdout (screencap PNG). */
-const runAdbBinary = (
-  operation: string,
-  binary: string,
-  arguments_: readonly string[],
-  limits: AdbRunLimits,
-  signal: AbortSignal | undefined,
-): Promise<Result<Buffer, AnalysisError>> =>
-  new Promise((settle) => {
-    if (signal?.aborted === true)
-      return settle(err(new AnalysisCancelledError(operation)));
-    let stopped: "abort" | "timeout" | undefined;
-    let deadline: NodeJS.Timeout | undefined;
-    let grace: NodeJS.Timeout | undefined;
-    const child = execFile(
-      binary,
-      [...arguments_],
-      {
-        encoding: "buffer" as const,
-        maxBuffer: limits.maxOutputBytes,
-        killSignal: "SIGTERM",
-        timeout: 0,
-      },
-      (error, stdout) => {
-        signal?.removeEventListener("abort", onAbort);
-        clearTimeout(deadline);
-        clearTimeout(grace);
-        if (stopped === "abort")
-          return settle(err(new AnalysisCancelledError(operation)));
-        if (stopped === "timeout")
-          return settle(
-            err(new AnalysisTimeoutError(operation, limits.timeoutMs)),
-          );
-        if (error !== null)
-          return settle(
-            err(
-              new AnalysisProtocolError(
-                `adb failed for ${operation}: ${error.message}`,
-                { cause: error },
-              ),
-            ),
-          );
-        settle(ok(stdout as Buffer));
-      },
-    );
-    const stop = (reason: "abort" | "timeout"): void => {
-      if (stopped !== undefined) return;
-      stopped = reason;
-      child.kill("SIGTERM");
-      grace = setTimeout(() => child.kill("SIGKILL"), STOP_GRACE_MS);
-    };
-    const onAbort = (): void => stop("abort");
-    signal?.addEventListener("abort", onAbort, { once: true });
-    deadline = setTimeout(() => stop("timeout"), limits.timeoutMs);
+/** Decode textual adb protocols after the shared byte capture and error boundary. */
+const runAdb = async (
+  ...arguments_: Parameters<typeof runAdbCapture>
+): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
+  const captured = await runAdbCapture(...arguments_);
+  if (!captured.ok) return captured;
+  return ok({
+    stdout: captured.value.stdout.toString("utf8"),
+    stderr: captured.value.stderr.toString("utf8"),
   });
+};
 
 const clientIdentityResult = (
   selection: AdbBinarySelection,
@@ -947,12 +904,29 @@ export class AdbProvider {
         );
       }
       case "list_adb_directory": {
-        const ran = await shell(["ls", "-la", request.input.device_path], {
-          timeoutMs: LISTING_TIMEOUT_MS,
-          maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
-        });
+        const ran = await runAdbCapture(
+          operation,
+          request.input.serial,
+          selection.binary,
+          adbArguments(request.input.serial, [
+            "shell",
+            "sh",
+            "-c",
+            'cd "$1" || exit\nexec find . -mindepth 1 -maxdepth 1 -exec sh -c "$2" rea-list-directory {} +',
+            "rea-list-directory",
+            request.input.device_path,
+            ADB_DIRECTORY_BATCH_SCRIPT,
+          ]),
+          {
+            timeoutMs: LISTING_TIMEOUT_MS,
+            maxOutputBytes: LISTING_MAX_OUTPUT_BYTES,
+          },
+          signal,
+        );
         if (!ran.ok) return ran;
-        const { entries, unparsedLines } = parseLsOutput(ran.value.stdout);
+        const { entries, unparsedLines } = parseAdbDirectoryListing(
+          ran.value.stdout,
+        );
         return ok(
           createAnalysisExecution(
             {
@@ -965,7 +939,7 @@ export class AdbProvider {
             provider,
             {
               limitations: [
-                "Entry kinds derive from the permission string's type character",
+                "Entry kinds derive from stat permission mode; directory contents and link targets may change during capture",
                 ...unparsedOverflowLimitation(unparsedLines),
               ],
             },
@@ -2046,15 +2020,16 @@ export class AdbProvider {
     const localPath = join(directory.value, "screen.png");
     const existing = await refuseExistingTarget(operation, localPath);
     if (existing !== undefined) return err(existing);
-    const captured = await runAdbBinary(
+    const captured = await runAdbCapture(
       operation,
+      input.serial,
       selection.binary,
       adbArguments(input.serial, ["exec-out", "screencap", "-p"]),
       { timeoutMs: SCREEN_TIMEOUT_MS, maxOutputBytes: SCREEN_MAX_OUTPUT_BYTES },
       signal,
     );
     if (!captured.ok) return captured;
-    const dimensions = parsePngDimensions(captured.value);
+    const dimensions = parsePngDimensions(captured.value.stdout);
     if (dimensions.width === null)
       return err(
         new AnalysisProtocolError(
@@ -2062,7 +2037,7 @@ export class AdbProvider {
         ),
       );
     try {
-      await writeFile(localPath, captured.value, { flag: "wx" });
+      await writeFile(localPath, captured.value.stdout, { flag: "wx" });
     } catch (cause) {
       return err(
         new AnalysisOutputError(
@@ -2072,14 +2047,16 @@ export class AdbProvider {
         ),
       );
     }
-    const sha256 = createHash("sha256").update(captured.value).digest("hex");
+    const sha256 = createHash("sha256")
+      .update(captured.value.stdout)
+      .digest("hex");
     return ok(
       createAnalysisExecution(
         {
           client,
           serial: input.serial,
           local_path: localPath,
-          bytes: captured.value.byteLength,
+          bytes: captured.value.stdout.byteLength,
           sha256,
           width: dimensions.width,
           height: dimensions.height,

@@ -19,6 +19,21 @@ const environmentRequirementSchema = z.object({
     .enum(["none", "process", "container", "virtual-machine"])
     .nullable(),
 });
+const stableUnknownId = (
+  question: string,
+  domain: string,
+  scopeDigest: string | null,
+): string =>
+  `unk_${createHash("sha256")
+    .update(
+      canonicalJson({
+        domain: domain.trim(),
+        question: question.replace(/\s+/gu, " ").trim(),
+        scope_digest: scopeDigest,
+      }),
+    )
+    .digest("hex")}`;
+
 const probeSchema = z.object({
   operation: z.string().min(1),
   rationale: text,
@@ -88,6 +103,15 @@ type UnknownRevision = Omit<
 >;
 
 const refineRevision = (value: UnknownRevision, context: z.RefinementCtx) => {
+  if (
+    value.unknown_id !==
+    stableUnknownId(value.question, value.domain, value.scope_digest)
+  )
+    context.addIssue({
+      code: "custom",
+      message: "Residual unknown ID does not match its immutable identity",
+      path: ["unknown_id"],
+    });
   if ((value.revision === 1) !== (value.previous_revision_digest === null))
     context.addIssue({
       code: "custom",
@@ -213,13 +237,8 @@ export const createResidualUnknown = (
 ): ResidualUnknown => {
   const question = input.question.replace(/\s+/gu, " ").trim();
   const domain = input.domain.trim();
-  const identity = canonicalJson({
-    domain,
-    question,
-    scope_digest: scopeDigest,
-  });
   const revision = {
-    unknown_id: `unk_${createHash("sha256").update(identity).digest("hex")}`,
+    unknown_id: stableUnknownId(question, domain, scopeDigest),
     revision: 1,
     previous_revision_digest: null,
     scope_digest: scopeDigest,

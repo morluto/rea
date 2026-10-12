@@ -260,7 +260,7 @@ npx rea-agents@latest setup
 
 ## 스타 기록
 
-🎉 **GitHub 스타 90,000개, 감사합니다!**
+🎉 **GitHub 스타 110,000개, 감사합니다!**
 
 REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 테스트하고, 수정에 기여해 주신 모든 분께 감사드립니다.
 
@@ -274,7 +274,13 @@ REA를 사용하고, 버그를 보고하고, 기능을 요청하고, 빌드를 �
 
 ## 면책 조항
 
-REA는 합법적인 리버스 엔지니어링 연구, 분석, 재구성을 위한 도구를 제공합니다. 필요한 권한을 얻고 관련 법률을 준수할 책임은 사용자에게 있습니다. 이 프로젝트는 불법적이거나 허가받지 않은 사용을 지지하지 않습니다.
+책임 있는 사용에 관한 안내는 [DISCLAIMER.md](DISCLAIMER.md)를 참고하세요.
+
+REA는 법을 준수하는 연구, 교육, 상호운용성 확보, 소프트웨어 보존, 그리고 본인이 소유하거나 조사 권한을 가진 소프트웨어의 분석을 위한 도구입니다.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## 기여
 
@@ -285,3 +291,15 @@ REA에 도움을 보태 주세요! [issue를 등록](https://github.com/morluto/
 ## 라이선스
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

@@ -16,6 +16,7 @@ import {
   type BrowserScenarioEvent,
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
+import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
@@ -218,6 +219,70 @@ class FakeSession implements BrowserScenarioSessionPort {
 }
 
 describe("PlaywrightBrowserScenarioProvider", () => {
+  it("reports response-body provenance uncertainty without marking event coverage missing", async () => {
+    const session = new FakeSession("launch");
+    const selected = scenario();
+    session.eventItems = [
+      {
+        sequence: 1,
+        step_index: 0,
+        kind: "response",
+        transaction_id: "request-1",
+        redirected_from_transaction_id: null,
+        method: "GET",
+        url: sanitizeBrowserUrl("https://app.example.test/main.js"),
+        resource_type: "script",
+        header_names: [],
+        status: 200,
+        failure: null,
+      },
+      {
+        sequence: 2,
+        step_index: 0,
+        kind: "network-content",
+        transaction_id: "request-1",
+        source_event_sequence: 1,
+        phase: "response",
+        headers: { state: "not_requested" },
+        body: {
+          state: "captured",
+          representation: "playwright-response-body-bytes",
+          encoding: "base64",
+          content: "",
+          bytes: 0,
+          sha256:
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          media_type: "text/javascript",
+          redacted: false,
+        },
+      },
+    ];
+    const input = browserScenarioSchema.parse({
+      ...selected,
+      capture: {
+        ...selected.capture,
+        network: { ...selected.capture.network, response_body: true },
+      },
+    });
+    const provider = new PlaywrightBrowserScenarioProvider(() =>
+      Promise.resolve(session),
+    );
+
+    const result = await provider.captureScenario(input);
+    if (!result.ok) throw result.error;
+    expect(result.value.limitations).toContain(
+      PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION,
+    );
+    expect(result.value.completeness.missing_sections).not.toContain("events");
+    expect(result.value.events.items[1]).toMatchObject({
+      kind: "network-content",
+      body: {
+        state: "captured",
+        representation: "playwright-response-body-bytes",
+      },
+    });
+  });
+
   it("makes reported event gaps ineligible for equality even in launch mode", async () => {
     const session = new FakeSession("launch");
     session.eventGaps = ["Popup frames before discovery are unavailable"];

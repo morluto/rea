@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisClient,
+} from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisProfileCommitment } from "../../../src/domain/analysisProfile.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../../src/contracts/artifactComparisonExample.js";
 import { PROCESS_CAPTURE_REFERENCE } from "../../../src/contracts/investigationExamples.js";
@@ -29,26 +33,33 @@ afterEach(async () => {
 describe("guided prompt completion from live analysis", () => {
   it("reads live documents and complete procedures without ambiguous names", async () => {
     const requests: Array<Readonly<Record<string, unknown>>> = [];
-    const session = createTestBinarySession(() => client(requests), {
-      resolveAnalysisProfile: () =>
-        Promise.resolve(
-          resultOk({
-            profile: createAnalysisProfile(
-              {
-                id: "fixture",
-                name: "Fixture analysis provider",
-                version: "1",
-              },
-              { fixture: true },
-            ),
-          }),
-        ),
-    });
+    const session = createTestBinarySession(
+      (_target, profile) => client(requests, profile),
+      {
+        resolveAnalysisProfile: () =>
+          Promise.resolve(
+            resultOk({
+              profile: createAnalysisProfile(
+                {
+                  id: "fixture",
+                  name: "Fixture analysis provider",
+                  version: "1",
+                },
+                { fixture: true },
+              ),
+            }),
+          ),
+      },
+    );
     directory = await createTestTempDirectory("rea-prompt-completion-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     expect((await session.open(target)).ok).toBe(true);
     const completion = createPromptCompletionSource(session, session);
+    expect(await completion.complete("document", "app")).toEqual([]);
+    expect(await completion.complete("procedure", "")).toEqual([]);
+    const warmed = await session.execute("list_documents", {});
+    if (!warmed.ok) throw warmed.error;
 
     expect(await completion.complete("document", "app")).toEqual([
       "App",
@@ -269,14 +280,23 @@ const fixtureEnvironment = {
 
 const client = (
   requests: Array<Readonly<Record<string, unknown>>>,
-): AnalysisClient => ({
-  execute(operation, parameters) {
+  analysisProfile?: AnalysisProfileCommitment,
+): AnalysisClient => {
+  const observe = (value: unknown) =>
+    resultOk(
+      createAnalysisExecution(
+        value,
+        analysisProfile?.provider ?? fixtureProvider,
+        analysisProfile === undefined ? {} : { analysisProfile },
+      ),
+    );
+  const execute: AnalysisClient["execute"] = (operation, parameters) => {
     if (operation === "list_documents")
-      return Promise.resolve(observed(["AppTests", "App", "App"]));
+      return Promise.resolve(observe(["AppTests", "App", "App"]));
     if (operation === "list_procedures") {
       requests.push(parameters);
       return Promise.resolve(
-        observed([
+        observe([
           { address: "0x1000", value: "duplicate" },
           { address: "0x2000", value: "unique" },
           { address: "0x3000", value: "duplicate" },
@@ -284,7 +304,11 @@ const client = (
         ]),
       );
     }
-    return Promise.resolve(observed(null));
-  },
-  close: () => Promise.resolve(resultOk(null)),
-});
+    return Promise.resolve(observe(null));
+  };
+  return {
+    execute,
+    executeIfReady: execute,
+    close: () => Promise.resolve(resultOk(null)),
+  };
+};

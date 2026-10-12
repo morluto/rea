@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -11,7 +11,32 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { withArtifactClient } from "../../support/artifactClientScope.js";
-import { artifactInventoryResultSchema } from "../../../src/domain/artifactGraph.js";
+import {
+  artifactExtractionResultSchema,
+  artifactInventoryResultSchema,
+} from "../../../src/domain/artifactGraph.js";
+
+it("completes an empty ZIP extraction with an empty identity", async () => {
+  const root = await createTestTempDirectory("rea-empty-artifact-extraction-");
+  const archive = join(root, "empty.zip");
+  await writeOrderedZip(archive, []);
+  const archiveTarget = await parseBinaryTarget(archive);
+  if (!archiveTarget.ok) throw archiveTarget.error;
+
+  const output = join(root, "output");
+  const result = await withArtifactClient(archiveTarget.value, (client) =>
+    client.execute("extract_artifact", { output_root: output }),
+  );
+  if (!result.ok) throw result.error;
+  const extraction = artifactExtractionResultSchema.parse(result.value.result);
+  expect(extraction.extraction_manifest).toMatchObject({
+    source_manifest_id: extraction.manifest.manifest_id,
+    selected_occurrence_ids: [],
+  });
+  expect(extraction.artifacts).toEqual([]);
+  expect(extraction.containment_verified).toBe(true);
+  expect(await readdir(output)).toEqual([]);
+});
 
 it.each([
   ["legacy CP437", Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]), false, "é.txt"],

@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+
+import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import { EvidenceLedger } from "./EvidenceLedger.js";
@@ -371,5 +374,49 @@ describe("residual unknown registry resolution and history", () => {
     const before = serializeEvidenceBundle(base.export());
     expect(base.import(branch.export()).ok).toBe(false);
     expect(serializeEvidenceBundle(base.export())).toBe(before);
+  });
+});
+
+describe("residual unknown imported identity", () => {
+  it("rejects a rehashed wrong ID atomically and accepts valid history", () => {
+    const store = ledger();
+    const created = store.recordUnknown(
+      input("Stable question?"),
+      mutation("stable"),
+    );
+    if (!created.ok) throw created.error;
+    const initialBundle = store.export();
+    const mutationEvidenceId = created.value.mutation_evidence_ids[0];
+    if (mutationEvidenceId === undefined)
+      throw new Error("Missing mutation Evidence ID");
+    const otherId = createResidualUnknown(
+      input("Different question?"),
+      mutationEvidenceId,
+      created.value.scope_digest,
+    ).unknown_id;
+    const { revision_digest: _revisionDigest, ...revision } = created.value;
+    const incorrectIdentity = { ...revision, unknown_id: otherId };
+    const encoded = canonicalize(incorrectIdentity);
+    if (encoded === undefined) throw new Error("Could not encode revision");
+    const tampered = {
+      ...incorrectIdentity,
+      revision_digest: createHash("sha256").update(encoded).digest("hex"),
+    };
+    const invalidBundle = createEvidenceBundle(initialBundle.records, [
+      tampered,
+    ]);
+    const before = serializeEvidenceBundle(initialBundle);
+
+    expect(() => parseEvidenceBundle(invalidBundle)).toThrow();
+    expect(store.import(invalidBundle).ok).toBe(false);
+    expect(serializeEvidenceBundle(store.export())).toBe(before);
+
+    expect(
+      store.updateUnknown(update(created.value), mutation("stable-update")).ok,
+    ).toBe(true);
+    const validHistory = store.export();
+    const imported = ledger();
+    expect(imported.import(validHistory).ok).toBe(true);
+    expect(imported.export()).toEqual(validHistory);
   });
 });

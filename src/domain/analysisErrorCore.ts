@@ -45,13 +45,15 @@ export class AnalysisProtocolError extends AnalysisError {
 /** Caller input failed provider-neutral application parsing. */
 export class AnalysisInputError extends AnalysisError {
   readonly _tag = "AnalysisInputError";
+  override readonly userMessage: string | undefined;
 
   constructor(
     readonly operation: string,
-    options?: AnalysisErrorOptions,
+    options?: AnalysisErrorOptions & { readonly userMessage?: string },
     readonly issues: readonly AnalysisInputIssue[] = [],
   ) {
     super(`Invalid analysis input for ${operation}`, options);
+    this.userMessage = options?.userMessage;
   }
 }
 

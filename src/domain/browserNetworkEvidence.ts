@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
+export const PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION =
+  "Captured response-body bytes are the result of Playwright's Response.body() API. Playwright may satisfy that API with a credentialed follow-up load of the request URL when CDP has no body, so transaction and event links do not verify that retained bytes came from the original network transaction.";
+
 /** Resolved network content selection recorded by a capture. */
 export const browserNetworkContentSelectionValuesSchema = z.strictObject({
   request_body: z.boolean(),
@@ -43,6 +46,9 @@ export const browserNetworkBodySchema = z.union([
       state: z.literal("captured"),
       representation: z.enum([
         "browser-exposed-request-bytes",
+        "playwright-response-body-bytes",
+        // Retained for captures produced before response-body provenance was
+        // narrowed to the bytes Playwright exposes through Response.body().
         "browser-decoded-response-bytes",
       ]),
       encoding: z.literal("base64"),

@@ -98,7 +98,10 @@ const projectBody = (
       body.state,
       "No selected, completed script response bytes were retained for this request.",
     );
-  if (body.representation !== "browser-decoded-response-bytes")
+  if (
+    body.representation !== "playwright-response-body-bytes" &&
+    body.representation !== "browser-decoded-response-bytes"
+  )
     return unavailable(
       "unsupported-body-representation",
       `Captured representation ${body.representation} is not script response bytes.`,

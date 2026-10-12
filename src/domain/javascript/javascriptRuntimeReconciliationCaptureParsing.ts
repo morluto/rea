@@ -44,21 +44,21 @@ interface NormalizedV8Inspection {
         readonly target_id: string;
         readonly type: string;
         readonly title: string;
-        readonly attached: boolean;
+        readonly attached: boolean | null;
         readonly file_path: string;
       }
     | {
         readonly target_id: string;
         readonly type: string;
         readonly title: string;
-        readonly attached: boolean;
+        readonly attached: boolean | null;
         readonly url: string;
       }
     | {
         readonly target_id: string;
         readonly type: string;
         readonly title: string;
-        readonly attached: boolean;
+        readonly attached: boolean | null;
         readonly unresolved_location: Extract<
           JavaScriptRuntimeObservation["target"]["location"],
           { kind: "unresolved" }

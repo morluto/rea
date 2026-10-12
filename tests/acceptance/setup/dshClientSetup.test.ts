@@ -230,3 +230,70 @@ cliTest.for(["null", "caller-value", "[caller-value]"])(
     expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
   },
 );
+
+cliTest.for([
+  {
+    label: "group-owned rows",
+    patch: `- id: tools
+  insert:
+    - id: other
+      name: caller-plugin
+    - id: rea-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config: {serverName: rea, transport: stdio, command: stale, args: [mcp]}
+`,
+    remediation: "group with unknown activity",
+    removal: "removed",
+  },
+  {
+    label: "expression-backed inserts",
+    patch: "- insert: !!js process.env.DSH_ROWS\n",
+    remediation: "unknown structure",
+    removal: "retained",
+  },
+])(
+  "DSH CLI rejects setup and preserves ownership for $label",
+  async ({ patch, remediation, removal }, { cli }) => {
+    const home = await createTestTempDirectory("rea-dsh-ownership-");
+    const profile = join(home, ".dsh");
+    const config = join(profile, "cordis.patch.yml");
+    await mkdir(profile);
+    await writeFile(config, patch);
+    const run = (args: readonly string[]) =>
+      cli.run({
+        arguments: [...args, "--json"],
+        cwd: home,
+        environment: { HOME: home, USERPROFILE: home, DSH_HOME: profile },
+      });
+    const setup = await run(["setup", "--client", "dsh", "--yes"]);
+    expect(setup.exitCode).not.toBe(0);
+    expect(setup.json).toMatchObject({
+      status: "needs_human",
+      appliedActions: [],
+      remediation: expect.stringContaining(remediation),
+    });
+    expect(await readFile(config, "utf8")).toBe(patch);
+    await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const uninstall = await run(["uninstall"]);
+    expect(uninstall.exitCode).toBe(0);
+    expect(uninstall.json).toMatchObject({
+      status: "complete",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "dsh", status: removal }),
+      ]),
+    });
+    if (removal === "removed") {
+      expect(parse(await readFile(config, "utf8"))).toEqual([
+        { id: "tools", insert: [{ id: "other", name: "caller-plugin" }] },
+      ]);
+      expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(patch);
+    } else {
+      expect(await readFile(config, "utf8")).toBe(patch);
+      await expect(readFile(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+  },
+);

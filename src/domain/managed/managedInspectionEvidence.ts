@@ -43,15 +43,14 @@ export const parseManagedInspectionEvidence = <
     throw new TypeError(
       `Managed Evidence ${operation} (${evidence.evidence_id}) token scope SHA-256 ${scope.requires_artifact_sha256} does not match normalized artifact SHA-256 ${artifactSha256}`,
     );
+  const moduleMvid = result.module?.mvid ?? null;
+  const scopedMvid = scope?.requires_mvid;
   if (
-    scope?.requires_mvid !== undefined &&
-    scope.requires_mvid !== null &&
-    result.module?.mvid !== undefined &&
-    result.module.mvid !== null &&
-    scope.requires_mvid.toLowerCase() !== result.module.mvid.toLowerCase()
+    scopedMvid !== undefined &&
+    scopedMvid?.toLowerCase() !== moduleMvid?.toLowerCase()
   )
     throw new TypeError(
-      `Managed Evidence ${operation} (${evidence.evidence_id}) token scope MVID ${scope.requires_mvid} does not match module MVID ${result.module.mvid}`,
+      `Managed Evidence ${operation} (${evidence.evidence_id}) token scope MVID ${String(scopedMvid)} does not match module MVID ${String(moduleMvid)}`,
     );
   return { evidence, result };
 };

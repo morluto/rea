@@ -354,7 +354,9 @@ node and coverage is `unknown`. An empty call list with partial or unknown
 coverage is not proof that the function has no calls.
 `trace_call_path` reports each limited expansion in `residual_unknowns` and
 sets `truncated: true`; any path already supported by observed edges remains
-visible. Tool errors remain in their existing error or failure fields.
+visible. When a requested goal is not reached but an expansion is unresolved,
+`goal_status` is `unknown`; `not_reached` means traversal exhausted without
+unresolved relationship reads. Cancellation remains a tool error.
 
 REA prepares complete MCP results within the pinned stdio client's 10 MiB
 receive-buffer budget, including both text and structured representations and

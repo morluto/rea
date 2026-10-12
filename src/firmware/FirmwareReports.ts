@@ -57,6 +57,10 @@ const region = z.object({
   end_offset: integer,
   size: integer,
 });
+type BlobOrigin = {
+  readonly handler: string | null;
+  readonly range: { readonly offset: number; readonly length: number } | null;
+};
 const known = new Set([
   "StatReport",
   "HashReport",
@@ -191,6 +195,20 @@ export const normalizeUnblobReport = (
   const sizes = new Map<string, number>();
   const depths: string[] = [];
   const diagnostics: JsonValue[] = [];
+  const blobOrigins = new Map<string, BlobOrigin>();
+  const addBlobOrigin = (
+    parentPath: string,
+    id: string,
+    origin: BlobOrigin,
+  ) => {
+    const key = JSON.stringify([parentPath, id]);
+    if (blobOrigins.has(key))
+      throw new AnalysisOutputError(
+        "extract_firmware",
+        `Duplicate blob identity in parent task: ${parentPath} (${id})`,
+      );
+    blobOrigins.set(key, origin);
+  };
   const chunks: {
     input_path: string;
     provider_id: string;
@@ -288,6 +306,10 @@ export const normalizeUnblobReport = (
                 jsonValueSchema.parse(problem),
               ),
             );
+        addBlobOrigin(path, parsed.id, {
+          handler: detail?.handler_name ?? null,
+          range: { offset: parsed.start_offset, length: parsed.size },
+        });
         chunks.push({
           input_path: path,
           provider_id: parsed.id,
@@ -305,6 +327,10 @@ export const normalizeUnblobReport = (
       }
       if (item.__typename__ === "MultiFileReport") {
         const parsed = multiFile.parse(item);
+        addBlobOrigin(path, parsed.id, {
+          handler: parsed.handler_name,
+          range: null,
+        });
         if (parsed.extraction_reports.length > 0)
           diagnostics.push(
             extractionDiagnostic(
@@ -319,16 +345,6 @@ export const normalizeUnblobReport = (
   const recordsByPath = new Map(
     records.map((record) => [record.task.path, record.task]),
   );
-  const chunksByOrigin = new Map<string, (typeof chunks)[number]>();
-  for (const item of chunks) {
-    const key = JSON.stringify([item.input_path, item.provider_id]);
-    if (chunksByOrigin.has(key))
-      throw new AnalysisOutputError(
-        "extract_firmware",
-        `Duplicate chunk identity in ${item.input_path}`,
-      );
-    chunksByOrigin.set(key, item);
-  }
   const derivations = records.flatMap((record) =>
     record.subtasks.map((child) => {
       const parentPath = logical(record.task.path);
@@ -348,7 +364,7 @@ export const normalizeUnblobReport = (
           "extract_firmware",
           `Child task identity disagrees with its analysis: ${childPath}`,
         );
-      const origin = chunksByOrigin.get(
+      const origin = blobOrigins.get(
         JSON.stringify([parentPath, child.blob_id]),
       );
       return {

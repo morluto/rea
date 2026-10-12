@@ -44,15 +44,20 @@ describe.skipIf(process.platform !== "darwin")(
     });
 
     cliTest("rejects a symbol spanning lines as input", async ({ cli }) => {
+      const missingTarget = join(
+        await createTestTempDirectory("rea-demangle-invalid-input-"),
+        "absent",
+      );
       const result = await cli.run({
         arguments: [
           "demangle-swift",
-          await evidenceTarget(),
+          missingTarget,
           "$s4main3FooV",
           "$s4main\n3FooV",
           "--json",
         ],
         environment,
+        timeoutMs: 20_000,
       });
       expect(result.exitCode).not.toBe(0);
       expect(result.json).toMatchObject({ code: "VALIDATION_ERROR" });

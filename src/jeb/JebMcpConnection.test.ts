@@ -23,6 +23,40 @@ describe("decodeJebToolResult", () => {
     });
   });
 
+  it.each([
+    [
+      "structured content",
+      {
+        isError: true,
+        structuredContent: {
+          success: true,
+          input_files: [],
+          units: [],
+        },
+      },
+    ],
+    [
+      "JSON text",
+      {
+        isError: true,
+        content: [{ type: "text", text: '{"success":true}' }],
+      },
+    ],
+  ] as const)("rejects error-marked success in %s", (_source, result) => {
+    expect(() => decodeJebToolResult(result)).toThrow(AnalysisProtocolError);
+  });
+
+  it("preserves an explicit JEB failure envelope returned as JSON text", () => {
+    expect(
+      decodeJebToolResult({
+        isError: true,
+        content: [
+          { type: "text", text: '{"success":false,"message":"missing"}' },
+        ],
+      }),
+    ).toEqual({ success: false, message: "missing" });
+  });
+
   it("decodes a single JSON text block", () => {
     expect(
       decodeJebToolResult({

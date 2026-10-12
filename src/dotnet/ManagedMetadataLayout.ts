@@ -135,7 +135,7 @@ const requireRange = (
     );
 };
 
-const align4 = (value: number): number => (value + 3) & ~3;
+const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 
 const readStreamName = (
   bytes: Buffer,

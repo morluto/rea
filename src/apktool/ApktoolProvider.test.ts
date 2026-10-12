@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
-import { expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test } from "vitest";
 
 import { ApktoolProvider } from "./ApktoolProvider.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -69,7 +76,7 @@ const evidenceResult = async (
   request: ApktoolRequest,
 ): Promise<Record<string, unknown>> => {
   const result = await provider.execute(request);
-  if (!result.ok) throw new Error(result.error.message);
+  if (!result.ok) throw result.error;
   return result.value.result as Record<string, unknown>;
 };
 
@@ -89,21 +96,31 @@ const decodeStub = (
     readonly withStrings?: boolean;
     readonly withGerman?: boolean;
     readonly failDecode?: boolean;
+    readonly manifestFile?: string;
+    readonly stringsFile?: string;
     readonly stringsXml?: string;
   } = {},
 ): ((root: string) => string) => {
   const withStrings = options.withStrings ?? true;
   const withGerman = options.withGerman ?? true;
   const stringsXml = options.stringsXml ?? REAL_STRINGS;
+  const manifestWrite =
+    options.manifestFile === undefined
+      ? `printf '%s\\n' '${REAL_MANIFEST.replace(/'/gu, "'\\''")}' > "$5/AndroidManifest.xml"`
+      : `cp '${options.manifestFile}' "$5/AndroidManifest.xml"`;
+  const stringsWrite =
+    options.stringsFile === undefined
+      ? `printf '%s\\n' '${stringsXml.replace(/'/gu, "'\\''")}' > "$5/res/values/strings.xml"`
+      : `cp '${options.stringsFile}' "$5/res/values/strings.xml"`;
   return () => `if [ "$1" = "--version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "d" ]; then
   ${
     options.failDecode === true
       ? `printf 'Exception in thread "main" brut.androlib.AndrolibException: Could not decode the APK\\n' >&2; exit 1;`
       : `printf '%s\\n' '${REAL_YML.replace(/'/gu, "'\\''")}' > "$5/apktool.yml"
-  printf '%s\\n' '${REAL_MANIFEST.replace(/'/gu, "'\\''")}' > "$5/AndroidManifest.xml"
+  ${manifestWrite}
   mkdir -p "$5/res/values"${withGerman ? ' "$5/res/values-de"' : ""}
-  ${withStrings ? `printf '%s\\n' '${stringsXml.replace(/'/gu, "'\\''")}' > "$5/res/values/strings.xml"` : ""}
+  ${withStrings ? stringsWrite : ""}
   ${withGerman ? `printf '%s\\n' '${DE_STRINGS.replace(/'/gu, "'\\''")}' > "$5/res/values-de/strings.xml"` : ""}
   printf 'I: Using Apktool on stub\\n'
   exit 0`
@@ -326,24 +343,58 @@ it("uses an owned APK snapshot and framework cache and resolves regional locales
 
 it("marks an oversized strings document partial without claiming it is missing", async () => {
   const { command, root } = await writeApktoolStub((root) =>
-    decodeStub()(root).replace(
-      "  printf 'I: Using Apktool on stub",
-      '  dd if=/dev/zero of="$5/res/values/strings.xml" bs=1048576 count=9 2>/dev/null\n  printf \'I: Using Apktool on stub',
-    ),
+    decodeStub({ stringsFile: join(root, "large-strings.xml") })(root),
   );
+  await writeFile(join(root, "large-strings.xml"), "");
+  await truncate(join(root, "large-strings.xml"), 9 * 1024 * 1024);
   const apk = await apkFixture(root);
   const result = await providerOver(command).execute({
     operation: "decode_android_resources",
     input: { path: apk.path, include_strings: true },
   });
-  expect(result.ok).toBe(true);
-  if (!result.ok) return;
+  if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     coverage: "partial",
     strings: [],
   });
   expect(result.value.limitations.join(" ")).toContain("exceeds");
   expect(result.value.limitations.join(" ")).not.toContain("No default");
+});
+
+describe("truncated manifest prefixes", () => {
+  it.each([
+    {
+      name: "a retained prefix ending after the root element",
+      manifest: `<manifest package="com.rea.large"></manifest>${" ".repeat(512 * 1024 + 1)}`,
+    },
+    {
+      name: "a retained prefix ending before the root element closes",
+      manifest: `<manifest package="com.rea.large">${" ".repeat(512 * 1024 + 1)}</manifest>`,
+    },
+  ])("retains $name without parsing its package", async ({ manifest }) => {
+    const { command, root } = await writeApktoolStub((root) =>
+      decodeStub({ manifestFile: join(root, "large-AndroidManifest.xml") })(
+        root,
+      ),
+    );
+    await writeFile(join(root, "large-AndroidManifest.xml"), manifest);
+    const apk = await apkFixture(root);
+
+    const result = await providerOver(command).execute({
+      operation: "decode_android_resources",
+      input: { path: apk.path, include_strings: false },
+    });
+    if (!result.ok) throw result.error;
+
+    expect(result.value.result).toMatchObject({
+      coverage: "partial",
+      manifest: manifest.slice(0, 512 * 1024),
+      metadata: { package_name: null, version_name: "1.2.3" },
+    });
+    expect(result.value.limitations.join(" ")).toContain(
+      "manifest is truncated",
+    );
+  });
 });
 
 it("retains failed workspace cleanup and retries it on close", async () => {

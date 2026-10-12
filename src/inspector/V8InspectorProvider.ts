@@ -117,7 +117,9 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           runtime: discovery.runtime,
           targets: allowed.map(projectTarget),
           excluded: { ...excluded, unconnectable: 0 },
-          limitations: describeInspectorTargetLimitations(),
+          limitations: describeInspectorTargetLimitations(
+            allowed.some((target) => target.attached === null),
+          ),
         }),
       );
     } catch (cause: unknown) {
@@ -357,7 +359,7 @@ const authorizedTarget = async (
     product,
   });
   if (
-    target.attached ||
+    target.attached === true ||
     !decision.allowed ||
     decision.location.kind === "builtin"
   )

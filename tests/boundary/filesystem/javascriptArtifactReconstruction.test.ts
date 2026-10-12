@@ -136,7 +136,6 @@ it.each([
   ["a non-array sourcesContent value", { sourcesContent: "source" }],
   ["a non-string, non-null source entry", { sourcesContent: [42] }],
   ["a source-content array with the wrong length", { sourcesContent: [] }],
-  ["a non-string source name", { sources: [42] }],
 ])(
   "reports %s as an invalid local source map",
   async (_description, content) => {

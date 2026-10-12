@@ -143,8 +143,9 @@ origin, and exact segment rules match. The view does not infer further
 cross-sample patterns.
 
 Groups cite parent record ordinals and distinct statuses and MIME types (lowercase
-type/subtype without parameters). A malformed media type is unknown, not a content
-type. Flags report single samples, mixed statuses or mixed content types.
+type/subtype without parameters). An invalid type/subtype essence is unknown;
+parameters do not affect this projection. Flags report single samples, mixed
+statuses or mixed content types.
 `coverage` pages groups; `records` separately reports examined, total and excluded
 parent records. Ordinal subsets carry a limitation. Null URLs are excluded as
 `url-redacted`; unparseable URLs, URLs without an origin, spellings without

@@ -121,6 +121,7 @@ export class HopperClient {
   #launcherFailureDiagnostic: HopperStartupFailureDiagnostic | undefined;
   #operationFailure: OperationFailureRecord | undefined;
   #startupController: AbortController | undefined;
+  #ready = false;
   #startupFailureResult: AnalysisError | undefined;
   #runId: string | undefined;
   #startPromise: Promise<Result<HopperServerInfo, AnalysisError>> | undefined;
@@ -257,6 +258,16 @@ export class HopperClient {
     };
   }
 
+  /** True only after the authenticated health handshake has completed. */
+  isReady(): boolean {
+    return (
+      this.#ready &&
+      this.#socket !== undefined &&
+      !this.#socket.destroyed &&
+      this.#closePromise === undefined
+    );
+  }
+
   /** Launch the bridge once and complete its authenticated health handshake. */
   start(
     signal?: AbortSignal,
@@ -292,7 +303,7 @@ export class HopperClient {
         if (!result.ok) {
           this.#rememberStartupFailure(result.error);
           reset();
-        }
+        } else this.#ready = true;
       },
       (cause: unknown) => {
         this.#logger.debug(
@@ -466,7 +477,28 @@ export class HopperClient {
   ): Promise<Result<JsonValue, AnalysisError>> {
     const started = await this.start(options.signal);
     if (!started.ok) return started;
-    const result = await this.#request(name, arguments_, options);
+    return this.#normalizeToolResult(
+      name,
+      await this.#request(name, arguments_, options),
+    );
+  }
+
+  /** Dispatch against the connected bridge without invoking startup or retry. */
+  callToolIfReady(
+    name: string,
+    arguments_: Readonly<Record<string, JsonValue>> = {},
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<Result<JsonValue, AnalysisError> | undefined> {
+    if (!this.isReady()) return Promise.resolve(undefined);
+    return this.#request(name, arguments_, options).then((result) =>
+      this.#normalizeToolResult(name, result),
+    );
+  }
+
+  #normalizeToolResult(
+    name: string,
+    result: Result<JsonValue, AnalysisError>,
+  ): Result<JsonValue, AnalysisError> {
     return !result.ok &&
       result.error instanceof HopperRemoteError &&
       result.error.diagnosticType === "capability_unavailable"
@@ -579,6 +611,7 @@ export class HopperClient {
     options: HopperClientCloseOptions = {},
   ): Promise<Result<null, AnalysisError>> {
     this.#closing = true;
+    this.#ready = false;
     try {
       return await cleanupHopperSession({
         socket: this.#socket,

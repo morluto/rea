@@ -24,6 +24,7 @@ import {
   type JsonObjectMemberReader,
 } from "./JsonInputFile.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
+import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
@@ -42,12 +43,14 @@ type TextWriteResult<Failure = EvidenceFileError | AnalysisCancelledError> =
 export const readJsonFile = async (
   path: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<unknown, EvidenceFileError | AnalysisResourceConstraintError>
 > =>
   readJsonFileInput(
     path,
-    (selected) => readJsonInputFile(selected, "read_evidence_file", signal),
+    (selected) =>
+      readJsonInputFile(selected, "read_evidence_file", signal, resources),
     signal,
   );
 
@@ -56,6 +59,7 @@ export const readJsonObjectMembersFile = (
   path: string,
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<
   Result<
     void,
@@ -65,7 +69,13 @@ export const readJsonObjectMembersFile = (
   readJsonFileInput(
     path,
     (selected) =>
-      readJsonObjectFile(selected, "read_evidence_file", scans, signal),
+      readJsonObjectFile(
+        selected,
+        "read_evidence_file",
+        scans,
+        signal,
+        resources,
+      ),
     signal,
   );
 
@@ -103,6 +113,7 @@ const readJsonFileInput = async <Value>(
     }
     return ok(decoded.value);
   } catch (cause: unknown) {
+    if (cause instanceof RegularFileCleanupFailure) throw cause;
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     if (signal?.aborted === true) throw cause;
     return err(

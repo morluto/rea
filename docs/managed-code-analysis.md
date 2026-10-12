@@ -53,6 +53,12 @@ CIL decoding, and projected inspection records have a separate conservative
 output occurrences still consume that budget. These are inspection resource
 policies, not PE format limits or a hard bound on total V8 heap use.
 
+Path-based member comparison uses the same per-input snapshot policy and
+inspects its two selected paths sequentially, retaining each inspection rather
+than both full byte snapshots. The limit therefore remains a per-file resource
+admission rule, not an aggregate comparison limit. Comparison Evidence keeps
+the caller-selected paths as its parameters and artifact locations.
+
 Input overflow returns a resource constraint. Decode or projection overflow
 reports `resource-limit` with unavailable or partial coverage; omitted facts do
 not become empty observations. Ambiguous PE section mappings are rejected

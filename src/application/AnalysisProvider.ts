@@ -123,6 +123,12 @@ export interface ProviderRequestActivitySnapshot {
 
 /** Provider session bound to exactly one parsed artifact. */
 export interface AnalysisClient extends AnalysisOperationPort {
+  /** Execute only if this operation can run without loading or starting a provider. */
+  executeIfReady?(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError> | undefined>;
   /** Retained token-verified process snapshots for dynamic providers this client started. */
   runtimeLineageSnapshots?(): readonly ProviderRuntimeLineageSnapshot[];
   /** Current provider work that may outlive a timed-out or cancelled caller. */

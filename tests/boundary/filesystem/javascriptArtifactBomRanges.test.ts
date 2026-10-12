@@ -79,7 +79,12 @@ for (const format of ["directory", "asar"] as const) {
           map_path: "app.js.map",
           resolution: { kind: "artifact-relative", path: "original.js" },
         },
-        properties: { content_available: true },
+        properties: expect.objectContaining({
+          content_available: true,
+          source_name_available: true,
+          source_index: 0,
+          declaration_index: 0,
+        }),
       }),
     );
   });

@@ -15,7 +15,7 @@ it("does not attribute the first universal slice's UUID and segments to the sele
   const universal = new NativeFixtureRunner({
     "otool:-h": `${singleSlice}\n${singleSlice}`,
     dwarfdump:
-      "UUID: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA (x86_64) fixture\nUUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) fixture\n",
+      "UUID: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA (x86_64) /owned/universal\nUUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) /owned/universal\n",
   });
   const client = new NativeMacOSProvider(
     {},
@@ -73,7 +73,7 @@ it.each([
       .join("\n");
     const fixtures = new NativeFixtureRunner({
       lipo,
-      dwarfdump: `UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (${dyldArchitecture}) fixture\n`,
+      dwarfdump: `UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (${dyldArchitecture}) /owned/universal\n`,
     });
     const client = new NativeMacOSProvider(
       {},

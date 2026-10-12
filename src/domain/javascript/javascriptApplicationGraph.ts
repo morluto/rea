@@ -172,7 +172,28 @@ const sourceMapObservationMatchesIdentity = (
   observation: ApplicationNode["observations"][number],
 ): boolean => {
   const { evidence, source_map_reference: reference } = observation;
+  const sourceDigests = [
+    observation.properties.content_sha256,
+    // Older graph producers used `source_sha256` for the same source-map fact.
+    observation.properties.source_sha256,
+  ];
+  const hasKnownSourceDigest = identity.source_sha256 !== null;
+  const sourceDigestMatches =
+    sourceDigests.every(
+      (digest) =>
+        digest === undefined ||
+        digest === null ||
+        digest === identity.source_sha256,
+    ) &&
+    (!hasKnownSourceDigest || sourceDigests.includes(identity.source_sha256));
+  const contentAvailabilityMatches =
+    (observation.properties.content_available !== true ||
+      hasKnownSourceDigest) &&
+    (observation.properties.content_available !== false ||
+      !hasKnownSourceDigest);
   return (
+    sourceDigestMatches &&
+    contentAvailabilityMatches &&
     reference !== null &&
     evidence.state === "observed" &&
     evidence.artifact.available &&

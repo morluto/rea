@@ -134,7 +134,9 @@ describe("bundle comparison MCP integration", () => {
       expect(result.isError).toBe(true);
       expect(parseMcpToolError(result)).toMatchObject({
         error: {
-          code: "evidence_integrity_mismatch",
+          code: "invalid_request",
+          category: "invalid_input",
+          details: { path: recordPath },
           message: expect.stringContaining(
             `this JSON is one Evidence record (${record.evidence_id})`,
           ),

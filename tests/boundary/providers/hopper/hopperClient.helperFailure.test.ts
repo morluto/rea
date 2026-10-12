@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
+
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -67,17 +70,23 @@ const trackFailedHelperClient = (
 const projectPrimaryStartupFailure = (error: AnalysisError) => {
   if (!error.cleanupIncomplete) return projectAnalysisError(error);
   expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
-  const primary = error.cause;
+  const cause = error.cause;
+  if (!(cause instanceof AggregateError))
+    throw new Error("Cleanup failure did not retain its aggregate causes");
+  const primary = cause.cause;
   if (!(primary instanceof AnalysisError))
     throw new Error("Cleanup failure lost its typed startup cause");
   return projectAnalysisError(primary);
 };
 
 it("does not equate an owned native helper exit with an external GUI exit", async () => {
+  const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
+  const targetPath = join(directory, "target");
+  await writeFile(targetPath, "fixture target");
   const launcher = new HopperApplicationLauncher({
     environment: {},
     launcherPath: process.execPath,
-    targetPath: "/target",
+    targetPath,
     targetKind: "executable",
     loaderArgs: [
       "-e",
@@ -91,7 +100,10 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   const result = await client.start();
   expect(result).toMatchObject({
     ok: false,
-    error: { cleanupIncomplete: true, cause: { _tag: "HopperStartError" } },
+    error: {
+      cleanupIncomplete: true,
+      cause: { cause: { _tag: "HopperStartError" } },
+    },
   });
   if (result.ok) throw new Error("Expected the native helper to fail");
   expect(projectPrimaryStartupFailure(result.error)).toMatchObject({
@@ -140,7 +152,10 @@ it.each(["exit", "signal", "exit75"] as const)(
     const result = await client.start();
     expect(result).toMatchObject({
       ok: false,
-      error: { cleanupIncomplete: true, cause: { _tag: "HopperStartError" } },
+      error: {
+        cleanupIncomplete: true,
+        cause: { cause: { _tag: "HopperStartError" } },
+      },
     });
     if (result.ok) throw new Error("Expected the launcher to fail");
     const projected = projectPrimaryStartupFailure(result.error);

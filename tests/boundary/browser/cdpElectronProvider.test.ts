@@ -83,6 +83,7 @@ describe("CdpElectronProvider target selection", () => {
     const browser = await startFakeCdpBrowser({
       electronFileUrl: pathToFileURL(index).href,
       duplicateElectronInventory: true,
+      omitElectronTargetAttachmentState: true,
     });
     browsers.push(browser);
     const provider = new CdpElectronProvider();
@@ -96,8 +97,14 @@ describe("CdpElectronProvider target selection", () => {
       expect.objectContaining({
         target_id: "electron-page",
         file_path: index,
+        attached: null,
       }),
     ]);
+    expect(
+      listed.value.limitations.some((item) =>
+        item.includes("attachment state"),
+      ),
+    ).toBe(true);
     expect(listed.value.excluded).toEqual({
       unsupported_url: 3,
       non_page: 2,
@@ -112,6 +119,12 @@ describe("CdpElectronProvider target selection", () => {
     );
     if (!inspected.ok) throw inspected.error;
     expect(inspected.value.target.file_path).toBe(index);
+    expect(inspected.value.target.attached).toBeNull();
+    expect(
+      inspected.value.limitations.some((item) =>
+        item.includes("attachment state"),
+      ),
+    ).toBe(true);
     expect(inspected.value.frames).toEqual([
       expect.objectContaining({ file_path: index }),
     ]);

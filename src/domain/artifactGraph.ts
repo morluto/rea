@@ -212,7 +212,7 @@ const extractedArtifactSchema = z.object({
 const artifactExtractionManifestSchema = z.object({
   extraction_id: extractionIdSchema,
   source_manifest_id: manifestIdSchema,
-  selected_occurrence_ids: z.array(occurrenceIdSchema).min(1),
+  selected_occurrence_ids: z.array(occurrenceIdSchema),
   files_sha256: sha256Schema,
   output_root_alias: z.literal("$OUTPUT_ROOT"),
 });

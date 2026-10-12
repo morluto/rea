@@ -12,7 +12,10 @@ import {
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
-import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import {
   clientSkillDirectories,
   supportedClients,
@@ -398,18 +401,134 @@ describe("DeepSeek Harness repair boundaries", () => {
     ]);
   });
 
-  it("refuses a group-targeted insertion whose applicability is unknown", async () => {
+  it("keeps group-targeted ownership for uninstall while setup rejects unknown activity", async () => {
     const { home, client } = await harnessClient();
     const initial = stringifyYaml([
-      { id: "missing-group", insert: [canonicalEntry()] },
+      {
+        id: "tools",
+        insert: [
+          canonicalEntry(),
+          { id: "foreign-peer", name: "caller-plugin", config: { keep: true } },
+        ],
+      },
     ]);
     await writeFile(client.configPath, initial);
+    expect(await inspectClientConfiguration(client, {}, command)).toMatchObject(
+      {
+        status: "invalid",
+        remediation: expect.stringContaining("targets a group"),
+      },
+    );
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("failed");
-    expect(await dshStatus(home)).not.toMatchObject({ state: "aligned" });
+    expect(await dshStatus(home)).toMatchObject({
+      state: "stale",
+      command: [...command],
+    });
     expect(await readFile(client.configPath, "utf8")).toBe(initial);
+    const host = systemUninstallHost(home);
+    expect(await host.inspectClient(client)).toBeUndefined();
+    expect((await host.removeClient(client)).status).toBe("removed");
+    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
+      {
+        id: "tools",
+        insert: [
+          { id: "foreign-peer", name: "caller-plugin", config: { keep: true } },
+        ],
+      },
+    ]);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
+
+  it("blocks malformed literal patches but still uninstalls a known owned sibling", async () => {
+    const { home, client } = await harnessClient();
+    const initial = stringifyYaml([
+      { insert: [canonicalEntry()] },
+      "foreign-invalid-row",
+    ]);
+    await writeFile(client.configPath, initial);
+
+    expect(await inspectClientConfiguration(client, {}, command)).toMatchObject(
+      {
+        status: "invalid",
+        remediation: expect.stringContaining("Malformed Cordis patches"),
+      },
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(initial);
+
+    const host = systemUninstallHost(home);
+    expect(await host.inspectClient(client)).toBeUndefined();
+    expect((await host.removeClient(client)).status).toBe("removed");
+    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
+      "foreign-invalid-row",
+    ]);
+  });
+
+  it.each(["{ id: rea-mcp }", "7", "false", "''", "[null]"])(
+    "blocks a non-list literal insert value %s before setup edits the file",
+    async (insert) => {
+      const { client } = await harnessClient();
+      const initial = `- insert: ${insert}\n`;
+      await writeFile(client.configPath, initial);
+
+      expect(
+        await inspectClientConfiguration(client, {}, command),
+      ).toMatchObject({
+        status: "invalid",
+        remediation: expect.stringContaining("Malformed Cordis patches"),
+      });
+      expect(
+        (await configureClientConfiguration(client, {}, command)).status,
+      ).toBe("failed");
+      expect(await readFile(client.configPath, "utf8")).toBe(initial);
+    },
+  );
+
+  it("keeps Harness's null insert no-op editable", async () => {
+    const { client } = await harnessClient();
+    await writeFile(client.configPath, "- insert: null\n");
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+  });
+});
+
+describe("DeepSeek Harness expression-backed structure", () => {
+  it.each([
+    `- !!js process.env.DSH_PATCH\n`,
+    `- insert: !!js process.env.DSH_ROWS\n`,
+    `- insert: [!!js process.env.DSH_ROW]\n`,
+  ])(
+    "retains dynamic insertion structure without appending or removing rows: %s",
+    async (initial) => {
+      const { home, client } = await harnessClient();
+      await writeFile(client.configPath, initial);
+      expect(await dshStatus(home)).toMatchObject({ state: "invalid" });
+      expect(
+        await inspectClientConfiguration(client, {}, command),
+      ).toMatchObject({
+        status: "invalid",
+        remediation: expect.stringContaining("unknown structure"),
+      });
+      expect(
+        (await configureClientConfiguration(client, {}, command)).status,
+      ).toBe("failed");
+      expect(await readFile(client.configPath, "utf8")).toBe(initial);
+      const host = systemUninstallHost(home);
+      expect((await host.removeClient(client)).status).toBe("retained");
+      expect(await readFile(client.configPath, "utf8")).toBe(initial);
+      await expect(
+        readFile(`${client.configPath}.rea.backup`, "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 });
 
 describe("DeepSeek Harness registration state", () => {
@@ -993,7 +1112,7 @@ describe("DeepSeek Harness alias targets", () => {
     const { client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- insert: &rows
+      `- holder: &rows
     - id: other-tool
       name: other
       config:
@@ -1015,7 +1134,7 @@ describe("DeepSeek Harness alias targets", () => {
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("other-tool");
     expect(text).not.toContain("*rows");
-    expect(text).not.toContain("stale-launcher");
+    expect(text).toContain("stale-launcher");
     const patches = parseYaml(text) as { insert?: { id?: string }[] }[];
     expect(
       patches.flatMap(({ insert }) =>
@@ -1063,11 +1182,11 @@ describe("DeepSeek Harness alias targets", () => {
 });
 
 describe("DeepSeek Harness alias identity", () => {
-  it("keeps unrelated rows when the insert list is anchored outside an operation", async () => {
+  it("keeps unrelated rows when a valid insertion list is aliased", async () => {
     const { client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- &rows
+      `- holder: &rows
   - id: other-tool
     name: other
     config:
@@ -1107,7 +1226,8 @@ describe("DeepSeek Harness alias identity", () => {
     const { client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- &expr !!js process.env.TOKEN
+      `- insert: []
+  callerExpression: &expr !!js process.env.TOKEN
 - insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
@@ -1137,7 +1257,8 @@ describe("DeepSeek Harness alias identity", () => {
     const { home, client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- &entryId rea-mcp
+      `- insert: []
+  holder: &entryId rea-mcp
 - insert:
     - id: *entryId
       name: "@deepseek-ai/dsh-mcp-client"
@@ -1201,7 +1322,8 @@ describe("DeepSeek Harness alias cleanup", () => {
     const { home, client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- &expr !!js process.env.GHIDRA_INSTALL_DIR
+      `- insert: []
+  callerExpression: &expr !!js process.env.GHIDRA_INSTALL_DIR
 - insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
@@ -1475,46 +1597,11 @@ describe("DeepSeek Harness alias anchors", () => {
     ).toBe("unchanged");
   });
 
-  it("edits a root alias whose insert list is itself an alias", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- &rows
-  - id: other-tool
-    name: other
-    config:
-      command: keep-me
-  - id: rea-mcp
-    name: "@deepseek-ai/dsh-mcp-client"
-    config:
-      serverName: rea
-      transport: stdio
-      command: stale-launcher
-      args: [mcp]
-- holder: &op
-    insert: *rows
-- *op
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const inserted = loadedInserts(await readFile(client.configPath, "utf8"));
-    expect(inserted.filter((entry) => entry.id === "other-tool")).toHaveLength(
-      1,
-    );
-    expect(inserted.filter((entry) => entry.id === "rea-mcp")).toHaveLength(1);
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("unchanged");
-  });
-
   it("drops a replayed root alias after its insert alias is emptied", async () => {
     const { home, client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- &rows
+      `- holder: &rows
   - id: rea-mcp
     name: "@deepseek-ai/dsh-mcp-client"
     config:
@@ -1866,7 +1953,7 @@ describe("DeepSeek Harness ownership and editability", () => {
       );
       const initial = yaml.toString();
       await writeFile(client.configPath, initial);
-      expect(await dshStatus(home)).toMatchObject({ state: "invalid" });
+      expect(await dshStatus(home)).toMatchObject({ state: "stale" });
       expect(
         (await configureClientConfiguration(client, {}, command)).status,
       ).toBe("failed");

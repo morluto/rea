@@ -3,15 +3,15 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import { evidenceSchema, parseEvidence } from "../evidence.js";
+import { evidenceSchema, type Evidence } from "../evidence.js";
 import {
   cliMetadataGuidSchema,
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import type { JsonValue } from "../jsonValue.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { parseManagedInspectionEvidence } from "./managedInspectionEvidence.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
@@ -210,7 +210,7 @@ const buildReconstructionSummary = (
 });
 
 const buildStaticObservation = (
-  staticEvidence: ReturnType<typeof parseEvidence>,
+  staticEvidence: Evidence,
   members: ManagedMemberInspection,
 ): StaticObservation => ({
   evidence_id: staticEvidence.evidence_id,
@@ -238,7 +238,7 @@ const RECONSTRUCTION_LIMITATIONS = [
 
 const buildReconstructionWithoutId = (
   input: ManagedReconstructionImportInput,
-  staticEvidence: ReturnType<typeof parseEvidence>,
+  staticEvidence: Evidence,
   members: ManagedMemberInspection,
   methods: readonly ImportedMethod[],
 ): Omit<ManagedReconstructionImportResult, "reconstruction_id"> => ({
@@ -257,12 +257,12 @@ const buildReconstructionWithoutId = (
 export const importManagedReconstruction = (
   input: ManagedReconstructionImportInput,
 ): ManagedReconstructionImportResult => {
-  const staticEvidence = parseEvidence(input.static_members);
-  if (staticEvidence.operation !== "inspect_managed_members")
-    throw new TypeError("Evidence operation is not inspect_managed_members");
-  const members = managedMemberInspectionSchema.parse(
-    staticEvidence.normalized_result,
-  );
+  const { evidence: staticEvidence, result: members } =
+    parseManagedInspectionEvidence(
+      input.static_members,
+      "inspect_managed_members",
+      managedMemberInspectionSchema,
+    );
   const methods = input.methods.map((candidate) => {
     const observed = findObservedMethod(members, candidate);
     if (observed === undefined)

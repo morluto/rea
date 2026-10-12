@@ -4,7 +4,11 @@ import {
   type AnalysisOperation,
   type AnalysisOperationPort,
 } from "./AnalysisProvider.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisInputError,
+  AnalysisProtocolError,
+} from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { EnhancedTools } from "./EnhancedTools.js";
@@ -138,5 +142,120 @@ describe("selector origin of composed workflows", () => {
       sentParameters.some((parameters) => "selectorOrigin" in parameters),
       "the origin travels in the options only, never in Evidence-bound parameters",
     ).toBe(false);
+  });
+});
+
+describe("trace path completion and cancellation", () => {
+  it("keeps an unreachable goal unknown when provider coverage is unresolved", async () => {
+    const tools = new EnhancedTools({
+      execute: async (operation, parameters) => {
+        if (operation === "procedure_address")
+          return ok(createAnalysisExecution(parameters.procedure, provider));
+        if (operation === "procedure_callees")
+          return ok(
+            createAnalysisExecution([], provider, {
+              relationshipCoverage: {
+                status: "unknown",
+                reason: "the provider cannot confirm graph coverage",
+              },
+            }),
+          );
+        throw new Error(`Unexpected operation: ${operation}`);
+      },
+    });
+
+    const result = await tools.execute("trace_call_path", {
+      start: "0x1000",
+      goal: "0x2000",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: { goal_status: "unknown", truncated: true },
+    });
+  });
+
+  it.each([
+    { abortSignal: false, errorKind: "cancelled" },
+    { abortSignal: true, errorKind: "cancelled" },
+    { abortSignal: true, errorKind: "protocol" },
+  ])(
+    "preserves provider $errorKind failure and cleanup with request abort: $abortSignal",
+    async ({ abortSignal, errorKind }) => {
+      const cleanup = {
+        reason: "provider cleanup is still pending",
+        resources: ["provider session"],
+      };
+      const providerFailure =
+        errorKind === "cancelled"
+          ? new AnalysisCancelledError("procedure_callees", { cleanup })
+          : new AnalysisProtocolError("provider relationship read failed", {
+              cleanup,
+            });
+      const controller = new AbortController();
+      const tools = new EnhancedTools({
+        execute: async (operation, parameters) => {
+          if (operation === "procedure_address")
+            return ok(createAnalysisExecution(parameters.procedure, provider));
+          if (operation === "procedure_callees") {
+            if (abortSignal) controller.abort();
+            return err(providerFailure);
+          }
+          throw new Error(`Unexpected operation: ${operation}`);
+        },
+      });
+
+      const result = await tools.execute(
+        "trace_call_path",
+        { start: "0x1000", goal: "0x2000" },
+        abortSignal ? controller.signal : undefined,
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag:
+            errorKind === "cancelled"
+              ? "AnalysisCancelledError"
+              : "AnalysisProtocolError",
+          cleanup,
+        },
+      });
+      if (result.ok) throw new Error("expected provider failure");
+      expect(result.error).toBe(providerFailure);
+    },
+  );
+
+  it("stops after cancellation races with a successful relationship response", async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const tools = new EnhancedTools({
+      execute: async (operation, parameters) => {
+        calls.push(operation);
+        if (operation === "procedure_address")
+          return ok(createAnalysisExecution(parameters.procedure, provider));
+        if (operation === "procedure_callees") {
+          controller.abort();
+          return ok(createAnalysisExecution(["0x2000"], provider));
+        }
+        throw new Error(`Unexpected operation: ${operation}`);
+      },
+    });
+
+    const result = await tools.execute(
+      "trace_call_path",
+      { start: "0x1000", goal: "0x3000" },
+      controller.signal,
+    );
+
+    expect(calls).toEqual([
+      "procedure_address",
+      "procedure_address",
+      "procedure_callees",
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
   });
 });

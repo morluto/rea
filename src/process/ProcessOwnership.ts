@@ -642,6 +642,8 @@ const cleanupValidationFailure = (
 const sanitizedTokenReadFailure = (diagnostic: string | undefined): string => {
   if (diagnostic === "environment_unavailable") return diagnostic;
   if (diagnostic === "platform_binary_environment_withheld") return diagnostic;
+  if (diagnostic === "restricted_process_environment_withheld")
+    return diagnostic;
   const environmentErrno = /^(EACCES|EPERM|ENOENT|ESRCH):/u.exec(
     diagnostic ?? "",
   );
@@ -803,17 +805,21 @@ const TOKEN_READ_RETRY_DELAY_MS = 40;
 /** Darwin reports this when the kernel withholds a platform binary's environment. */
 const PLATFORM_BINARY_ENVIRONMENT_WITHHELD =
   "platform_binary_environment_withheld";
+/** Darwin reports this when the kernel withholds a restricted process environment. */
+const RESTRICTED_PROCESS_ENVIRONMENT_WITHHELD =
+  "restricted_process_environment_withheld";
 
 const currentProcessUid = (): number | undefined =>
   typeof process.getuid === "function" ? process.getuid() : undefined;
 
 /**
  * Whether the operating system provably withheld this candidate's run token:
- * current macOS omits the environment of Apple platform binaries from
- * KERN_PROCARGS2 and fails with EINVAL for processes owned by another
- * account, and neither class can be token-verified by any caller. Such a
- * candidate is recorded as unverified instead of failing an otherwise clean
- * capture; every other unreadable candidate stays fail-closed.
+ * current macOS omits the environment of Apple platform binaries and
+ * CS_RESTRICT processes from KERN_PROCARGS2, and fails with EINVAL for
+ * processes owned by another account. These classes cannot be token-verified
+ * by this caller. An unrelated candidate is recorded as unverified instead
+ * of failing an otherwise clean capture; every related or otherwise
+ * unreadable candidate stays fail-closed.
  */
 const environmentWithheldFromInspection = (
   entry: ProcessTableEntry,
@@ -822,7 +828,10 @@ const environmentWithheldFromInspection = (
   const uid = currentProcessUid();
   if (uid !== undefined && entry.uid !== undefined && entry.uid !== uid)
     return true;
-  return diagnostic === PLATFORM_BINARY_ENVIRONMENT_WITHHELD;
+  return (
+    diagnostic === PLATFORM_BINARY_ENVIRONMENT_WITHHELD ||
+    diagnostic === RESTRICTED_PROCESS_ENVIRONMENT_WITHHELD
+  );
 };
 
 const scanTokenOwnedProcesses = async (

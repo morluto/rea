@@ -14,7 +14,7 @@ describe("CDP target inventory", () => {
         type: "page",
         title: `Page ${String(index)}`,
         url: `https://allowed.example/page/${String(index)}`,
-        attached: false,
+        ...(index === 0 ? {} : { attached: index === 1 ? false : true }),
         webSocketDebuggerUrl: `ws://127.0.0.1:${String(port)}/devtools/page/${id}`,
       };
     });
@@ -60,6 +60,14 @@ describe("CDP target inventory", () => {
       expect(result.value.targets).toHaveLength(targets.length);
       expect(result.value.targets[0]?.target_id).toBe("target-0000");
       expect(result.value.targets.at(-1)?.target_id).toBe("target-1100");
+      expect(
+        result.value.targets.slice(0, 3).map(({ attached }) => attached),
+      ).toEqual([null, false, true]);
+      expect(
+        result.value.limitations.some((item) =>
+          item.includes("attachment state"),
+        ),
+      ).toBe(true);
     } finally {
       if (server.listening)
         await new Promise<void>((resolve, reject) => {

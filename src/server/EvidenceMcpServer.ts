@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import {
   McpServer,
   isCallToolResult,
@@ -33,6 +35,12 @@ import { encodeToolResult } from "./toolResultEncoding.js";
 export interface CompactInputSchemaPresentation {
   readonly budgetBytes: number;
 }
+
+const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
+
+/** Signal for the completion request currently being dispatched by the SDK. */
+export const currentMcpRequestSignal = (): AbortSignal | undefined =>
+  currentRequestSignal.getStore();
 
 /** A Zod schema whose standard interface exposes a JSON Schema projection. */
 const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
@@ -124,6 +132,7 @@ class ErrorEvidenceTransport implements Transport {
   onmessage: Transport["onmessage"];
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
+  private readonly pendingCompletions = new Map<RequestId, AbortController>();
 
   constructor(
     private readonly transport: Transport,
@@ -141,6 +150,8 @@ class ErrorEvidenceTransport implements Transport {
         typeof message.params?.["name"] === "string"
       )
         this.pendingTools.set(message.id, message.params["name"]);
+      if (isJSONRPCRequest(message) && message.method === "completion/complete")
+        this.pendingCompletions.set(message.id, new AbortController());
       // The SDK suppresses replies after cancellation, so send() cannot release
       // this bookkeeping. Keep transport authentication outside retained data.
       if (
@@ -148,14 +159,28 @@ class ErrorEvidenceTransport implements Transport {
         message.method === "notifications/cancelled"
       ) {
         const id = message.params?.["requestId"];
-        if (typeof id === "string" || typeof id === "number")
+        if (typeof id === "string" || typeof id === "number") {
           this.pendingTools.delete(id);
+          this.pendingCompletions.get(id)?.abort();
+          this.pendingCompletions.delete(id);
+        }
       }
-      this.onmessage?.(message, extra);
+      const completion =
+        isJSONRPCRequest(message) && message.method === "completion/complete"
+          ? this.pendingCompletions.get(message.id)
+          : undefined;
+      if (completion === undefined) this.onmessage?.(message, extra);
+      else
+        currentRequestSignal.run(completion.signal, () =>
+          this.onmessage?.(message, extra),
+        );
     };
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
       this.pendingTools.clear();
+      for (const completion of this.pendingCompletions.values())
+        completion.abort();
+      this.pendingCompletions.clear();
       this.onclose?.();
     };
   }
@@ -176,6 +201,9 @@ class ErrorEvidenceTransport implements Transport {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
+      for (const completion of this.pendingCompletions.values())
+        completion.abort();
+      this.pendingCompletions.clear();
     }
   }
 
@@ -211,8 +239,10 @@ class ErrorEvidenceTransport implements Transport {
         await this.transport.send({ ...recovered, result }, options);
       } else await this.transport.send(recovered, options);
     } finally {
-      if (!isJSONRPCRequest(message) && id !== undefined)
+      if (!isJSONRPCRequest(message) && id !== undefined) {
         this.pendingTools.delete(id);
+        this.pendingCompletions.delete(id);
+      }
     }
   }
 
