@@ -21,7 +21,8 @@ breakpoint names.
 
 ## Start with a function
 
-Choose an installed provider from [setup](installation.md#hopper). For Ghidra:
+Choose an installed provider from [setup](installation.md#hopper); the
+[IDA](ida-provider.md) and [angr](angr-provider.md) guides cover those engines. For Ghidra:
 
 ```bash
 rea inspect /absolute/path/to/program --provider ghidra --json
