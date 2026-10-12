@@ -101,6 +101,27 @@ describe("release configuration", () => {
     },
   );
 
+  it("declares the interface fields Codex plugin validation requires", async () => {
+    const manifest = (await readJson(".codex-plugin/plugin.json")) as {
+      interface: Record<string, unknown>;
+    };
+
+    for (const field of [
+      "displayName",
+      "shortDescription",
+      "longDescription",
+      "developerName",
+      "category",
+    ])
+      expect(manifest.interface[field]).toEqual(expect.stringMatching(/\S/u));
+    expect(manifest.interface.capabilities).toEqual(
+      expect.arrayContaining([expect.stringMatching(/\S/u)]),
+    );
+    expect(manifest.interface.defaultPrompt).toEqual(
+      expect.arrayContaining([expect.stringMatching(/\S/u)]),
+    );
+  });
+
   it("keeps the npm package and MCP Registry metadata aligned", async () => {
     const packageJson = (await readJson("package.json")) as {
       name: string;
