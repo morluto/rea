@@ -8,6 +8,7 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import {
@@ -37,7 +38,10 @@ export interface EvidenceImportDelta {
   readonly metadataChanged: boolean;
 }
 
-type ImportResult = Result<EvidenceImportDelta, EvidenceLedgerFailure>;
+type ImportResult = Result<
+  EvidenceImportDelta,
+  EvidenceLedgerFailure | AnalysisInputError
+>;
 
 /** Session-owned set of immutable evidence records. */
 export class EvidenceLedger {
@@ -76,10 +80,18 @@ export class EvidenceLedger {
     try {
       bundle = parseEvidenceBundle(input);
     } catch (cause: unknown) {
+      const failure = describeEvidenceBundleFailure(input, cause);
+      if (failure.kind === "single-record")
+        return err(
+          new AnalysisInputError("import_evidence_bundle", {
+            cause,
+            userMessage: failure.message,
+          }),
+        );
       return err(
         new EvidenceIntegrityError("Evidence bundle validation failed", {
           cause,
-          userMessage: describeEvidenceBundleFailure(input, cause),
+          userMessage: failure.message,
         }),
       );
     }

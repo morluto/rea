@@ -102,7 +102,7 @@ const unavailableResult = (
   bytes: Buffer,
   layout: ManagedPeLayout,
 ): ManagedArtifactInspection => {
-  const malformed = layout.cliDirectoryPresent;
+  const malformed = layout.cliDirectoryState !== "absent";
   const issues = layout.cliIssue === null ? [] : [layout.cliIssue];
   const limitations = malformed
     ? [

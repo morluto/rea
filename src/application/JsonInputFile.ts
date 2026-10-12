@@ -11,6 +11,7 @@ import streamValues from "stream-json/streamers/stream-values.js";
 import streamArray from "stream-json/streamers/stream-array.js";
 
 import { RegularFileChangedError } from "../filesystem/RegularFile.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { withRegularFile } from "./RegularFileRead.js";
 import {
   JSON_BYTE_ORDER_MARK_MESSAGE,
@@ -55,6 +56,7 @@ export const readJsonObjectFile = (
   operation: string,
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<Result<void, JsonInputFileFailure>> =>
   withRegularFile(
     path,
@@ -188,7 +190,10 @@ export const readJsonObjectFile = (
         throw cause;
       }
     },
-    { signal },
+    {
+      signal,
+      ...(resources === undefined ? {} : { resources }),
+    },
   );
 
 const memberConsumer = (
@@ -236,6 +241,7 @@ export const readJsonInputFile = (
   path: string,
   operation: string,
   signal?: AbortSignal,
+  resources?: ArtifactResourceScope,
 ): Promise<Result<unknown, JsonInputFileFailure>> =>
   withRegularFile(
     path,
@@ -294,7 +300,10 @@ export const readJsonInputFile = (
         throw cause;
       }
     },
-    { signal },
+    {
+      signal,
+      ...(resources === undefined ? {} : { resources }),
+    },
   );
 
 const jsonReadFailure = (

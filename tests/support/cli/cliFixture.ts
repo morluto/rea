@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   createTestWorkspace,
@@ -58,6 +59,15 @@ export const createTestCli = (
         cwd: cwd ?? process.cwd(),
         env: {
           PATH: process.env.PATH ?? "",
+          // Native Windows APIs need the system root and a writable temporary
+          // directory even when the command's application environment is empty.
+          ...(process.platform === "win32"
+            ? {
+                SystemRoot: process.env.SystemRoot,
+                TEMP: tmpdir(),
+                TMP: tmpdir(),
+              }
+            : {}),
           ...(compileCache === undefined ||
           environment?.NODE_V8_COVERAGE !== undefined
             ? {}

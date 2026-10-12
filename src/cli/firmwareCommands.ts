@@ -4,6 +4,8 @@ import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysi
 import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
+import { firmwareInputSchemas } from "../domain/firmware/firmwareAnalysis.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "pino";
@@ -19,6 +21,8 @@ export const registerFirmwareCommands = (
   const service = new FirmwareAnalysisService(
     createFirmwareAnalysisProvider(environment),
   );
+  const extractInput = firmwareInputSchemas.extract_firmware.shape;
+  const range = extractInput.range.unwrap().shape;
   const execute = (
     name: string,
     operation: FirmwareOperation,
@@ -34,7 +38,9 @@ export const registerFirmwareCommands = (
         }
       }),
     );
-  const path = z.string().describe("Local firmware path; never executed");
+  const path = localPathStringSchema.describe(
+    "Local firmware path; never executed",
+  );
   cli.command(CLI_COMMANDS.inspectFirmwareRegions, {
     description:
       "Inspect firmware signature candidates without extracting them",
@@ -52,38 +58,20 @@ export const registerFirmwareCommands = (
       "Extract selected firmware bytes and return verified files and provenance",
     args: z.object({
       path,
-      outputDirectory: z
-        .string()
-        .describe("Absolute absent output directory; parent must exist"),
+      outputDirectory: localPathStringSchema.describe(
+        "Absent output directory; parent must exist",
+      ),
     }),
     options: z.object({
-      offset: z
-        .number()
-        .int()
-        .nonnegative()
+      offset: range.offset
         .optional()
         .describe("Selected byte offset; requires length"),
-      length: z
-        .number()
-        .int()
-        .positive()
+      length: range.length
         .optional()
         .describe("Selected byte length; requires offset"),
-      maxDepth: z
-        .number()
-        .int()
-        .optional()
-        .describe("Extraction depth, 1–10; default 3"),
-      maxOutputBytes: z
-        .number()
-        .int()
-        .optional()
-        .describe("Staging byte budget; default 256 MiB, maximum 512 MiB"),
-      maxOutputFiles: z
-        .number()
-        .int()
-        .optional()
-        .describe("Staging entry budget; default 10000"),
+      maxDepth: extractInput.max_depth,
+      maxOutputBytes: extractInput.max_output_bytes,
+      maxOutputFiles: extractInput.max_output_files,
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.extractFirmware, "extract_firmware", {
@@ -92,15 +80,9 @@ export const registerFirmwareCommands = (
         ...(options.offset === undefined && options.length === undefined
           ? {}
           : { range: { offset: options.offset, length: options.length } }),
-        ...(options.maxDepth === undefined
-          ? {}
-          : { max_depth: options.maxDepth }),
-        ...(options.maxOutputBytes === undefined
-          ? {}
-          : { max_output_bytes: options.maxOutputBytes }),
-        ...(options.maxOutputFiles === undefined
-          ? {}
-          : { max_output_files: options.maxOutputFiles }),
+        max_depth: options.maxDepth,
+        max_output_bytes: options.maxOutputBytes,
+        max_output_files: options.maxOutputFiles,
       }),
   });
 };

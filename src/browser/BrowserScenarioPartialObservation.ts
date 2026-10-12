@@ -1,9 +1,13 @@
 import type { BrowserScenario } from "../domain/browserScenario.js";
+import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import type {
   BrowserScenarioCaptureData,
   BrowserScenarioPartialObservation,
 } from "../domain/browserScenarioCapture.js";
-import type { BrowserScenarioStep } from "../domain/browserScenarioCaptureValues.js";
+import type {
+  BrowserScenarioEvent,
+  BrowserScenarioStep,
+} from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSessionPort } from "./BrowserScenarioSessionPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -20,26 +24,42 @@ const OPERATION = "capture_browser_scenario" as const;
 const browserScenarioLimitations = (
   session: BrowserScenarioSessionPort,
   scenario: BrowserScenario,
-): string[] => [
-  "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
-  "Network content is retained only when selected; response bytes are browser-decoded, not compressed wire bytes.",
-  "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
-  "Network content reads settle within 5 seconds each and never wait for unfinished responses or refetch them.",
-  "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
-  "Storage values are hashed only after declared-secret redaction.",
-  ...(scenario.storage.local_storage.length === 0 &&
-  scenario.storage.session_storage.length === 0
-    ? []
-    : [
-        "Non-cookie storage seeds use CDP pre-script instrumentation; only pauses in the scenario's private seed script are resumed by this observer.",
-      ]),
-  ...(session.eventLimitations?.() ?? []),
-  ...(session.mode === "connect"
-    ? [
-        "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
-      ]
-    : []),
-];
+  events: readonly BrowserScenarioEvent[],
+): string[] => {
+  const capturedResponseBody =
+    scenario.capture.network.response_body &&
+    events.some(
+      (event) =>
+        event.kind === "network-content" &&
+        event.phase === "response" &&
+        event.body.state === "captured" &&
+        (event.body.representation === "playwright-response-body-bytes" ||
+          event.body.representation === "browser-decoded-response-bytes"),
+    );
+  return [
+    "Event sequence records provider receipt order; simultaneous browser causality is not inferred.",
+    "Network content is retained only when selected; Playwright response-body bytes are API results and are not guaranteed to match wire bytes.",
+    "Request bytes are limited to what Playwright exposes; not_exposed does not establish body absence or multipart file coverage.",
+    "Network content reads settle within 5 seconds each and the observer does not request bodies from unfinished responses.",
+    ...(capturedResponseBody
+      ? [PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION]
+      : []),
+    "Playwright scenario events do not expose request initiator stacks; receipt order does not prove causality.",
+    "Storage values are hashed only after declared-secret redaction.",
+    ...(scenario.storage.local_storage.length === 0 &&
+    scenario.storage.session_storage.length === 0
+      ? []
+      : [
+          "Non-cookie storage seeds use CDP pre-script instrumentation; only pauses in the scenario's private seed script are resumed by this observer.",
+        ]),
+    ...(session.eventLimitations?.() ?? []),
+    ...(session.mode === "connect"
+      ? [
+          "CDP attachment cannot recover pre-attach events or guarantee launch-time context options.",
+        ]
+      : []),
+  ];
+};
 
 /** Project one session into the common capture fields used by success and failure. */
 export const browserScenarioCaptureData = (input: {
@@ -52,30 +72,37 @@ export const browserScenarioCaptureData = (input: {
     | "disconnected-external"
     | "incomplete";
   readonly limitations?: readonly string[];
-}): BrowserScenarioCaptureData => ({
-  browser: {
-    mode: input.session.mode,
-    process_ownership: input.session.processOwnership,
-    cleanup: input.cleanup,
-    product: input.session.product,
-    version: input.session.version,
-  },
-  scenario: {
-    start_origin: new URL(input.scenario.start_url.url).origin,
-    action_count: input.scenario.actions.length,
-    secret_references: input.scenario.secrets
-      .map(({ secret_id: id }) => id)
-      .sort(),
-    network_content: input.scenario.capture.network,
-  },
-  duration_ms: Date.now() - input.startedAt,
-  steps: [...input.steps],
-  events: input.session.events(),
-  limitations: [
-    ...browserScenarioLimitations(input.session, input.scenario),
-    ...(input.limitations ?? []),
-  ],
-});
+}): BrowserScenarioCaptureData => {
+  const events = input.session.events();
+  return {
+    browser: {
+      mode: input.session.mode,
+      process_ownership: input.session.processOwnership,
+      cleanup: input.cleanup,
+      product: input.session.product,
+      version: input.session.version,
+    },
+    scenario: {
+      start_origin: new URL(input.scenario.start_url.url).origin,
+      action_count: input.scenario.actions.length,
+      secret_references: input.scenario.secrets
+        .map(({ secret_id: id }) => id)
+        .sort(),
+      network_content: input.scenario.capture.network,
+    },
+    duration_ms: Date.now() - input.startedAt,
+    steps: [...input.steps],
+    events,
+    limitations: [
+      ...browserScenarioLimitations(
+        input.session,
+        input.scenario,
+        events.items,
+      ),
+      ...(input.limitations ?? []),
+    ],
+  };
+};
 
 /** Describe the cleanup failure without discarding its resource evidence. */
 export const browserScenarioCleanupObservation = (

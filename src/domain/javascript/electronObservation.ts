@@ -43,7 +43,12 @@ const electronTargetSchema = z.object({
   type: z.string(),
   title: z.string(),
   file_path: z.string(),
-  attached: z.boolean(),
+  attached: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Discovery-reported debugger attachment state; null means unknown",
+    ),
 });
 
 /** Complete local file target inventory from one Electron CDP endpoint. */

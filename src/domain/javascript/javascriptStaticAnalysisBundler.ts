@@ -56,7 +56,7 @@ export const inspectBundlerRegistration = (
     ...runtimeValue.asyncChunkKeys,
     ...recovered.asyncChunkKeys,
   ]);
-  const registration = {
+  const registration: JavaScriptBundlerRegistration = {
     bundler: runtime.toLowerCase().includes("rspack")
       ? ("rspack" as const)
       : ("webpack" as const),
@@ -64,7 +64,10 @@ export const inspectBundlerRegistration = (
     chunk_keys: chunkKeys.values,
     unknown_chunk_keys: chunkKeys.unknown,
     runtime_require_name: runtimeValue.requireName,
-    runtime_module_cache_status: bundlerModuleCacheStatus(source),
+    // A name appearing in the source does not establish cache behavior or
+    // associate it with this registration. Until the analyzed runtime body
+    // proves cache reads and writes, preserve the honest unknown state.
+    runtime_module_cache_status: "not-observed",
     entry_module_keys: runtimeValue.entryModuleKeys,
     unknown_entry_module_keys: runtimeValue.unknownEntryModuleKeys,
     async_chunk_keys: asyncChunkKeys.values,
@@ -350,12 +353,3 @@ const uniqueValues = (values: readonly string[], unknown = 0): StaticValues => {
     unknown,
   };
 };
-
-const bundlerModuleCacheStatus = (
-  source: string,
-): "observed" | "not-observed" =>
-  /\b(?:__webpack_module_cache__|__rspack_module_cache__|installedModules)\b/u.test(
-    source,
-  )
-    ? "observed"
-    : "not-observed";

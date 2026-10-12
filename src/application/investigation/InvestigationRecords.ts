@@ -3,6 +3,7 @@ import type { Evidence } from "../../domain/evidence.js";
 import type { EvidenceBundle } from "../../domain/evidenceBundle.js";
 import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
 import type {
   RecordUnknownInput,
@@ -65,7 +66,7 @@ export class InvestigationRecords
   /** Atomically merge a bundle and report changes for the owner's post-commit observers. */
   mergeEvidenceBundle(
     bundle: unknown,
-  ): Result<EvidenceImportDelta, EvidenceIntegrityError> {
+  ): Result<EvidenceImportDelta, EvidenceIntegrityError | AnalysisInputError> {
     return this.#evidence.import(bundle);
   }
 

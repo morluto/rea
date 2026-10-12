@@ -91,6 +91,11 @@ export class CdpElectronProvider implements ElectronObservationPort {
               : [
                   `${String(unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
                 ]),
+            ...(allowed.some((target) => target.attached === null)
+              ? [
+                  "CDP discovery omitted attachment state for one or more targets; attached is reported as unknown.",
+                ]
+              : []),
           ],
         }),
       );

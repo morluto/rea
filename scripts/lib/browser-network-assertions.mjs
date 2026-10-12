@@ -117,7 +117,7 @@ export function assertBrowserNetworkEvidence(
   assert.deepEqual(retained(responseFor("/compressed")), networkFixtureDecoded);
   assert.equal(
     responseFor("/compressed").body.representation,
-    "browser-decoded-response-bytes",
+    "playwright-response-body-bytes",
   );
   const formRequest = requestEvents.find(
     (event) => event.url.url === `${origin}/form`,
@@ -149,7 +149,7 @@ export function assertBrowserNetworkEvidence(
   return {
     same_url_markers: markers,
     binary_bytes: networkFixtureBinary.length,
-    compressed_representation: "browser-decoded-response-bytes",
+    compressed_representation: "playwright-response-body-bytes",
     unfinished_stream: "response-unfinished",
     empty_response_state: responseFor("/empty").body.state,
   };

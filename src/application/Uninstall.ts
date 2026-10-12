@@ -310,6 +310,15 @@ const removeClient = async (
   // still belongs to that id, and so does a direct patch that projects no row.
   const carriesDshEntry =
     parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry;
+  if (
+    parsed.dialect === "dsh" &&
+    dshDocument(parsed.document).hasUnknownStructure
+  )
+    return item(
+      client.name,
+      "retained",
+      "A Cordis expression may produce registration rows, so the patch was retained without changes.",
+    );
   if (!hasNative && legacyPath === undefined && !carriesDshEntry)
     return item(client.name, "skipped", "REA registration is absent.");
   const removeNative =
@@ -495,14 +504,11 @@ const removeManagedSkills = async (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
 ): Promise<UninstallItem> => {
+  // Every destination shares one summary item, so each result is labeled by
+  // the directory it refers to.
   const results = await Promise.all(
-    skillDestinations(home, undefined, environment, platform).map(
-      ({ client, path }) =>
-        removeManagedSkill(
-          path,
-          client === "claude_code" ? "Claude Code skill" : "skill",
-          fileSystem,
-        ),
+    skillDestinations(home, undefined, environment, platform).map(({ path }) =>
+      removeManagedSkill(path, path, fileSystem),
     ),
   );
   const failed = results.find(({ status }) => status === "failed");

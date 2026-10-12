@@ -339,8 +339,10 @@ const captureBody = (source: BodySource, body: string): WebPageInspection => {
       encodedDataLength: Buffer.byteLength(responseBody),
     },
   });
-  expect(events.responseBodyRequestIds()).toEqual(["request-1"]);
-  events.ingestResponseBody("request-1", {
+  const candidate = events.responseBodyRequests()[0];
+  expect(candidate?.requestId).toBe("request-1");
+  expect(candidate).toBeDefined();
+  events.ingestResponseBody(candidate!, {
     body:
       source === "base64 response"
         ? Buffer.from(responseBody).toString("base64")

@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -259,3 +260,39 @@ for (const group of groups) {
     },
   );
 }
+
+cliTest("uninstall names each retained skill directory", async ({ cli }) => {
+  const home = await createTestTempDirectory("rea-uninstall-skill-paths-");
+  const shared = join(home, ".agents", "skills", PRODUCT_IDENTITY.skillName);
+  const claude = join(home, ".claude", "skills", PRODUCT_IDENTITY.skillName);
+  for (const directory of [shared, claude]) {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, "SKILL.md"), "---\nname: unrelated\n---\n");
+  }
+
+  const result = await cli.run({
+    arguments: ["uninstall", "--json"],
+    cwd: home,
+    environment: {
+      HOME: home,
+      USERPROFILE: home,
+      CLAUDE_CONFIG_DIR: join(home, ".claude"),
+    },
+    timeoutMs: 20_000,
+  });
+
+  expect(result.exitCode, result.stderr).toBe(0);
+  const report = result.json as {
+    items?: readonly { name: string; status: string; detail: string }[];
+  };
+  const skill = report.items?.find(({ name }) => name === "skill");
+  expect(skill?.status).toBe("retained");
+  for (const directory of [shared, claude]) {
+    expect(skill?.detail).toContain(
+      `${directory}: retained (Skill manifest is not REA-owned.)`,
+    );
+    expect(await readFile(join(directory, "SKILL.md"), "utf8")).toBe(
+      "---\nname: unrelated\n---\n",
+    );
+  }
+});

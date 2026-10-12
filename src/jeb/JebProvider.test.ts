@@ -165,6 +165,63 @@ describe("JebProvider boundary", () => {
   });
 });
 
+describe("JebProvider open project inventories", () => {
+  it.each(["input_files", "units"] as const)(
+    "rejects an omitted %s inventory from a successful project response",
+    async (omitted) => {
+      const project = {
+        success: true,
+        name: "empty-project",
+        creation_datetime: "2026-10-12T00:00:00",
+        input_files: [],
+        units: [],
+      };
+      const response = { ...project };
+      delete response[omitted];
+      const provider = providerWith(
+        scriptedConnection({
+          get_client_information: { success: true, version: "5.48.0" },
+          open_project: response,
+        }),
+      );
+
+      const result = await provider.execute({
+        operation: "open_jeb_project",
+        input: { path: "probe.apk" },
+      });
+
+      if (result.ok) throw new Error("Expected an omitted inventory failure");
+      expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+    },
+  );
+
+  it("preserves explicitly empty project inventories", async () => {
+    const provider = providerWith(
+      scriptedConnection({
+        get_client_information: { success: true, version: "5.48.0" },
+        open_project: {
+          success: true,
+          name: "empty-project",
+          creation_datetime: "2026-10-12T00:00:00",
+          input_files: [],
+          units: [],
+        },
+      }),
+    );
+
+    const result = await provider.execute({
+      operation: "open_jeb_project",
+      input: { path: "probe.apk" },
+    });
+
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      input_files: [],
+      units: [],
+    });
+  });
+});
+
 describe("JebProvider target and endpoint selection", () => {
   it("keeps the implicitly selected unit unknown when unit_path is omitted", async () => {
     const provider = providerWith(

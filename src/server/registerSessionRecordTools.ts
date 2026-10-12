@@ -89,6 +89,7 @@ const registerSnapshotEvidenceTool = ({
 const registerImportEvidenceTool = ({
   server,
   session,
+  resources,
   importContract,
 }: EvidenceToolRegistration): void => {
   server.registerTool(
@@ -97,7 +98,7 @@ const registerImportEvidenceTool = ({
     async (input, context) => {
       const path = input.path;
       const signal = context.mcpReq.signal;
-      const loaded = await readImmutableEvidenceBundle(path, signal);
+      const loaded = await readImmutableEvidenceBundle(path, signal, resources);
       if (!loaded.ok)
         return server.delivery.toCallToolResult(loaded, importContract);
       const retainedUnknownRevisions = new Set(

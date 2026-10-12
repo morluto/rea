@@ -45,6 +45,7 @@ export class EvidenceReferenceError extends EvidenceIntegrityError {
 /** Evidence bundle filesystem access failed within the configured policy. */
 export class EvidenceFileError extends AnalysisError {
   readonly _tag = "EvidenceFileError";
+  override readonly userMessage: string | undefined;
 
   /** Caller-selected path that failed, resolved against the working directory. */
   readonly path: string | undefined;
@@ -53,14 +54,22 @@ export class EvidenceFileError extends AnalysisError {
 
   constructor(
     readonly operation: "read" | "write",
-    readonly reason: "not-file" | "exists" | "invalid-json" | "missing" | "io",
+    readonly reason:
+      | "not-file"
+      | "exists"
+      | "wrong-kind"
+      | "invalid-json"
+      | "missing"
+      | "io",
     options?: AnalysisErrorOptions & {
       readonly path?: string;
       readonly published?: PublishedEvidenceFile;
+      readonly userMessage?: string;
     },
   ) {
     super(`Evidence bundle ${operation} failed: ${reason}`, options);
     this.path = options?.path;
     this.published = options?.published;
+    this.userMessage = options?.userMessage;
   }
 }

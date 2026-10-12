@@ -245,6 +245,17 @@ describe("binary target I/O: package classification", () => {
     });
   });
 
+  it("classifies a binary plist by its magic under any extension", async () => {
+    const directory = await createTestTempDirectory("rea-bplist-target-");
+    const path = join(directory, "Model.archive");
+    await writeFile(path, buildBinary({ $archiver: "NSKeyedArchiver" }));
+    const result = await parseBinaryTarget(path);
+    expect(result.ok && result.value).toMatchObject({
+      kind: "artifact",
+      format: "plist",
+    });
+  });
+
   it("does not trust a ZIP-family extension without ZIP magic", async () => {
     const directory = await createTestTempDirectory("rea-fake-archive-");
     const path = join(directory, "fake.zip");

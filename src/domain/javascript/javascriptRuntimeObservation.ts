@@ -89,7 +89,12 @@ export type JavaScriptRuntimeTargetLocation = z.infer<
 const javascriptRuntimeTargetSchema = z.strictObject({
   target_id: z.string().min(1),
   protocol_type: z.string().min(1),
-  attached: z.boolean(),
+  attached: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Discovery-reported debugger attachment state; null means unknown",
+    ),
   location: javascriptRuntimeTargetLocationSchema,
 });
 

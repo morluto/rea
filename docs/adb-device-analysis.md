@@ -88,7 +88,7 @@ existing analysis families directly, for example
 | `list_adb_packages`     | read               | `pm list packages -f` with scope; base APK device paths                                                                                                                   |
 | `resolve_adb_packages`  | read               | Case-insensitive package-name substring search with exact-match flag                                                                                                      |
 | `inspect_adb_package`   | read               | `dumpsys package` projection: versions, install times, installer, flags, permission count                                                                                 |
-| `list_adb_directory`    | read               | `ls -la`: kinds, permissions, owner, group, sizes, symlink targets                                                                                                        |
+| `list_adb_directory`    | read               | NUL-framed immediate children, including hidden entries: kinds, permissions, owner, group, sizes, symlink targets                                                         |
 | `pull_adb_package`      | read               | Complete split APK set from `pm path`, each file digested                                                                                                                 |
 | `pull_adb_file`         | read               | One absolute device path pulled and digested                                                                                                                              |
 | `capture_adb_screen`    | read               | One `screencap -p` frame (exec-out, no device-side file) with dimensions                                                                                                  |
@@ -102,6 +102,9 @@ existing analysis families directly, for example
 
 ## Interpret the result
 
+- **Directory names retain whitespace and newlines.** Symlink targets do too,
+  including trailing newlines. Records containing invalid UTF-8 remain as
+  labelled hex in `unparsed_lines` and make directory coverage partial.
 - **Inferences carry their basis.** Device `kind` reports
   `kind_basis` (serial prefix or USB transport); APK `role` reports
   `role_basis: file_name`; `emulator_observed` is the build's own

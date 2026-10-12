@@ -219,7 +219,11 @@ describe("managed one-shot cleanup outcomes", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.cause).toBe(primaryError);
+    expect(result.error.cause).toBeInstanceOf(AggregateError);
+    expect(result.error.cause).toMatchObject({
+      cause: primaryError,
+      errors: [primaryError, cleanupError],
+    });
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "cleanup_incomplete",
       details: {

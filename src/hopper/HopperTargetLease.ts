@@ -6,7 +6,7 @@ import {
   type Server,
   type Socket,
 } from "node:net";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { HopperStartError } from "../domain/hopperErrors.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -37,16 +37,17 @@ export const acquireHopperTargetLease = async (input: {
   readonly runId: string;
   readonly directory?: string;
 }): Promise<HopperTargetLeaseAcquisition> => {
-  // The canonical path only derives the lease key; it never authorizes access.
-  // Common expected `realpath` failures include a missing target or path
-  // component (ENOENT, ENOTDIR), an unreadable component (EACCES), or a
-  // symlink loop (ELOOP). This catch also falls back for every other error,
-  // which may hide a real filesystem problem. The lexical `resolve` fallback
-  // still yields a deterministic key, but aliases may take separate leases
-  // whenever `realpath` cannot resolve them.
-  const targetPath = await realpath(input.targetPath).catch(() =>
-    resolve(input.targetPath),
-  );
+  // Canonicalization is required for lease identity. A lexical fallback could
+  // let two aliases reserve independent sockets for the same Hopper document.
+  let targetPath: string;
+  try {
+    targetPath = await realpath(input.targetPath);
+  } catch (cause: unknown) {
+    throw new HopperStartError({
+      cause,
+      userMessage: `REA could not resolve Hopper target ${JSON.stringify(input.targetPath)} to a canonical path before reserving the document. Confirm that the target exists and its path is accessible.`,
+    });
+  }
   return acquireLease({
     ...input,
     identity: {

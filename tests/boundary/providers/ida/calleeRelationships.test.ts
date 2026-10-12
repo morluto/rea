@@ -209,7 +209,7 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
     });
     if (!trace.ok) throw trace.error;
     expect(trace.value).toMatchObject({
-      goal_status: "not_reached",
+      goal_status: "unknown",
       edges: [],
       limitations: expect.arrayContaining([
         expect.stringContaining("callgraph was unavailable"),

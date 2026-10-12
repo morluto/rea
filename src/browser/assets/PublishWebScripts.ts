@@ -7,6 +7,7 @@ import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js"
 import { DESTINATION_CASE_COLLISION_PREFIX } from "../../artifacts/ArtifactPaths.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../../domain/browserNetworkEvidence.js";
 import {
   webScriptExportManifestSchema,
   webScriptExportResultSchema,
@@ -26,7 +27,7 @@ const LIMITATIONS = [
   "Ordinary unambiguous URL paths preserve relative module layouts by origin, including case-distinct spellings. Query variants, exact path collisions, file/directory prefixes, inline sources, and unrepresentable paths are isolated. A case-distinct pair is isolated only when the destination filesystem cannot store both spellings; the record names that pair. Browser module relationships of isolated paths remain unknown.",
   "Local JavaScript analysis does not implement browser import maps, root-relative URL resolution, remote URL loading, or browser runtime behavior. It may strip import queries and fragments; isolated variants are not canonical targets.",
   "Source-map declarations are retained as metadata. No source maps or missing dependencies are fetched or reconstructed.",
-  "Captured response bytes are browser-decoded bytes; Debugger sources are the exposed text encoded as UTF-8. Redacted bytes are exported exactly as retained, and may no longer parse as JavaScript.",
+  "Scenario response bytes preserve the output of Playwright's Response.body() API; any source-body provenance caveat from the capture is retained in this manifest. Debugger sources are the exposed text encoded as UTF-8. Redacted bytes are exported exactly as retained, and may no longer parse as JavaScript.",
 ];
 
 interface PublishWebScriptsOptions {
@@ -43,6 +44,22 @@ export const publishWebScripts = async (
 ): Promise<WebScriptExportResult> =>
   options.resources.run(async () => {
     const planned = planWebScriptExport(capture.scripts);
+    const scenarioResponseBodyCaptured =
+      capture.kind === "browser-scenario" &&
+      capture.scripts.some(
+        (script) =>
+          script.source.kind === "scenario-response" &&
+          script.content.state === "captured" &&
+          (script.content.representation === "playwright-response-body-bytes" ||
+            script.content.representation === "browser-decoded-response-bytes"),
+      );
+    const responseBodyProvenanceLimitations =
+      scenarioResponseBodyCaptured &&
+      !capture.limitations.includes(
+        PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION,
+      )
+        ? [PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION]
+        : [];
     let tree: SafeOutputTree | undefined;
     let result: WebScriptExportResult | undefined;
     try {
@@ -70,6 +87,7 @@ export const publishWebScripts = async (
         scripts: records,
         limitations: [
           ...capture.limitations,
+          ...responseBodyProvenanceLimitations,
           ...LIMITATIONS,
           ...(records.some(({ content }) => content.state === "exported")
             ? []

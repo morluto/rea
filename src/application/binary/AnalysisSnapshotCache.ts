@@ -8,6 +8,7 @@ import {
 } from "../../domain/evidenceErrors.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { rebindEvidenceSubjectTargetPath } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
@@ -190,7 +191,7 @@ export class AnalysisSnapshotCache {
       | undefined,
     mergeEvidence: (
       bundle: EvidenceBundle,
-    ) => Result<number, EvidenceIntegrityError>,
+    ) => Result<number, EvidenceIntegrityError | AnalysisInputError>,
   ): Result<number, AnalysisError> {
     let validated: AnalysisSnapshot;
     try {

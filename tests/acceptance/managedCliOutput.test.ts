@@ -178,6 +178,38 @@ cliTest(
 );
 
 cliTest(
+  "managed CLI rejects repeated or empty type selections as invalid input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-types-");
+    const path = join(root, "fixture.dll");
+    await writeFile(path, buildManagedPeFixture());
+    for (const [types, message] of [
+      [["Fixture.Empty0", "Fixture.Empty0"], "must not repeat a name"],
+      [[""], ">=1 characters"],
+    ] as const) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-managed-members",
+          path,
+          ...types.flatMap((type) => ["--type", type]),
+          "--json",
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: expect.stringMatching(/^type/u),
+            message: expect.stringContaining(message),
+          }),
+        ],
+      });
+    }
+  },
+);
+
+cliTest(
   "managed CLI bounds CIL claims by section virtual ranges",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-virtual-size-");

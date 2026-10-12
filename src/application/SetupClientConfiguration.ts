@@ -59,6 +59,13 @@ const configureClientDocument = async (
     throwCleanupFailure(files.error);
     return { status: "failed", reason: "readback" };
   }
+  const existing = files.value.at(-1);
+  const editabilityError =
+    existing?.dialect === "dsh"
+      ? dshDocument(existing.document).editabilityError
+      : undefined;
+  if (editabilityError !== undefined)
+    return { status: "failed", reason: "readback" };
   const policy = await readClientPolicyBlock(
     client,
     undefined,
@@ -284,15 +291,20 @@ export const inspectClientConfiguration = async (
       remediation: files.error.detail,
     };
   }
+  const existing = files.value.at(-1);
+  const editabilityError =
+    existing?.dialect === "dsh"
+      ? dshDocument(existing.document).editabilityError
+      : undefined;
+  if (editabilityError !== undefined)
+    return {
+      status: "invalid",
+      remediation: editabilityError.message,
+    };
   const policy = await readClientPolicyBlock(
     client,
     undefined,
-    clientConfigurationDesired(
-      client,
-      providerEnvironment,
-      command,
-      files.value.at(-1),
-    ),
+    clientConfigurationDesired(client, providerEnvironment, command, existing),
   );
   if (!policy.ok) {
     throwCleanupFailure(policy.error);

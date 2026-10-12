@@ -262,8 +262,13 @@ Capturing more data alone does not establish a website change.
 states. Captured bodies retain base64 bytes, byte count, media type, and SHA-256
 of the retained bytes. Request bytes are those exposed by Playwright; a
 `not_exposed` request body does not prove absence or complete multipart file
-coverage. Response bytes are decoded by the browser, not the compressed wire
-representation. No later fetch is substituted for the original response.
+coverage. Response bytes are the result of Playwright's `Response.body()` API.
+Playwright may satisfy that API with a credentialed follow-up load of the
+request URL when CDP has no response body. Event and transaction references
+identify the associated Playwright response object, but do not verify that the
+retained bytes came from the original network transaction. Successful selected
+response bodies include this limitation in the capture. These bytes are not
+the compressed wire representation.
 Headers preserve producer order and duplicates. Authorization,
 Proxy-Authorization, Cookie, and Set-Cookie values are null with
 `redacted: true`; ordinary values remain intact. Declared UTF-8 secret values

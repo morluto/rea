@@ -334,6 +334,8 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "inspect_go_binary")
+    return { reason: "available", remediation: null };
   if (name === "trace_web_module_imports")
     return {
       reason: "available",

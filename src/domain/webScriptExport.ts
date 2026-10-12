@@ -52,6 +52,9 @@ export const exportedWebScriptSchema = z.strictObject({
       redacted: z.boolean().nullable(),
       representation: z.enum([
         "debugger-source-utf8",
+        "playwright-response-body-bytes",
+        // Accept already-saved exports from before the response representation
+        // was narrowed to the Playwright API result.
         "browser-decoded-response-bytes",
       ]),
     }),
@@ -116,9 +119,10 @@ export interface CapturedWebScript {
         readonly sha256: string;
         readonly media_type: string | null;
         readonly redacted: boolean | null;
-        readonly representation:
-          | "debugger-source-utf8"
-          | "browser-decoded-response-bytes";
+        readonly representation: Extract<
+          ExportedWebScript["content"],
+          { readonly state: "exported" }
+        >["representation"];
       }
     | Extract<ExportedWebScript["content"], { state: "unavailable" }>;
 }

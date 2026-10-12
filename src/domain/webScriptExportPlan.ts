@@ -94,8 +94,9 @@ const candidatePath = (script: CapturedWebScript): CandidatePath => {
   return {
     path: `origins/${hash(url.origin)}/${parts.join("/")}`,
     reason:
-      url.search !== "" ||
-      url.hash !== "" ||
+      // URL.search/hash collapse absent and explicitly empty components.
+      url.href.includes("?") ||
+      url.href.includes("#") ||
       url.username !== "" ||
       url.password !== ""
         ? "URL query, fragment, or credentials cannot select a canonical local module."

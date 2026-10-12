@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 
+import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 
 const injectedFilesystemFailures = vi.hoisted(() => ({
@@ -140,16 +141,17 @@ it.skipIf(process.platform === "win32").each([false, true])(
   "preserves extracted output when commit close fails (persistent: %s)",
   async (persistent) => {
     const root = await createTestTempDirectory("rea-extraction-commit-close-");
-    const source = join(root, "source");
+    const source = join(root, "source.zip");
     const output = join(root, "published");
-    await mkdir(source);
-    await writeFile(join(source, "payload.txt"), "committed bytes");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add("payload.txt", new TextReader("committed bytes"));
+    await writeFile(source, await writer.close());
     const client = new ArtifactProvider(process.env).createClient({
       path: source,
       sourcePath: source,
       sha256: "0".repeat(64),
       kind: "archive",
-      format: "asar",
+      format: "zip",
     });
     onTestFinished(async () => {
       injectedFilesystemFailures.blockCloseRetries = false;

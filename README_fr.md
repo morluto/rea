@@ -262,7 +262,7 @@ Signalez les vulnérabilités via [SECURITY.md](SECURITY.md).
 
 ## Historique des étoiles
 
-🎉 **90 000 étoiles GitHub — merci !**
+🎉 **110 000 étoiles GitHub — merci !**
 
 Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent des fonctionnalités, testent les builds et contribuent des correctifs.
 
@@ -276,7 +276,13 @@ Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent d
 
 ## Avertissement
 
-REA fournit des outils destinés à la recherche, à l'analyse et à la reconstruction légales en rétro-ingénierie. Il vous appartient d'obtenir toute autorisation nécessaire et de respecter les lois applicables. Le projet n'encourage aucune utilisation illégale ou non autorisée.
+Consultez [DISCLAIMER.md](DISCLAIMER.md) pour les consignes d'utilisation responsable.
+
+REA est destiné à la recherche, à l’éducation, à l’interopérabilité, à la préservation logicielle et à l’analyse de logiciels que vous possédez ou êtes autorisé à examiner, dans le respect de la loi.
+
+The project's position on illegal or unauthorized use covers all REA
+versions, distribution channels, and platforms; each copy retains its
+applicable licenses.
 
 ## Contribuer
 
@@ -287,3 +293,15 @@ Consultez [CONTRIBUTING.md](CONTRIBUTING.md) pour l'environnement de développem
 ## Licence
 
 [MIT](LICENSE)
+
+REA-authored code is licensed under MIT. Third-party material retains its own
+licenses and copyright notices; see [Third-party notices](THIRD_PARTY_NOTICES.md)
+for the dependency inventory, preserved license texts, and external-tool terms.
+
+**You must legally obtain and be authorized to use commercial tools**, including
+IDA Pro / Hex-Rays decompilers, Hopper, and JEB, under their applicable licenses.
+REA grants no tool license, key, or activation entitlement. Trials and demos
+remain subject to vendor terms, including user, feature, automation, and output
+sharing restrictions. Cracked copies, stolen keys, unauthorized key sharing,
+and bypassing license restrictions are not authorized. This guidance does not
+amend MIT or third-party licenses.

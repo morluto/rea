@@ -507,6 +507,50 @@ describe("managed application graph token scope", () => {
       "token scope SHA-256",
     );
   });
+
+  it.each([
+    "module identity absent",
+    "module MVID unknown",
+    "token scope MVID unknown",
+  ] as const)("rejects inconsistent identity when %s", (variant) => {
+    const { memberEvidence, boundaryEvidence } = createManagedInteropEvidence();
+    const members = managedMemberInspectionSchema.parse(
+      parseEvidence(memberEvidence).normalized_result,
+    );
+    if (members.module === null || members.module.mvid === null)
+      throw new Error("Expected fixture module identity and MVID");
+    const module =
+      variant === "module identity absent"
+        ? null
+        : variant === "module MVID unknown"
+          ? { ...members.module, mvid: null }
+          : members.module;
+    const identity_scope =
+      variant === "token scope MVID unknown"
+        ? { ...members.identity_scope, requires_mvid: null }
+        : members.identity_scope;
+    const inconsistentMembers = createEvidence(
+      undefined,
+      MANAGED_STATIC_PROVIDER,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: { ...members, module, identity_scope },
+        rawResult: null,
+        limitations: members.limitations,
+      },
+    );
+
+    const projected = projectManagedApplicationGraphEvidence({
+      managed_members: inconsistentMembers,
+      managed_native_boundaries: boundaryEvidence,
+    });
+
+    expect(projected.ok).toBe(false);
+    if (projected.ok)
+      throw new Error("An inconsistent token scope was accepted");
+    expect(JSON.stringify(projected.error)).toContain("token scope MVID");
+  });
 });
 
 describe("unknown managed application graph token scope", () => {

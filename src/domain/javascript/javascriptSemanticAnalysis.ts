@@ -10,6 +10,7 @@ import {
 import {
   collectSemanticModuleLink,
   collectSemanticCallable,
+  semanticImportEqualsSpecifier,
   collectSemanticReferences,
   collectSemanticReferencesSteps,
   immutableSemanticBindings,
@@ -752,6 +753,8 @@ const bindInnerDeclaration = (
   state: JavaScriptSemanticAnalysisState,
 ): void => {
   if (t.isImportDeclaration(node)) bindImports(node, scope, state);
+  else if (t.isTSImportEqualsDeclaration(node))
+    bindImportEquals(node, scope, state);
   else if (t.isVariableDeclarator(node))
     bindPattern({
       pattern: node.id,
@@ -783,6 +786,25 @@ const bindInnerDeclaration = (
       mutable: true,
       kind: "catch",
     });
+};
+
+const bindImportEquals = (
+  node: t.TSImportEqualsDeclaration,
+  scope: JavaScriptSemanticScopeState,
+  state: JavaScriptSemanticAnalysisState,
+): void => {
+  const specifier = semanticImportEqualsSpecifier(node);
+  if (specifier === null) return;
+  addBinding({
+    state,
+    scope,
+    name: node.id.name,
+    kind: "import",
+    mutable: false,
+    definitionNode: node.id,
+    initializer: null,
+    directOrigin: { specifier, importedPath: [] },
+  });
 };
 
 const bindAssignment = (

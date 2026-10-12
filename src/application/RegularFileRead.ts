@@ -95,7 +95,8 @@ const withRegularFileOwned = async <Value>(
       cause.cleanupCause,
     );
     if (options.resources === undefined) throw failure;
-    await retryRegularFileCleanup(failure, options.resources);
+    const retry = await retryRegularFileCleanup(failure, options.resources);
+    if (retry.cleanup !== undefined) throw failure;
     throw cause.cause;
   }
   const owner = new OwnedFileHandle(handle);
@@ -128,9 +129,10 @@ const withRegularFileOwned = async <Value>(
       cleanupCause,
     );
     if (options.resources === undefined) throw failure;
-    const cleanup = await retryRegularFileCleanup(failure, options.resources);
-    if (cleanup.outcome.kind === "failed") throw cleanup.outcome.cause;
-    return cleanup.outcome.value;
+    const retry = await retryRegularFileCleanup(failure, options.resources);
+    if (retry.cleanup !== undefined) throw failure;
+    if (retry.outcome.kind === "failed") throw retry.outcome.cause;
+    return retry.outcome.value;
   }
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;

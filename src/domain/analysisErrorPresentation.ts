@@ -148,6 +148,7 @@ export const analysisErrorCategory = (
     error instanceof EvidenceFileError &&
     (error.reason === "missing" ||
       error.reason === "not-file" ||
+      error.reason === "wrong-kind" ||
       error.reason === "exists")
   )
     return "invalid_input";
@@ -210,7 +211,10 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   if (error instanceof AnalysisArtifactChangedError)
     return "The selected artifact changed during acquisition; no stable snapshot was decoded.";
   if (error instanceof AnalysisInputError)
-    return "Analysis input is invalid. Check the arguments and try again.";
+    return (
+      error.userMessage ??
+      "Analysis input is invalid. Check the arguments and try again."
+    );
   const hopperMessage = hopperErrorUserMessage(error);
   if (hopperMessage !== undefined) return hopperMessage;
   if (error.userMessage !== undefined) return error.userMessage;

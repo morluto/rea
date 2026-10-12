@@ -126,6 +126,12 @@ describe("parseManifestPackage", () => {
   it("reports null when no package attribute exists", () => {
     expect(parseManifestPackage("<manifest>\n</manifest>\n")).toBeNull();
   });
+
+  it("rejects a well-formed document with the wrong root element", () => {
+    expect(() => parseManifestPackage("<resources/>")).toThrowError(
+      new TypeError("AndroidManifest.xml root must be <manifest>"),
+    );
+  });
 });
 
 describe("parseDecodedStrings", () => {

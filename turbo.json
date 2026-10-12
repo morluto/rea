@@ -57,6 +57,19 @@
         "vitest.config.ts"
       ]
     },
+    "lint:built": {
+      "dependsOn": ["compile"],
+      "inputs": [
+        ".nvmrc",
+        ".oxlintrc.json",
+        "package.json",
+        "package-lock.json",
+        "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "vitest.config.ts"
+      ]
+    },
     "format:check": {},
     "knip": {
       "dependsOn": ["compile"],
@@ -141,7 +154,7 @@
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",
         ".agents/skills/reverse-engineer-anything/**",
-        "README.md",
+        "README*.md",
         {
           "mode": "dependencyOutputs",
           "globs": [

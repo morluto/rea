@@ -40,12 +40,19 @@ export const registerProcessCommands = (
         .describe("Optional partial-order or finite-trace specification path"),
     }),
     run: ({ args }) =>
-      logCliCommand(
-        logger,
-        "compare-process-captures",
-        () =>
-          compareProcessEvidenceFiles(args.left, args.right, args.traceSpec),
-        isProcessCliFailure,
+      withCommandCancellation((signal) =>
+        logCliCommand(
+          logger,
+          "compare-process-captures",
+          () =>
+            compareProcessEvidenceFiles(
+              args.left,
+              args.right,
+              args.traceSpec,
+              signal,
+            ),
+          isProcessCliFailure,
+        ),
       ),
   });
 };

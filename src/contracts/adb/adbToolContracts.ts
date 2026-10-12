@@ -174,7 +174,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "list_adb_directory",
     ...toolContractMetadata("list_adb_directory"),
     description:
-      "List one absolute device directory (`ls -la`): names, kinds, permissions, owner, group, sizes, dates, and symlink targets. Recognizes the standard errors for absent paths and denied reads. Read-only.",
+      "List the immediate children of one absolute device directory, including hidden entries: names, kinds, permissions, owner, group, sizes, dates, and symlink targets. Names and targets preserve embedded newlines. Recognizes the standard errors for absent paths and denied reads. Read-only.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.list_adb_directory,
     outputSchema: evidenceResultOf(adbResultSchemas.list_adb_directory),

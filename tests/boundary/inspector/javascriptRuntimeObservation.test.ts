@@ -235,6 +235,68 @@ test("returns every target exposed by the selected Inspector endpoint inline", a
   }
 });
 
+test.each([
+  { label: "omitted", attached: undefined, expected: null },
+  { label: "explicitly detached", attached: false, expected: false },
+] as const)(
+  "preserves $label V8 attachment state through listing and observation",
+  async ({ attached, expected }) => {
+    const fixture = await runtimeFixture();
+    const fake = await startFakeV8Inspector({
+      targetUrl: pathToFileURL(fixture.entry).href,
+      ...(attached === undefined ? {} : { attached }),
+    });
+    try {
+      const provider = new V8InspectorProvider();
+      const listed = await provider.listTargets({
+        inspector_endpoint: fake.endpoint,
+      });
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets[0]?.attached).toBe(expected);
+      if (expected === null)
+        expect(
+          listed.value.limitations.some((item) =>
+            item.includes("attachment state"),
+          ),
+        ).toBe(true);
+
+      const observed = await provider.observe(
+        observeInput(fake.endpoint, fake.targetId, "node"),
+      );
+      if (!observed.ok) throw observed.error;
+      expect(observed.value.target.attached).toBe(expected);
+      if (expected === null)
+        expect(
+          observed.value.limitations.some((item) =>
+            item.includes("attachment state"),
+          ),
+        ).toBe(true);
+    } finally {
+      await fake.close();
+    }
+  },
+);
+
+test("rejects a V8 target explicitly marked attached", async () => {
+  const fixture = await runtimeFixture();
+  const fake = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(fixture.entry).href,
+    attached: true,
+  });
+  try {
+    const result = await new V8InspectorProvider().observe(
+      observeInput(fake.endpoint, fake.targetId, "node"),
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "target_not_allowed" },
+    });
+    expect(fake.commands).toEqual([]);
+  } finally {
+    await fake.close();
+  }
+});
+
 test("includes targets outside the old caller root filter", async () => {
   const fixture = await runtimeFixture();
   const outside = await temporaryFile("outside.js");

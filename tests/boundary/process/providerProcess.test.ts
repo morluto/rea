@@ -1,6 +1,7 @@
-import { access, stat } from "node:fs/promises";
+import { access, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -57,7 +58,8 @@ describe("provider process runtime and wait primitives", () => {
       parent: tmpdir(),
       prefix: "rea-provider-test-",
     });
-    expect((await stat(runtime.path)).mode & 0o777).toBe(0o700);
+    expect((await stat(runtime.path)).mode & 0o077).toBe(0);
+    await writeFile(join(runtime.path, "owned-scratch"), "fixture");
 
     const first = runtime.close();
     const second = runtime.close();

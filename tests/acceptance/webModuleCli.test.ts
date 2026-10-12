@@ -35,7 +35,9 @@ cliTest(
       environment,
       timeoutMs: 15000,
     });
-    expect(cliResponse.exitCode).toBe(0);
+    expect(cliResponse.exitCode, cliResponse.stdout + cliResponse.stderr).toBe(
+      0,
+    );
     expect(cliResponse.json).toMatchObject({
       normalized_result: {
         engine: null,

@@ -31,7 +31,10 @@ if (mode === "exit") process.exit(73);
 if (mode === "silent") setInterval(() => undefined, 1_000);
 else {
   await rm(endpointPath, { force: true });
+  const sockets = new Set();
   const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
     socket.setEncoding("utf8");
     const state = {
       buffer: { value: "" },
@@ -44,6 +47,11 @@ else {
       targetSha256,
     };
     socket.on("data", (chunk) => onSocketData(socket, server, chunk, state));
+  });
+  process.on("message", (message) => {
+    if (message !== "disconnect") return;
+    for (const socket of sockets) socket.destroy();
+    process.send?.({ event: "disconnected" });
   });
   if (transport === "unix-socket") server.listen(endpointPath);
   else {

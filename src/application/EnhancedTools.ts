@@ -591,6 +591,7 @@ export class EnhancedTools {
       ...(signal === undefined ? {} : { signal }),
       ...(selectorOrigin === undefined ? {} : { selectorOrigin }),
     });
+    if (!execution.ok) return execution;
     if (isAborted(signal)) return err(new AnalysisCancelledError(name));
     return execution;
   }

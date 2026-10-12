@@ -14,6 +14,36 @@ import {
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 describe("CdpBrowserProvider: cancellation and session events", () => {
+  it("honors cancellation during the final progress callback before publishing inspection", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 3) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      },
+    });
+  });
+
   it("projects direct-session cancellation onto the requested operation", async () => {
     const browser = await startFakeCdpBrowser({
       pageScopedVersionWebSocket: true,

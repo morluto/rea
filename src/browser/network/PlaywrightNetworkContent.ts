@@ -72,7 +72,7 @@ export const captureNetworkHeaders = async (
   }
 };
 
-/** Retain only bytes exposed by the browser; no fetch or wire-byte reconstruction occurs. */
+/** Retain bytes returned by Playwright's body API, after declared-secret redaction. */
 export const captureNetworkBody = async (
   read: () => Promise<Buffer | null>,
   phase: "request" | "response",
@@ -94,7 +94,7 @@ export const captureNetworkBody = async (
       representation:
         phase === "request"
           ? "browser-exposed-request-bytes"
-          : "browser-decoded-response-bytes",
+          : "playwright-response-body-bytes",
       encoding: "base64",
       content: retained.toString("base64"),
       bytes: retained.length,

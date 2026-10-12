@@ -64,6 +64,17 @@ export interface ResolveArtifactPathInput {
   readonly moduleKind?: "import" | "require";
 }
 
+/** Loader selected by a source-level JavaScript module reference. */
+export const moduleKindForJavaScriptReference = (
+  sourcePath: string,
+  referenceKind: "static-import" | "dynamic-import" | "require",
+): "import" | "require" =>
+  referenceKind === "require" ||
+  (referenceKind === "static-import" &&
+    posix.extname(sourcePath).toLowerCase() === ".cts")
+    ? "require"
+    : "import";
+
 const EXTENSIONS = [
   ".js",
   ".cjs",
@@ -100,6 +111,8 @@ type CandidateResolution =
       readonly resolvedPath: null;
       readonly status: UnresolvedArtifactPathStatus;
       readonly limitations: readonly string[];
+      /** A truthy package main failed, so Node must not try ancestor packages. */
+      readonly stopsAncestorLookup?: true;
     };
 
 /** Resolve one declaration while preserving its original input identity. */
@@ -187,7 +200,12 @@ const contextualCandidate = (
   if (context === "html-reference") return htmlCandidate(input);
   if (context === "module-specifier") {
     const fileUrl = fileUrlPath(declared);
-    if (fileUrl !== undefined) return fileUrl;
+    if (fileUrl !== undefined)
+      return input.moduleKind === "require"
+        ? unresolvedCandidate("external", [
+            "Node CommonJS require specifiers do not resolve file URLs as local artifacts.",
+          ])
+        : fileUrl;
     if (hasScheme(declared))
       return unresolvedCandidate("external", [
         "URL and Node builtin schemes are outside static artifact module resolution.",
@@ -274,23 +292,39 @@ const bareModuleCandidate = (
   }
   const source = input.files.get(input.sourcePath);
   let directory = posix.dirname(input.sourcePath);
+  let nearestNotFound: CandidateResolution | null = null;
   while (true) {
     const candidate = posix.join(directory, dependencyDirectory);
     const metadata = readPackageMetadata(input, candidate);
-    if (request.dependencyExportsEligible && metadata.kind !== "absent")
-      return resolvePackageDependency(input, candidate, request, metadata);
-    if (request.packageSubpath === ".") {
-      const direct = resolveFileCandidates(
-        input,
-        fileCandidates(candidate, input.moduleKind),
-      );
-      if (direct !== null) return direct;
+    const continueCommonJsLookup =
+      input.moduleKind === "require" &&
+      (metadata.kind === "absent" ||
+        (metadata.kind === "available" &&
+          (!request.dependencyExportsEligible ||
+            metadata.exports === undefined)));
+    const packageResolution =
+      metadata.kind !== "absent" ||
+      hasContainerDirectory(input.files, candidate, source?.container_sha256)
+        ? resolvePackageDependency(input, candidate, request, metadata)
+        : request.packageSubpath === "." && input.moduleKind !== "import"
+          ? resolveFileCandidates(
+              input,
+              fileCandidates(candidate, input.moduleKind),
+            )
+          : null;
+    if (packageResolution !== null) {
+      if (
+        continueCommonJsLookup &&
+        packageResolution.status === "not-found" &&
+        packageResolution.stopsAncestorLookup !== true
+      ) {
+        nearestNotFound ??= packageResolution;
+      } else return packageResolution;
     }
-    if (hasContainerDirectory(input.files, candidate, source?.container_sha256))
-      return resolvePackageDependency(input, candidate, request, metadata);
     if (directory === "." || directory === "") break;
     directory = posix.dirname(directory);
   }
+  if (nearestNotFound !== null) return nearestNotFound;
   return unresolvedCandidate("external", [
     "No matching bare package was inventoried in an enclosing node_modules directory.",
   ]);
@@ -425,10 +459,12 @@ const resolvePackageDependency = (
   if (rawExports === undefined) {
     if (subpath === ".")
       return (
-        resolveFileCandidates(
-          input,
-          fileCandidates(directory, input.moduleKind),
-        ) ?? resolveDirectory(input, directory, metadata, new Set())
+        (input.moduleKind === "import"
+          ? null
+          : resolveFileCandidates(
+              input,
+              fileCandidates(directory, input.moduleKind),
+            )) ?? resolveDirectory(input, directory, metadata, new Set())
       );
     // Resolve legacy ESM subpaths as URLs: suffixes identify the loaded module
     // but do not belong to its filesystem path. Keep the declared specifier on
@@ -831,6 +867,8 @@ const resolveDirectory = (
     ]) ??
     resolveFileCandidates(input, indexCandidates(directory, input.moduleKind));
   if (selected !== null) return selected;
+  if (input.moduleKind === "require")
+    return { ...notFoundCandidate(), stopsAncestorLookup: true };
   if (input.moduleKind !== undefined) return notFoundCandidate();
   return resolveCandidate(
     entryInput,
@@ -1102,7 +1140,10 @@ const packageExportConditions = (
     "default",
   ]);
 
-const notFoundCandidate = (): CandidateResolution => ({
+const notFoundCandidate = (): Extract<
+  CandidateResolution,
+  { readonly resolvedPath: null }
+> => ({
   resolvedPath: null,
   status: "not-found",
   limitations: [

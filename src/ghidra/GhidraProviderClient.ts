@@ -108,7 +108,11 @@ export type GhidraProviderClientFactory = (
   Partial<
     Pick<
       GhidraClient,
-      "runtimeLineage" | "readTargetSnapshot" | "hashTargetSnapshot"
+      | "callToolIfReady"
+      | "operationHealthSnapshot"
+      | "runtimeLineage"
+      | "readTargetSnapshot"
+      | "hashTargetSnapshot"
     >
   >;
 
@@ -664,6 +668,40 @@ export const createGhidraProviderClient = (input: {
           startupTimeoutMs: config.ghidraStartupTimeoutMs,
         })
       : undefined;
+  const projectExecution = (
+    operation: AnalysisOperation,
+    normalized: JsonValue,
+    rawResult: JsonValue,
+    observationLimitations: readonly string[] = [],
+  ) => {
+    const relationshipCoverage = relationshipCoverageFor(operation);
+    return createAnalysisExecution(normalized, committedProfile.provider, {
+      rawResult,
+      analysisProfile: committedProfile,
+      ...(relationshipCoverage === undefined ? {} : { relationshipCoverage }),
+      limitations: [
+        ...limitationsFor(operation),
+        ...observationLimitations,
+        ...sessionLimitations(),
+      ],
+    });
+  };
+  const inventoryExecution = (
+    operation: "list_documents" | "list_procedures",
+    called: Result<JsonValue, GhidraSessionError>,
+  ) => {
+    if (!called.ok)
+      return err(
+        projectSessionError(
+          operation,
+          called.error,
+          config.ghidraStartupTimeoutMs,
+        ),
+      );
+    const parsed = parseGhidraInventoryResult(operation, called.value);
+    if (!parsed.ok) return parsed;
+    return ok(projectExecution(operation, parsed.value, called.value));
+  };
   return {
     execute: async (operation, parameters, options) => {
       if (extensionFailure !== undefined) return err(extensionFailure);
@@ -721,6 +759,8 @@ export const createGhidraProviderClient = (input: {
           ? {}
           : { progress: options.progress }),
       });
+      if (operation === "list_documents" || operation === "list_procedures")
+        return inventoryExecution(operation, called);
       if (!called.ok)
         return err(
           projectSessionError(
@@ -824,22 +864,31 @@ export const createGhidraProviderClient = (input: {
         if (!attested.ok) return attested;
         normalized = attested.value;
       }
-      const relationshipCoverage = relationshipCoverageFor(operation);
       return ok(
-        createAnalysisExecution(normalized, committedProfile.provider, {
-          rawResult: called.value,
-          analysisProfile: committedProfile,
-          ...(relationshipCoverage === undefined
-            ? {}
-            : { relationshipCoverage }),
-          limitations: [
-            ...limitationsFor(operation),
-            ...observationLimitations,
-            ...sessionLimitations(),
-          ],
-        }),
+        projectExecution(
+          operation,
+          normalized,
+          called.value,
+          observationLimitations,
+        ),
       );
     },
+    executeIfReady: async (operation, parameters, options) => {
+      if (operation !== "list_documents" && operation !== "list_procedures")
+        return undefined;
+      if (extensionFailure !== undefined) return err(extensionFailure);
+      const input = parseGhidraInventoryInput(operation, parameters);
+      if (!input.ok) return input;
+      if (client.callToolIfReady === undefined) return undefined;
+      const called = await client.callToolIfReady(
+        operation,
+        input.value,
+        options?.signal === undefined ? {} : { signal: options.signal },
+      );
+      if (called === undefined) return undefined;
+      return inventoryExecution(operation, called);
+    },
+    operationHealthSnapshot: () => client.operationHealthSnapshot?.(),
     runtimeLineageSnapshots: () => {
       const observation = client.runtimeLineage?.() ?? null;
       return observation === null

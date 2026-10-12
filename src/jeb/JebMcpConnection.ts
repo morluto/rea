@@ -38,25 +38,34 @@ export const decodeJebToolResult = (input: unknown): JsonValue => {
   const blocks = result.content.flatMap((block) =>
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
+  let decoded: JsonValue;
   if (result.structuredContent !== undefined) {
-    // isError envelopes carry JEB's {success:false, message} refusal semantics;
-    // decode them so the provider can preserve the engine's own reason.
-    return jsonValueSchema.parse(result.structuredContent);
-  }
-  if (blocks.length !== 1)
-    throw new AnalysisProtocolError(
-      "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
-    );
-  try {
-    return jsonValueSchema.parse(JSON.parse(blocks[0] ?? "null"));
-  } catch {
-    if (result.isError === true)
+    decoded = jsonValueSchema.parse(result.structuredContent);
+  } else {
+    if (blocks.length !== 1)
       throw new AnalysisProtocolError(
-        `JEB MCP tool failed: ${blocks[0] ?? "unexplained engine failure"}`,
+        "JEB MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
       );
-    return blocks[0] ?? null;
+    const text = blocks[0] ?? "null";
+    try {
+      decoded = jsonValueSchema.parse(JSON.parse(text));
+    } catch {
+      decoded = text;
+    }
   }
+  if (result.isError === true && !isJebFailureEnvelope(decoded))
+    throw new AnalysisProtocolError(
+      `JEB MCP tool failed: ${blocks[0] ?? "error-marked result without a JEB failure envelope"}`,
+      { cause: decoded },
+    );
+  return decoded;
 };
+
+const isJebFailureEnvelope = (value: JsonValue): boolean =>
+  typeof value === "object" &&
+  value !== null &&
+  !Array.isArray(value) &&
+  value.success === false;
 
 export type JebMcpConnectionFactory = (endpoint: URL) => JebMcpConnection;
 

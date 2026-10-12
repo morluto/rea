@@ -150,7 +150,16 @@ async function verifyCase(executable, entrypoint, scenario) {
     phase = "public-map-assertions";
     observed = item?.mappings;
     assert.equal(item.status, "included");
-    assert.deepEqual(item.mappings, expected);
+    assert.equal(item.mappings.length, expected.length);
+    for (const [index, coordinates] of expected.entries()) {
+      const mapping = item.mappings[index];
+      for (const [key, value] of Object.entries(coordinates))
+        assert.deepEqual(mapping[key], value);
+      // This compiler fixture has one source declaration in one wrapped leaf.
+      assert.equal(mapping.source_index, 0);
+      assert.equal(mapping.declaration_index, 0);
+    }
+    assert.equal(item.original_sources.length, 1);
     assert.equal(item.artifact.sha256, sha(site.map));
     assert.equal(item.artifact.bytes, Buffer.byteLength(site.map));
     assert.equal(item.original_sources[0].artifact.sha256, sha(site.original));

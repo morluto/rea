@@ -4,6 +4,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type { ElectronStaticValue } from "./electronStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
 } from "./javascriptAstValues.js";
 import { sourceSlice } from "./javascriptStaticAnalysisHelpers.js";
@@ -124,7 +125,7 @@ export const collectContextBridgeMembers = (
     members: [],
     unknown: 0,
   };
-  collectMembersAt(node, "", 0, state);
+  collectMembersAt(node, [], state);
   const members = [...new Set(state.members)].sort(compareUnicodeCodePoints);
   return {
     status: "object-literal",
@@ -135,11 +136,10 @@ export const collectContextBridgeMembers = (
 
 const collectMembersAt = (
   object: t.ObjectExpression,
-  prefix: string,
-  depth: number,
+  prefix: readonly string[],
   state: { members: string[]; unknown: number },
 ): void => {
-  if (depth >= 8) {
+  if (prefix.length >= 8) {
     state.unknown += 1;
     return;
   }
@@ -148,15 +148,16 @@ const collectMembersAt = (
       state.unknown += 1;
       continue;
     }
-    const name = semanticStaticPropertyName(property.key, property.computed);
-    if (name === "" || property.computed) {
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) {
       state.unknown += 1;
       continue;
     }
-    const path = prefix === "" ? name : `${prefix}.${name}`;
+    const segments = [...prefix, name];
+    const path = segments.join(".");
     state.members.push(path);
     if (t.isObjectProperty(property) && t.isObjectExpression(property.value))
-      collectMembersAt(property.value, path, depth + 1, state);
+      collectMembersAt(property.value, segments, state);
   }
 };
 

@@ -13,6 +13,7 @@ import type {
 } from "./javascriptStaticAnalysisTypes.js";
 import {
   readExactJavaScriptLiteral,
+  semanticStaticPropertyKey,
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -131,15 +132,15 @@ export const moduleFactory = (
 /** Derive a literal or explicitly computed module key. */
 export const modulePropertyName = (
   property: t.ObjectMethod | t.ObjectProperty | t.SpreadElement,
-): string =>
-  t.isObjectMethod(property) || t.isObjectProperty(property)
-    ? property.computed &&
-      !t.isStringLiteral(property.key) &&
-      !t.isNumericLiteral(property.key)
-      ? `[computed@${String(property.start ?? -1)}]`
-      : semanticStaticPropertyName(property.key, property.computed) ||
-        `[unknown@${String(property.start ?? -1)}]`
+): string => {
+  if (!t.isObjectMethod(property) && !t.isObjectProperty(property))
+    return `[unknown@${String(property.start ?? -1)}]`;
+  const key = semanticStaticPropertyKey(property.key, property.computed);
+  if (key !== null) return key;
+  return property.computed
+    ? `[computed@${String(property.start ?? -1)}]`
     : `[unknown@${String(property.start ?? -1)}]`;
+};
 
 /** Read the factory-local bundler require parameter when declared. */
 export const factoryRequireName = (

@@ -134,7 +134,7 @@ export const inspectManagedNativeBoundariesBytes = (
     return emptyInspection(
       target,
       bytes,
-      pe.cliDirectoryPresent ? "malformed" : "not-managed",
+      pe.cliDirectoryState !== "absent" ? "malformed" : "not-managed",
       { issues: pe.cliIssue === null ? [] : [pe.cliIssue] },
     );
   const issues: ManagedParseIssue[] = [];

@@ -189,6 +189,35 @@ schema constraints; REA still validates complete canonical inputs. Full-profile
 `gpt-5.4` metadata is also verified locally. Live model API acceptance and
 Windows remain unverified; see [native client verification](testing.md).
 
+Claude Code normally defers MCP tool definitions through tool search. It
+[turns tool search off](https://code.claude.com/docs/en/mcp#configure-tool-search)
+when `ANTHROPIC_BASE_URL` points to a non-first-party host, such as DeepSeek's
+Anthropic-compatible endpoint. It then sends every REA tool's name, description
+and input schema with every request
+([#2019](https://github.com/morluto/rea/issues/2019)). On main at 04089d5be,
+with 172 tools, that payload measured about 496 KB with the default profile and
+about 290 KB with `compact`. By the o200k and cl100k tokenizers, that is roughly
+120k and 68k tokens. Compaction cannot remove tool definitions. If they nearly
+fill the window Claude Code assumes, the context refills after every compaction
+and Claude Code reports that autocompact is thrashing. To avoid this:
+
+- Make Claude Code assume the model's actual context window. DeepSeek's Claude
+  Code guide selects `deepseek-flash[1m]`; the `[1m]` suffix makes Claude Code
+  assume a one-million-token window. For other unrecognized model IDs, set
+  `CLAUDE_CODE_MAX_CONTEXT_TOKENS` to the window the provider documents.
+- If the endpoint forwards `tool_reference` blocks, set `ENABLE_TOOL_SEARCH=true`
+  to restore deferred loading. DeepSeek's Anthropic API guide does not list
+  `tool_reference` among its supported content blocks, so this setting may cause
+  its requests to fail.
+- To shrink the upfront catalog, add
+  `"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of the
+  `mcpServers.rea` entry in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`
+  when that variable is set), then restart Claude Code. Setup keeps this
+  override.
+
+The sizes above come from REA's own `tools/list`. A live Claude Code session
+against DeepSeek's API is unverified.
+
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),
 setup writes a `type: "stdio"` entry under `mcpServers.rea` in the user-level
 `~/.pi/agent/mcp.json` and installs the bundled skill under `~/.agents/skills`.
@@ -756,7 +785,7 @@ Ghidra's default analysis settings, and loads its packaged Java
 bridge via `-scriptPath`; it never opens an existing user project. Linux and
 macOS use a current-user-only local bridge socket and descriptor. The
 project remains under the selected temporary directory. If its Unix socket
-pathname would exceed the host's byte limit, REA allocates a separate mode-0700
+pathname would exceed the host's byte limit, REA allocates a separate owner-only
 socket directory under `/tmp` and removes it on close, cancellation, or failure.
 Diagnostics retain the actual endpoint and both owned directories.
 On Linux and macOS, REA starts the inspected JVM directly using Ghidra's own LaunchSupport

@@ -40,7 +40,7 @@ cliTest(
       },
       timeoutMs: 45000,
     });
-    expect(response.exitCode).toBe(0);
+    expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     expect(response.json).toMatchObject({
       normalized_result: {
         source: { script_index: 0 },

@@ -160,6 +160,7 @@ export interface LifecycleToolRegistration {
 
 const registerLifecycleTools = (
   registration: LifecycleToolRegistration,
+  artifactResources: ArtifactResourceScope,
 ): void => {
   const {
     server,
@@ -169,7 +170,7 @@ const registerLifecycleTools = (
     availabilityPolicy,
     androidAnalysisAvailability,
   } = registration;
-  registerOpenLifecycleTool(registration);
+  registerOpenLifecycleTool(registration, artifactResources);
   registerCloseLifecycleTool(registration);
   registerSessionStatusTool({
     server,
@@ -181,12 +182,10 @@ const registerLifecycleTools = (
   });
 };
 
-const registerOpenLifecycleTool = ({
-  server,
-  session,
-  logger,
-  openContract,
-}: LifecycleToolRegistration): void => {
+const registerOpenLifecycleTool = (
+  { server, session, logger, openContract }: LifecycleToolRegistration,
+  artifactResources: ArtifactResourceScope,
+): void => {
   server.registerTool(
     openContract.name,
     toolRegistrationOptions(openContract),
@@ -196,6 +195,7 @@ const registerOpenLifecycleTool = ({
         const loaded = await readAnalysisSnapshot(
           input.snapshot_path,
           context.mcpReq.signal,
+          artifactResources,
         );
         if (!loaded.ok)
           return server.delivery.toCallToolResult(loaded, openContract);
@@ -302,42 +302,45 @@ export const registerSessionTools = (
   const compareBundlesContract = toolContract("compare_bundles");
   const snapshotContract = toolContract("get_evidence_bundle");
   const processResources = new ProcessCaptureResourceScope();
-  registerLifecycleTools({
-    server,
-    session,
-    logger,
-    openContract,
-    closeContract,
-    statusContract,
-    startedAt: options.startedAt ?? new Date().toISOString(),
-    availabilityPolicy: sessionAvailabilityPolicy(
-      options.availabilityPolicy,
-      {},
-    ),
-    androidAnalysisAvailability:
-      options.androidAnalysisAvailability ?? missingAndroidAvailability,
-    closeProcessResources: async () => {
-      try {
-        await processResources.retryCleanup();
-        return ok(null);
-      } catch (cause: unknown) {
-        return err(
-          new ProcessCaptureError(
-            "process capture cleanup remains incomplete",
-            {
-              cause,
-              reason: "cleanup_incomplete",
-              cleanupResources: ["process_capture_resources"],
-              executionFailure:
-                cause instanceof Error
-                  ? cause.message || cause.name
-                  : String(cause),
-            },
-          ),
-        );
-      }
+  registerLifecycleTools(
+    {
+      server,
+      session,
+      logger,
+      openContract,
+      closeContract,
+      statusContract,
+      startedAt: options.startedAt ?? new Date().toISOString(),
+      availabilityPolicy: sessionAvailabilityPolicy(
+        options.availabilityPolicy,
+        {},
+      ),
+      androidAnalysisAvailability:
+        options.androidAnalysisAvailability ?? missingAndroidAvailability,
+      closeProcessResources: async () => {
+        try {
+          await processResources.retryCleanup();
+          return ok(null);
+        } catch (cause: unknown) {
+          return err(
+            new ProcessCaptureError(
+              "process capture cleanup remains incomplete",
+              {
+                cause,
+                reason: "cleanup_incomplete",
+                cleanupResources: ["process_capture_resources"],
+                executionFailure:
+                  cause instanceof Error
+                    ? cause.message || cause.name
+                    : String(cause),
+              },
+            ),
+          );
+        }
+      },
     },
-  });
+    options.artifactResources,
+  );
   registerEvidenceTools({
     server,
     session,
@@ -381,7 +384,12 @@ export const registerSessionTools = (
   registerProcessComparisonTool(server, session, compareContract);
   registerArtifactComparisonTool(server, session, compareArtifactsContract);
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
-  registerBundleComparisonTool(server, session, compareBundlesContract);
+  registerBundleComparisonTool(
+    server,
+    session,
+    compareBundlesContract,
+    options.artifactResources,
+  );
   registerInvestigationTools(server, session);
   registerUnknownTools({ server, session });
   registerContextTools(server, session);

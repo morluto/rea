@@ -6,6 +6,51 @@ import {
   topLevelBinding,
 } from "./javascriptSemanticAnalysis.fixture.js";
 
+describe("TypeScript import-equals links", () => {
+  it("retains runtime external import-equals as a require dependency", () => {
+    const links = analyzeJavaScriptSemantics(`
+      import dependency = require("./dependency.cjs");
+      import type types = require("./types");
+      import alias = Namespace.Dependency;
+    `).moduleLinks;
+
+    expect(links).toEqual([
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./dependency.cjs",
+        importedName: null,
+        localName: "dependency",
+        exportedName: null,
+      }),
+    ]);
+  });
+
+  it("keeps the exported binding for exported import-equals", () => {
+    const source = 'export import dependency = require("./dependency");';
+    const links = analyzeJavaScriptSemantics(source).moduleLinks;
+
+    expect(links).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "require",
+          specifier: "./dependency",
+          localName: "dependency",
+          exportedName: null,
+        }),
+        expect.objectContaining({
+          kind: "export",
+          specifier: null,
+          localName: "dependency",
+          exportedName: "dependency",
+        }),
+      ]),
+    );
+    expect(
+      links.find(({ kind }) => kind === "require")?.location.start,
+    ).toEqual({ line: 1, column: 7 });
+  });
+});
+
 describe("CommonJS dependency links", () => {
   it.each([
     'require("dependency");',

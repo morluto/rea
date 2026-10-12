@@ -69,16 +69,14 @@ const openProject = z
     success: z.literal(true),
     name: z.string().nullish(),
     creation_datetime: z.string().nullish(),
-    input_files: z
-      .array(
-        z.object({
-          file_name: z.string(),
-          file_size: z.number().int().nonnegative(),
-          contents_sha256_hash: z.string(),
-        }),
-      )
-      .optional(),
-    units: z.array(unitEntry).optional(),
+    input_files: z.array(
+      z.object({
+        file_name: z.string(),
+        file_size: z.number().int().nonnegative(),
+        contents_sha256_hash: z.string(),
+      }),
+    ),
+    units: z.array(unitEntry),
   })
   .passthrough();
 const listUnits = z
@@ -292,8 +290,8 @@ export class JebProvider implements JebAnalysisPort {
       engine,
       project_name: opened.name ?? null,
       creation_datetime: opened.creation_datetime ?? null,
-      input_files: opened.input_files ?? [],
-      units: opened.units ?? [],
+      input_files: opened.input_files,
+      units: opened.units,
     });
     return ok(
       createAnalysisExecution(result, this.#identity, {

@@ -15,6 +15,26 @@ import {
 } from "./hopperClient.fixture.js";
 
 describe("HopperClient protocol", () => {
+  it("does not start cold and preserves normal dispatch once ready", async () => {
+    const launcher = new FixtureLauncher();
+    const client = new HopperClient({ launcher, startupTimeoutMs: 1_000 });
+    onTestFinished(async () => {
+      await client.close();
+    });
+
+    await expect(
+      client.callToolIfReady("echo", { label: "cold" }),
+    ).resolves.toBe(undefined);
+    expect(launcher.processes).toEqual([]);
+
+    const started = await client.start();
+    if (!started.ok) throw started.error;
+    await expect(
+      client.callToolIfReady("echo", { label: "warm" }),
+    ).resolves.toEqual({ ok: true, value: { label: "warm" } });
+    expect(launcher.processes).toHaveLength(1);
+  });
+
   it("sanitizes unexpected owned-cleanup exceptions", () => {
     expect(
       providerCleanupFailure(

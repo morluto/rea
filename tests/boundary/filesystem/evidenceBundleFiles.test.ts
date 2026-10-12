@@ -39,24 +39,27 @@ const bundle = (result = true) =>
     ),
   ]);
 
-it("returns import cancellation before inspecting a selected path", async () => {
-  const root = await createTestTempDirectory("rea-import-pre-cancel-");
-  const controller = new AbortController();
-  controller.abort(new Error("cancel before import"));
-  expect(
-    await readImmutableEvidenceBundle(
-      join(root, "missing.json"),
-      controller.signal,
-    ),
-  ).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCancelledError",
-      operation: "import_evidence_bundle",
-    },
-  });
-  expect(await readdir(root)).toEqual([]);
-});
+it.each([
+  ["immutable", readImmutableEvidenceBundle],
+  ["mutable", readEvidenceBundle],
+] as const)(
+  "cancels a %s bundle read before opening its selected path",
+  async (_, read) => {
+    const root = await createTestTempDirectory("rea-bundle-pre-cancel-");
+    const controller = new AbortController();
+    controller.abort(new Error("cancel before bundle read"));
+    expect(
+      await read(join(root, "missing.json"), controller.signal),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "import_evidence_bundle",
+      },
+    });
+    expect(await readdir(root)).toEqual([]);
+  },
+);
 
 it("preserves the failed-close owner when import is also cancelled", async () => {
   const root = await createTestTempDirectory("rea-import-cancel-cleanup-");
@@ -431,21 +434,8 @@ describe("evidence bundle filesystem adapter", () => {
     },
   );
 
-  it("names the failed bundle constraint for a single record or schema mismatch", async () => {
+  it("names schema mismatches that prevent bundle parsing", async () => {
     const directory = await createTestTempDirectory("rea-evidence-");
-    const record = bundle().records[0];
-    const single = join(directory, "record.json");
-    await writeFile(single, JSON.stringify(record));
-    expect(await readEvidenceBundle(single)).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "EvidenceIntegrityError",
-        userMessage: expect.stringContaining(
-          `this JSON is one Evidence record (${String(record?.evidence_id)})`,
-        ),
-      },
-    });
-
     const partial = join(directory, "partial.json");
     await writeFile(partial, JSON.stringify({ evidence_id: "typo" }));
     const rejected = await readEvidenceBundle(partial);
@@ -469,6 +459,41 @@ describe("evidence bundle filesystem adapter", () => {
         _tag: "EvidenceIntegrityError",
         userMessage: expect.stringContaining(
           "does not match the bundle schema at records:",
+        ),
+      },
+    });
+  });
+});
+
+describe("standalone Evidence bundle inputs", () => {
+  it("classifies a record only after authenticating it", async () => {
+    const directory = await createTestTempDirectory("rea-evidence-");
+    const record = bundle().records[0];
+    const single = join(directory, "record.json");
+    await writeFile(single, JSON.stringify(record));
+    expect(await readEvidenceBundle(single)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceFileError",
+        reason: "wrong-kind",
+        path: single,
+        userMessage: expect.stringContaining(
+          `this JSON is one Evidence record (${String(record?.evidence_id)})`,
+        ),
+      },
+    });
+
+    const tamperedRecord = join(directory, "tampered-record.json");
+    await writeFile(
+      tamperedRecord,
+      JSON.stringify({ ...record, normalized_result: "changed" }),
+    );
+    expect(await readEvidenceBundle(tamperedRecord)).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining(
+          "does not match the bundle schema",
         ),
       },
     });

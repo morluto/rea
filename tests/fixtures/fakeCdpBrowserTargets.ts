@@ -101,7 +101,9 @@ export const targets = (
           type: "page",
           title: "Electron application",
           url: options.electronFileUrl,
-          attached: false,
+          ...(options.omitElectronTargetAttachmentState === true
+            ? {}
+            : { attached: false }),
           ...(options.omitTargetWebSocket === true
             ? {}
             : {

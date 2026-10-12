@@ -53,65 +53,6 @@ export const parseProcessListOutput = (
   return { columns, processes, unparsedLines };
 };
 
-export interface AdbDirectoryEntry {
-  readonly name: string;
-  readonly kind: "directory" | "file" | "symlink" | "other";
-  readonly permissions: string | null;
-  readonly owner: string | null;
-  readonly group: string | null;
-  readonly bytes: number | null;
-  readonly date: string | null;
-  readonly link_target: string | null;
-}
-
-const LS_LINE =
-  /^([bcdlps-][rwxstST-]{9})\s+(?:(\d+)\s+)?(\S+)\s+(\S+)\s+(?:(\d+)\s+)?([\d-]{10})\s+([\d:]{4,8})\s+(.+)$/u;
-
-/** Parse `ls -la` output, including `total` headers and symlink targets. */
-export const parseLsOutput = (
-  stdout: string,
-): {
-  entries: readonly AdbDirectoryEntry[];
-  unparsedLines: readonly string[];
-} => {
-  const entries: AdbDirectoryEntry[] = [];
-  const unparsedLines: string[] = [];
-  for (const rawLine of stdout.split(/\r?\n/u)) {
-    const line = rawLine.trimEnd();
-    if (line === "" || line.startsWith("total ")) continue;
-    const match = LS_LINE.exec(line);
-    if (match === null) {
-      if (line.trim() !== "") unparsedLines.push(line);
-      continue;
-    }
-    const permissions = match[1]!;
-    let name = match[8]!.trim();
-    let linkTarget: string | null = null;
-    const linkArrow = name.indexOf(" -> ");
-    if (linkArrow !== -1 && permissions.startsWith("l")) {
-      linkTarget = name.slice(linkArrow + 4);
-      name = name.slice(0, linkArrow);
-    }
-    entries.push({
-      name,
-      kind: permissions.startsWith("d")
-        ? "directory"
-        : permissions.startsWith("l")
-          ? "symlink"
-          : permissions.startsWith("-")
-            ? "file"
-            : "other",
-      permissions,
-      owner: match[3] ?? null,
-      group: match[4] ?? null,
-      bytes: match[5] === undefined ? null : Number(match[5]),
-      date: `${match[6] ?? ""} ${match[7] ?? ""}`.trim() || null,
-      link_target: linkTarget,
-    });
-  }
-  return { entries, unparsedLines };
-};
-
 export interface AdbFeatureEntry {
   readonly name: string;
   readonly version: number | null;

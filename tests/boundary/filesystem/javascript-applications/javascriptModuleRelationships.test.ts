@@ -14,6 +14,90 @@ import {
   writeFixtureFiles,
 } from "../../../support/javascriptApplicationFixture.js";
 
+describe("TypeScript source module loader semantics", () => {
+  it("uses emitted TypeScript loader semantics without changing dynamic imports", async () => {
+    const root = await createTestTempDirectory("rea-cts-module-loader-");
+    await writeFixtureFiles(root, {
+      "package.json": '{"type":"module"}',
+      "main.cts": `
+        import local = require("./local");
+        import selected from "conditional";
+        export { retained } from "conditional";
+        void import("conditional");
+        void local;
+        void selected;
+      `,
+      "consumer.mts": `
+        import local = require("./local");
+        export { local };
+      `,
+      "local.js": "module.exports = 42;",
+      "node_modules/conditional/package.json": JSON.stringify({
+        exports: {
+          ".": {
+            import: "./esm.mjs",
+            require: "./cjs.cjs",
+          },
+        },
+      }),
+      "node_modules/conditional/esm.mjs": "export const retained = 'esm';",
+      "node_modules/conditional/cjs.cjs": "exports.retained = 'cjs';",
+    });
+
+    const { graph } = await reconstructJavaScriptFixture(root);
+    const localRequireEdge = (sourcePath: string) => {
+      const source = findSourceModule(graph, sourcePath);
+      return graph.edges.find(
+        ({ source_node_id, relation, properties }) =>
+          source_node_id === source?.node_id &&
+          relation === "imports" &&
+          properties.module_link_kind === "require" &&
+          properties.specifier === "./local",
+      );
+    };
+
+    expect(
+      findSourceModule(graph, "main.cts")?.observations[0]?.properties,
+    ).toMatchObject({ module_format: "commonjs" });
+    expect(localRequireEdge("main.cts")).toMatchObject({
+      properties: { resolved_path: "local.js", local_name: "local" },
+    });
+    expect(
+      findRelationshipEdge(graph, {
+        kind: "import",
+        specifier: "conditional",
+        resolvedPath: "node_modules/conditional/cjs.cjs",
+        localName: "selected",
+      }),
+    ).toBeDefined();
+    expect(
+      findRelationshipEdge(graph, {
+        kind: "re-export",
+        specifier: "conditional",
+        resolvedPath: "node_modules/conditional/cjs.cjs",
+      }),
+    ).toBeDefined();
+    expect(
+      graph.edges.find(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "dynamic-import" &&
+          properties.specifier === "conditional",
+      ),
+    ).toMatchObject({
+      properties: {
+        resolved_path: "node_modules/conditional/esm.mjs",
+      },
+    });
+    expect(
+      findSourceModule(graph, "consumer.mts")?.observations[0]?.properties,
+    ).toMatchObject({ module_format: "esm" });
+    expect(localRequireEdge("consumer.mts")).toMatchObject({
+      properties: { resolved_path: "local.js", local_name: "local" },
+    });
+  });
+});
+
 describe("CommonJS and ESM module relationships", () => {
   it("composes bindings, re-exports, dynamic imports, and JSON modules", async () => {
     const root = await moduleFixture();

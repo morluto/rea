@@ -19,6 +19,7 @@ interface PatchOperation {
   readonly map: YAMLMap<unknown, unknown>;
   readonly ownedRows: readonly number[];
   readonly direct: boolean;
+  readonly unknownApplicability: boolean;
 }
 
 /** One interpretation of identity, ordered patch applicability and source nodes. */
@@ -29,6 +30,8 @@ export class DshCordisDocument {
   #entryNode: YAMLMap<unknown, unknown> | undefined;
   readonly #insertions: number;
   #unknownSelector = false;
+  #unknownStructure = false;
+  readonly #editabilityError: ConfigurationError | undefined;
   readonly config: Record<string, unknown> | undefined;
 
   constructor(text: string) {
@@ -38,22 +41,39 @@ export class DshCordisDocument {
       throw new ConfigurationError("Cordis patches must be a list");
     const operations: PatchOperation[] = [];
     let insertions = 0;
+    let malformedStructure = false;
     for (const source of root.items) {
       const map = this.#map(source);
-      if (map === undefined) continue;
+      if (map === undefined) {
+        if (this.#yaml.value(source) instanceof CordisExpression)
+          this.#unknownStructure = true;
+        else malformedStructure = true;
+        continue;
+      }
       const inserted = this.#yaml.resolve(this.#yaml.field(map, "insert"));
       const targetId = this.#id(map);
+      const unknownApplicability = targetId !== undefined;
+      const insertedValue = this.#yaml.value(inserted);
+      const invalidEntries = isSeq(inserted)
+        ? inserted.items.filter((entry) => this.#map(entry) === undefined)
+        : [];
+      if (
+        insertedValue instanceof CordisExpression ||
+        invalidEntries.some(
+          (entry) => this.#yaml.value(entry) instanceof CordisExpression,
+        )
+      )
+        this.#unknownStructure = true;
+      else if (insertedValue != null && !isSeq(inserted))
+        malformedStructure = true;
+      else if (invalidEntries.length > 0) malformedStructure = true;
       const ownedRows = isSeq(inserted)
         ? inserted.items.flatMap((entry, index) =>
             this.#id(entry) === DSH_ENTRY_ID ? [index] : [],
           )
         : [];
       const direct = !isSeq(inserted) && targetId === DSH_ENTRY_ID;
-      if (ownedRows.length > 0 && targetId)
-        throw new ConfigurationError(
-          "Cannot establish the target group for a Cordis REA insertion from the home patch alone",
-        );
-      operations.push({ source, map, ownedRows, direct });
+      operations.push({ source, map, ownedRows, direct, unknownApplicability });
       if (isSeq(inserted)) {
         for (const index of ownedRows) {
           const entry = this.#map(inserted.items[index]);
@@ -81,6 +101,33 @@ export class DshCordisDocument {
     }
     this.#operations = operations;
     this.#insertions = insertions;
+    this.#editabilityError = this.#unknownStructure
+      ? new ConfigurationError(
+          "Expression-backed Cordis patches have unknown structure; use literal patches before setup",
+        )
+      : malformedStructure
+        ? new ConfigurationError(
+            "Malformed Cordis patches cannot be edited safely; use mapping entries and insert lists before setup",
+          )
+        : operations.some(
+              (op) => op.unknownApplicability && op.ownedRows.length > 0,
+            )
+          ? new ConfigurationError(
+              "Cordis REA insertion targets a group with unknown activity; use a direct insertion before setup",
+            )
+          : this.#unknownSelector
+            ? new ConfigurationError(
+                "Expression-backed Cordis name selectors have unknown applicability; use literal selectors before setup",
+                {
+                  settings: [
+                    {
+                      setting: "name",
+                      constraint: "Use literal selectors before setup",
+                    },
+                  ],
+                },
+              )
+            : undefined;
     const config = this.#field("config");
     // Ownership survives malformed config so uninstall can remove the source row.
     this.config = insertions === 0 ? undefined : isRecord(config) ? config : {};
@@ -114,11 +161,17 @@ export class DshCordisDocument {
   get carriesEntry(): boolean {
     return this.#operations.some((op) => op.direct || op.ownedRows.length > 0);
   }
+  get hasUnknownStructure(): boolean {
+    return this.#unknownStructure;
+  }
+  get editabilityError(): ConfigurationError | undefined {
+    return this.#editabilityError;
+  }
   get ready(): boolean {
     const disabled = this.#field("disabled");
     return (
       this.#insertions === 1 &&
-      !this.#unknownSelector &&
+      this.#editabilityError === undefined &&
       this.#field("name") === DSH_CLIENT_PACKAGE &&
       (disabled === undefined || disabled === false)
     );
@@ -128,20 +181,6 @@ export class DshCordisDocument {
   environment(
     overrides: Readonly<Record<string, string>> = {},
   ): Result<Readonly<Record<string, string>>, ConfigurationError> {
-    if (this.#unknownSelector)
-      return err(
-        new ConfigurationError(
-          "Expression-backed Cordis name selectors have unknown applicability; use literal selectors before setup",
-          {
-            settings: [
-              {
-                setting: "name",
-                constraint: "Use literal selectors before setup",
-              },
-            ],
-          },
-        ),
-      );
     const config = this.#field("config");
     if (config instanceof CordisExpression)
       return err(
@@ -200,6 +239,8 @@ export class DshCordisDocument {
     command: readonly string[],
     overrides: Readonly<Record<string, string>>,
   ): Result<Record<string, unknown>, ConfigurationError> {
+    if (this.#editabilityError !== undefined)
+      return err(this.#editabilityError);
     const environment = this.environment(overrides);
     if (!environment.ok) return environment;
     const env = {
@@ -214,6 +255,11 @@ export class DshCordisDocument {
 
   /** Plan every replacement from source snapshots before changing an output tree. */
   serialize(desired?: Record<string, unknown>): string {
+    if (
+      this.#editabilityError !== undefined &&
+      (this.#unknownStructure || desired !== undefined)
+    )
+      throw this.#editabilityError;
     const root = this.#yaml.document.contents;
     if (!isSeq(root))
       throw new ConfigurationError("Cordis patches must be a list");

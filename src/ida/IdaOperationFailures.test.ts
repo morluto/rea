@@ -17,6 +17,112 @@ afterEach(async () => {
     await rm(root, { recursive: true, force: true });
 });
 
+describe("headless IDA partial operation evidence", () => {
+  it("retains completed rows when post-operation target identity changes", async () => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "headless");
+    let healthReads = 0;
+    producer.overrideCall = (name) => {
+      if (name !== "server_health") return undefined;
+      healthReads += 1;
+      return healthReads === 2
+        ? {
+            status: "ok",
+            input_path: "/different/target.elf",
+            idb_path: "/different/target.elf.i64",
+            module: "target.elf",
+            imagebase: "0x1000",
+            auto_analysis_ready: true,
+          }
+        : undefined;
+    };
+    const client = new IdaSessionClient(
+      {
+        command: "fixture",
+        args: [],
+        env: {},
+        mode: "headless",
+        timeoutMs: 1000,
+        workspaceRoot: root,
+      },
+      target,
+      producer,
+    );
+    try {
+      const result = await client.execute("list_procedures", {});
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain("identity changed");
+        expect(result.error.partialObservation).toMatchObject({
+          normalized_result: {
+            status: "partial",
+            observations: [expect.objectContaining({ tool: "list_funcs" })],
+            target_binding: {
+              status: "not_verified",
+              reason: expect.stringContaining("identity changed"),
+            },
+            metadata_after: {
+              input_path: "/different/target.elf",
+              idb_path: "/different/target.elf.i64",
+            },
+          },
+          raw_result: {
+            post_operation_identity_check: "started",
+            metadata_after: {
+              input_path: "/different/target.elf",
+              idb_path: "/different/target.elf.i64",
+            },
+          },
+        });
+      }
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+
+  it("retains completed replies when cancellation arrives after a reply", async () => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const producer = new RecordingIdaMcp(target, "headless");
+    const controller = new AbortController();
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs") controller.abort();
+    };
+    const client = new IdaSessionClient(
+      {
+        command: "fixture",
+        args: [],
+        env: {},
+        mode: "headless",
+        timeoutMs: 1000,
+        workspaceRoot: root,
+      },
+      target,
+      producer,
+    );
+    try {
+      const result = await client.execute(
+        "list_procedures",
+        {},
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.partialObservation).toMatchObject({
+          normalized_result: {
+            status: "partial",
+            observations: [expect.objectContaining({ tool: "list_funcs" })],
+          },
+        });
+      }
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+});
+
 describe("headless IDA operation failures", () => {
   it.each<{
     tool: string;
@@ -92,7 +198,28 @@ describe("headless IDA operation failures", () => {
       try {
         const result = await client.execute(operation, parameters);
         expect(result.ok).toBe(false);
-        if (!result.ok) expect(result.error.message).toContain(failure);
+        if (!result.ok) {
+          expect(result.error.message).toContain(failure);
+          expect(result.error.partialObservation).toMatchObject({
+            provider: { id: "ida" },
+            operation,
+            parameters,
+            normalized_result: {
+              status: "partial",
+              failed_operation: operation,
+              observations: expect.arrayContaining([
+                expect.objectContaining({ tool }),
+              ]),
+              metadata_before: expect.any(Object),
+            },
+            locations: expect.arrayContaining([
+              { kind: "artifact-path", path: target.path },
+            ]),
+          });
+          expect(
+            projectAnalysisError(result.error).details?.partial_observation,
+          ).toMatchObject({ normalized_result: { status: "partial" } });
+        }
       } finally {
         expect((await client.close()).ok).toBe(true);
       }
@@ -168,7 +295,7 @@ describe("headless IDA procedure lookup failures", () => {
         expect(
           projected.details,
           "the operation and exactly one issue that names the procedure in its message",
-        ).toEqual({
+        ).toMatchObject({
           operation,
           issues: [
             {

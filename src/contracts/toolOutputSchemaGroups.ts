@@ -220,7 +220,7 @@ const callPathTraceOutput = evidenceResultOf(
     start: z.string(),
     goal: z.string().nullable(),
     direction: z.enum(["forward", "backward"]),
-    goal_status: z.enum(["not_requested", "reached", "not_reached"]),
+    goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
     nodes: z.array(
       z.object({
         address: z.string(),

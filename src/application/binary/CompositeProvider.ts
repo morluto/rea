@@ -94,6 +94,15 @@ export class CompositeProvider implements AnalysisProvider {
       return outcomes.find((outcome) => !outcome.ok) ?? ok(null);
     };
     return {
+      executeIfReady: (operation, parameters, options) => {
+        const provider = this.#providerByOperation.get(operation);
+        const client =
+          provider === undefined ? undefined : clients.get(provider);
+        return (
+          client?.executeIfReady?.(operation, parameters, options) ??
+          Promise.resolve(undefined)
+        );
+      },
       execute: (operation, parameters, options) => {
         if (operation === "health")
           return Promise.resolve(

@@ -875,6 +875,38 @@ it.skipIf(!onDarwin)(
       });
       expect(JSON.parse(stdout)).toEqual({
         argvDecoyIgnored: true,
+        readableEnvironmentWithoutToken: {
+          runId: null,
+          environmentEntryCount: 1,
+        },
+        restrictedReadableEnvironmentWithoutToken: {
+          state: "readable",
+          reason: null,
+        },
+        restrictedEmptyEnvironment: {
+          state: "unavailable",
+          reason: "restricted_process_environment_withheld",
+        },
+        platformEmptyEnvironment: {
+          state: "unavailable",
+          reason: "platform_binary_environment_withheld",
+        },
+        restrictedUnavailableEnvironment: {
+          state: "unavailable",
+          reason: "restricted_process_environment_withheld",
+        },
+        restrictedAmbiguousEnvironment: {
+          state: "unavailable",
+          reason: "restricted_process_environment_withheld",
+        },
+        ordinaryAmbiguousEnvironment: {
+          state: "unavailable",
+          reason: "ambiguous_environment_boundary",
+        },
+        ordinaryUnavailableEnvironment: {
+          state: "unavailable",
+          reason: "environment_unavailable",
+        },
         alternatePaddingRead: true,
         appleVectorTokenFailsClosed: true,
         clearedAppleVectorTokenFailsClosed: true,

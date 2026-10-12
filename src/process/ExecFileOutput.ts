@@ -1,10 +1,10 @@
 import {
   execFile,
-  type ExecFileOptionsWithStringEncoding,
+  type ExecFileOptionsWithBufferEncoding,
 } from "node:child_process";
 
 type ExecFileOutputOptions = Omit<
-  ExecFileOptionsWithStringEncoding,
+  ExecFileOptionsWithBufferEncoding,
   "encoding" | "maxBuffer"
 > & {
   readonly maxBuffer?: number;
@@ -100,12 +100,12 @@ export const execFileOutputFailure = (
   };
 };
 
-/** Run a shell-free command while capturing its complete UTF-8 output. */
-export const execFileOutput = (
+/** Run a shell-free command while capturing its complete output bytes. */
+export const execFileBytes = (
   command: string,
   arguments_: readonly string[],
   options: ExecFileOutputOptions = {},
-): Promise<{ readonly stdout: string; readonly stderr: string }> =>
+): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> =>
   new Promise((resolve, reject) => {
     const { stopSignal, signal, timeout, ...execOptions } = options;
     const invalid = timeout === undefined ? undefined : invalidTimeout(timeout);
@@ -134,7 +134,7 @@ export const execFileOutput = (
               ...(timeout === undefined ? {} : { timeout }),
             }
           : { killSignal: stopSignal }),
-        encoding: "utf8",
+        encoding: "buffer",
         maxBuffer: options.maxBuffer ?? Number.POSITIVE_INFINITY,
       },
       (error, stdout, stderr) => {
@@ -148,8 +148,8 @@ export const execFileOutput = (
               ? timeoutError(command, timeout, error)
               : error;
         if (failure !== null) {
-          Reflect.set(failure, "stdout", stdout);
-          Reflect.set(failure, "stderr", stderr);
+          Reflect.set(failure, "stdout", stdout.toString("utf8"));
+          Reflect.set(failure, "stderr", stderr.toString("utf8"));
           reject(failure);
           return;
         }
@@ -173,3 +173,14 @@ export const execFileOutput = (
         stop("timeout");
       }, timeout);
   });
+
+/** Run a shell-free command while capturing its complete UTF-8 output. */
+export const execFileOutput = (
+  command: string,
+  arguments_: readonly string[],
+  options: ExecFileOutputOptions = {},
+): Promise<{ readonly stdout: string; readonly stderr: string }> =>
+  execFileBytes(command, arguments_, options).then(({ stdout, stderr }) => ({
+    stdout: stdout.toString("utf8"),
+    stderr: stderr.toString("utf8"),
+  }));

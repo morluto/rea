@@ -165,10 +165,12 @@ describe("Hopper bridge launcher selection", () => {
 
 it("launches Hopper helpers with the caller-selected environment without restoring ambient values", async () => {
   const directory = await createTestTempDirectory("rea-hopper-selected-env-");
+  const targetPath = join(directory, "target");
+  await writeFile(targetPath, "fixture target");
   const launcher = new HopperApplicationLauncher({
     environment: { REA_SELECTED_VALUE: "caller-value" },
     launcherPath: process.execPath,
-    targetPath: join(directory, "target"),
+    targetPath,
     targetKind: "executable",
     loaderArgs: [
       "-e",

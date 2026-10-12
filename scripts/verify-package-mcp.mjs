@@ -20,7 +20,7 @@ const execute = promisify(execFile);
 const verifyMcpToolsAndPrompts = async (client, mcpOptions) => {
   await verifyCompleteToolCatalog(client, mcpOptions);
   await prompts.verifyPromptCatalog(client, mcpOptions, prompts.names);
-  await prompts.verifyPromptCompletion(client, mcpOptions, false);
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
 };
 
 const verifyMcpTargetFree = async (client, mcpOptions) => {
@@ -121,11 +121,8 @@ const verifyMcpNonLinuxCurrentDocument = async (
 
 const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
   await verifyMcpOpenAndBind(client, mcpOptions);
-  await prompts.verifyPromptCompletion(
-    client,
-    mcpOptions,
-    process.platform !== "linux",
-  );
+  // Completion never starts a provider; only an ordinary operation readies it.
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
   if (process.platform === "linux") {
     await verifyMcpLinuxToolAvailability(client, mcpOptions);
   } else {
@@ -134,6 +131,7 @@ const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
       mcpOptions,
     );
     await verifyMcpNonLinuxCurrentDocument(client, mcpOptions, current);
+    await prompts.verifyPromptCompletion(client, mcpOptions, ["fixture"]);
   }
   const closed = await client.callTool(
     { name: "close_binary", arguments: {} },
@@ -141,7 +139,7 @@ const verifyMcpBinaryLifecycle = async (client, mcpOptions) => {
   );
   if (closed.isError === true)
     throw new Error("packaged MCP could not close its binary");
-  await prompts.verifyPromptCompletion(client, mcpOptions, false);
+  await prompts.verifyPromptCompletion(client, mcpOptions, []);
 };
 
 const verifyMcpEvidenceBundle = async (client, mcpOptions, evidenceRoot) => {

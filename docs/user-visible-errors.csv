@@ -86,8 +86,22 @@ harm_rank,location,trigger,current_copy,user_risk,proposed_replacement,implement
 77,install.sh:node missing,node is absent,"Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ is required; install it from nodejs.org and retry.",Low risk; exact versions and recovery,Keep current copy,unchanged,verified by shell branch inspection
 78,install.sh:npm missing,npm is absent,npm is required; install it with Node.js and retry.,Low risk; exact recovery,Keep current copy,unchanged,verified by shell branch inspection
 79,install.sh:node unreadable,node exists but does not report a parseable version,could not determine the active Node.js version.,No cause-local recovery,"The active Node.js version could not be read. Check that node works and is on PATH, then retry.",implemented,verified by exact unreadable-Node-version installer test
-80,install.sh:Node 22 floor,Node 22 minor version is below 19,"Node.js VERSION is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.",Low risk; exact detected version and supported alternatives,Keep current copy,unchanged,verified by exact installer test using Node 20 and branch inspection
-81,install.sh:Node 24 floor,Node 24 minor version is below 11,"Node.js VERSION is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.",Low risk; exact detected version and floor,Keep current copy,unchanged,verified by shell branch inspection
+80,install.sh:Node 22 floor,Node 22 minor version is below 19,"Node.js VERSION is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.",No install guidance; operator must guess between nvm/fnm/system packages/nodejs.org,"Node.js VERSION is unsupported.
+
+REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:
+  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)
+  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)
+  Direct download for OS/ARCH:
+    https://nodejs.org/dist/latest-v24.x/  (grab the OS-ARCH tarball)
+Then rerun this installer.",implemented,verified by exact installer test using Node 20 against the `linux/x64` fake host and by shell branch inspection
+81,install.sh:Node 24 floor,Node 24 minor version is below 11,"Node.js VERSION is unsupported; use Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+.",No install guidance; operator must guess between nvm/fnm/system packages/nodejs.org,"Node.js VERSION is unsupported.
+
+REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+. Install one via:
+  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)
+  fnm:  fnm install 24 && fnm use 24      (https://github.com/Schniz/fnm)
+  Direct download for OS/ARCH:
+    https://nodejs.org/dist/latest-v24.x/  (grab the OS-ARCH tarball)
+Then rerun this installer.",implemented,verified by shell branch inspection
 82,install.sh:version syntax,Explicit version is not exact semantic version,version must be an exact semantic version.,Low risk; exact correction,Keep current copy,unchanged,verified by shell branch inspection
 83,install.sh:release lookup,Latest GitHub release request fails,could not resolve the latest GitHub release.,No fallback despite supporting pinned versions,"The latest REA release could not be resolved. Check network access or pass --version VERSION, then retry.",implemented,verified by exact release-lookup installer test
 84,install.sh:release response,Latest release response is not valid expected JSON,Node JSON parser stack followed by the safe release-response message,Leaks a parser stack and buries recovery guidance,The release response was invalid. Retry later or pass --version VERSION.,implemented,verified by exact malformed-release test with parser stderr suppressed

@@ -1,5 +1,16 @@
 # Native, managed, and packaged artifacts
 
+## Go build metadata
+
+Use `inspect_go_binary` for an explicit local ELF, PE or thin Mach-O when the
+question concerns the embedded compiler version, module/dependency versions,
+local replacements or build settings. No `open_binary`, Go installation or
+target execution is required. The CLI equivalent is `inspect-go-binary PATH`.
+Preserve artifact SHA-256, original file ranges, framed module bytes and every
+unparsed module-text line. A missing record is an unknown, not proof of a
+non-Go binary; observed metadata does not authenticate its claims. Function,
+source and type recovery remain a separate native-analysis question.
+
 ## Recorded Linux crashes
 
 Use `inspect_recorded_crash` with an explicit Linux x86-64 ELF core path to

@@ -79,6 +79,14 @@ class LazyAnalysisClient implements AnalysisClient {
   #loading: Promise<AnalysisClient> | undefined;
   #closed = false;
 
+  executeIfReady: NonNullable<AnalysisClient["executeIfReady"]> = (
+    operation,
+    parameters,
+    options,
+  ) =>
+    this.#client?.executeIfReady?.(operation, parameters, options) ??
+    Promise.resolve(undefined);
+
   constructor(loadClient: () => Promise<AnalysisClient>, providerId: string) {
     this.#loadClient = loadClient;
     this.#providerId = providerId;

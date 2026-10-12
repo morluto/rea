@@ -4,6 +4,7 @@ import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { EvidenceLedger } from "./EvidenceLedger.js";
 
 const TARGET: BinaryTarget = {
@@ -234,6 +235,32 @@ describe("evidence ledger metadata imports", () => {
 });
 
 describe("evidence bundle imports", () => {
+  it("classifies an authenticated Evidence record as the wrong import kind", () => {
+    const record = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result: true,
+    });
+    const result = new EvidenceLedger().import(record);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        userMessage: expect.stringContaining(
+          `this JSON is one Evidence record (${record.evidence_id})`,
+        ),
+      },
+    });
+    if (result.ok) throw new Error("Expected a wrong-kind import failure");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      message: expect.stringContaining(
+        `this JSON is one Evidence record (${record.evidence_id})`,
+      ),
+    });
+  });
+
   it("rejects conflicting duplicate IDs without mutating the ledger", () => {
     const ledger = new EvidenceLedger();
     const first = createEvidence(TARGET, PROVIDER, {

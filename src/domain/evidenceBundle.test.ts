@@ -5,6 +5,7 @@ import { ANALYSIS_SNAPSHOT_TARGET } from "./analysisSnapshot.fixture.js";
 import {
   createEvidenceBundle,
   createImmutableEvidenceBundle,
+  describeEvidenceBundleFailure,
   evidenceBundleForTarget,
   parseEvidenceBundle,
 } from "./evidenceBundle.js";
@@ -17,6 +18,24 @@ import {
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 const targetDigest = "a".repeat(64);
 const foreignDigest = "b".repeat(64);
+
+describe("evidence bundle failure classification", () => {
+  it("treats only authenticated standalone Evidence as the wrong input kind", () => {
+    const record = createEvidence(undefined, provider, {
+      operation: "observe",
+      parameters: {},
+      result: { observed: true },
+    });
+    const single = describeEvidenceBundleFailure(record, new Error("bundle"));
+    expect(single).toMatchObject({ kind: "single-record" });
+
+    const tampered = describeEvidenceBundleFailure(
+      { ...record, normalized_result: { observed: false } },
+      new Error("bundle"),
+    );
+    expect(tampered).toMatchObject({ kind: "invalid-bundle" });
+  });
+});
 
 const makeUnknown = (
   question: string,

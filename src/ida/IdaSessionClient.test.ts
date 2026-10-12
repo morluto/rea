@@ -116,6 +116,86 @@ describe("headless IDA producer pagination", () => {
 });
 
 describe("attached IDA observation semantics", () => {
+  it("returns cold and pending startup calls immediately, then cancels queued work before dispatch", async () => {
+    const { producer, client } = await fixture("headless");
+    await expect(client.executeIfReady("list_procedures", {})).resolves.toBe(
+      undefined,
+    );
+    expect(producer.connects).toBe(0);
+
+    let enterOpen: (() => void) | undefined;
+    let finishOpen: (() => void) | undefined;
+    const openEntered = new Promise<void>((resolve) => {
+      enterOpen = resolve;
+    });
+    const openGate = new Promise<void>((resolve) => {
+      finishOpen = resolve;
+    });
+    producer.beforeCall = async (name) => {
+      if (name === "idb_open") {
+        enterOpen?.();
+        await openGate;
+      }
+    };
+    const startup = client.execute("list_procedures", {});
+    await openEntered;
+    await expect(client.executeIfReady("list_strings", {})).resolves.toBe(
+      undefined,
+    );
+    expect(
+      producer.calls.filter(({ name }) => name === "idb_open"),
+    ).toHaveLength(1);
+    finishOpen?.();
+    const started = await startup;
+    if (!started.ok) throw started.error;
+    const warm = await client.executeIfReady("list_procedures", {});
+    if (warm === undefined) throw new Error("expected ready IDA dispatch");
+    if (!warm.ok) throw warm.error;
+    expect(warm.value.result).toEqual([
+      expect.objectContaining({ address: "0x1000", value: "main" }),
+    ]);
+
+    let enterRead: (() => void) | undefined;
+    let finishRead: (() => void) | undefined;
+    const readEntered = new Promise<void>((resolve) => {
+      enterRead = resolve;
+    });
+    const readGate = new Promise<void>((resolve) => {
+      finishRead = resolve;
+    });
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs") {
+        enterRead?.();
+        await readGate;
+      }
+    };
+    const active = client.execute("list_procedures", {});
+    await readEntered;
+    const controller = new AbortController();
+    const queued = client.executeIfReady(
+      "list_strings",
+      {},
+      {
+        signal: controller.signal,
+      },
+    );
+    controller.abort();
+    await expect(queued).resolves.toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    finishRead?.();
+    const activeResult = await active;
+    if (!activeResult.ok) throw activeResult.error;
+    expect(
+      producer.calls.filter(({ name }) => name === "list_funcs"),
+    ).toHaveLength(3);
+    expect(producer.calls.some(({ name }) => name === "find_regex")).toBe(
+      false,
+    );
+    await client.close();
+  });
+
   it("accepts a normalized spelling of the bound document path", async () => {
     const { target, producer, client } = await fixture();
     const equivalent =

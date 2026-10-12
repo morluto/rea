@@ -59,7 +59,8 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
 export const parseManifestPackage = (manifest: string): string | null => {
   const document = parseXml(manifest, "AndroidManifest.xml");
   const root = document.documentElement;
-  if (root === null || root.nodeName !== "manifest") return null;
+  if (root === null || root.nodeName !== "manifest")
+    throw new TypeError("AndroidManifest.xml root must be <manifest>");
   return root.getAttribute("package") || null;
 };
 

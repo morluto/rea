@@ -73,6 +73,9 @@ describe("captured script path projection", () => {
   it.each([
     "",
     "https://a.test/main.js?v=2",
+    "https://a.test/main.js?",
+    "https://a.test/main.js#",
+    "https://a.test/main.js?#",
     "https://a.test/main.js#variant",
     "data:text/javascript,export{}",
     "https://a.test/%2fescape.js",

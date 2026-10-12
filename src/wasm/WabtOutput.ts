@@ -49,11 +49,12 @@ export const parseWabtOutput = (
       bytes: Number.parseInt(match[4] ?? "", 16),
       description,
     };
+    const sectionHeaderBytes = section.start - (sections.at(-1)?.end ?? 8);
     if (
       section.end > artifactBytes ||
       section.end - section.start !== section.bytes ||
-      section.start < 8 ||
-      section.start < (sections.at(-1)?.end ?? 8)
+      sectionHeaderBytes < 2 ||
+      sectionHeaderBytes > 6
     )
       throw new Error("WABT section ranges do not match selected artifact.");
     sections.push(section);

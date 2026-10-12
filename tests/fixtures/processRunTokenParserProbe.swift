@@ -26,38 +26,42 @@ func fixture(
 @main
 struct ProcessRunTokenParserProbe {
   static func main() throws {
-    let argvDecoy = try token(in: fixture(
+    let argvDecoy = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=argv-decoy", "trailing"],
       environment: ["DECOY=words REA_PROCESS_RUN_ID=synthetic-decoy"]
     ))
-    let realToken = try token(in: fixture(
+    let realToken = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable"],
       environment: ["DECOY=words REA_PROCESS_RUN_ID=synthetic-decoy", "REA_PROCESS_RUN_ID=owned-token"]
     ))
-    let emptyLaterArgument = try token(in: fixture(
+    let readableNoToken = try parseProcessEnvironment(in: fixture(
+      arguments: ["/fixture/executable"],
+      environment: ["PATH=/usr/bin"]
+    ))
+    let emptyLaterArgument = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable", "", "after-empty"],
       environment: ["REA_PROCESS_RUN_ID=empty-argument-token"],
       pointerSize: 8
     ))
-    let alternatePadding = try token(in: fixture(
+    let alternatePadding = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable", "argument"],
       environment: ["REA_PROCESS_RUN_ID=alternate-padding-token"],
       pointerSize: 4
     ), pointerSize: 4)
-    let emptyArgv0Read = try token(in: fixture(
+    let emptyArgv0Read = try parseProcessEnvironment(in: fixture(
       arguments: ["", "", "after-empty"],
       environment: ["REA_PROCESS_RUN_ID=empty-argv0-token"],
       pointerSize: 8
     ))
-    let finalAssignmentArgumentRead = try token(in: fixture(
+    let finalAssignmentArgumentRead = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable", "FOO=bar"],
       environment: ["REA_PROCESS_RUN_ID=final-assignment-token"]
     ))
-    let reservedArgumentIgnored = try token(in: fixture(
+    let reservedArgumentIgnored = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable", "REA_PROCESS_RUN_ID=argv-decoy"],
       environment: ["DECOY=words REA_PROCESS_RUN_ID=synthetic-decoy"]
     ))
-    let nonAsciiPathRead = try token(in: fixture(
+    let nonAsciiPathRead = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/é", "FOO=bar"],
       environment: ["REA_PROCESS_RUN_ID=utf8-path-token"],
       pointerSize: 8,
@@ -65,7 +69,7 @@ struct ProcessRunTokenParserProbe {
     ))
     let appleVectorTokenFailsClosed: Bool
     do {
-      _ = try token(in: fixture(
+      _ = try parseProcessEnvironment(in: fixture(
         arguments: ["/fixture/executable"],
         environment: ["pfz=user-value", "PATH=/usr/bin"],
         appleRecords: ["pfz=synthetic", "REA_PROCESS_RUN_ID=apple-decoy"]
@@ -76,7 +80,7 @@ struct ProcessRunTokenParserProbe {
     }
     let clearedAppleVectorTokenFailsClosed: Bool
     do {
-      _ = try token(in: fixture(
+      _ = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable"],
       environment: ["REA_PROCESS_RUN_ID=cleared-pfz-owned-token"],
       appleRecords: ["REA_PROCESS_RUN_ID=apple-decoy"],
@@ -86,14 +90,14 @@ struct ProcessRunTokenParserProbe {
     } catch RunTokenReadError.ambiguousEnvironmentBoundary {
       clearedAppleVectorTokenFailsClosed = true
     }
-    let callerPfzBeforeTokenRead = try token(in: fixture(
+    let callerPfzBeforeTokenRead = try parseProcessEnvironment(in: fixture(
       arguments: ["/fixture/executable"],
       environment: ["pfz=caller-value", "REA_PROCESS_RUN_ID=cleared-pfz-owned-token"],
       zeroedPfz: true
     ))
     let emptyEnvironmentRecordsBeforeTokenFailClosed: Bool
     do {
-      _ = try token(in: fixture(
+      _ = try parseProcessEnvironment(in: fixture(
         arguments: ["/fixture/executable"],
         environment: ["DECOY=value", "", "", "REA_PROCESS_RUN_ID=synthetic-decoy"],
         appleRecords: [],
@@ -103,7 +107,7 @@ struct ProcessRunTokenParserProbe {
     } catch RunTokenReadError.ambiguousEnvironmentBoundary {
       emptyEnvironmentRecordsBeforeTokenFailClosed = true
     }
-    let zeroArgumentsRead = try token(in: fixture(
+    let zeroArgumentsRead = try parseProcessEnvironment(in: fixture(
       arguments: [],
       environment: ["REA_PROCESS_RUN_ID=zero-argc-token"],
       pointerSize: 4
@@ -117,14 +121,14 @@ struct ProcessRunTokenParserProbe {
     truncatedArgv.append(contentsOf: Array("REA_PROCESS_RUN_ID=synthetic-decoy".utf8))
     let truncatedArgvFailsClosed: Bool
     do {
-      _ = try token(in: truncatedArgv)
+      _ = try parseProcessEnvironment(in: truncatedArgv)
       truncatedArgvFailsClosed = false
     } catch {
       truncatedArgvFailsClosed = true
     }
     let duplicateTokenFailsClosed: Bool
     do {
-      _ = try token(in: fixture(
+      _ = try parseProcessEnvironment(in: fixture(
         arguments: ["/fixture/executable"],
         environment: ["REA_PROCESS_RUN_ID=first", "REA_PROCESS_RUN_ID=second"]
       ))
@@ -134,7 +138,7 @@ struct ProcessRunTokenParserProbe {
     }
     let missingAppleBoundaryFailsClosed: Bool
     do {
-      _ = try token(in: fixture(
+      _ = try parseProcessEnvironment(in: fixture(
         arguments: ["/fixture/executable"],
         environment: ["REA_PROCESS_RUN_ID=synthetic-decoy"],
         appleRecords: []
@@ -144,23 +148,97 @@ struct ProcessRunTokenParserProbe {
       missingAppleBoundaryFailsClosed = true
     }
 
+    let restrictedReadableNoToken = processRunTokenObservation(
+      pid: 1,
+      parse: .success(readableNoToken),
+      codeSigningFlags: { 0x0000_0800 }
+    )
+    let restrictedEmptyEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .success(try parseProcessEnvironment(in: fixture(
+        arguments: ["/fixture/executable"],
+        environment: []
+      ))),
+      codeSigningFlags: { 0x0000_0800 }
+    )
+    let platformEmptyEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .success(try parseProcessEnvironment(in: fixture(
+        arguments: ["/fixture/executable"],
+        environment: []
+      ))),
+      codeSigningFlags: { 0x0400_0000 }
+    )
+    let restrictedUnavailableEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .failure(.environmentUnavailable),
+      codeSigningFlags: { 0x0000_0800 }
+    )
+    let restrictedAmbiguousEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .failure(.ambiguousEnvironmentBoundary),
+      codeSigningFlags: { 0x0000_0800 }
+    )
+    let ordinaryAmbiguousEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .failure(.ambiguousEnvironmentBoundary),
+      codeSigningFlags: { 0 }
+    )
+    let ordinaryUnavailableEnvironment = processRunTokenObservation(
+      pid: 1,
+      parse: .failure(.environmentUnavailable),
+      codeSigningFlags: { 0 }
+    )
+
     let result: [String: Any] = [
-      "argvDecoyIgnored": argvDecoy == nil,
-      "realTokenRead": realToken == "owned-token",
-      "emptyLaterArgumentRead": emptyLaterArgument == "empty-argument-token",
-      "alternatePaddingRead": alternatePadding == "alternate-padding-token",
+      "argvDecoyIgnored": argvDecoy.runId == nil && argvDecoy.environmentEntryCount == 1,
+      "realTokenRead": realToken.runId == "owned-token",
+      "readableEnvironmentWithoutToken": [
+        "runId": readableNoToken.runId as Any? ?? NSNull(),
+        "environmentEntryCount": readableNoToken.environmentEntryCount,
+      ],
+      "restrictedReadableEnvironmentWithoutToken": [
+        "state": restrictedReadableNoToken.state,
+        "reason": restrictedReadableNoToken.reason as Any? ?? NSNull(),
+      ],
+      "restrictedEmptyEnvironment": [
+        "state": restrictedEmptyEnvironment.state,
+        "reason": restrictedEmptyEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "platformEmptyEnvironment": [
+        "state": platformEmptyEnvironment.state,
+        "reason": platformEmptyEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "restrictedUnavailableEnvironment": [
+        "state": restrictedUnavailableEnvironment.state,
+        "reason": restrictedUnavailableEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "restrictedAmbiguousEnvironment": [
+        "state": restrictedAmbiguousEnvironment.state,
+        "reason": restrictedAmbiguousEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "ordinaryAmbiguousEnvironment": [
+        "state": ordinaryAmbiguousEnvironment.state,
+        "reason": ordinaryAmbiguousEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "ordinaryUnavailableEnvironment": [
+        "state": ordinaryUnavailableEnvironment.state,
+        "reason": ordinaryUnavailableEnvironment.reason as Any? ?? NSNull(),
+      ],
+      "emptyLaterArgumentRead": emptyLaterArgument.runId == "empty-argument-token",
+      "alternatePaddingRead": alternatePadding.runId == "alternate-padding-token",
       "truncatedArgvFailsClosed": truncatedArgvFailsClosed,
       "duplicateTokenFailsClosed": duplicateTokenFailsClosed,
       "missingAppleBoundaryFailsClosed": missingAppleBoundaryFailsClosed,
-      "emptyArgv0Read": emptyArgv0Read == "empty-argv0-token",
-      "finalAssignmentArgumentRead": finalAssignmentArgumentRead == "final-assignment-token",
-      "reservedArgumentIgnored": reservedArgumentIgnored == nil,
-      "nonAsciiPathRead": nonAsciiPathRead == "utf8-path-token",
+      "emptyArgv0Read": emptyArgv0Read.runId == "empty-argv0-token",
+      "finalAssignmentArgumentRead": finalAssignmentArgumentRead.runId == "final-assignment-token",
+      "reservedArgumentIgnored": reservedArgumentIgnored.runId == nil && reservedArgumentIgnored.environmentEntryCount == 1,
+      "nonAsciiPathRead": nonAsciiPathRead.runId == "utf8-path-token",
       "appleVectorTokenFailsClosed": appleVectorTokenFailsClosed,
       "clearedAppleVectorTokenFailsClosed": clearedAppleVectorTokenFailsClosed,
-      "callerPfzBeforeTokenRead": callerPfzBeforeTokenRead == "cleared-pfz-owned-token",
+      "callerPfzBeforeTokenRead": callerPfzBeforeTokenRead.runId == "cleared-pfz-owned-token",
       "emptyEnvironmentRecordsBeforeTokenFailClosed": emptyEnvironmentRecordsBeforeTokenFailClosed,
-      "zeroArgumentsRead": zeroArgumentsRead == "zero-argc-token",
+      "zeroArgumentsRead": zeroArgumentsRead.runId == "zero-argc-token",
     ]
     let output = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
     FileHandle.standardOutput.write(output)
