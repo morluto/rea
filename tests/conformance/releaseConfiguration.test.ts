@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { SUPPORTED_NODE_VERSION_RANGE } from "../../src/domain/runtimeVersion.js";
+import { MCP_STARTUP_POLICY } from "../../src/mcpStartupPolicy.js";
 
 const readJson = async (path: string): Promise<unknown> =>
   JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -120,6 +121,16 @@ describe("release configuration", () => {
     expect(manifest.interface.defaultPrompt).toEqual(
       expect.arrayContaining([expect.stringMatching(/\S/u)]),
     );
+  });
+
+  it("carries the owned Codex startup timeout in the Codex plugin server entry", async () => {
+    expect(await readJson(".codex-plugin/plugin.json")).toMatchObject({
+      mcpServers: {
+        rea: {
+          startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+        },
+      },
+    });
   });
 
   it("keeps the npm package and MCP Registry metadata aligned", async () => {

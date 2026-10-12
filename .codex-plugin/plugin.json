@@ -19,7 +19,8 @@
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@latest", "mcp"]
+      "args": ["-y", "rea-agents@latest", "mcp"],
+      "startup_timeout_sec": 30
     }
   },
   "interface": {
