@@ -6,7 +6,7 @@ import {
   readFile,
   writeFile,
 } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
@@ -368,9 +368,21 @@ it("rejects lost grouped credits, fabricated references, bots, and stale PR bodi
 
 it("binds publication to complete recorded history and the reviewed base", async () => {
   const f = await fixture();
-  await git(f.directory, ["add", "CHANGELOG.md"]);
+  const pluginManifests = [
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+  ];
+  for (const path of pluginManifests) {
+    await mkdir(join(f.directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify({ version: "6.4.0" }),
+    );
+  }
+  await git(f.directory, ["add", "CHANGELOG.md", ...pluginManifests]);
   await git(f.directory, ["commit", "-m", "chore: release notes"]);
   const source = await git(f.directory, ["rev-parse", "HEAD"]);
+  // Release PRs bump the plugin manifest versions, so they are release-only metadata.
   await f.invoke(["check", "--manifest", f.manifest, "--source", source]);
   await writeFile(join(f.directory, "product.txt"), "later product change");
   await git(f.directory, ["add", "product.txt"]);
