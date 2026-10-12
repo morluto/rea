@@ -15,11 +15,17 @@
     "decompiler",
     "mcp-server"
   ],
-  "skills": ["./.agents/skills/reverse-engineer-anything"],
+  "skills": [
+    "./.agents/skills/reverse-engineer-anything"
+  ],
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@latest", "mcp"]
+      "args": [
+        "-y",
+        "rea-agents@6.4.0",
+        "mcp"
+      ]
     }
   }
 }

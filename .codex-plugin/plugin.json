@@ -15,11 +15,17 @@
     "decompiler",
     "mcp-server"
   ],
-  "skills": ["./.agents/skills/reverse-engineer-anything"],
+  "skills": [
+    "./.agents/skills/reverse-engineer-anything"
+  ],
   "mcpServers": {
     "rea": {
       "command": "npx",
-      "args": ["-y", "rea-agents@latest", "mcp"],
+      "args": [
+        "-y",
+        "rea-agents@6.4.0",
+        "mcp"
+      ],
       "startup_timeout_sec": 30
     }
   },
@@ -29,7 +35,11 @@
     "longDescription": "Use REA to explain shipped behavior from native binaries, managed assemblies, Electron and JavaScript bundles, packages, firmware, and browser targets, with evidence that separates observations from inferences.",
     "developerName": "morluto",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://rea.tools/",
     "defaultPrompt": [
       "Use REA to explain how this binary implements a feature.",

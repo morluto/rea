@@ -47,11 +47,13 @@ describe("release configuration", () => {
               path: "server.json",
               jsonpath: "$.packages[0].version",
             },
-            ...pluginManifests.map((path) => ({
-              type: "json",
-              path,
-              jsonpath: "$.version",
-            })),
+            ...pluginManifests.flatMap((path) =>
+              ["$.version", "$.mcpServers.rea.args[1]"].map((jsonpath) => ({
+                type: "json",
+                path,
+                jsonpath,
+              })),
+            ),
           ],
         },
       },
@@ -87,50 +89,6 @@ describe("release configuration", () => {
     });
     const changelog = await readFile("CHANGELOG.md", "utf8");
     expect(/^## \[([^\]]+)\]/mu.exec(changelog)?.[1]).toBe(packageJson.version);
-  });
-
-  it.each(pluginManifests)(
-    "keeps the plugin manifest %s aligned with the package version",
-    async (path) => {
-      const packageJson = (await readJson("package.json")) as {
-        version: string;
-      };
-
-      expect(await readJson(path)).toMatchObject({
-        version: packageJson.version,
-      });
-    },
-  );
-
-  it("declares the interface fields Codex plugin validation requires", async () => {
-    const manifest = (await readJson(".codex-plugin/plugin.json")) as {
-      interface: Record<string, unknown>;
-    };
-
-    for (const field of [
-      "displayName",
-      "shortDescription",
-      "longDescription",
-      "developerName",
-      "category",
-    ])
-      expect(manifest.interface[field]).toEqual(expect.stringMatching(/\S/u));
-    expect(manifest.interface.capabilities).toEqual(
-      expect.arrayContaining([expect.stringMatching(/\S/u)]),
-    );
-    expect(manifest.interface.defaultPrompt).toEqual(
-      expect.arrayContaining([expect.stringMatching(/\S/u)]),
-    );
-  });
-
-  it("carries the owned Codex startup timeout in the Codex plugin server entry", async () => {
-    expect(await readJson(".codex-plugin/plugin.json")).toMatchObject({
-      mcpServers: {
-        rea: {
-          startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
-        },
-      },
-    });
   });
 
   it("keeps the npm package and MCP Registry metadata aligned", async () => {
@@ -171,6 +129,71 @@ describe("release configuration", () => {
           packageArguments: [{ type: "positional", value: "mcp" }],
         },
       ],
+    });
+  });
+});
+
+describe("plugin manifests", () => {
+  it.each(pluginManifests)(
+    "pins the plugin manifest %s and its server launch to the package version",
+    async (path) => {
+      const packageJson = (await readJson("package.json")) as {
+        name: string;
+        version: string;
+      };
+
+      expect(await readJson(path)).toMatchObject({
+        version: packageJson.version,
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", `${packageJson.name}@${packageJson.version}`, "mcp"],
+          },
+        },
+      });
+    },
+  );
+
+  it.each(pluginManifests)(
+    "stores %s in the form Release Please rewrites it to",
+    async (path) => {
+      // Release Please reserializes JSON extra-files, so any other layout
+      // would change formatting in every release PR.
+      const content = await readFile(path, "utf8");
+
+      expect(content).toBe(`${JSON.stringify(JSON.parse(content), null, 2)}
+`);
+    },
+  );
+
+  it("declares the interface fields Codex plugin validation requires", async () => {
+    const manifest = (await readJson(".codex-plugin/plugin.json")) as {
+      interface: Record<string, unknown>;
+    };
+
+    for (const field of [
+      "displayName",
+      "shortDescription",
+      "longDescription",
+      "developerName",
+      "category",
+    ])
+      expect(manifest.interface[field]).toEqual(expect.stringMatching(/\S/u));
+    expect(manifest.interface.capabilities).toEqual(
+      expect.arrayContaining([expect.stringMatching(/\S/u)]),
+    );
+    expect(manifest.interface.defaultPrompt).toEqual(
+      expect.arrayContaining([expect.stringMatching(/\S/u)]),
+    );
+  });
+
+  it("carries the owned Codex startup timeout in the Codex plugin server entry", async () => {
+    expect(await readJson(".codex-plugin/plugin.json")).toMatchObject({
+      mcpServers: {
+        rea: {
+          startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+        },
+      },
     });
   });
 });

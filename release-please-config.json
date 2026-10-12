@@ -39,8 +39,18 @@
         },
         {
           "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.mcpServers.rea.args[1]"
+        },
+        {
+          "type": "json",
           "path": ".codex-plugin/plugin.json",
           "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.mcpServers.rea.args[1]"
         }
       ]
     }

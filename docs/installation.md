@@ -978,8 +978,8 @@ The repository root is both a Claude Code plugin
 (`.claude-plugin/plugin.json`) and a Codex plugin
 (`.codex-plugin/plugin.json`). Each manifest bundles the
 `reverse-engineer-anything` skill from `.agents/skills/` and registers the
-stdio server as `npx -y rea-agents@latest mcp`, without a second distribution
-artifact.
+stdio server through `npx`, pinned to the exact package version in that
+manifest, without a second distribution artifact.
 
 The repository is also its own single-plugin marketplace, through
 `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`.
@@ -997,8 +997,9 @@ In Codex, add the marketplace and then install REA from the plugin list:
 codex plugin marketplace add morluto/rea
 ```
 
-Each release updates both manifest versions, which is when installed copies
-refresh the bundled skill. A plugin does not run `rea setup`, so provider
+Each release updates both manifest versions and their pinned server version
+together, which is when installed copies refresh the bundled skill and move to
+the new server. A plugin does not run `rea setup`, so provider
 configuration still follows the sections above. Use the plugin or a
 `rea setup` registration for a client, not both, to avoid two `rea` servers.
 
