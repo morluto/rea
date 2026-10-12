@@ -8,7 +8,7 @@ const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
 ];
-const PLUGIN_PACKAGE_SPECIFIER_PREFIX = "rea-agents@";
+const PLUGIN_PACKAGE_NAME = "rea-agents";
 const pluginManifestSchema = versionSchema.extend({
   mcpServers: z.object({
     rea: z.object({ args: z.array(z.string()) }),
@@ -201,18 +201,11 @@ async function validateCandidate(git, sha, version, commits) {
   );
   // A stale manifest keeps the previous plugin cache key or launches the
   // previous server, so both are version authority like server.json.
+  const launches = [];
   for (const path of PLUGIN_MANIFEST_PATHS) {
     const manifest = await readJson(git, sha, path, pluginManifestSchema);
-    const specifier = manifest.mcpServers.rea.args[1];
-    versions.push(
-      [path, manifest.version],
-      [
-        `${path} rea-agents server launch`,
-        specifier?.startsWith(PLUGIN_PACKAGE_SPECIFIER_PREFIX)
-          ? specifier.slice(PLUGIN_PACKAGE_SPECIFIER_PREFIX.length)
-          : specifier,
-      ],
-    );
+    versions.push([path, manifest.version]);
+    launches.push([path, manifest.mcpServers.rea.args[1]]);
   }
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
@@ -232,6 +225,16 @@ async function validateCandidate(git, sha, version, commits) {
     if (actual !== version) {
       throw new Error(
         `${location}@${sha} declares ${actual}; release branch requires ${version}.`,
+      );
+    }
+  }
+  // Compare the whole specifier: a bare version would make npx fetch a
+  // package named after the release number.
+  const requiredLaunch = `${PLUGIN_PACKAGE_NAME}@${version}`;
+  for (const [location, launched] of launches) {
+    if (launched !== requiredLaunch) {
+      throw new Error(
+        `${location}@${sha} launches ${launched ?? "no package"}; release branch requires ${requiredLaunch}.`,
       );
     }
   }
