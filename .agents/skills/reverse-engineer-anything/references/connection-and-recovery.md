@@ -13,7 +13,7 @@ main and an older release expose the same arguments.
 
 | Observation                                                     | Meaning and next step                                                                                                                                                                                                                                                                                                 |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No REA tools in the active session                              | Inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                                                                                                       |
+| No REA tools in the active session                              | If REA was installed as a client plugin, follow the plugin section below. Otherwise inspect registration with `rea doctor --client codex --json`. A skill installation alone does not register MCP.                                                                                                                   |
 | Missing, malformed or stale registration                        | Prepare a scoped setup plan; apply only authorized changes with backups.                                                                                                                                                                                                                                              |
 | Aligned registration, but no connected tools                    | Restart/reconnect the client. Doctor checks registration; it cannot establish the current agent's connection. Inspect the client's launch error if reconnection fails.                                                                                                                                                |
 | `MCP tool call requires approval, but approval policy is never` | Codex rejected the call before REA executed it. Do not install an engine or repeat setup to solve this client-policy decision. See the approval section below.                                                                                                                                                        |
@@ -33,6 +33,28 @@ bring-your-own prerequisites. Use supported inventory/static evidence when it
 answers part of the question, and name the unavailable evidence separately.
 Do not substitute another target. Label observations from ordinary shell tools
 as such; only actual REA output supplies REA Evidence.
+
+## REA installed as a client plugin
+
+A Claude Code or Codex plugin owns its `rea` server and this skill. Doctor's
+`--client` and `--skill` checks and `rea setup` read and write only
+setup-owned state, so for a plugin-only install they report `missing`, and
+applying setup would add a second `rea` server. If this skill was loaded from
+a plugin, or the client lists a `rea` plugin, do not prepare a setup plan for
+missing tools. Instead:
+
+- Check that the plugin is installed and enabled with the client's own
+  listing: `claude plugin list` and `/mcp` in Claude Code, `codex plugin list`
+  in Codex.
+- Restart or reconnect the client, then read its launch error for the `rea`
+  server if tools are still absent. The first start downloads the pinned
+  package through `npx` and can exceed the client's startup timeout; a second
+  start uses the cache.
+- Check analysis engines with `rea doctor --provider <id> --json`, using the
+  package invocation when `rea` is not on `PATH`.
+
+Use the setup repair below only when the user wants a setup-owned registration
+instead of the plugin, and remove or disable the plugin first.
 
 ## Repair registration when needed
 
