@@ -10,6 +10,10 @@ import {
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
 import { stringValue } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  resolveSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
 
 /** Static CommonJS export names. */
 export interface StaticExports {
@@ -29,13 +33,41 @@ export const fingerprintJavaScriptAst = (node: t.Node): string => {
 };
 
 /** Collect statically declared CommonJS/bundler export names from one factory. */
-export const collectJavaScriptExports = (node: t.Node): StaticExports => {
+export const collectJavaScriptExports = (
+  node: t.Node,
+  bindings?: JavaScriptSemanticAnalysisState,
+): StaticExports => {
   const exports = new Set<string>();
+  const factoryExports =
+    bindings !== undefined &&
+    t.isFunction(node) &&
+    t.isIdentifier(node.params[1])
+      ? resolveSemanticBindingState(
+          bindings,
+          node.params[1],
+          node.params[1].name,
+        )?.bindingId
+      : undefined;
+  const isExportsAlias = (reference: t.Node | null): boolean => {
+    if (!t.isIdentifier(reference)) return false;
+    if (factoryExports === undefined) return reference.name === "exports";
+    return (
+      bindings !== undefined &&
+      resolveSemanticBindingState(bindings, reference, reference.name)
+        ?.bindingId === factoryExports
+    );
+  };
   traverseJavaScriptAst(node, {
     enter: (current) => {
       if (t.isAssignmentExpression(current))
-        collectAssignmentExports(current.left, current.right, exports);
-      if (t.isCallExpression(current)) collectCallExports(current, exports);
+        collectAssignmentExports(
+          current.left,
+          current.right,
+          exports,
+          isExportsAlias,
+        );
+      if (t.isCallExpression(current))
+        collectCallExports(current, exports, isExportsAlias);
       return undefined;
     },
   });
@@ -72,17 +104,19 @@ const collectAssignmentExports = (
   left: t.LVal | t.OptionalMemberExpression,
   right: t.Expression,
   output: Set<string>,
+  isExportsAlias: (root: t.Node | null) => boolean,
 ): void => {
   const path = memberPath(left);
   if (path === null) return;
+  const root = memberRoot(left);
+  const exportsAlias = isExportsAlias(root);
   // Rebinding the CommonJS alias does not replace module.exports.
-  if (path.length === 1 && path[0] === "exports") return;
-  const exportOffset =
-    path[0] === "exports"
-      ? 1
-      : path[0] === "module" && path[1] === "exports"
-        ? 2
-        : null;
+  if (path.length === 1 && exportsAlias) return;
+  const exportOffset = exportsAlias
+    ? 1
+    : path[0] === "module" && path[1] === "exports"
+      ? 2
+      : null;
   if (exportOffset === null) return;
   if (path.length === exportOffset) {
     if (t.isObjectExpression(right)) collectObjectKeys(right, output);
@@ -98,6 +132,7 @@ const collectAssignmentExports = (
 const collectCallExports = (
   call: t.CallExpression,
   output: Set<string>,
+  isExportsAlias: (root: t.Node | null) => boolean,
 ): void => {
   const callee = memberPath(call.callee);
   if (callee === null) return;
@@ -107,13 +142,14 @@ const collectCallExports = (
     callee[1] === "defineProperty";
   const declarationCall = callee.length >= 2 && callee.at(-1) === "d";
   if (!definePropertyCall && !declarationCall) return;
-  const target = memberPath(call.arguments[0]);
+  const targetNode = call.arguments[0];
+  const target = memberPath(targetNode);
   const exportTarget =
-    target !== null &&
-    ((target.length === 1 && target[0] === "exports") ||
-      (target.length === 2 &&
-        target[0] === "module" &&
-        target[1] === "exports"));
+    isExportsAlias(targetNode ?? null) ||
+    (target !== null &&
+      target.length === 2 &&
+      target[0] === "module" &&
+      target[1] === "exports");
   if (!exportTarget) return;
   if (definePropertyCall) {
     const name = stringValue(call.arguments[1]);
@@ -123,6 +159,17 @@ const collectCallExports = (
   const declarations = call.arguments[1];
   if (t.isObjectExpression(declarations))
     collectObjectKeys(declarations, output);
+};
+
+const memberRoot = (node: t.Node | null | undefined): t.Node | null => {
+  let current = node;
+  while (
+    current !== null &&
+    current !== undefined &&
+    (t.isMemberExpression(current) || t.isOptionalMemberExpression(current))
+  )
+    current = current.object;
+  return current ?? null;
 };
 
 const collectObjectKeys = (

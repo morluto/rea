@@ -24,9 +24,12 @@ provider-dependent behavior to be reproduced safely.
 
 ## Security boundary
 
-REA authenticates each local provider bridge session with a random capability
-token and a current-user Unix socket. Tokens are transferred through private
-session descriptors rather than process arguments or environment variables.
+REA authenticates its Hopper and Ghidra bridges with per-session random
+capability tokens. POSIX uses current-user Unix sockets; Windows Ghidra uses
+authenticated loopback TCP with a private NTFS runtime whose DACL admits only
+the current user and SYSTEM. See [Windows Ghidra P0](docs/windows-ghidra-p0.md#private-runtime-transport-and-lifecycle).
+Tokens are transferred through private session descriptors rather than process
+arguments or environment variables.
 This is not a sandbox and does not protect against malicious processes already
 running as the same operating-system user. Opening an untrusted binary
 delegates parsing and analysis to the selected local provider with that user's

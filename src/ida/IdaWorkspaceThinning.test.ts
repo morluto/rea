@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { parseBinaryTarget } from "../application/BinaryTargetResolver.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
-import { fat } from "../domain/binaryTarget.fixture.js";
+import { fat, thinMach } from "../domain/binaryTarget.fixture.js";
 import {
   createIdaTarget,
   RecordingIdaMcp,
@@ -27,6 +27,46 @@ const universalTarget = async (hostArchitecture: "arm64" | "x64") => {
   roots.push(directory);
   const path = join(directory, "universal");
   const bytes = fat([0x01000007, 0x0100000c]);
+  await writeFile(path, bytes);
+  const resolved = await parseBinaryTarget(path, { hostArchitecture });
+  if (!resolved.ok) throw resolved.error;
+  if (resolved.value.format !== "mach-o-universal")
+    throw new Error("the universal fixture did not resolve as a FAT container");
+  return { bytes, target: resolved.value };
+};
+
+/** One slice of a synthetic universal file: CPU type, offset and size. */
+interface Layout {
+  readonly cpu: number;
+  readonly offset: number;
+  readonly size: number;
+  readonly alignmentExponent?: number;
+}
+
+/**
+ * Write a universal file whose slices span more than one 64 KiB read, each
+ * filled with its own byte so bytes outside the selected slice are visible.
+ */
+const largeUniversalTarget = async (
+  layout: readonly Layout[],
+  hostArchitecture: "arm64" | "x64",
+) => {
+  const directory = await createTestTempDirectory("rea-ida-thin-large-");
+  roots.push(directory);
+  const path = join(directory, "universal");
+  const total = Math.max(...layout.map(({ offset, size }) => offset + size));
+  const bytes = Buffer.alloc(total);
+  bytes.writeUInt32BE(0xcafebabe, 0);
+  bytes.writeUInt32BE(layout.length, 4);
+  layout.forEach(({ cpu, offset, size, alignmentExponent = 14 }, index) => {
+    const entry = 8 + index * 20;
+    bytes.writeUInt32BE(cpu, entry);
+    bytes.writeUInt32BE(offset, entry + 8);
+    bytes.writeUInt32BE(size, entry + 12);
+    bytes.writeUInt32BE(alignmentExponent, entry + 16);
+    bytes.fill(0x11 * (index + 1), offset, offset + size);
+    thinMach(0xfeedfacf, cpu).copy(bytes, offset);
+  });
   await writeFile(path, bytes);
   const resolved = await parseBinaryTarget(path, { hostArchitecture });
   if (!resolved.ok) throw resolved.error;
@@ -74,6 +114,63 @@ describe("IDA workspace input thinning", () => {
       const { offset, size } = target.universalSlice;
       expect(input.equals(bytes.subarray(offset, offset + size))).toBe(true);
       expect(input.readUInt32BE(4)).toBe(0x01000007);
+      await workspace.remove();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "copies exactly the selected slice when later slices follow it across read boundaries",
+    async () => {
+      const { bytes, target } = await largeUniversalTarget(
+        [
+          {
+            cpu: 0x01000007,
+            offset: 4096,
+            size: 8480,
+            alignmentExponent: 12,
+          },
+          { cpu: 0x0100000c, offset: 16384, size: 33464 },
+          { cpu: 0x00000007, offset: 65536, size: 33464 },
+        ],
+        "arm64",
+      );
+      const workspace = await IdaWorkspace.allocate(target);
+      roots.push(workspace.directory);
+      await workspace.copyInput();
+
+      const input = await readFile(workspace.inputPath);
+      const { offset, size } = target.universalSlice;
+      expect(size, "the arm64 slice is selected").toBe(33464);
+      expect(input.length, "no byte after the slice is copied").toBe(size);
+      expect(input.equals(bytes.subarray(offset, offset + size))).toBe(true);
+      expect(workspace.inputSha256).toBe(
+        createHash("sha256")
+          .update(bytes.subarray(offset, offset + size))
+          .digest("hex"),
+      );
+      await workspace.remove();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "copies exactly the first slice when it is selected and others follow",
+    async () => {
+      const { bytes, target } = await largeUniversalTarget(
+        [
+          { cpu: 0x01000007, offset: 16384, size: 37456 },
+          { cpu: 0x0100000c, offset: 65536, size: 33464 },
+        ],
+        "x64",
+      );
+      const workspace = await IdaWorkspace.allocate(target);
+      roots.push(workspace.directory);
+      await workspace.copyInput();
+
+      const input = await readFile(workspace.inputPath);
+      const { offset, size } = target.universalSlice;
+      expect(size, "the x86_64 slice is selected").toBe(37456);
+      expect(input.length, "no byte after the slice is copied").toBe(size);
+      expect(input.equals(bytes.subarray(offset, offset + size))).toBe(true);
       await workspace.remove();
     },
   );

@@ -6,6 +6,7 @@ import type {
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
+import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
 
 const versionSchema = z
@@ -98,8 +99,7 @@ const validatedInspectorWebSocket = (
     socket.port !== trusted.port ||
     socket.username !== "" ||
     socket.password !== "" ||
-    socket.search !== "" ||
-    socket.hash !== "" ||
+    urlDeclaresQueryOrFragment(socket) ||
     !allowedPaths.has(socket.pathname)
   )
     throw new BrowserObservationError(operation, "invalid_endpoint_response");

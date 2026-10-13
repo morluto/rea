@@ -198,15 +198,19 @@ type CapabilityAvailabilityCode = Exclude<
   CapabilityDescriptor["availabilityCode"],
   undefined
 >;
-type CapabilityProjection = Omit<CapabilityDescriptor, "available" | "reason"> &
-  (
+// Wire capability projection also covers target-free operations outside binary routing.
+type CapabilityProjection = Omit<
+  CapabilityDescriptor,
+  "operation" | "available" | "reason"
+> & { readonly operation: string } & (
     | { readonly available: true; readonly reason: null }
     | { readonly available: false; readonly reason: string }
   );
 type ProviderCapabilityGroup = ProviderCapabilitySet["groups"][number];
 
 /** Group inline capability facts without merging distinct providers or states. */
-const providerCapabilitySets = (
+/** Project provider descriptors once for binary and target-free status consumers. */
+export const providerCapabilitySets = (
   descriptors: readonly CapabilityProjection[],
 ): ProviderCapabilitySet[] => {
   const providers = new Map<

@@ -51,15 +51,18 @@ const installCookies = async (
 };
 
 const blockAttachedServiceWorkers = async (page: Page): Promise<void> => {
-  const controller = await page.evaluate(
-    "Boolean(navigator.serviceWorker?.controller)",
-  );
-  if (controller)
+  const hasServiceWorker = await page.evaluate(`(async () => {
+    if (!("serviceWorker" in navigator)) return false;
+    const serviceWorker = navigator.serviceWorker;
+    if (serviceWorker.controller !== null) return true;
+    return (await serviceWorker.getRegistrations()).length > 0;
+  })()`);
+  // An attached context belongs to the caller. Reject a block request when it
+  // already has a worker instead of unregistering that caller-owned resource.
+  if (hasServiceWorker)
     throw new BrowserObservationError(OPERATION, "target_not_allowed");
   const blockRegistration = `(() => {
     if (!("serviceWorker" in navigator)) return;
-    void navigator.serviceWorker.getRegistrations()
-      .then((registrations) => Promise.all(registrations.map((item) => item.unregister())));
     Object.defineProperty(ServiceWorkerContainer.prototype, "register", {
       configurable: false,
       value: () => Promise.reject(new Error("service workers are blocked by scenario policy"))
@@ -77,7 +80,10 @@ const initializePage = async (
 ): Promise<void> => {
   context.setDefaultTimeout(0);
   context.setDefaultNavigationTimeout(0);
-  if (scenario.browser.mode === "connect")
+  if (
+    scenario.browser.mode === "connect" &&
+    scenario.environment.service_workers === "block"
+  )
     await blockAttachedServiceWorkers(page);
   await installCookies(context, scenario, secrets);
 };
@@ -127,7 +133,7 @@ export class PlaywrightScenarioSession implements BrowserScenarioSessionPort {
     const secrets = BrowserScenarioSecrets.resolve(scenario, environment);
     if (secrets === undefined)
       throw new BrowserObservationError(OPERATION, "secret_unavailable");
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const opening = openPlaywrightScenarioBrowser(scenario, environment, {
       signal: options.signal,
       ...(options.retainCleanup === undefined

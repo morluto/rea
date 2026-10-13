@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import {
+  hasCompleteInventoryCoverage,
+  parseArtifactInventoryEvidence,
+} from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
@@ -62,6 +65,7 @@ export const androidApplicationProjectionResultSchema = z.strictObject({
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
+    // Count completeness is separate from the declared coverage status.
     inventory_complete: z.boolean(),
   }),
   limitations: z.array(z.string().min(1)),
@@ -95,8 +99,8 @@ export const projectAndroidApplication = (
   );
   const components = classified;
   const limitations = [
-    ...(!inventory.complete
-      ? ["Source inventory pages are incomplete; absence is unknown."]
+    ...(!hasCompleteInventoryCoverage(inventory)
+      ? ["Source inventory coverage is partial; absence is unknown."]
       : []),
     "Manifest, resource, signing, and bytecode semantics require a dedicated Android provider; this projection reports exact inventory paths and hashes only.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid DEX or JVM class bytes.",

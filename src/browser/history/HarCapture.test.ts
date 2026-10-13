@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { historicalHar } from "../../../tests/fixtures/historicalHar.js";
-import { decodeHarCapture, decodeHarText } from "./HarCapture.js";
+import { decodeCaptureText } from "./CaptureJson.js";
+import { decodeHarCapture } from "./HarCapture.js";
 
 it.each([
   { values: [] },
@@ -159,6 +160,19 @@ it("rejects identical duplicate core fields before schema validation", () => {
     '"version":"1.2","version":"1.2"',
   );
   expect(() => decodeHarCapture(text, [])).toThrow("duplicate");
+});
+
+it("names the violated HAR schema constraint without restating capture values", () => {
+  expect(() =>
+    decodeHarCapture(
+      JSON.stringify({
+        log: { creator: { name: "x", version: "1" }, entries: [] },
+      }),
+      [],
+    ),
+  ).toThrow(
+    "HAR schema validation failed: required (must have required property 'version').",
+  );
 });
 
 it("preserves prototype-named producer members through the capture boundary", () => {
@@ -563,18 +577,21 @@ it("ignores one leading byte-order mark, as HAR 1.2 requires of readers", () => 
   const text = JSON.stringify(historicalHar());
   const body = Buffer.from(text, "utf8");
   const marked = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]);
-  expect(decodeHarText(marked)).toBe(text);
-  expect(decodeHarCapture(decodeHarText(marked), [])).toEqual(
-    decodeHarCapture(decodeHarText(body), []),
+  expect(decodeCaptureText(marked, "HAR")).toBe(text);
+  expect(decodeHarCapture(decodeCaptureText(marked, "HAR"), [])).toEqual(
+    decodeHarCapture(decodeCaptureText(body, "HAR"), []),
   );
   // A second mark is content, not an encoding signature.
   expect(() =>
     decodeHarCapture(
-      decodeHarText(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), marked])),
+      decodeCaptureText(
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), marked]),
+        "HAR",
+      ),
       [],
     ),
   ).toThrow("HAR is malformed JSON.");
-  expect(() => decodeHarText(Buffer.from([0x7b, 0xff, 0x7d]))).toThrow(
-    "HAR is not valid UTF-8 JSON.",
-  );
+  expect(() =>
+    decodeCaptureText(Buffer.from([0x7b, 0xff, 0x7d]), "HAR"),
+  ).toThrow("HAR is not valid UTF-8 JSON.");
 });

@@ -72,7 +72,7 @@ export const runElectronActions = async (
 ): Promise<ElectronActions> => {
   const actions: ElectronActions = [];
   for (const action of input.actions) {
-    const actionStartedAt = Date.now();
+    const actionStartedAt = performance.now();
     const windowIndex = actionWindowIndex(action);
     let selectedWindow: Page | undefined;
     try {
@@ -107,7 +107,10 @@ export const runElectronActions = async (
         target:
           selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
         status: "completed",
-        elapsed_ms: Date.now() - actionStartedAt,
+        elapsed_ms: Math.max(
+          0,
+          Math.round(performance.now() - actionStartedAt),
+        ),
         error: null,
       });
     } catch (cause: unknown) {
@@ -118,7 +121,10 @@ export const runElectronActions = async (
         target:
           selectedWindow === undefined ? null : `window:${String(windowIndex)}`,
         status: options.signal?.aborted ? "cancelled" : "failed",
-        elapsed_ms: Date.now() - actionStartedAt,
+        elapsed_ms: Math.max(
+          0,
+          Math.round(performance.now() - actionStartedAt),
+        ),
         error: safeActionErrorMessage(cause),
       });
       break;
@@ -366,7 +372,7 @@ export const runWithExecutionLimits = async <Value>(
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new BrowserObservationError(OPERATION, "timeout")),
-          Math.max(1, deadline - Date.now()),
+          Math.max(1, deadline - performance.now()),
         );
       }),
     );

@@ -87,6 +87,3 @@ export const DEFAULT_REFERENCE_SOURCE_IGNORE_PATTERNS = [
   ".coverage",
   "*.log",
 ] as const;
-
-export const PARSEABLE_REFERENCE_SOURCE_LANGUAGES: ReadonlySet<string> =
-  new Set(["JavaScript", "TypeScript", "JSX", "TSX"]);

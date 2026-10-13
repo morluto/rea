@@ -85,8 +85,10 @@ export class IdaWorkspace {
             slice === undefined
               ? position + bytes.length
               : Math.min(position + bytes.length, slice.offset + slice.size);
-          const admitted = bytes.subarray(start - position, end - position);
-          if (admitted.length > 0) {
+          // A chunk after the slice has end < position, and a negative subarray
+          // bound would count from the chunk's end instead of being empty.
+          if (end > start) {
+            const admitted = bytes.subarray(start - position, end - position);
             inputHash.update(admitted);
             await input.write(admitted);
           }

@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import select
 import stat
 import subprocess
 import tempfile
@@ -118,6 +119,7 @@ class XWindowAttributes(ctypes.Structure):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--owner-stdin", action="store_true")
     parser.add_argument("--hopper")
     parser.add_argument("--socket")
     parser.add_argument(
@@ -131,6 +133,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--display-number", type=int)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
+
+
+class OwnerLifetime:
+    """The launcher's private pipe is a lifetime capability, independent of PIDs."""
+
+    def __init__(self, enabled: bool) -> None:
+        self._poll = select.poll() if enabled else None
+        if self._poll is not None:
+            # Node/libuv can implement piped stdio with a Unix socket pair.
+            mode = os.fstat(0).st_mode
+            if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+                raise AdapterFailure(
+                    INVALID_LAUNCH_COMMAND,
+                    "invalid_launch_command",
+                    "owner lifetime requires a private stdin pipe",
+                )
+            self._poll.register(0, select.POLLIN | select.POLLHUP | select.POLLERR)
+
+    def alive(self) -> bool:
+        if self._poll is None:
+            return True
+        for _, events in self._poll.poll(0):
+            if events & (select.POLLHUP | select.POLLERR | select.POLLNVAL):
+                return False
+            if events & select.POLLIN and not os.read(0, 4096):
+                return False
+        return True
+
+
+def wait_for_hopper(child: subprocess.Popen[bytes], owner: OwnerLifetime) -> int:
+    while owner.alive():
+        try:
+            return child.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            continue
+    # run_launch's finally owns cleanup of both direct, unreaped children.
+    return 0
 
 
 def digest(path: Path) -> str:
@@ -572,6 +611,7 @@ def start_xvfb(
                     "-auth",
                     str(authority),
                 ],
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
             )
@@ -627,6 +667,9 @@ def run_launch(args: argparse.Namespace) -> int:
             "invalid_launch_command",
             "missing Hopper launch coordinates",
         )
+    owner = OwnerLifetime(args.owner_stdin)
+    if not owner.alive():
+        return 0
     hopper = Path(args.hopper)
     socket = Path(args.socket)
     try:
@@ -654,6 +697,8 @@ def run_launch(args: argparse.Namespace) -> int:
     child: subprocess.Popen[bytes] | None = None
     display: int | None = None
     try:
+        if not owner.alive():
+            return 0
         hopper_environment = dict(os.environ)
         for name in ("WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
             hopper_environment.pop(name, None)
@@ -666,7 +711,10 @@ def run_launch(args: argparse.Namespace) -> int:
                 "XDG_SESSION_TYPE": "x11",
             }
         )
-        child = subprocess.Popen(command, env=hopper_environment)
+        # Children must not consume or retain REA's lifetime pipe.
+        child = subprocess.Popen(
+            command, env=hopper_environment, stdin=subprocess.DEVNULL
+        )
         leader = os.getpid()
         os.environ["XAUTHORITY"] = str(authority)
 
@@ -702,10 +750,12 @@ def run_launch(args: argparse.Namespace) -> int:
         observed: list[tuple[int, int, int, int, int]] = []
         dialog: tuple[int, int, int, int, int] | None = None
         while time.monotonic() < deadline:
+            if not owner.alive():
+                return 0
             if socket.exists():
                 x11.XCloseDisplay(display)
                 display = None
-                return child.wait()
+                return wait_for_hopper(child, owner)
             if not hopper_is_owned(leader, hopper):
                 if child.poll() is None:
                     time.sleep(0.1)
@@ -749,7 +799,7 @@ def run_launch(args: argparse.Namespace) -> int:
         x11.XFlush(display)
         x11.XCloseDisplay(display)
         display = None
-        return child.wait()
+        return wait_for_hopper(child, owner)
     except AdapterFailure as error:
         raise error.with_stderr(capture)
     finally:

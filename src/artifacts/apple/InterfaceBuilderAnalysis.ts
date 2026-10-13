@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { parseBinary } from "plist";
 
+import { appleResourceKeyFields } from "../../domain/apple/appleAssetCatalog.js";
+import {
+  interfaceBuilderConnectionFieldNames,
+  isUIKitRuntimeConnectionClass,
+} from "../../domain/apple/interfaceBuilderKeyedArchive.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
 import {
@@ -28,6 +33,10 @@ import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
+import {
+  hasBinaryPlistSignature,
+  hasNibArchiveSignature,
+} from "../../domain/apple/appleArchiveFormat.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -89,8 +98,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
           remainingInputBytes,
         );
         aggregateInputBytes += bytes.length;
-        const isNibArchive =
-          bytes.subarray(0, 10).toString("ascii") === "NIBArchive";
+        const isNibArchive = hasNibArchiveSignature(bytes);
         let nib: ReturnType<typeof projectNibArchive> | null = null;
         let xmlText: string | undefined;
         let binaryPrototypeKeyObserved = false;
@@ -108,7 +116,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
             "NIBArchive representation exceeds the aggregate Interface Builder decode budget",
           );
         } else {
-          if (bytes.subarray(0, 8).toString("ascii") !== "bplist00")
+          if (!hasBinaryPlistSignature(bytes))
             xmlText = decodeXmlPlistText(bytes);
           const decodedReservation = preflightPropertyListDecode(
             bytes,
@@ -437,8 +445,10 @@ const projectNibArchive = (
     archive.objects
       .filter((object) => {
         const name = runtimeClass(object.id) ?? "";
-        return !/^(?:NSObject|NSIBObjectData|NSString|NSMutableString|NSNumber|NSArray|NSMutableArray|NSSet|NSMutableSet|NSDictionary|NSMutableDictionary|NSApplication|NSNib.*Connector|UIRuntime\w*Connection)$/u.test(
-          name,
+        return (
+          !/^(?:NSObject|NSIBObjectData|NSString|NSMutableString|NSNumber|NSArray|NSMutableArray|NSSet|NSMutableSet|NSDictionary|NSMutableDictionary|NSApplication|NSNib.*Connector)$/u.test(
+            name,
+          ) && !isUIKitRuntimeConnectionClass(name)
         );
       })
       .map((object) => {
@@ -459,18 +469,27 @@ const projectNibArchive = (
           break;
         }
         budget.reserveJsonStringOccurrence(name);
+        const nibValues = Object.fromEntries(
+          Object.entries(object.values).map(([key, value]) => {
+            budget.reserveJsonPropertyNameOccurrence(key);
+            return [key, dereference(value) ?? null];
+          }),
+        );
+        // Normalize only recognized scalar fields at the format owner. A keyed
+        // archive's authored nibValues dictionary must not gain this meaning.
+        const resourceFields = appleResourceKeyFields(nibValues);
+        for (const [field, value] of resourceFields) {
+          budget.reserveJsonPropertyNameOccurrence(field);
+          budget.reserveJsonStringOccurrence(value);
+        }
         return [
           String(object.id),
           {
             customClass: className,
             label: name,
             objectID: String(object.id),
-            nibValues: Object.fromEntries(
-              Object.entries(object.values).map(([key, value]) => {
-                budget.reserveJsonPropertyNameOccurrence(key);
-                return [key, dereference(value) ?? null];
-              }),
-            ),
+            nibValues,
+            ...Object.fromEntries(resourceFields),
           },
         ];
       }),
@@ -488,15 +507,14 @@ const projectNibArchive = (
     const className = normalizeClassName(object.class_name);
     // AppKit connectors use NS-prefixed keys; UIKit's runtime outlet and
     // event connections use UI-prefixed keys with the same roles.
-    const uiKit = /^UIRuntime\w*Connection$/u.test(className);
+    const uiKit = isUIKitRuntimeConnectionClass(className);
     if (!uiKit && !className.includes("Connector")) continue;
     const values = object.values;
-    const source = reference(uiKit ? values.UISource : values.NSSource);
+    const connectionFields = interfaceBuilderConnectionFieldNames(className);
+    const source = reference(values[connectionFields.source]);
     if (source === null) continue;
-    const destination = reference(
-      uiKit ? values.UIDestination : values.NSDestination,
-    );
-    const label = referencedString(uiKit ? values.UILabel : values.NSLabel);
+    const destination = reference(values[connectionFields.destination]);
+    const label = referencedString(values[connectionFields.label]);
     const type = className.includes("Outlet")
       ? "outlet"
       : className.includes("Control") || className.includes("Event")
@@ -650,7 +668,7 @@ const decodePlist = (
   readonly value: JsonValue;
   readonly omittedPrototypeKeys: number | null;
 } => {
-  const binary = bytes.subarray(0, 8).toString("ascii") === "bplist00";
+  const binary = hasBinaryPlistSignature(bytes);
   const { value, omittedPrototypeKeys } = binary
     ? {
         value: parseBinary(bytes),

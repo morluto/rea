@@ -279,6 +279,6 @@ export const checkRecoveryDeadline = (
   signal?: AbortSignal,
 ): void => {
   checkRecoveryCancellation(signal);
-  if (Date.now() >= deadline)
+  if (performance.now() >= deadline)
     throw new AnalysisTimeoutError(OPERATION, RECOVERY_LIMITS.timeoutMs);
 };

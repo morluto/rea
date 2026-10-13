@@ -25,6 +25,26 @@ The equivalent MCP methods are `identify_flutter_build` (with `path`) and
 arm64-v8a, then x86_64, then x86, then armeabi-v7a, then the remaining
 ABIs alphabetically).
 
+## Optional retained AOT delivery
+
+MCP `inspect_dart_aot` keeps complete output when `detail` is omitted or
+`"complete"`. Explicit `detail: "summary"` returns the selected target/ABI/library
+identity, all snapshot headers, structural coverage, string-pool coverage and
+original lower-bound counts without the string lists. It retains complete source
+Evidence and returns a distinct linked `inspect_analysis_view` summary. Analysis
+and the caller's ABI choice are unchanged; one-shot CLI output stays complete.
+
+Use `normalized_result.parent_evidence_id` as the retained source for
+`inspect_analysis_view`, with `view: {kind: "dart-aot", collection: "package_uris",
+offset: 0, limit: 64}`. Collections are `package_uris`, `dart_uris` and
+`class_like_tokens`. Pages preserve the original strings and order, selected ABI,
+library identity and source coverage. `returned_counts` describe producer-returned
+rows; counts ending in `_at_least` remain lower bounds. Exhausting a page sequence
+does not make a partial pool complete or turn byte-pattern tokens into typed
+classes/functions. Views do not reopen the APK. Original Evidence remains
+exportable under its existing session lifetime. Summary requires a retaining
+server; older servers keep the complete request after schema discovery.
+
 ## What the AOT inspection returns
 
 `inspect_dart_aot` reads one ABI's `libapp.so` in full and reports:

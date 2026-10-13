@@ -809,6 +809,42 @@ it("keeps an active script message bucket after its last message is evicted", as
   await manager.closeAll();
 });
 
+it("retains the newest contiguous messages across repeated budget evictions", async () => {
+  const { bindings, manager, started } = await startLocalAttachedSession();
+  expect(started.ok).toBe(true);
+  if (!started.ok) return;
+  bindings.device.session.nextPayload = { index: -1 };
+  const loaded = await manager.loadScript(started.value.sessionId, {
+    sourceKind: "inline",
+    source: "send({index: -1});",
+  });
+  expect(loaded.ok).toBe(true);
+  const script = bindings.device.session.scripts[0];
+  expect(script).toBeDefined();
+  if (script === undefined) return;
+
+  // About 500 of these fit the 16 MiB budget, so 2,000 sends evict and
+  // compact the queue several times.
+  const filler = "x".repeat(32_000);
+  for (let index = 0; index < 2_000; index += 1)
+    script.message.emit({ type: "send", payload: { index, filler } }, null);
+
+  const status = manager.status(started.value.sessionId);
+  expect(status?.messagesTruncated).toBe(true);
+  const indexes = (status?.messages ?? []).map(
+    (message) => (message as { payload: { index: number } }).payload.index,
+  );
+  expect(indexes.length).toBeGreaterThan(400);
+  expect(indexes.at(-1)).toBe(1_999);
+  expect(indexes).toEqual(
+    Array.from(
+      { length: indexes.length },
+      (_, offset) => 2_000 - indexes.length + offset,
+    ),
+  );
+  await manager.closeAll();
+});
+
 it("serializes a final remote release against a new same-endpoint session", async () => {
   const bindings = new FakeDeviceManager();
   let enteredRemoval: (() => void) | undefined;

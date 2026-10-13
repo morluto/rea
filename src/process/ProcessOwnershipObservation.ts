@@ -4,7 +4,10 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
 import { execFileOutput } from "./ExecFileOutput.js";
-import { createDarwinProcessRunTokenReader } from "./DarwinProcessRunTokenReader.js";
+import {
+  createDarwinProcessRunTokenReader,
+  type DarwinProcessReaderCompiler,
+} from "./DarwinProcessRunTokenReader.js";
 import { readProcessRunTokens } from "./ProcessRunTokenObservations.js";
 import type {
   OwnedProcessGroup,
@@ -219,16 +222,32 @@ export const createSystemProcessOwnershipHost = (
   hostEnvironment: NodeJS.ProcessEnv = process.env,
   options: {
     /** Override the compiler executable used by the Darwin native reader. */
-    readonly darwinXcrun?: string;
+    readonly darwinCompiler?: DarwinProcessReaderCompiler;
+    /** Override the caller-owned module cache used compiling that helper. */
+    readonly darwinModuleCachePath?: string;
   } = {},
 ): ProcessOwnershipHost => {
+  const darwinModuleCachePath =
+    options.darwinModuleCachePath ??
+    hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
+  const swiftcPath = hostEnvironment.REA_DARWIN_SWIFTC_PATH;
+  const darwinCompiler =
+    options.darwinCompiler ??
+    (swiftcPath === undefined || swiftcPath === ""
+      ? undefined
+      : {
+          kind: "swiftc" as const,
+          executable: swiftcPath,
+          sdkRoot: hostEnvironment.SDKROOT ?? "",
+        });
   const darwinTokens =
     platform === "darwin"
-      ? createDarwinProcessRunTokenReader(
-          options.darwinXcrun === undefined
+      ? createDarwinProcessRunTokenReader({
+          ...(darwinCompiler === undefined ? {} : { compiler: darwinCompiler }),
+          ...(darwinModuleCachePath === undefined
             ? {}
-            : { xcrun: options.darwinXcrun },
-        )
+            : { moduleCachePath: darwinModuleCachePath }),
+        })
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];

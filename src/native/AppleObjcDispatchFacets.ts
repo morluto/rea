@@ -335,7 +335,6 @@ export const decodeObjcDispatchFacets = (input: {
     sections,
     read,
     result,
-    failures,
     issues: categoryIssues,
     admit: () => budget.admit(),
     methods,

@@ -90,16 +90,11 @@
       content="REA — Find out how software works. Reverse engineering with your coding agent."
     />
     <!-- website:sharing:end -->
-    <meta
-      name="theme-color"
-      content="#ffffff"
-      media="(prefers-color-scheme: light)"
-    />
-    <meta
-      name="theme-color"
-      content="#1e1e2e"
-      media="(prefers-color-scheme: dark)"
-    />
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
+    <script src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
     <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="../../assets/styles.css" />
     <script src="../../assets/main.js" defer></script>
@@ -115,14 +110,23 @@
           ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
         >
         <nav class="navigation" aria-label="Main navigation">
+          <a href="../../get-started/" class="nav-start">Get started</a>
           <a href="../../showcase/">Showcases</a>
           <a href="../../blog/">Blog</a>
-          <a href="../../get-started/" class="nav-start">Get started</a>
           <a href="../../guides/" aria-current="page">Guides</a>
           <a href="../../faq/">FAQ</a>
         </nav>
         <div class="header-social">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../../guides/native/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../../zh-CN/guides/native/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../../zh-TW/guides/native/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../../ja/guides/native/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../../ko/guides/native/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../../tr/guides/native/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../../ru/guides/native/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../../vi/guides/native/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../../th/guides/native/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../../de/guides/native/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../../es/guides/native/" lang="es" dir="ltr" data-language="es">Español</a><a href="../../fr/guides/native/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../../uk/guides/native/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../../pl/guides/native/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../../pt-BR/guides/native/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../../ar/guides/native/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../../fa/guides/native/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../../id/guides/native/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../../it/guides/native/" lang="it" dir="ltr" data-language="it">Italiano</a></nav></details>
+          <button class="theme-toggle" type="button" data-theme-toggle hidden>
+            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            </svg>
+            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="4" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            </svg>
+          </button>
           <a
             class="nav-github"
             href="https://github.com/morluto/rea"

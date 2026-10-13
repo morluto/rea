@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { PrivateRuntimeRootUnavailableError } from "./PrivateRuntimeRootUnavailableError.js";
 
 import {
   windowsNativeCapabilities,
@@ -34,16 +35,6 @@ export const privateRuntimeRootCapability = (
     ? windowsNativeCapabilities(platform).private_runtime_dacl
     : { available: true, reason: null, proof: "posix-mkdtemp-owner-only" };
 
-/** Expected failure when a runtime root's privacy boundary is unavailable. */
-export class PrivateRuntimeRootUnavailableError extends Error {
-  readonly code = "private-runtime-root-authority-unavailable";
-
-  constructor(message: string) {
-    super(message);
-    this.name = "PrivateRuntimeRootUnavailableError";
-  }
-}
-
 /**
  * Owns a private temporary runtime root and removes it idempotently.
  *
@@ -66,7 +57,9 @@ export class PrivateRuntimeRoot {
     const platform = options.platform ?? process.platform;
     const capability = privateRuntimeRootCapability(platform);
     if (!capability.available)
-      throw new PrivateRuntimeRootUnavailableError(capability.reason);
+      throw new PrivateRuntimeRootUnavailableError(capability.reason, {
+        retryable: capability.retryable === true,
+      });
     if (platform === "win32") {
       const runtime = WindowsPrivateRuntime.create(
         options.parent ?? tmpdir(),

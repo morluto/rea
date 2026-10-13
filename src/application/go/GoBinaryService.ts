@@ -34,6 +34,10 @@ const architectureForSubject = (architecture: string) => {
 export class GoBinaryService {
   constructor(readonly provider: GoBinaryPort) {}
 
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
   /** Inspect one explicitly selected file without acquiring a binary session. */
   async inspect(
     rawInput: unknown,

@@ -176,11 +176,11 @@ export const runFirmwareCommand = async (context: {
   };
   let failure: unknown;
   try {
-    const deadline = Date.now() + FIRMWARE_LIMITS.timeoutMs;
+    const deadline = performance.now() + FIRMWARE_LIMITS.timeoutMs;
     while (!(await supervisor.waitForOutputClose(100))) {
       checkDiagnostics();
       if (signal.aborted) throw new AnalysisCancelledError(operation);
-      if (Date.now() >= deadline)
+      if (performance.now() >= deadline)
         throw new AnalysisTimeoutError(operation, FIRMWARE_LIMITS.timeoutMs);
       if (context.outputBudget !== undefined)
         await inventoryFirmwareOutput(

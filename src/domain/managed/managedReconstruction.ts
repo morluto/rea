@@ -204,7 +204,8 @@ const buildReconstructionSummary = (
     ({ reconstruction }) => reconstruction.kind === "semantic-pseudocode",
   ).length,
   total_text_bytes: methods.reduce(
-    (total, { reconstruction }) => total + reconstruction.text_length,
+    (total, { reconstruction }) =>
+      total + Buffer.byteLength(reconstruction.text, "utf8"),
     0,
   ),
 });

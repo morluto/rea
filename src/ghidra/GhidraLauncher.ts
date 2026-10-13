@@ -21,6 +21,8 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { execFileOutputFailure } from "../process/ExecFileOutput.js";
+import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
+import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
@@ -62,6 +64,18 @@ export type GhidraLaunch = ProviderProcessLaunch & {
   readonly projectRoot: string;
   readonly ghidraLogPath: string;
   readonly scriptLogPath: string;
+  readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
+};
+
+/** Same per-stream projection budget for helper warnings and failed commands. */
+export const GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES = 8 * 1024;
+
+/** Successful helper stderr, retained independently of the analysis JVM output. */
+export type GhidraLaunchSupportDiagnostic = {
+  readonly mode: "-envvars" | "-vmargs";
+  readonly stderr: string;
+  readonly stderr_bytes: number;
+  readonly stderr_truncated: boolean;
 };
 
 /** Provider-owned capability that starts one isolated headless analysis. */
@@ -76,20 +90,24 @@ export interface GhidraLauncher {
 export class GhidraLaunchError extends Error {
   readonly #partialLaunch: GhidraLaunch | undefined;
   readonly #capturedOutput: AnalysisCapturedOutput | undefined;
+  readonly launchSupport: readonly GhidraLaunchSupportDiagnostic[];
 
   constructor(
     message: string,
     options?: ErrorOptions & {
       readonly partialLaunch?: GhidraLaunch;
       readonly capturedOutput?: AnalysisCapturedOutput;
+      readonly launchSupport?: readonly GhidraLaunchSupportDiagnostic[];
     },
   ) {
-    const { partialLaunch, capturedOutput, ...errorOptions } = options ?? {};
+    const { partialLaunch, capturedOutput, launchSupport, ...errorOptions } =
+      options ?? {};
     super(message, errorOptions);
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
     this.#capturedOutput =
       capturedOutput === undefined ? undefined : { ...capturedOutput };
+    this.launchSupport = (launchSupport ?? []).map((output) => ({ ...output }));
   }
 
   /** Process ownership retained for the client to retry an incomplete rollback. */
@@ -129,6 +147,7 @@ export interface GhidraHeadlessLauncherOptions {
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly analyzeHeadlessPath: string;
   readonly javaHome?: string;
+  readonly javaVmName?: string;
   readonly bridgeScriptPath: string;
   readonly platform?: NodeJS.Platform;
   readonly comSpec?: string;
@@ -173,6 +192,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
     const paths = ghidraRuntimePaths(session.runtimeRoot);
     const platform = this.options.platform ?? process.platform;
     let started: SpawnedOwnedProviderProcess | undefined;
+    const launchSupport: GhidraLaunchSupportDiagnostic[] = [];
     try {
       const psp = this.options.pspExtension;
       if (psp !== undefined) {
@@ -284,10 +304,32 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
               platform,
               analyzeHeadlessPath: this.options.analyzeHeadlessPath,
               javaHome: this.options.javaHome,
+              ...(this.options.javaVmName === undefined
+                ? {}
+                : { javaVmName: this.options.javaVmName }),
               homeRoot: paths.homeRoot,
               tempRoot: paths.tempRoot,
               arguments: headlessArguments,
               environment,
+              onStderr: (mode, stderr) => {
+                if (stderr === "") return;
+                const bytes = Buffer.byteLength(stderr);
+                const redacted = redactCapturedTransportCredential(
+                  { text: stderr, bytes, observedBytes: bytes },
+                  session.token,
+                  "[REDACTED]",
+                );
+                const bounded = boundedUtf8Text(
+                  redacted,
+                  GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
+                );
+                launchSupport.push({
+                  mode,
+                  stderr: bounded.text,
+                  stderr_bytes: bytes,
+                  stderr_truncated: bounded.truncated,
+                });
+              },
               ...(options.signal === undefined
                 ? {}
                 : { signal: options.signal }),
@@ -306,7 +348,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         hostEnvironment: {},
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const partialLaunch = ownedGhidraLaunch(started, paths, platform);
+      const partialLaunch = ownedGhidraLaunch(
+        started,
+        paths,
+        platform,
+        launchSupport,
+      );
       await writeGhidraRuntimeFile(
         paths.ownershipPath,
         `${JSON.stringify({
@@ -330,12 +377,17 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       return ok(partialLaunch);
     } catch (cause: unknown) {
       const capturedOutput = ghidraLaunchCommandOutput(cause);
+      const launchFailure = new GhidraLaunchError(
+        "Ghidra headless launch failed",
+        {
+          cause,
+          launchSupport,
+          ...(capturedOutput === undefined ? {} : { capturedOutput }),
+        },
+      );
       const primary = isAborted(options.signal)
-        ? new AnalysisCancelledError("open_binary", { cause })
-        : new GhidraLaunchError("Ghidra headless launch failed", {
-            cause,
-            ...(capturedOutput === undefined ? {} : { capturedOutput }),
-          });
+        ? new AnalysisCancelledError("open_binary", { cause: launchFailure })
+        : launchFailure;
       if (started === undefined) return err(primary);
 
       let cleanupFailure: unknown;
@@ -349,7 +401,12 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         cleanupFailure = failure;
       }
       if (cleanupFailure !== undefined) {
-        const partialLaunch = ownedGhidraLaunch(started, paths, platform);
+        const partialLaunch = ownedGhidraLaunch(
+          started,
+          paths,
+          platform,
+          launchSupport,
+        );
         const primaryMessage = isAborted(options.signal)
           ? primary.message
           : `Ghidra headless launch failed: ${cause instanceof Error ? cause.message : String(cause)}`;
@@ -363,6 +420,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
                 { cause: primary },
               ),
               partialLaunch,
+              launchSupport,
               ...(capturedOutput === undefined ? {} : { capturedOutput }),
             },
           ),
@@ -377,11 +435,13 @@ const ownedGhidraLaunch = (
   spawned: SpawnedOwnedProviderProcess,
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,
+  launchSupport: readonly GhidraLaunchSupportDiagnostic[],
 ): GhidraLaunch => ({
   ...ownedGhidraProcess(spawned, platform),
   projectRoot: paths.projectRoot,
   ghidraLogPath: paths.ghidraLogPath,
   scriptLogPath: paths.scriptLogPath,
+  ...(launchSupport.length === 0 ? {} : { launchSupport: [...launchSupport] }),
 });
 
 const ownedGhidraProcess = (

@@ -2,14 +2,16 @@ name: Real JavaScript recovery
 
 on:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: javascript-recovery-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   HUSKY: "0"
@@ -28,6 +30,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Fetch pinned Wakaru release into the job workspace
         shell: bash
         run: |

@@ -4,9 +4,14 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  buildNativeAotFixture,
+  nativeAotCommandError,
+  supportsNativeAotFixtureHost,
+} from "./lib/nativeaot-build.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-if (process.arch !== "x64" || !["linux", "win32"].includes(process.platform))
+if (!supportsNativeAotFixtureHost(process.platform, process.arch))
   throw new Error(
     "NativeAOT fixture lane requires Linux or Windows x64; it does not cross-compile NativeAOT.",
   );
@@ -40,9 +45,7 @@ const run = (command, args) => {
     maxBuffer: 8 * 1024 * 1024,
   });
   if (result.error || result.status !== 0)
-    throw new Error(
-      `NativeAOT fixture lane requires/action failed ${command}: ${result.error?.message ?? ""}\n${result.stdout ?? ""}${result.stderr ?? ""}`,
-    );
+    throw nativeAotCommandError(command, args[0], result);
   return result.stdout;
 };
 const dotnet = process.env.REA_NATIVEAOT_DOTNET ?? "dotnet";
@@ -57,20 +60,12 @@ if (process.platform === "linux") {
   run("clang", ["--version"]);
 }
 const map = join(output, "NativeAotFixture.map");
-run(dotnet, [
-  "publish",
-  join(root, "tests/fixtures/nativeaot/NativeAotFixture.csproj"),
-  "-r",
+await buildNativeAotFixture(run, {
+  dotnet,
+  project: join(root, "tests/fixtures/nativeaot/NativeAotFixture.csproj"),
   runtime,
-  "-c",
-  "Release",
-  "-o",
-  join(output, "symbols"),
-  "--maxcpucount:1",
-  `-p:BaseIntermediateOutputPath=${join(output, "obj")}/`,
-  `-p:BaseOutputPath=${join(output, "bin")}/`,
-  `-p:NativeAotMapPath=${map}`,
-]);
+  output,
+});
 const name =
   process.platform === "win32" ? "NativeAotFixture.exe" : "NativeAotFixture";
 const binary = join(output, "symbols", name);

@@ -9,6 +9,17 @@ const cases = [
   {
     client: "cursor",
     path: ".cursor/mcp.json",
+    text: "malformed UTF-8",
+    bytes: Buffer.concat([
+      Buffer.from('{"label":"'),
+      Buffer.from([0xff]),
+      Buffer.from('"}'),
+    ]),
+    diagnostic: "not valid UTF-8",
+  },
+  {
+    client: "cursor",
+    path: ".cursor/mcp.json",
     text: "[]",
     diagnostic: "The configuration root must be an object",
   },
@@ -92,7 +103,9 @@ for (const scenario of cases)
       );
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
-      await writeFile(config, scenario.text);
+      const original =
+        "bytes" in scenario ? scenario.bytes : Buffer.from(scenario.text);
+      await writeFile(config, original);
       const environment = {
         HOME: home,
         USERPROFILE: home,
@@ -146,7 +159,7 @@ for (const scenario of cases)
       });
       if (!("syntax" in scenario))
         expect(uninstall.stdout).not.toContain("not valid JSON");
-      expect(await readFile(config, "utf8")).toBe(scenario.text);
+      expect(await readFile(config)).toEqual(original);
       expect(await readdir(dirname(config))).toEqual([
         scenario.path.split("/").at(-1),
       ]);

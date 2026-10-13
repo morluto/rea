@@ -255,7 +255,7 @@ const runReferenceSourceImport = async (
           caller: "rea-cli",
           policy,
           importer: PRODUCT_IDENTITY.packageName,
-          importerVersion: null,
+          importerVersion: PRODUCT_IDENTITY.packageVersion,
         },
         resources,
       ),

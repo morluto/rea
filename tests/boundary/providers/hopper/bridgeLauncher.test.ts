@@ -84,6 +84,7 @@ describe("Hopper bridge launcher selection", () => {
         "private",
         "/usr/bin/python3",
         "/rea/hopper-demo-x11.py",
+        "--owner-stdin",
         "--strategy",
         "user-mount-namespace",
         "--mount-private-x11",
@@ -117,6 +118,7 @@ describe("Hopper bridge launcher selection", () => {
       command: "/usr/bin/python3",
       args: [
         "/rea/hopper-demo-x11.py",
+        "--owner-stdin",
         "--strategy",
         "direct",
         "--hopper",
@@ -202,3 +204,59 @@ it("launches Hopper helpers with the caller-selected environment without restori
     await launched.value.releaseLease?.();
   }
 });
+
+it.skipIf(process.platform !== "linux")(
+  "gives the demo helper a live owner stream through Node's actual stdio transport",
+  async () => {
+    const directory = await createTestTempDirectory("rea-hopper-owner-stdio-");
+    const launcher = new HopperApplicationLauncher(
+      {
+        ...options(process.execPath),
+        launchMode: "verified_linux_demo",
+        demoHelperPath: fileURLToPath(
+          new URL("../../../fixtures/hopperLifetimeLaunch.py", import.meta.url),
+        ),
+      },
+      {
+        selectPrivateDisplay: async () => ({
+          ok: true,
+          strategy: "direct",
+          diagnostic: {
+            component: "hopper_private_display",
+            operation: "probe",
+            status: "ready",
+            failure_code: null,
+            reason: "ready",
+            socket_directory: "/tmp/.X11-unix",
+            socket_directory_mode: "1777",
+            mount_read_only: false,
+            effective_socket_directory_mode: "1777",
+            effective_mount_read_only: false,
+            wsl: false,
+            strategy: "direct",
+            fallback_reason: null,
+            xvfb_stderr_bytes: 0,
+          },
+        }),
+      },
+    );
+    const launched = await launcher.launch({
+      directory,
+      socketPath: join(directory, "bridge.sock"),
+      token: "fixture-token",
+      runId: randomUUID(),
+    });
+    if (!launched.ok) throw launched.error;
+    const supervisor = new ProviderProcessSupervisor(launched.value);
+    try {
+      expect(await supervisor.waitForOutputClose(5_000)).toBe(true);
+      expect(supervisor.snapshot().exitCode).toBe(0);
+      expect(JSON.parse(supervisor.snapshot().stdout.text)).toEqual({
+        owner_alive: true,
+      });
+    } finally {
+      await supervisor.stop();
+      await launched.value.releaseLease?.();
+    }
+  },
+);

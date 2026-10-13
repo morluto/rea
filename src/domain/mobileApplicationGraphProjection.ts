@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
 
-import type { ParsedInventorySet } from "./artifactInventoryEvidence.js";
+import {
+  hasCompleteInventoryCoverage,
+  type ParsedInventorySet,
+} from "./artifactInventoryEvidence.js";
 import { evidenceSchema } from "./evidence.js";
 import { digestSchema } from "./digests.js";
 import { prefixedDigestSchema } from "./digests.js";
@@ -49,10 +52,11 @@ export const projectionCoverage = (
   budgetComplete: boolean,
 ): {
   status: "complete-within-inventory" | "partial";
+  /** True when all manifest graph-member counts are present, independent of source coverage. */
   inventory_complete: boolean;
 } => ({
   status:
-    inventory.complete && budgetComplete
+    hasCompleteInventoryCoverage(inventory) && budgetComplete
       ? ("complete-within-inventory" as const)
       : ("partial" as const),
   inventory_complete: inventory.complete,

@@ -16,10 +16,8 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
-import {
-  PrivateRuntimeRoot,
-  PrivateRuntimeRootUnavailableError,
-} from "../../process/PrivateRuntimeRoot.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
 import { ProviderStartupDeadline } from "../../process/ProviderDeadline.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import { cleanupOwnedProcessGroup } from "../../process/ProcessOwnership.js";
@@ -261,7 +259,7 @@ class OwnedCodec implements SourceMapCleanupOwner {
           PROVIDER,
           OPERATION,
           cause.message,
-          { cause },
+          { cause, retryable: cause.retryable },
         )
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,

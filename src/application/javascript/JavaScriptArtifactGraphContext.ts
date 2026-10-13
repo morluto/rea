@@ -66,6 +66,7 @@ export interface AstEdgeInput {
 
 /** Inferred static relationship edge values. */
 export interface InferenceEdgeInput extends AstEdgeInput {
+  readonly limitations?: readonly string[];
   readonly relation:
     | "imports"
     | "loads"
@@ -162,6 +163,9 @@ export const addStaticInferenceEdge = (
       range: input.range,
       operation: "map-static-relationship",
       coverage: input.coverage,
+      ...(input.limitations === undefined
+        ? {}
+        : { limitations: input.limitations }),
     }),
   });
 };
@@ -347,7 +351,7 @@ export const resolveArtifactPath = (
   specifier: string,
   sourcePath: string,
   files: ReadonlyMap<string, JavaScriptArtifactFile>,
-  moduleKind?: "import" | "require",
+  moduleKind?: "import" | "require" | "compiler-dependent",
 ): string | null =>
   resolveArtifactPathByContext({
     declaredPath: specifier,

@@ -26,6 +26,7 @@ import {
 } from "./MachoLoadCommandReader.js";
 import { traceDylibResolution } from "./DylibResolutionReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
@@ -133,6 +134,98 @@ it("uses legacy simulator and device platform facts when resolving dylibs", asyn
       ]),
     }),
   );
+});
+
+it("selects matching arm64e subtype slices when tracing a mixed FAT image", async () => {
+  const root = await createTestTempDirectory("rea-macho-arm64e-subtypes-");
+  const executablePath = "Contents/MacOS/App";
+  const dylibPath = "Contents/MacOS/libVariant.dylib";
+  const installName = "@executable_path/libVariant.dylib";
+  const arm64eDependency = "@executable_path/libArm64e.dylib";
+  const arm64eX1Dependency = "@executable_path/libArm64eX1.dylib";
+  const executableSlice = (cpu: typeof CPU.arm64e | typeof CPU.arm64eX1) =>
+    machoImage({
+      cpu,
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, installName),
+      ],
+    });
+  const executable = fatImage([
+    {
+      cpu: CPU.arm64eX1,
+      bytes: executableSlice(CPU.arm64eX1),
+    },
+    {
+      cpu: CPU.arm64e,
+      bytes: executableSlice(CPU.arm64e),
+    },
+  ]);
+  const variantSlice = (
+    cpu: typeof CPU.arm64e | typeof CPU.arm64eX1,
+    dependencyName: string,
+  ) =>
+    machoImage({
+      cpu,
+      fileType: FILE_TYPE.dylib,
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.ID_DYLIB, installName),
+        dylibCommand(LC.LOAD_DYLIB, dependencyName),
+      ],
+    });
+  const completeDylib = fatImage([
+    {
+      cpu: CPU.arm64e,
+      bytes: variantSlice(CPU.arm64e, arm64eDependency),
+    },
+    {
+      cpu: CPU.arm64eX1,
+      bytes: variantSlice(CPU.arm64eX1, arm64eX1Dependency),
+    },
+  ]);
+  await mkdir(join(root, "Contents/MacOS"), { recursive: true });
+  await writeFile(join(root, executablePath), executable);
+  await writeFile(join(root, dylibPath), completeDylib);
+
+  const trace = () =>
+    traceDylibResolution({
+      rootPath: root,
+      targetPath: join(root, executablePath),
+      targetSha256: createHash("sha256").update(executable).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: [executablePath] },
+    });
+
+  const complete = await trace();
+  expect(
+    complete.edges
+      .filter(({ loader }) => loader === dylibPath)
+      .map(({ install_name: dependencyName }) => dependencyName),
+  ).toEqual([arm64eX1Dependency, arm64eDependency]);
+
+  const onlyArm64e = fatImage([
+    {
+      cpu: CPU.arm64e,
+      bytes: variantSlice(CPU.arm64e, arm64eDependency),
+    },
+  ]);
+  await writeFile(join(root, dylibPath), onlyArm64e);
+  const missingVariant = await trace();
+  expect(
+    missingVariant.edges
+      .filter(
+        ({ loader, install_name: dependencyName }) =>
+          loader === executablePath && dependencyName === installName,
+      )
+      .map(({ candidates, resolution }) => [
+        candidates[0]?.outcome,
+        resolution.status,
+      ]),
+  ).toEqual([
+    ["architecture-missing", "unresolved"],
+    ["resolved", "resolved"],
+  ]);
 });
 
 describe("Mach-O load command reader: decodes thin-image load commands", () => {
@@ -345,10 +438,13 @@ describe("Mach-O load command reader inputs", () => {
     expect(i386.status === "parsed" && i386.slices[0]?.architecture).toBe(
       "i386",
     );
-    // A Java class file shares the FAT magic; its version is not a slice count.
-    const javaClass = Uint8Array.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 0x34]);
-    expect(hasMachoMagic(javaClass)).toBe(true);
-    expect(await read(javaClass)).toEqual({ status: "not-mach-o" });
+    // A Java class file shares the FAT magic; version fields are not a slice count.
+    const javaClasses = [javaClassFile(), javaClassFile(4000)];
+    expect(javaClasses.map(({ length }) => length)).toEqual([57, 4060]);
+    for (const javaClass of javaClasses) {
+      expect(hasMachoMagic(javaClass)).toBe(true);
+      expect(await read(javaClass)).toEqual({ status: "not-mach-o" });
+    }
     expect(await read(new TextEncoder().encode("#!/bin/sh\n"))).toEqual({
       status: "not-mach-o",
     });
@@ -487,6 +583,16 @@ describe("Mach-O load command reader failures", () => {
     expect(await read(fat.subarray(0, 4100))).toMatchObject({
       status: "malformed",
       reason: "FAT architecture 0 slice range extends beyond the file",
+    });
+  });
+
+  it("preserves unsupported status for an unsupported FAT alignment exponent", async () => {
+    const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
+    new DataView(fat.buffer).setUint32(24, 53, false);
+
+    expect(await read(fat)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("alignment exponent 53 is unsupported"),
     });
   });
 });

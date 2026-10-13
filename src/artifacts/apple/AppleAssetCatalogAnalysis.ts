@@ -8,6 +8,7 @@ import {
 import { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import {
   appleAssetCatalogInputSchema,
+  appleResourceKeyFields,
   parseAppleAssetCatalogRecords,
   projectAppleAssetCatalogPage,
 } from "../../domain/apple/appleAssetCatalog.js";
@@ -16,17 +17,6 @@ import { execFileOutput } from "../../process/ExecFileOutput.js";
 const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
-const RESOURCE_KEY_FIELDS = new Set([
-  "image",
-  "imageName",
-  "image_name",
-  "resourceName",
-  "resource_name",
-  "assetName",
-  "asset_name",
-  "UIImageName",
-  "NSImageName",
-]);
 
 /** Inspect compiled asset catalog metadata without extracting rendition bytes. */
 export const analyzeAppleAssetCatalogs = async (input: {
@@ -201,27 +191,22 @@ export const collectInterfaceBuilderResourceKeys = (
   }[],
 ) =>
   nodes.flatMap((node) => {
+    if (node.kind !== "resource") return [];
     const source = node.evidence.find(
       (item) => item.artifact_path !== null && item.artifact_sha256 !== null,
     );
     const sourcePath = source?.artifact_path;
     const sourceArchiveSha256 = source?.artifact_sha256;
     if (sourcePath == null || sourceArchiveSha256 == null) return [];
-    return Object.entries(node.attributes).flatMap(([field, value]) =>
-      RESOURCE_KEY_FIELDS.has(field) &&
-      typeof value === "string" &&
-      value.length > 0
-        ? [
-            {
-              sourceNodeId: node.id,
-              sourcePath,
-              sourceArchiveSha256,
-              field,
-              key: value,
-            },
-          ]
-        : [],
-    );
+    return appleResourceKeyFields(node.attributes).flatMap(([field, value]) => [
+      {
+        sourceNodeId: node.id,
+        sourcePath,
+        sourceArchiveSha256,
+        field,
+        key: value,
+      },
+    ]);
   });
 
 const runAssetUtil = async (

@@ -6,7 +6,10 @@ import {
   artifactInspectionInputSchema,
 } from "../contracts/artifactToolContracts.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import { summarizeRetainedAnalysis } from "../application/analysisView/AnalysisViewService.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
 import { createArtifactExtractionDestination } from "../application/artifacts/ArtifactExtractionDestination.js";
 import { ok } from "../domain/result.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -25,6 +28,10 @@ export const registerArtifactTools = (
     readonly withAdmittedAnalysis: import("./analysisAdmission.js").WithAdmittedAnalysis;
   },
 ): void => {
+  const retention = {
+    recordEvidence: options.recordEvidence,
+    evidenceById: options.evidenceById,
+  };
   registerEvidenceTools(server, ARTIFACT_TOOL_CONTRACTS, {
     ...options,
     parametersForExecution: (operation, parameters) => {
@@ -37,12 +44,13 @@ export const registerArtifactTools = (
         ? { ...parameters, output_root: createArtifactExtractionDestination() }
         : parameters;
     },
+    preflight: (operation, parameters) =>
+      operation === "inspect_artifact" && parameters.detail === "summary"
+        ? requireAnalysisViewRetention(operation, retention)
+        : ok(null),
     projectEvidence: (operation, parameters, evidence) =>
       operation === "inspect_artifact" && parameters.detail === "summary"
-        ? summarizeRetainedAnalysis(evidence, {
-            recordEvidence: options.recordEvidence,
-            evidenceById: options.evidenceById,
-          })
+        ? summarizeRetainedAnalysis(evidence, retention)
         : ok(evidence),
     sourceEvidence: (operation, result) =>
       operation === "inspect_artifact"

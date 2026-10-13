@@ -93,7 +93,7 @@ it(
     const compared = await runCli(
       [
         "compare-web-captures",
-        JSON.stringify({ inspection }),
+        JSON.stringify({ inspection, scenario: { caller_metadata: true } }),
         JSON.stringify({ inspection }),
         "--json",
       ],
@@ -182,6 +182,119 @@ it(
   },
   INTEGRATION_TEST_TIMEOUT_MS,
 );
+
+describe("scenario comparison CLI diagnostics", () => {
+  const rule = {
+    rule_id: "domain",
+    artifacts: ["url"],
+    match: "app.example.test",
+    replacement: "normalized.test",
+  };
+  it.each([
+    {
+      name: "duplicate rule IDs",
+      normalization: { rules: [rule, rule] },
+      issue: {
+        path: ["normalization", "rules", 1, "rule_id"],
+        reason: "invalid_value",
+        message: "Normalization rule IDs must be unique",
+      },
+    },
+    {
+      name: "duplicate artifact kinds",
+      normalization: { rules: [{ ...rule, artifacts: ["url", "url"] }] },
+      issue: {
+        path: ["normalization", "rules", 0, "artifacts"],
+        reason: "invalid_value",
+        message: "Normalization rule artifact kinds must be unique",
+      },
+    },
+    {
+      name: "structurally invalid rules",
+      normalization: { rules: "invalid" },
+      issue: {
+        path: ["normalization", "rules"],
+        reason: "invalid_type",
+        expected: "array",
+      },
+    },
+  ])(
+    "retains scenario normalization diagnostics for $name",
+    async ({ normalization, issue }) => {
+      const capture = JSON.stringify(completeScenarioCapture());
+      const result = await runCli([
+        "compare-web-captures",
+        capture,
+        capture,
+        "--normalization-json",
+        JSON.stringify(normalization),
+        "--json",
+      ]);
+      expect(result).toMatchObject({
+        code: "invalid_request",
+        details: { operation: "compare_web_captures", issues: [issue] },
+      });
+    },
+  );
+
+  it("keeps malformed scenario diagnostics in the selected capture group", async () => {
+    const capture = completeScenarioCapture();
+    const result = await runCli([
+      "compare-web-captures",
+      JSON.stringify({ ...capture, duration_ms: "invalid" }),
+      JSON.stringify(capture),
+      "--json",
+    ]);
+    expect(result).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "compare_web_captures",
+        issues: [
+          {
+            path: ["before_scenario", "duration_ms"],
+            reason: "invalid_type",
+            expected: "number",
+          },
+        ],
+      },
+    });
+  });
+
+  it.each(["omitted", "misspelled"])(
+    "reports the missing scenario manifest when it is %s on both captures",
+    async (kind) => {
+      const { scenario, ...capture } = completeScenarioCapture();
+      const input = JSON.stringify(
+        kind === "omitted" ? capture : { ...capture, scneario: scenario },
+      );
+      const result = await runCli([
+        "compare-web-captures",
+        input,
+        input,
+        "--json",
+      ]);
+      expect(result).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "compare_web_captures",
+          issues: expect.arrayContaining([
+            {
+              path: ["before_scenario", "scenario"],
+              reason: "missing_argument",
+              expected: "object",
+            },
+            {
+              path: ["after_scenario", "scenario"],
+              reason: "missing_argument",
+              expected: "object",
+            },
+          ]),
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('"inspection"');
+    },
+  );
+});
 
 describe("browser CLI capture parity", () => {
   it(
@@ -352,6 +465,7 @@ const completeScenarioCapture = () => {
         response_body: false,
         header_values: false,
       },
+      event_families: [],
     },
     duration_ms: 1,
     steps: [

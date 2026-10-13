@@ -62,15 +62,17 @@ export const registerApktoolCommands = (
         .describe(
           "Project strings from res/values-<locale> instead of the default",
         ),
-      "no-strings": z
+      strings: z
         .boolean()
-        .default(false)
-        .describe("Skip projecting string resources"),
+        .default(true)
+        .describe(
+          "Include string resources; use --no-strings to skip projecting them",
+        ),
     }),
     run: ({ args, options }) =>
       execute(CLI_COMMANDS.decodeAndroidResources, "decode_android_resources", {
         path: args.path,
-        include_strings: !options["no-strings"],
+        include_strings: options.strings,
         ...(options.locale === undefined ? {} : { locale: options.locale }),
       }),
   });

@@ -14,10 +14,13 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import {
   browserStepArtifactsSchema,
   type BrowserScenarioEvent,
+  type BrowserScenarioEventFamily,
   type BrowserStepArtifacts,
 } from "../domain/browserScenarioCaptureValues.js";
 import { PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION } from "../domain/browserNetworkEvidence.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { compareBrowserScenarios } from "../domain/browserScenarioDiff.js";
+import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -300,6 +303,7 @@ describe("PlaywrightBrowserScenarioProvider", () => {
     });
     expect(result.value.limitations).toContain(session.eventGaps[0]);
   });
+
   it("returns an initial state and every step beyond the former action ceiling", async () => {
     const session = new FakeSession("launch");
     const provider = new PlaywrightBrowserScenarioProvider(() =>
@@ -370,6 +374,85 @@ describe("PlaywrightBrowserScenarioProvider", () => {
       missing_sections: ["events"],
     });
     expect(session.closeCalls).toBe(1);
+  });
+});
+
+describe("PlaywrightBrowserScenarioProvider timing", () => {
+  it("keeps capture elapsed values valid across a backward wall-clock jump", async () => {
+    let wallClock = 10_000;
+    vi.spyOn(Date, "now").mockImplementation(() => wallClock);
+    const session = new FakeSession("launch");
+    session.onPerform = () => {
+      wallClock = 1;
+    };
+    const provider = new PlaywrightBrowserScenarioProvider(() =>
+      Promise.resolve(session),
+    );
+
+    try {
+      const result = await provider.captureScenario(scenario());
+      if (!result.ok) throw result.error;
+      expect(wallClock).toBe(1);
+      expect(Number.isInteger(result.value.duration_ms)).toBe(true);
+      expect(result.value.duration_ms).toBeGreaterThanOrEqual(0);
+      expect(
+        result.value.steps.every(
+          ({ elapsed_ms }) => Number.isInteger(elapsed_ms) && elapsed_ms >= 0,
+        ),
+      ).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
+
+describe("PlaywrightBrowserScenarioProvider comparison coverage", () => {
+  it("keeps quiet captures with different event families from comparing unchanged", async () => {
+    const capture = async (events: readonly BrowserScenarioEventFamily[]) => {
+      const provider = new PlaywrightBrowserScenarioProvider(() =>
+        Promise.resolve(new FakeSession("launch")),
+      );
+      const result = await provider.captureScenario(scenario({ events }));
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    const compare = async (
+      before: readonly BrowserScenarioEventFamily[],
+      after: readonly BrowserScenarioEventFamily[],
+    ) =>
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: await capture(before),
+          after_scenario: await capture(after),
+        }),
+      );
+
+    const recorded = await capture(["page-errors", "console", "console"]);
+    expect(recorded.completeness.equality_eligible).toBe(true);
+    expect(recorded.scenario.event_families).toEqual([
+      "console",
+      "page-errors",
+    ]);
+    for (const [before, after] of [
+      [[], ["console"]],
+      [["console"], ["page-errors"]],
+    ] as const) {
+      const compared = await compare(before, after);
+      expect(compared.overall_status).toBe("unknown");
+      expect(
+        compared.steps.flatMap((step) => step.artifact_diffs),
+      ).toContainEqual(
+        expect.objectContaining({
+          artifact: "events",
+          status: "unknown",
+          reason: expect.stringContaining("Event family selections differ"),
+        }),
+      );
+    }
+    expect(
+      (await compare(["console", "page-errors"], ["page-errors", "console"]))
+        .overall_status,
+    ).toBe("unchanged");
   });
 });
 

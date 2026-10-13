@@ -1,7 +1,10 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isElfMetadataArchitecture,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
@@ -55,6 +58,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
     return idaCapabilities(
       config.ok ? config.value.mode : "attached",
       config.ok && "command" in config.value,
+      config.ok && config.value.protocol === "native",
     );
   }
   inspectAvailability(): ProviderAvailability {
@@ -101,12 +105,16 @@ export class IdaProvider implements AnalysisProviderCandidate {
       target_kind: target.kind,
       target_format: target.format,
     };
-    if (target.kind === "executable" && target.architecture === "mips")
+    if (
+      target.kind === "executable" &&
+      isElfMetadataArchitecture(target.architecture)
+    )
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason:
-          "REA's IDA adapter has no verified MIPS lane. Select a supported Ghidra profile instead.",
+        reason: `REA's IDA adapter has no verified ${
+          target.architecture === "mips" ? "MIPS" : "RISC-V"
+        } lane. Select a supported Ghidra profile instead.`,
         diagnostics,
       };
     if (target.kind !== "executable")
@@ -142,9 +150,11 @@ export class IdaProvider implements AnalysisProviderCandidate {
         upstream_distribution_version: null,
         mode: config.value.mode,
         compatibility_profile:
-          config.value.mode === "attached"
-            ? "legacy-1.4"
-            : "database-supervisor",
+          config.value.protocol === "native"
+            ? "native-ida-mcp"
+            : config.value.mode === "attached"
+              ? "legacy-1.4"
+              : "database-supervisor",
         database_revision: null,
         cache_policy: "live",
         registration_digest: createHash("sha256")

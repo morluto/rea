@@ -10,7 +10,10 @@ import { z } from "zod";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { machoImage } from "../../../src/artifacts/apple/MachoImage.fixture.js";
-import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import {
+  CATALOG_IDENTITY,
+  createCatalogDigests,
+} from "../../../src/catalogIdentity.js";
 import { CLI_COMMAND_NAMES } from "../../../src/cliCommandNames.js";
 import { PACKAGE_METADATA } from "../../../src/generatedPackageMetadata.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "../../../src/identity.js";
@@ -113,6 +116,27 @@ describe("server and catalog identity", () => {
       mcp_prompts: PROMPT_CONTRACTS.length,
     });
     expect(CATALOG_IDENTITY.digests.combined_sha256).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("covers each tool's target-content policy in the catalog digest", () => {
+    expect(createCatalogDigests()).toEqual(CATALOG_IDENTITY.digests);
+    const [first] = TOOL_CONTRACTS;
+    if (first === undefined) throw new Error("expected a tool contract");
+    const toggled = TOOL_CONTRACTS.map((contract) =>
+      contract === first
+        ? { ...contract, returnsTargetContent: !contract.returnsTargetContent }
+        : contract,
+    );
+    const digests = createCatalogDigests(toggled);
+    expect(digests.combined_sha256).not.toBe(
+      CATALOG_IDENTITY.digests.combined_sha256,
+    );
+    expect(digests.tools_sha256).not.toBe(
+      CATALOG_IDENTITY.digests.tools_sha256,
+    );
+    expect(digests.prompts_sha256).toBe(
+      CATALOG_IDENTITY.digests.prompts_sha256,
+    );
   });
 
   it("reports unknown without a live comparison and distinguishes aligned from stale", () => {

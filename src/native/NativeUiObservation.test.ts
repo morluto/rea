@@ -35,6 +35,37 @@ const validPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jv4sAAAAASUVORK5CYII=",
   "base64",
 );
+it.each([
+  { offset: 8, value: 12 },
+  { offset: 16, value: 0x8000_0000 },
+  { offset: 20, value: 0x8000_0000 },
+])(
+  "rejects invalid IHDR metadata with a matching digest",
+  async ({ offset, value }) => {
+    const bytes = Buffer.from(validPng);
+    bytes.writeUInt32BE(value, offset);
+    const screenshot = {
+      mime_type: "image/png",
+      base64: bytes.toString("base64"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      width: bytes.readUInt32BE(16),
+      height: bytes.readUInt32BE(20),
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, screenshot: true },
+      {
+        environment: {},
+        invoke: async () => ({
+          ok: true,
+          result: { ...snapshot, screenshot },
+        }),
+      },
+    );
+    expect(result.ok).toBe(false);
+  },
+);
 describe("native UI screenshot validation", () => {
   it("rejects malformed or mismatched screenshot bytes from the helper", async () => {
     const screenshot = {
@@ -89,6 +120,33 @@ describe("native UI screenshot validation", () => {
       expect(result.ok).toBe(false);
     },
   );
+
+  it("rejects a PNG whose IHDR type only matches after ASCII folding", async () => {
+    const bytes = Buffer.from(validPng);
+    const type = bytes.subarray(12, 16);
+    type[0] = (type[0] ?? 0) | 0x80;
+    expect(type.toString("ascii")).toBe("IHDR");
+    const screenshot = {
+      mime_type: "image/png",
+      base64: bytes.toString("base64"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      width: 1,
+      height: 1,
+    };
+    const result = await observeNativeUi(
+      target,
+      "observe_native_ui",
+      { ...scope, screenshot: true },
+      {
+        environment: {},
+        invoke: async () => ({
+          ok: true,
+          result: { ...snapshot, screenshot },
+        }),
+      },
+    );
+    expect(result.ok).toBe(false);
+  });
 
   it("accepts a self-consistent PNG screenshot from the helper", async () => {
     const bytes = validPng;

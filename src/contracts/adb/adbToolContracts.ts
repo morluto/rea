@@ -326,7 +326,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "start_adb_app",
     ...toolContractMetadata("start_adb_app"),
     description:
-      "Start one installed app by launching its declared launcher activity: the component is resolved through `cmd package resolve-activity --brief`, then started with `am start -n`. A device-mutating tool for dynamic-analysis workflows; pair with `read_adb_logcat` (pid filter) and `list_adb_processes` to observe the started app, and `stop_adb_app` to end the run.",
+      "Start one installed app's resolved launcher activity with `am start -W -n`. A device-mutating tool for dynamic analysis. The full wait report determines success; failures retain launch-attempt facts and raw output. Pair with `read_adb_logcat` (pid filter) and `list_adb_processes` to observe the app, and `stop_adb_app` to end the run.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.start_adb_app,
     outputSchema: evidenceResultOf(adbResultSchemas.start_adb_app),
@@ -341,7 +341,7 @@ export const ADB_TOOL_CONTRACTS = [
     name: "start_adb_activity",
     ...toolContractMetadata("start_adb_activity"),
     description:
-      "Start an intent with `am start`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; the activity manager's Starting/Error verdict is preserved verbatim.",
+      "Start an intent with `am start -W`: one action, optional data URI, optional explicit component, and up to 16 typed extras (string, boolean, int, long, float). A device-mutating tool; the full wait report determines success, with failed-attempt facts and raw output retained.",
     kind: "adb-provider",
     inputSchema: adbInputSchemas.start_adb_activity,
     outputSchema: evidenceResultOf(adbResultSchemas.start_adb_activity),

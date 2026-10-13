@@ -42,6 +42,30 @@ const parseFunctionValueFixture = (
 };
 
 describe("Ghidra function-analysis result values", () => {
+  it("preserves file-offset resolution in Evidence locations and rejects inexact offsets", () => {
+    const selection = {
+      file_offset: 0x210,
+      mapped_address: "0x140001010",
+      procedure_address: "0x140001010",
+    };
+    const wire = { value: "return 42;", limitations: [], selection };
+    expect(parseGhidraFunctionResult("procedure_assembly", wire)).toMatchObject(
+      { ok: false, error: { _tag: "AnalysisOutputError" } },
+    );
+    const parsed = parseGhidraFunctionResult("procedure_pseudo_code", wire);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.locations).toEqual([
+      { kind: "file-offset", offset: 0x210 },
+      { kind: "address", address: "0x140001010" },
+      { kind: "address", address: "0x140001010" },
+    ]);
+    expect(
+      parseGhidraFunctionResult("procedure_pseudo_code", {
+        ...wire,
+        selection: { ...selection, file_offset: Number.MAX_SAFE_INTEGER + 1 },
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  });
   it.each([...observationOperations])(
     "requires the function-observation limitations envelope for %s",
     (operation) => {

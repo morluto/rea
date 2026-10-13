@@ -174,7 +174,7 @@ Resolution follows dyld:
 - `@rpath` tries each `LC_RPATH` of the loading image first, then those of the
   image that loaded it, up to the process root.
 - Dependencies load dependents-first in load-command order, and each image
-  loads once per process. A later request whose install name matches an
+  loads once per process. A later @rpath request whose install name matches an
   already loaded image reuses it.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.

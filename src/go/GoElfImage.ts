@@ -6,31 +6,19 @@ import {
   type GoFileMapping,
   type GoZeroFillMapping,
 } from "./GoBinaryContainer.js";
+import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 
 /** Read ELF build-info sections and file-backed program mappings. */
 export const readGoElfImage = (bytes: Buffer): GoBinaryContainer => {
-  if (bytes.length < 16)
-    throw new GoBinaryFormatFailure(
-      "malformed",
-      "ELF identification is truncated",
-    );
-  const bits = bytes[4] === 1 ? 32 : bytes[4] === 2 ? 64 : null;
-  if (bits === null || ![1, 2].includes(bytes[5] ?? 0) || bytes[6] !== 1)
-    throw new GoBinaryFormatFailure(
-      "malformed",
-      "ELF class, byte order, or version is invalid",
-    );
-  const reader = new GoBinaryReader(bytes, bytes[5] === 1);
+  const fixedHeader = readElfFixedHeader(bytes);
+  if (!fixedHeader.ok)
+    throw new GoBinaryFormatFailure("malformed", fixedHeader.error);
+  const { elfClass: bits, headerSize } = fixedHeader.value;
+  const reader = new GoBinaryReader(
+    bytes,
+    fixedHeader.value.byteOrder === "little",
+  );
   const wide = bits === 64;
-  const minimum = wide ? 64 : 52;
-  reader.range(0, minimum, "ELF header");
-  if (reader.u32(20) !== 1 || reader.u16(wide ? 52 : 40) < minimum)
-    throw new GoBinaryFormatFailure(
-      "malformed",
-      "ELF header version or size is invalid",
-    );
-  const headerSize = reader.u16(wide ? 52 : 40);
-  reader.range(0, headerSize, "ELF declared header");
   const phOffset = reader.word(wide ? 32 : 28, bits);
   const shOffset = reader.word(wide ? 40 : 32, bits);
   const phWidth = reader.u16(wide ? 54 : 42);

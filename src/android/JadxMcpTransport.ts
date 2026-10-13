@@ -199,9 +199,11 @@ export class JadxMcpTransport implements Transport {
           throw new Error(`JADX MCP frame exceeds ${MAX_FRAME_BYTES} bytes`);
         this.#appendFrame(fragment, frameBytes);
         if (newline === -1) return;
-        const line = this.#frameBuffer
-          .subarray(0, this.#frameLength)
-          .toString("utf8");
+        const line = new TextDecoder("utf-8", {
+          fatal: true,
+          // Preserve a leading BOM so the JSON-RPC parser can reject it.
+          ignoreBOM: true,
+        }).decode(this.#frameBuffer.subarray(0, this.#frameLength));
         this.#frameBuffer = Buffer.alloc(0);
         this.#frameLength = 0;
         this.onmessage?.(deserializeMessage(line));

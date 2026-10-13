@@ -1,4 +1,5 @@
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   recordedCrashPayloadSchema,
   recordedCrashSchema,
@@ -47,8 +48,10 @@ export class PwntoolsRecordedCrashProvider
           payload,
           snapshot,
           rootPath,
+          resources,
           diagnostics,
           options,
+          runCommand,
         }) => {
           const validate = (debuggerContext: RecordedCrash["debugger"]) =>
             recordedCrashSchema.safeParse({
@@ -114,26 +117,39 @@ export class PwntoolsRecordedCrashProvider
                 );
             }
           if (!input.include_debugger_context) return value;
-          const context = await inspectPwndbgCore({
-            environment,
-            rootPath,
-            diagnostics,
-            options,
-            ...(launcher === undefined ? {} : { launcher }),
-          });
-          const enriched = validate(context);
-          if (!enriched.success)
-            throw new AnalysisOutputError(
-              "inspect_recorded_crash",
-              `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
-              {
-                capturedOutput:
-                  context.status === "available"
-                    ? recordedCrashStageOutput(diagnostics, context.diagnostics)
-                    : diagnostics,
-              },
-            );
-          return enriched.data;
+          try {
+            const context = await inspectPwndbgCore({
+              environment,
+              rootPath,
+              resources,
+              diagnostics,
+              options,
+              runCommand,
+            });
+            const enriched = validate(context);
+            if (!enriched.success)
+              throw new AnalysisOutputError(
+                "inspect_recorded_crash",
+                `Recorded debugger context is invalid: ${enriched.error.issues[0]?.message ?? "schema mismatch"}`,
+                {
+                  capturedOutput:
+                    context.status === "available"
+                      ? recordedCrashStageOutput(
+                          diagnostics,
+                          context.diagnostics,
+                        )
+                      : diagnostics,
+                },
+              );
+            return enriched.data;
+          } catch (cause: unknown) {
+            if (cause instanceof AnalysisError)
+              cause.retainPartialObservation({
+                ...value,
+                debugger: { status: "unavailable", requested: true },
+              });
+            throw cause;
+          }
         },
       },
       environment,

@@ -38,7 +38,7 @@ const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 const installationHost = (): GhidraInstallationHost => ({
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\n",
+  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
   probeJava: () => ({
     version: "21.0.11",
@@ -46,6 +46,7 @@ const installationHost = (): GhidraInstallationHost => ({
     home: "/usr/lib/jvm/jdk-21",
     bits: 64,
     runtime: "jdk",
+    vmName: "OpenJDK 64-Bit Server VM",
   }),
 });
 
@@ -599,6 +600,11 @@ describe("Ghidra client projection", () => {
       expect.objectContaining({
         runId: "11111111-1111-4111-8111-111111111111",
         platform: "linux",
+        launcher: expect.objectContaining({
+          options: expect.objectContaining({
+            javaVmName: "OpenJDK 64-Bit Server VM",
+          }),
+        }),
       }),
     ]);
     expect(toolCalls).toEqual([
@@ -756,6 +762,11 @@ describe("Ghidra result projection", () => {
       ok: false,
       error: { _tag: tag },
     });
+    if (!result.ok)
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "cancelled",
+        details: { diagnostics: { remote_code: code } },
+      });
   });
 
   it("returns cancellation before profile work", async () => {
@@ -1691,7 +1702,10 @@ it("projects Ghidra startup failure and its incomplete cleanup together", async 
         diagnostics: {
           primary_error: {
             code: "provider_timeout",
-            details: { timeout_ms: 250 },
+            details: {
+              timeout_ms: 250,
+              diagnostics: { failure_kind: "timeout" },
+            },
           },
           cleanup_error: { code: "cleanup_incomplete" },
         },

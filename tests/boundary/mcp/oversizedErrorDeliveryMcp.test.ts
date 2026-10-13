@@ -16,8 +16,11 @@ import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 
 const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const UNTRUSTED_TARGET_CONTENT = {
+  provenance: { untrusted_content: true, source: "analysis_target" },
+};
 
-const failureWithName = (nameBytes: number) =>
+const failureWithName = (nameBytes: number, targetContent = false) =>
   delivery.toErrorToolResult(
     new AnalysisInputError("procedure_address", undefined, [
       {
@@ -26,6 +29,7 @@ const failureWithName = (nameBytes: number) =>
         message: `Unknown Ghidra procedure name or address: REA_MISSING_${"x".repeat(nameBytes)}`,
       },
     ]),
+    targetContent,
   );
 
 // The delivered error carries its JSON once, as text, so only a diagnostic
@@ -185,6 +189,70 @@ it("delivers an error whose text fits although structured and text copies would 
     expect(Buffer.byteLength(JSON.stringify(failure))).toBeLessThan(
       STDIO_DEFAULT_MAX_BUFFER_SIZE,
     );
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});
+
+it("keeps the untrusted target-content marker on an oversized error's replacement", async () => {
+  const retained: Evidence[] = [];
+  const server = new EvidenceMcpServer(
+    { name: "oversized-target-error-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => {
+      retained.push(evidence);
+      return ok("added");
+    },
+    delivery,
+  );
+  server.registerTool(
+    "procedure_pseudo_code",
+    { inputSchema: z.object({}) },
+    async () =>
+      failureWithName(STDIO_DEFAULT_MAX_BUFFER_SIZE + 64 * 1024, true),
+  );
+  server.registerTool(
+    "record_unknown",
+    { inputSchema: z.object({ required: z.string() }) },
+    async (): Promise<CallToolResult> => ({ content: [] }),
+  );
+  server.registerTool(
+    "list_strings",
+    { inputSchema: z.object({ required: z.string() }) },
+    async (): Promise<CallToolResult> => ({ content: [] }),
+  );
+  const client = new Client({ name: "oversized-target-client", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const failure = await client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: {},
+    });
+    expect(failure.isError).toBe(true);
+    expect(parseMcpToolError(failure)).toMatchObject({
+      error: { code: "resource_constraint" },
+    });
+    expect(failure._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    expect(retained[0]?.raw_result).toMatchObject({
+      _meta: UNTRUSTED_TARGET_CONTENT,
+    });
+    // SDK-built input validation errors bypass ToolResultDelivery; the
+    // transport still marks them for target-content tools only.
+    const invalidTarget = await client.callTool({
+      name: "list_strings",
+      arguments: {},
+    });
+    expect(invalidTarget.isError).toBe(true);
+    expect(invalidTarget._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+    const invalidContentFree = await client.callTool({
+      name: "record_unknown",
+      arguments: {},
+    });
+    expect(invalidContentFree.isError).toBe(true);
+    expect(invalidContentFree._meta).toBeUndefined();
   } finally {
     await Promise.all([client.close(), server.close()]);
   }

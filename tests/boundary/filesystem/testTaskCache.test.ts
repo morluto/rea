@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, readFile, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
@@ -78,7 +78,7 @@ it.skipIf(process.platform === "android")(
     await workflowGit(root, ["init", "--initial-branch=main"]);
     await workflowGit(root, ["add", "."]);
     await workflowGit(root, ["commit", "-m", "test: seed cache fixture"]);
-    const run = () =>
+    const run = (cwd = root) =>
       execute(
         process.execPath,
         [
@@ -87,7 +87,7 @@ it.skipIf(process.platform === "android")(
           "test:run",
           "--output-logs=errors-only",
         ],
-        { cwd: root, env: { ...process.env, TURBO_DAEMON: "false" } },
+        { cwd, env: { ...process.env, TURBO_DAEMON: "false" } },
       );
     await run();
     await writeFile(join(root, "README_zh.md"), "wrong command");
@@ -104,5 +104,32 @@ it.skipIf(process.platform === "android")(
         "prepared\n",
       );
     }
+    // Provider jobs receive the producer's cache in a fresh checkout, not its
+    // outputs. Turbo must restore identical inputs and rebuild changed ones.
+    const consumer = await createTestTempDirectory("rea-cache-consumer-");
+    await cp(root, consumer, {
+      recursive: true,
+      filter: (path) =>
+        basename(path) !== ".turbo" &&
+        !/^prepared-\d+\.txt$/u.test(basename(path)),
+    });
+    await cp(join(root, ".turbo/cache"), join(consumer, ".turbo/cache"), {
+      recursive: true,
+    });
+    const restored = await run(consumer);
+    expect(restored.stdout).toContain(`${dependencies.length} cached`);
+    for (const index of dependencies.keys())
+      expect(
+        await readFile(join(consumer, `prepared-${index}.txt`), "utf8"),
+      ).toBe("prepared\n");
+    await writeFile(
+      join(consumer, "artifact-input.txt"),
+      "changed producer input",
+    );
+    await run(consumer);
+    for (const index of dependencies.keys())
+      expect(
+        await readFile(join(consumer, `prepared-${index}.txt`), "utf8"),
+      ).toBe("prepared\nprepared\n");
   },
 );

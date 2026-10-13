@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { EvmInterfaceService } from "./EvmInterfaceService.js";
+import type { EvmInterfaceExecution } from "./EvmInterfacePort.js";
 import {
   evmInterfaceExecution,
   evmInterfaceFixture,
@@ -43,7 +44,8 @@ it.each(["carrier", "encoding", "digest", "no-subject"])(
             },
     };
     const service = new EvmInterfaceService({
-      inspect: () => Promise.resolve(ok(execution)),
+      inspect: () =>
+        Promise.resolve(ok(execution as unknown as EvmInterfaceExecution)),
     });
     expect(
       await service.inspect({

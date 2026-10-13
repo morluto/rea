@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "40"
+  version: "41"
 ---
 
 # REA
@@ -64,12 +64,47 @@ explicit path or endpoint and do not need it.
   consult the NativeAOT workflow in `references/native-and-artifacts.md` for
   optional metadata recovery and its supported host/layout boundary.
 - User-owned browser page already open: `list_browser_targets`.
-- Retained HAR/native mitmproxy capture: `inspect_web_network_capture`. Select
+- Fiddler Everywhere traffic or a native `.saz` capture: read the
+  [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
+  Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
+  connect Everywhere's separate MCP server for live traffic.
+- Retained HAR/SAZ/native mitmproxy/aioquic qlog capture: `inspect_web_network_capture`. Select
   original record ordinals when useful; inspect producer fields and byte/number
   sidecars without fetching recorded URLs or claiming live attribution. See
   [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
-  profile and credential exclusions.
+  profile and credential exclusions. Qlog support starts with aioquic 1.5.0
+  JSON 0.3; stream coverage and endpoint loss declarations do not recover bodies
+  or establish network loss. Prefer detail summary, then kind qlog trace/stream
+  pages; select one trace, stream ID and direction for contribution/range pages.
+  Facts retain all-recorded-events-before-selection scope. Other qlog layouts
+  and PCAP correlation are unsupported.
 - User-owned Electron runtime already open: `list_electron_targets`.
+- Packet-field discovery: `inspect_packet_fields` searches installed protocols
+  and field names/types before choosing fields for `inspect_packet_capture`.
+  Query/page the relevant records; registrations do not establish observed traffic.
+- Recorded packet captures: `inspect_packet_capture` with selected TShark fields,
+  display filters and decode-as rules. Requires Linux, util-linux prlimit and `REA_TSHARK_COMMAND`; see
+  [capture guide](https://github.com/morluto/rea/blob/main/docs/packet-captures.md).
+  Packet limits count input packets before filtering. Output defaults to 50 matching
+  frames; use `match_offset` / `match_limit` for later pages, or explicit null
+  limit for complete matching output. Preserve the source digest across pages.
+  This does not perform live capture.
+  For address/DNS/SNI/protocol summaries use `inspect_pcap_capture` with MCP
+  detail summary, then retained kind pcap pages. Requires Wireshark 4.x tshark
+  and capinfos, with Linux prlimit or Windows Job Objects; see
+  [packet summaries](https://github.com/morluto/rea/blob/main/docs/pcap-analysis.md).
+  Select an exact DNS question for address pages; page exhaustion does not prove
+  network completeness. This reads recordings and does not acquire traffic.
+- Decoder discovery: `inspect_signal_decoders` searches installed decoder IDs
+  or selected decoder help, including channels and options. Query and page the
+  relevant details before choosing settings; this does not scan hardware.
+- Recorded logic/signal traces: `decode_signal_recording` with explicit decoder,
+  channel and protocol settings. On Linux with util-linux prlimit, supply sigrok-cli 0.7.2 through
+  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/signal-recordings.md).
+  Output defaults to 50 literal lines; select annotation classes and page with
+  `line_offset` / `line_limit`, or explicit null for all remaining output.
+  Window counts are display lines, not annotations or samples. Preserve source digests across pages.
+  This reads existing files; it does not acquire hardware signals.
 - Explicit local WebAssembly artifact: `inspect_wasm_artifact`. Supply WABT 1.0.42
   through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
   Select JavaScript glue and candidate paths explicitly and preserve URL/path
@@ -78,7 +113,11 @@ explicit path or endpoint and do not need it.
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
   `raw` or `hex` encoding. Preserve carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
-  lookup or target execution. See the
+  lookup or target execution. For the complete inferred interface without hex or
+  duplicate stdout, discover support and select `detail: "summary"`; complete
+  Evidence stays retained under its original identity. Use the returned
+  `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
+  Candidate coverage does not establish interface completeness. See the
   [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
 - Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
   with the explicit local file. This built-in target-free inspection requires no
@@ -86,6 +125,15 @@ explicit path or endpoint and do not need it.
   absent metadata does not prove a binary is not Go, and unparsed text records
   remain explicit. See the
   [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
+
+- Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
+  with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
+  first (compact inventory by default), or select an exact ordinary table
+  and `columns` when rows are needed. Defaults are selected-table schema and
+  20 rows; request `schema_scope: "database"` for the complete stored schema. Preserve both database and existing sibling WAL identity; row samples
+  report truncation and have unspecified order. Use a quiescent snapshot rather
+  than assuming a live database/WAL pair was copied atomically. See the
+  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/sqlite-databases.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its

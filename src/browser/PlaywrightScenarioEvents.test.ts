@@ -5,6 +5,77 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
+describe("declared secrets in scenario events", () => {
+  it("redacts encoded declared secrets from text evidence and fingerprints", () => {
+    const listeners = new Map<string, (value: unknown) => void>();
+    const socketListeners = new Map<string, (value: unknown) => void>();
+    const page = {
+      on: (name: string, listener: (value: unknown) => void) => {
+        listeners.set(name, listener);
+      },
+    } as unknown as Page;
+    const secret = "a/b&c\n d";
+    const scenario = browserScenarioSchema.parse({
+      browser: { mode: "launch", executable_path: "/opt/chromium" },
+      start_url: { url: "https://app.example.test/" },
+      actions: [
+        { step_id: "wait", action: "wait_for_timeout", duration_ms: 1 },
+      ],
+      secrets: [
+        { secret_id: "login_input", environment_variable: "REA_TEST_TOKEN" },
+      ],
+      capture: { events: ["console", "page-errors", "websockets"] },
+    });
+    const secrets = BrowserScenarioSecrets.resolve(scenario, {
+      REA_TEST_TOKEN: secret,
+    });
+    if (secrets === undefined) throw new Error("Expected resolved secrets");
+    const events = new PlaywrightScenarioEvents({
+      page,
+      enabled: new Set(["console", "page-errors", "websockets"]),
+      secrets,
+    });
+
+    listeners.get("console")?.({
+      type: () => "log",
+      text: () => encodeURIComponent(secret),
+      location: () => ({ url: "https://app.example.test/app.js" }),
+    });
+    const escapedSecret = JSON.stringify(secret).slice(1, -1);
+    const error = new Error(`failure ${escapedSecret}`);
+    error.stack = `failure ${escapedSecret}`;
+    listeners.get("pageerror")?.(error);
+    listeners.get("websocket")?.({
+      url: () => "wss://app.example.test/socket",
+      on: (name: string, listener: (value: unknown) => void) => {
+        socketListeners.set(name, listener);
+      },
+    });
+    const formEncodedSecret = new URLSearchParams([["value", secret]])
+      .toString()
+      .slice("value=".length);
+    socketListeners.get("framesent")?.({ payload: formEncodedSecret });
+
+    const items = events.result().items;
+    expect(items).toMatchObject([
+      { kind: "console", text: "[REDACTED:login_input]" },
+      {
+        kind: "page-error",
+        message: "failure [REDACTED:login_input]",
+        stack: "failure [REDACTED:login_input]",
+      },
+      { kind: "websocket-opened" },
+      {
+        kind: "websocket-frame-sent",
+        payload_text: "[REDACTED:login_input]",
+      },
+    ]);
+    expect(secrets.fingerprint(`stored ${encodeURIComponent(secret)}`)).toEqual(
+      { value_state: "redacted-secret", value_sha256: null },
+    );
+  });
+});
+
 describe("PlaywrightScenarioEvents", () => {
   it("observes requested popup page errors independently of popup lifecycle events", () => {
     const listeners = new Map<string, (value: unknown) => void>();
@@ -42,7 +113,7 @@ describe("PlaywrightScenarioEvents", () => {
     ]);
   });
 
-  it("bounds oversized page errors before validating captured events", () => {
+  it("retains oversized page errors without truncating their text", () => {
     const listeners = new Map<string, (value: Error) => void>();
     const page = {
       url: () => "https://app.example.test/",
@@ -88,7 +159,7 @@ describe("PlaywrightScenarioEvents", () => {
     const error = new Error("m".repeat(70_000));
     error.stack = "s".repeat(300_000);
 
-    expect(() => listeners.get("pageerror")?.(error)).not.toThrow();
+    listeners.get("pageerror")?.(error);
     expect(events.result().items[0]).toMatchObject({
       kind: "page-error",
       message: "m".repeat(70_000),

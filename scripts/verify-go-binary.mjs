@@ -115,15 +115,24 @@ try {
       ],
       { GOOS: os, GOARCH: arch },
     );
-    await verify(path, target, oracle);
+    await verify(path, target, oracle, null, "stripped");
     if (os === "linux" && arch === "amd64") {
       const sectionless = join(root.path, "linux-amd64-sectionless");
       const bytes = Buffer.from(await readFile(path));
       bytes.fill(0, 40, 48); // ELF64 e_shoff.
       bytes.fill(0, 58, 64); // e_shentsize, e_shnum and e_shstrndx.
       await writeFile(sectionless, bytes);
-      await verify(sectionless, target, oracle);
+      await verify(sectionless, target, oracle, null, "sectionless");
     }
+  }
+  for (const target of targets.filter(([os]) => os === "darwin")) {
+    const [os, arch] = target;
+    const path = join(root.path, `${os}-${arch}-unstripped`);
+    await go(["build", "-trimpath", "-buildvcs=false", "-o", path, "."], {
+      GOOS: os,
+      GOARCH: arch,
+    });
+    await verify(path, target, oracle, null, "unstripped");
   }
   if (process.platform === "win32")
     omittedCoverage.push(
@@ -317,7 +326,13 @@ async function inspect(mode, path) {
   return { evidence, report };
 }
 
-async function verify(path, target, oracle, byteExpected = null) {
+async function verify(
+  path,
+  target,
+  oracle,
+  byteExpected = null,
+  fileKind = "stripped",
+) {
   const bytes = await readFile(path);
   const expected =
     byteExpected ??
@@ -387,12 +402,7 @@ async function verify(path, target, oracle, byteExpected = null) {
   );
   verified.push({
     target: `${target[0]}/${target[1]}`,
-    file:
-      byteExpected === null
-        ? path.endsWith("sectionless")
-          ? "sectionless"
-          : "stripped"
-        : "byte-valued-strings",
+    file: byteExpected === null ? fileKind : "byte-valued-strings",
     go_version: expected.GoVersion,
     ...(byteExpected === null
       ? {}

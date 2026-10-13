@@ -61,6 +61,13 @@ export const createGhidraDiagnostics = (
           ghidra_log_path: options.launch.ghidraLogPath,
           script_log_path: options.launch.scriptLogPath,
           process_id: options.launch.process.pid ?? null,
+          ...(options.launch.launchSupport === undefined
+            ? {}
+            : {
+                launch_support: options.launch.launchSupport.map((output) => ({
+                  ...output,
+                })),
+              }),
         }),
     ...(options.snapshot === undefined
       ? {}

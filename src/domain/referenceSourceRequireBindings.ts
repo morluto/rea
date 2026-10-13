@@ -7,7 +7,10 @@ import {
 } from "./javascript/javascriptSemanticState.js";
 import { traverseJavaScriptAst } from "./javascript/javascriptSemanticTraversal.js";
 import type { JavaScriptSemanticReference } from "./javascript/javascriptSemanticIr.js";
-import type { ParsedJavaScriptSource } from "./javascript/javascriptSourceParser.js";
+import {
+  isExplicitModuleSourcePath,
+  type ParsedJavaScriptSource,
+} from "./javascript/javascriptSourceParser.js";
 
 /**
  * Keep calls that resolve either to Node's CommonJS wrapper loader or to a
@@ -29,7 +32,10 @@ export const unshadowedReferenceSourceRequireCalls = (
     semanticScopeId("program", file.program),
     "require",
   );
-  const allowsUnboundRequire = !isExplicitModuleSource(path);
+  // Syntax alone cannot establish Node's runtime mode: `.js` depends on its
+  // package scope, and `.ts` may be compiled with a CommonJS module target.
+  // Keep unmarked paths runtime-unknown and preserve candidate require edges.
+  const allowsUnboundRequire = !isExplicitModuleSourcePath(path);
   const hasTopLevelVarRequire =
     allowsUnboundRequire && hasUninitializedTopLevelVarRequire(file.program);
   const createRequireBinding = directCreateRequireBinding(
@@ -81,16 +87,6 @@ const contains = (container: t.Node, node: t.Node): boolean =>
   typeof node.end === "number" &&
   container.start <= node.start &&
   node.end <= container.end;
-
-const isExplicitModuleSource = (path: string): boolean => {
-  const lower = path.toLowerCase();
-  if (lower.endsWith(".mjs") || lower.endsWith(".mts")) return true;
-  if (lower.endsWith(".cjs") || lower.endsWith(".cts")) return false;
-  // Syntax alone cannot establish Node's runtime mode: `.js` depends on its
-  // package scope, and `.ts` may be compiled with a CommonJS module target.
-  // Keep unmarked paths runtime-unknown and preserve candidate require edges.
-  return false;
-};
 
 const hasUninitializedTopLevelVarRequire = (program: t.Program): boolean => {
   let found = false;

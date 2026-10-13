@@ -22,6 +22,7 @@ import {
   parseListCount,
   parseRelatedAddresses,
   parseSegments,
+  parseSegmentImageBase,
 } from "../domain/hopperValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -45,6 +46,7 @@ import { traceCallPath } from "./CallPathTracing.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
+
 /**
  * Composes direct provider operations into bounded reverse-engineering tools.
  * Direct callers use `execute`; adapters that own validation use
@@ -532,14 +534,21 @@ export class EnhancedTools {
     const stringCount = parseListCount(stringsResult.value, "strings");
     if (!stringCount.ok) return stringCount;
 
+    const imageBase = parseSegmentImageBase(segments.value);
+
     return ok({
       document: document.value,
-      segments: segments.value.map(({ name, start, end }) => ({
-        name,
-        start,
-        end,
-        length: addressDistance(start, end),
-      })),
+      ...(imageBase === undefined ? {} : { image_base: imageBase }),
+      segments: segments.value.map(
+        ({ name, start, end, image_base, address_space }) => ({
+          name,
+          start,
+          end,
+          length: addressDistance(start, end),
+          ...(image_base === undefined ? {} : { image_base }),
+          ...(address_space === undefined ? {} : { address_space }),
+        }),
+      ),
       segment_count: segments.value.length,
       procedure_count: procedureCount.value,
       string_count: stringCount.value,

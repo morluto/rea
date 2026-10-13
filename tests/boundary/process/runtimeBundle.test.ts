@@ -50,7 +50,7 @@ export const lazyUrl = import.meta.url;`,
           'export const generatedPackageMetadata = { version: "1.0.0" };',
         "dist/cli.js": 'export { facts, run } from "./main.js";',
         "dist/cliOutput.js": 'export { facts } from "./provider/probe λ.js";',
-        "dist/cli/streamedJsonOutput.js":
+        "dist/cli/cliResultOutput.js":
           'export { facts } from "../provider/probe λ.js";',
         "dist/mcpDoctor.js": 'export { run } from "./main.js";',
         "dist/main.js": `
@@ -98,7 +98,7 @@ export const run = async () => {
         [
           "--input-type=module",
           "--eval",
-          `const { facts } = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "cli.js")).href)}); const output = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "cliOutput.js")).href)}); const streamed = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "streamedJsonOutput.js")).href)}); process.stdout.write(JSON.stringify(facts === output.facts && facts === streamed.facts));`,
+          `const { facts } = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "cli.js")).href)}); const output = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "cliOutput.js")).href)}); const streamed = await import(${JSON.stringify(pathToFileURL(join(cliDirectory, "cliResultOutput.js")).href)}); process.stdout.write(JSON.stringify(facts === output.facts && facts === streamed.facts));`,
         ],
         { cwd: workspace.root },
       );
@@ -136,7 +136,7 @@ export const run = async () => {
       await workspace.write("package.json", '{"type":"module"}');
       for (const path of [
         "dist/cliOutput.js",
-        "dist/cli/streamedJsonOutput.js",
+        "dist/cli/cliResultOutput.js",
         "dist/mcpDoctor.js",
       ])
         await workspace.write(path, "export {};\n");

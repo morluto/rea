@@ -47,10 +47,6 @@ const validateCommitments = (
       digestProcessCommitment(
         value,
       ), `manifest.${field}`, "commitment does not match its canonical value");
-  require(Date.parse(manifest.started_at) <=
-    Date.parse(
-      manifest.completed_at,
-    ), "manifest.completed_at", "completion precedes start");
 };
 
 const validateOrdering = (

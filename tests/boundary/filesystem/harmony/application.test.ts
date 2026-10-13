@@ -214,6 +214,34 @@ describe("HarmonyOS packaging boundaries", () => {
 });
 
 describe("HarmonyOS inventory coverage", () => {
+  it("keeps a case-colliding inventory partial in the application projection", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-case-collision-",
+      "Fixture.hap",
+      [
+        { path: "module.json", content: '{"module":{}}' },
+        { path: "MODULE.JSON", content: '{"module":{}}' },
+      ],
+    );
+    const inventory = await inventoryApplicationPackage(path);
+    expect(inventory.normalized_result).toMatchObject({
+      coverage_status: "partial",
+    });
+
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      inventory,
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: true,
+    });
+    expect(projection.limitations).toContain(
+      "Source inventory coverage is partial; absence is unknown.",
+    );
+  });
+
   it.each(ZIP_PACKAGE_FORMATS)(
     "retains archive identity and ZIP coverage for %s",
     async (format) => {

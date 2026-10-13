@@ -6,15 +6,19 @@ import type {
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
 
-const failedConfigurationMessage = (
-  reason: "path" | "backup" | "write" | "readback",
+export const failedConfigurationMessage = (
+  result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
 ): string => {
-  if (reason === "path")
+  if (result.reason === "path")
     return "Agent configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun setup.";
-  if (reason === "backup")
+  if (result.reason === "backup")
     return "Agent configuration could not be backed up, so no change was made. Check file permissions, then rerun setup.";
-  if (reason === "write")
+  if (result.reason === "write")
     return "Agent configuration could not be updated. Check file permissions, then rerun setup.";
+  if (result.reason === "rollback")
+    return result.backupPath === undefined
+      ? `Agent configuration rollback failed at ${result.failure.path}: ${result.failure.detail}; the failed first-run file may remain. Remove or repair it before rerunning setup.`
+      : `Agent configuration rollback failed at ${result.failure.path}: ${result.failure.detail}. Inspect the preserved backup at ${result.backupPath} and restore the intended configuration, then rerun setup.`;
   return "Agent configuration could not be verified after writing. Repair the configuration file or restore its `.rea.backup`, then rerun setup.";
 };
 
@@ -40,12 +44,12 @@ export const configureDetectedClients = async (options: {
     );
     options.clients[client.name] = result;
     if (result.status === "failed") {
-      failure ??= failedConfigurationMessage(result.reason);
+      failure ??= failedConfigurationMessage(result);
       options.onProgress?.({
         actionId,
         label,
         state: "failed",
-        detail: failedConfigurationMessage(result.reason),
+        detail: failedConfigurationMessage(result),
       });
     } else if (result.status === "configured") {
       options.appliedActions.push(`configured_${client.name}`);

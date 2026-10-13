@@ -1,4 +1,4 @@
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import type { HeaderArchitecture } from "../domain/binaryTargetTypes.js";
 
 /** Bound Ghidra language for a caller-supplied raw-binary architecture. */
 export interface GhidraRawBinaryLanguage {
@@ -13,7 +13,7 @@ export interface GhidraRawBinaryLanguage {
  * Big-endian, Thumb-only, and Cortex-M variants are out of scope.
  */
 export const ghidraRawBinaryLanguage = (
-  architecture: Exclude<BinaryArchitecture, "mips">,
+  architecture: HeaderArchitecture,
 ): GhidraRawBinaryLanguage => {
   switch (architecture) {
     case "x86":

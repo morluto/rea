@@ -218,7 +218,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "evaluate_reconstruction_coverage",
     ...toolContractMetadata("evaluate_reconstruction_coverage"),
     description:
-      "Evaluate inline evidence-backed reconstruction coverage against one named boundary. Missing ownership or inventory is partial; stale, weak, truncated, skipped, or unresolved proof is unknown; contradictions, failed proof, missing owners, and authority routing fail closed.",
+      "Evaluate inline evidence-backed reconstruction coverage against one named boundary. Missing ownership or inventory is partial; stale, weak, truncated, skipped, unresolved, or conflicting tied verifier proof is unknown; contradictions, failed proof, missing owners, and authority routing fail closed.",
     kind: "application",
     inputSchema: reconstructionCoverageEvaluationInputSchema,
     outputSchema: reconstructionClosureResultSchema,

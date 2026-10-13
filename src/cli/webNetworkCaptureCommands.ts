@@ -1,11 +1,12 @@
 import { z } from "incur";
+import { WEB_NETWORK_CAPTURE_FORMATS } from "../domain/webNetworkCapture.js";
 import { createWebNetworkCaptureService } from "../composition/webNetworkCaptures.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Expose offline historical capture inspection with the same selection contract as MCP. */
 export const registerWebNetworkCaptureCommands = (
@@ -16,10 +17,12 @@ export const registerWebNetworkCaptureCommands = (
   const service = createWebNetworkCaptureService(environment);
   cli.command(CLI_COMMANDS.inspectWebNetworkCapture, {
     description:
-      "Inspect retained HAR or native mitmproxy records without fetching recorded URLs",
+      "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
       capturePath: z.string().describe("Absolute local capture path"),
-      format: z.enum(["har", "mitmproxy"]).describe("Producer capture format"),
+      format: z
+        .enum(WEB_NETWORK_CAPTURE_FORMATS)
+        .describe("Producer capture format"),
     }),
     options: z.object({
       record: z
@@ -39,20 +42,24 @@ export const registerWebNetworkCaptureCommands = (
           logger,
           CLI_COMMANDS.inspectWebNetworkCapture,
           async () => {
-            const result = await service.inspect(
-              {
-                capture_path: args.capturePath,
-                format: args.format,
-                sensitive_values: options.sensitiveValue,
-                ...(options.record === undefined
-                  ? {}
-                  : { record_ordinals: options.record }),
-              },
-              { signal },
+            return finishAnalysisCommand(
+              () =>
+                service.inspect(
+                  {
+                    capture_path: args.capturePath,
+                    format: args.format,
+                    sensitive_values: options.sensitiveValue,
+                    ...(options.record === undefined
+                      ? {}
+                      : { record_ordinals: options.record }),
+                  },
+                  { signal },
+                ),
+              service,
+              "web-network-capture",
+              "inspect_web_network_capture",
+              "Web network capture resources",
             );
-            return result.ok
-              ? result.value
-              : projectAnalysisError(result.error);
           },
         ),
       ),

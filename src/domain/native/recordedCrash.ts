@@ -358,3 +358,14 @@ export type InspectRecordedCrashInput = z.output<
   typeof inspectRecordedCrashInputSchema
 >;
 export type RecordedCrash = z.output<typeof recordedCrashSchema>;
+
+/** Validated basic core evidence retained when requested debugger enrichment fails. */
+export type RecordedCrashPartialObservation = Omit<
+  RecordedCrash,
+  "debugger"
+> & {
+  readonly debugger: {
+    readonly status: "unavailable";
+    readonly requested: true;
+  };
+};

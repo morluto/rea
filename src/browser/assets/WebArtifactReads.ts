@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -9,6 +10,8 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../../domain/safeJson.js";
 
 /** The selected artifact and input field owning a reader failure. */
@@ -42,8 +45,15 @@ export const readWebArtifactJson = async (
   path: string,
   maximumBytes: number,
   signal?: AbortSignal,
+  resourceScope?: ArtifactResourceScope,
 ) => {
-  const data = await readStableArtifact(path, maximumBytes, signal);
+  const data = await readStableArtifact(
+    path,
+    maximumBytes,
+    signal,
+    undefined,
+    resourceScope,
+  );
   const value = safeParseJson(decodeWebArtifact(data.bytes));
   if (!value.ok) throw new WebArtifactFormatFailure(value.error);
   return { ...data, value: value.value };
@@ -55,8 +65,30 @@ export const webArtifactReadError = (
   context: WebArtifactReadContext,
   signal?: AbortSignal,
 ): AnalysisError => {
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const primary =
+      signal?.aborted === true
+        ? new AnalysisCancelledError(context.operation, { cause })
+        : new ArtifactOperationError(
+            context.operation,
+            cause.reason,
+            cause.details,
+            cause.message,
+            { cause },
+          );
+    return analysisErrorWithCleanupFailure(
+      primary,
+      new ProviderCleanupError(
+        "captured-web-artifacts",
+        cause.cleanup.resources,
+        { reason: cause.cleanup.reason },
+        { cause, operation: context.operation },
+      ),
+      context.operation,
+    );
+  }
   if (signal?.aborted === true)
-    return new AnalysisCancelledError(context.operation);
+    return new AnalysisCancelledError(context.operation, { cause });
   const selection = context.callerSelected
     ? selectedFileError(cause, context)
     : undefined;

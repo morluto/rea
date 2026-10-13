@@ -23,7 +23,6 @@ export const decodeObjcCategories = (input: {
   readonly sections: readonly Section[];
   readonly read: ObjcDispatchReaders;
   readonly result: ObjcSwiftMetadata;
-  readonly failures: string[];
   readonly issues: DecodeIssue[];
   readonly admit: () => boolean;
   /** Decode a method list into implementations attributed to the category. */
@@ -37,7 +36,7 @@ export const decodeObjcCategories = (input: {
   /** Name of a class defined in this image, from its class_ro_t. */
   readonly localClassName: (address: bigint) => string;
 }): number => {
-  const { read, result, failures } = input;
+  const { read, result } = input;
   let examined = 0;
   for (const section of input.sections.filter(
     ({ name }) => name === "__objc_catlist",
@@ -93,7 +92,6 @@ export const decodeObjcCategories = (input: {
         });
       } catch (cause: unknown) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        failures.push(`Category at 0x${field.toString(16)}: ${message}`);
         input.issues.push(
           issue(
             "objc_properties_categories",

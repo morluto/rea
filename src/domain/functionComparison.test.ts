@@ -11,6 +11,7 @@ import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 import { jsonValueSchema } from "./jsonValue.js";
 
 import { compareFunctions } from "./functionComparison.js";
+import type { RelationshipCoverage } from "./relationshipCoverage.js";
 const procedure = (address: string, name: string) => ({
   address,
   name,
@@ -96,6 +97,7 @@ const observe = (
   digit: string,
   value: ReturnType<typeof dossier>,
   providerId = "rea-workflow",
+  relationshipCoverage: RelationshipCoverage | null = { status: "complete" },
 ): Evidence =>
   createEvidence(
     {
@@ -112,10 +114,39 @@ const observe = (
       result: jsonValueSchema.parse(value),
       confidence: "derived",
       authority: "shipped-artifact",
+      ...(relationshipCoverage === null ? {} : { relationshipCoverage }),
     },
   );
 
 describe("function comparison normalized identity", () => {
+  it("keeps differing generated names ambiguous and stable names mismatched", () => {
+    const named = (base: "0x1000" | "0x2000", name: string) =>
+      functionDossierSchema.parse({
+        ...dossier("return 0;", base),
+        procedure: {
+          ...procedure(base, name),
+          signature: "int helper(void)",
+          locals: [],
+        },
+      });
+    const generated = compareFunctions(
+      observe("1", named("0x1000", "sub_1000")),
+      observe("2", named("0x2000", "sub_2000")),
+    );
+    expect(generated.function_match.status).toBe("ambiguous");
+    expect(generated.status).toBe("unknown");
+    expect(
+      generated.dimensions.find(({ dimension }) => dimension === "identity"),
+    ).toMatchObject({ status: "unknown" });
+
+    const stable = compareFunctions(
+      observe("3", named("0x1000", "firstFunction")),
+      observe("4", named("0x2000", "secondFunction")),
+    );
+    expect(stable.function_match.status).toBe("mismatched");
+    expect(stable.status).toBe("changed");
+  });
+
   it.each(["sub_deallocate", "sub_deadbeef_handler", "fcn.dispatch"])(
     "recognizes the explicit symbol %s without a generated-name prefix false positive",
     (name) => {
@@ -184,6 +215,100 @@ describe("function comparison normalized identity", () => {
     expect(
       result.dimensions.find(({ dimension }) => dimension === "calls"),
     ).toMatchObject({ status });
+  });
+});
+
+describe("function call relationship coverage", () => {
+  const coverageCases: {
+    readonly label: string;
+    readonly coverage: RelationshipCoverage | null;
+    readonly limitation: string;
+  }[] = [
+    {
+      label: "missing",
+      coverage: null,
+      limitation: "Provider did not report relationship coverage.",
+    },
+    {
+      label: "partial",
+      coverage: {
+        status: "partial",
+        limitations: ["Call graph stopped at the read limit."],
+      },
+      limitation: "Call graph stopped at the read limit.",
+    },
+  ];
+  it.each(coverageCases)(
+    "keeps equal empty calls unknown for $label coverage",
+    ({ coverage, limitation }) => {
+      const left = observe("a", dossier("return 0;", "0x1000"));
+      const right = observe(
+        "b",
+        dossier("return 0;", "0x2000"),
+        "rea-workflow",
+        coverage,
+      );
+      const result = compareFunctions(left, right);
+      const calls = result.dimensions.find(
+        ({ dimension }) => dimension === "calls",
+      );
+      expect(calls).toMatchObject({
+        status: "unknown",
+        conclusion_kind: "unresolved_branch",
+        left_count: 0,
+        right_count: 0,
+        limitations: [`Right: ${limitation}`],
+      });
+      expect(result.status).toBe("unknown");
+    },
+  );
+
+  it("retains complete observations with execution diagnostics as comparable", () => {
+    const coverage = {
+      status: "complete" as const,
+      diagnostics: ["Provider reported a non-call xref warning."],
+    };
+    const left = observe(
+      "c",
+      dossier("return 0;", "0x1000"),
+      "rea-workflow",
+      coverage,
+    );
+    const right = observe(
+      "d",
+      dossier("return 0;", "0x2000"),
+      "rea-workflow",
+      coverage,
+    );
+    expect(
+      compareFunctions(left, right).dimensions.find(
+        ({ dimension }) => dimension === "calls",
+      ),
+    ).toMatchObject({ status: "unchanged", left_count: 0, right_count: 0 });
+  });
+
+  it("keeps unresolved call sites unknown despite complete resolved-set coverage", () => {
+    const left = observe("e", dossier("return 0;", "0x1000"));
+    const rightDossier = functionDossierSchema.parse({
+      ...dossier("return 0;", "0x2000"),
+      unresolved_calls: [
+        {
+          address: "0x2010",
+          reason: "Indirect dispatch target could not be resolved.",
+        },
+      ],
+    });
+    const right = observe("f", rightDossier);
+    expect(
+      compareFunctions(left, right).dimensions.find(
+        ({ dimension }) => dimension === "calls",
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      limitations: [
+        "Right: Unresolved call at 0x2010: Indirect dispatch target could not be resolved.",
+      ],
+    });
   });
 });
 
@@ -342,6 +467,7 @@ describe("function comparison ordering controls", () => {
           result: jsonValueSchema.parse(result),
           confidence: "derived",
           authority: "shipped-artifact",
+          relationshipCoverage: { status: "complete" },
         },
       );
     const left = controlled("0x1000", false);
@@ -525,7 +651,9 @@ describe("function comparison", () => {
       limitations: [expect.stringContaining("did not expose reference kinds")],
     });
   });
+});
 
+describe("function comparison identity and malformed CFG", () => {
   it("does not promote address-derived names through equal signatures", () => {
     const autoDossier = (base: "0x1000" | "0x2000") =>
       functionDossierSchema.parse({
@@ -546,6 +674,22 @@ describe("function comparison", () => {
       comparison.dimensions.find(({ dimension }) => dimension === "identity"),
     ).toMatchObject({ status: "unknown" });
     expect(comparison.status).toBe("unknown");
+    const changedText = compareFunctions(
+      observe("b", autoDossier("0x1000")),
+      observe(
+        "c",
+        functionDossierSchema.parse({
+          ...autoDossier("0x2000"),
+          pseudocode: "return 1;",
+        }),
+      ),
+    );
+    expect(changedText.dimensions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ dimension: "pseudocode", status: "changed" }),
+      ]),
+    );
+    expect(changedText.status).toBe("unknown");
   });
 
   it("rejects invalid CFG normalization and preserves newline differences", () => {

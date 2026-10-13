@@ -137,6 +137,9 @@ it("returns the summary of retained binary layout Evidence", async () => {
   const client = await connect(
     true,
     new BinaryLayoutService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
       identity: BINARY_LAYOUT_TEST_PROVIDER,
       inspect: () => Promise.resolve(ok(layout)),
     }),

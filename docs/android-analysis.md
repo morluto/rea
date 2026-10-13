@@ -9,6 +9,27 @@ This family is present on repository main and in npm 4.1.0. Check the
 [released package boundary](installation.md#released-package-and-main) and the
 connected server's tool list before selecting it.
 
+## Optional package delivery
+
+The MCP `inspect_android_package` request keeps complete output when `detail` is
+omitted or `"complete"`. Select `detail: "summary"` explicitly to receive all
+package, SDK and permission declarations, engine identity and class/resource
+counts without decoded manifest text or duplicate raw provider replies. A
+retaining session keeps the complete original Evidence and returns a distinct
+linked `inspect_analysis_view` summary. This changes delivery, not JADX analysis.
+
+Use the returned `normalized_result.parent_evidence_id` with
+`inspect_analysis_view`, source kind `retained-evidence`, and
+`view: {kind: "android", facet: "manifest", offset: 0, limit: 4096}` to read the
+exact decoded manifest without reopening the APK. Offsets and limits count UTF-16
+code units; follow `coverage.next_offset`. The page preserves `source_status` and
+`reported_total_bytes`: exhausting retained text does not make a partial decoded
+manifest complete. Complete source Evidence remains exportable under the existing
+session lifetime. Servers without retention reject summary before starting JADX.
+One-shot CLI output remains complete. Older servers require the existing complete
+request after schema discovery. APK authenticity and runtime behavior remain
+unverified.
+
 ## Supply tools
 
 Use a **full JDK 17 or newer** (including its compiler module) and

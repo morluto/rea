@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 
+import { xcodeIbtoolAvailable } from "../../fixtures/ibtool.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { decodeNibArchive } from "../../../src/artifacts/apple/NibArchive.js";
 import { analyzeInterfaceBuilderBundle } from "../../../src/artifacts/apple/InterfaceBuilderAnalysis.js";
@@ -57,7 +58,7 @@ const compileNestedViews = async (depth: number, withWindow = false) => {
   return { bundle, archive: decodeNibArchive(await readFile(nib)) };
 };
 
-describe.skipIf(process.platform !== "darwin")(
+describe.skipIf(!xcodeIbtoolAvailable)(
   "native compiled NIB view hierarchy",
   () => {
     it.each([4, 40])(

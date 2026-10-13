@@ -7,6 +7,9 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { webNetworkCaptureSchema } from "../../../src/domain/webNetworkCapture.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 const entrypoint = fileURLToPath(
   new URL("../../../scripts/rea.mjs", import.meta.url),
 );
@@ -40,6 +43,91 @@ const cli = async (
   }
 };
 import { historicalHar } from "../../fixtures/historicalHar.js";
+
+it("excludes declared binary lengths through CLI, MCP and retained capture pages", async () => {
+  const root = await createTestTempDirectory("rea-har-byte-length-");
+  const path = join(root, "capture.har");
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0];
+  if (entry === undefined) throw new Error("fixture missing");
+  const body = Buffer.alloc(12_345, "A");
+  const content = body.toString("base64");
+  const digest = createHash("sha256").update(body).digest("hex");
+  await writeFile(
+    path,
+    JSON.stringify({
+      log: {
+        ...fixture.log,
+        entries: [
+          {
+            ...entry,
+            response: {
+              ...entry.response,
+              content: {
+                size: 99,
+                mimeType: "text/plain",
+                encoding: "base64",
+                text: content,
+              },
+            },
+          },
+        ],
+      },
+    }),
+  );
+  const { call } = await connectLocalToolsMcp();
+  const args = { capture_path: path, format: "har" };
+  const control = await call("inspect_web_network_capture", args);
+  expect(control.isError).not.toBe(true);
+  const retained = parseEvidence(control.structuredContent);
+  const controlCapture = webNetworkCaptureSchema.parse(
+    retained.normalized_result,
+  );
+  expect(controlCapture.records[0]?.binary_fields[0]).toMatchObject({
+    state: "retained",
+    bytes: body.length,
+    content_base64: content,
+    sha256: digest,
+  });
+  for (const literal of ["12345", "2345"]) {
+    // Only the derived count matches, so this cannot pass via another exclusion.
+    expect(content).not.toContain(literal);
+    expect(digest).not.toContain(literal);
+    const fromCli = await cli(path, "har", ["--sensitive-value", literal]);
+    expect(fromCli.ok, fromCli.stdout).toBe(true);
+    const evidence = parseEvidence(JSON.parse(fromCli.stdout));
+    const response = await call("inspect_web_network_capture", {
+      ...args,
+      sensitive_values: [literal],
+    });
+    expect(response.isError).not.toBe(true);
+    const fromMcp = parseEvidence(response.structuredContent);
+    expect(fromMcp.normalized_result).toEqual(evidence.normalized_result);
+    const capture = webNetworkCaptureSchema.parse(evidence.normalized_result);
+    expect(capture.records[0]?.reported).toMatchObject({
+      response: { content: { size: 99, text: null } },
+    });
+    expect(capture.records[0]?.binary_fields[0]).toEqual({
+      pointer: "/response/content/text",
+      representation: "har-base64-content",
+      state: "redacted",
+      bytes: null,
+      content_base64: null,
+      sha256: null,
+    });
+    for (const detail of ["preview", "complete"]) {
+      const page = await call("inspect_analysis_view", {
+        source: { kind: "retained-evidence", evidence_id: fromMcp.evidence_id },
+        view: { kind: "capture", detail },
+      });
+      expect(page.isError).not.toBe(true);
+      const result = parseEvidence(page.structuredContent);
+      expect(result.normalized_result).toMatchObject({
+        items: [{ binary_fields: [{ state: "redacted", bytes: null }] }],
+      });
+    }
+  }
+}, 60_000);
 
 it("reads actual upstream HAR packages in an owned process and retains selected producer order", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-history-har-"));

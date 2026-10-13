@@ -7,6 +7,7 @@ import {
   clientServerForcedEnabled,
   clientServerListedDisabled,
   effectiveClientServer,
+  type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
 import { access } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -74,24 +75,48 @@ const registrationSchema = z
   })
   .passthrough();
 
-/** Inspect supported client registrations without reading their environment. */
+interface ClientRegistrationReadOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly resources?: ArtifactResourceScope;
+}
+
+/** Registration facts shared by diagnostics and update maintenance. */
+export interface ClientRegistrationInspection {
+  readonly status: ClientRegistrationStatus;
+  readonly activation: "enabled" | "disabled" | "unknown";
+}
+
+/** Project diagnostics from the same inspection used to select maintenance. */
 export const readClientRegistrationStatuses = async (
   home: string,
   currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
-  options: {
-    readonly platform?: NodeJS.Platform;
-    readonly environment?: NodeJS.ProcessEnv;
-    readonly resources?: ArtifactResourceScope;
-  } = {},
-): Promise<readonly ClientRegistrationStatus[]> => {
-  const statuses: ClientRegistrationStatus[] = [];
+  options: ClientRegistrationReadOptions = {},
+): Promise<readonly ClientRegistrationStatus[]> =>
+  (
+    await readClientRegistrationInspections(home, currentCommandPath, options)
+  ).map(({ status }) => status);
+
+/** Parse effective registrations and their client-specific activation once. */
+export const readClientRegistrationInspections = async (
+  home: string,
+  currentCommandPath: string = resolve(process.argv[1] ?? "unknown"),
+  options: ClientRegistrationReadOptions = {},
+): Promise<readonly ClientRegistrationInspection[]> => {
+  const inspections: ClientRegistrationInspection[] = [];
+  const record = (
+    status: ClientRegistrationStatus,
+    activation: ClientRegistrationInspection["activation"] = "unknown",
+  ): void => {
+    inspections.push({ status, activation });
+  };
   for (const client of supportedClients(
     home,
     options.platform,
     options.environment,
   )) {
     if (client.configPathError !== undefined) {
-      statuses.push({
+      record({
         client: client.name,
         config_path: client.configPath,
         command: [],
@@ -104,7 +129,7 @@ export const readClientRegistrationStatuses = async (
     const manualRemediation = manualRegistrationRemediation(client.name);
     if (client.format === "unsupported") {
       if (manualRemediation !== undefined)
-        statuses.push({
+        record({
           client: client.name,
           config_path: client.markerPath ?? client.configPath,
           command: [],
@@ -119,7 +144,7 @@ export const readClientRegistrationStatuses = async (
         options.resources,
       );
       if (!files.ok) {
-        statuses.push({
+        record({
           client: client.name,
           config_path: client.configPath,
           command: [],
@@ -130,9 +155,7 @@ export const readClientRegistrationStatuses = async (
       }
       const parsed = effectiveClientConfiguration(files.value);
       if (parsed === undefined) {
-        statuses.push(
-          unavailableStatus(client.name, client.configPath, "missing"),
-        );
+        record(unavailableStatus(client.name, client.configPath, "missing"));
         continue;
       }
       const policy = await readClientPolicyBlock(
@@ -142,7 +165,7 @@ export const readClientRegistrationStatuses = async (
         options.resources,
       );
       if (!policy.ok) {
-        statuses.push({
+        record({
           client: client.name,
           config_path: client.configPath,
           command: [],
@@ -159,7 +182,7 @@ export const readClientRegistrationStatuses = async (
             ? dshDocument(parsed.document).editabilityError
             : undefined;
         if (editabilityError !== undefined) {
-          statuses.push({
+          record({
             client: client.name,
             config_path: client.configPath,
             command: [],
@@ -168,9 +191,7 @@ export const readClientRegistrationStatuses = async (
           });
           continue;
         }
-        statuses.push(
-          unavailableStatus(client.name, client.configPath, "missing"),
-        );
+        record(unavailableStatus(client.name, client.configPath, "missing"));
         continue;
       }
       const registration = parseRegistration(raw, client);
@@ -178,21 +199,18 @@ export const readClientRegistrationStatuses = async (
         registration.command,
         ...registration.args,
       ];
-      statuses.push(
+      const activation = registrationActivation(registration, client, parsed);
+      record(
         configuredStatus(
           client.name,
           client.configPath,
           command,
-          registrationAligned(
-            registration,
-            client,
-            currentCommandPath,
-            options.platform ?? process.platform,
-            clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey),
-          ) &&
-            !clientServerListedDisabled(
-              parsed,
-              PRODUCT_IDENTITY.mcpServerKey,
+          activation === "enabled" &&
+            registrationAligned(
+              registration,
+              client,
+              currentCommandPath,
+              options.platform ?? process.platform,
             ) &&
             (parsed.dialect !== "dsh" || dshDocument(parsed.document).ready) &&
             policyBlock === undefined
@@ -200,9 +218,10 @@ export const readClientRegistrationStatuses = async (
             : "stale",
           policyBlock,
         ),
+        activation,
       );
     } catch (cause: unknown) {
-      statuses.push(
+      record(
         unavailableStatus(
           client.name,
           client.configPath,
@@ -211,26 +230,31 @@ export const readClientRegistrationStatuses = async (
       );
     }
   }
-  return statuses.sort((left, right) =>
-    compareUnicodeCodePoints(left.client, right.client),
+  return inspections.sort((left, right) =>
+    compareUnicodeCodePoints(left.status.client, right.status.client),
   );
 };
+
+const registrationActivation = (
+  registration: z.output<typeof registrationSchema>,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): "enabled" | "disabled" =>
+  (client.format !== "grok" && registration.disabled === true) ||
+  (registration.enabled === false &&
+    !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
+  (client.format === "zcode" && registration.enable === false) ||
+  clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+    ? "disabled"
+    : "enabled";
 
 const registrationAligned = (
   registration: z.output<typeof registrationSchema>,
   client: SetupClient,
   currentCommandPath: string,
   platform: NodeJS.Platform,
-  forcedEnabled = false,
 ): boolean => {
   const command = [registration.command, ...registration.args];
-  if (
-    (client.format !== "grok" && registration.disabled === true) ||
-    (registration.enabled === false && !forcedEnabled) ||
-    // ZCode's native flag is `enable`; other dialects leave that field opaque.
-    (client.format === "zcode" && registration.enable === false)
-  )
-    return false;
   if (!isOwnedClientRegistrationCommand(command, currentCommandPath))
     return false;
   if (

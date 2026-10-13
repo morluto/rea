@@ -113,7 +113,7 @@ export const publishWebScripts = async (
         options.signal,
       );
       options.signal?.throwIfAborted();
-      await tree.commit();
+      await tree.commit(options.signal);
       return result;
     } catch (cause: unknown) {
       if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;

@@ -47,6 +47,7 @@ import {
 } from "./lib/real-hopper-boundaries.mjs";
 import { startUnrelatedHopperSentinel } from "./lib/unrelated-hopper-sentinel.mjs";
 import { snapshotHopperRuntime } from "./lib/real-hopper-cleanup.mjs";
+import { verifyLinuxHopperOwnerExit } from "./lib/real-hopper-owner-exit.mjs";
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
 const timeout = 180_000;
@@ -577,6 +578,14 @@ if (sessionsAfter.length > 0) {
 }
 if (summary === undefined)
   throw new Error("Real-Hopper verification did not produce a summary");
+if (process.platform === "linux")
+  summary.ownerExit = await verifyLinuxHopperOwnerExit({
+    primary: targetA,
+    secondary: targetB,
+    serverCommand,
+    serverArgs,
+    environment: serverEnvironment,
+  });
 const completedVerifierRun = await completeVerifierRun(verifierRun);
 if (
   completedVerifierRun.process_lineage.status !== "verified" ||

@@ -4,7 +4,13 @@ import type {
 } from "../AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { InspectWasmArtifactInput } from "../../domain/wasm/wasmArtifact.js";
+import type { EvidenceSubjectTarget } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
+
+/** Successful WASM inspection must identify the selected local file. */
+export type WasmArtifactExecution = Omit<AnalysisExecution, "subject"> & {
+  readonly subject: EvidenceSubjectTarget & { readonly format: "file" };
+};
 
 /** Replaceable offline WASM inspection engine, independent of target execution and network clients. */
 export interface WasmArtifactPort {
@@ -13,5 +19,5 @@ export interface WasmArtifactPort {
   inspect(
     input: InspectWasmArtifactInput,
     options?: ExecutionOptions,
-  ): Promise<Result<AnalysisExecution, AnalysisError>>;
+  ): Promise<Result<WasmArtifactExecution, AnalysisError>>;
 }

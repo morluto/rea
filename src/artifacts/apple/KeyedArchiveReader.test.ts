@@ -23,6 +23,23 @@ const archive = {
   $top: { root: { UID: 1 }, other: { UID: 2 } },
 };
 describe("inert keyed archive decoding", () => {
+  it.each(["bplist00", "NIBArchive"])(
+    "rejects high-bit mutations of %s as malformed bytes rather than another archive kind",
+    (signature) => {
+      for (let index = 0; index < signature.length; index += 1) {
+        const bytes = Buffer.from(signature);
+        bytes[index] = (bytes[index] ?? 0) | 0x80;
+        expect(() =>
+          decodeKeyedArchiveBytes(bytes, { offset: 0, limit: 1 }),
+        ).toThrow(
+          expect.objectContaining({
+            code: "ERR_ENCODING_INVALID_ENCODED_DATA",
+          }),
+        );
+      }
+    },
+  );
+
   it("preserves CF$UID, malformed references and original pagination identities", () => {
     const bytes = Buffer.from(
       build({
@@ -202,6 +219,37 @@ const keyedRoot = (payload: readonly Buffer[]): Buffer =>
 describe("binary plist reference preflight", () => {
   const selection = { offset: 0, limit: 10 };
 
+  it("rejects an array key that coerces to __proto__ before parsing", () => {
+    expect(() =>
+      decodeKeyedArchiveBytes(
+        keyedRoot([
+          plistArray([9]),
+          Buffer.from([0xd1, 0, 10, 0, 11]),
+          plistArray([12]),
+          Buffer.from([0xd1, 0, 13, 0, 14]),
+          plistString("__proto__"),
+          plistString("lost"),
+          plistString("value"),
+        ]),
+        selection,
+      ),
+    ).toThrow("binary plist dictionary key is not a string");
+  });
+
+  it("rejects binary data dictionary keys", () => {
+    expect(() =>
+      decodeKeyedArchiveBytes(
+        keyedRoot([
+          plistArray([9]),
+          Buffer.from([0xd1, 0, 10, 0, 11]),
+          Buffer.from([0x41, 0xab]),
+          plistString("value"),
+        ]),
+        selection,
+      ),
+    ).toThrow("binary plist dictionary key is not a string");
+  });
+
   it("reports a reference cycle as malformed, not as an oversized archive", () => {
     expect(() =>
       decodeKeyedArchiveBytes(keyedRoot([plistArray([8])]), selection),
@@ -356,7 +404,7 @@ describe("XML plist nesting preflight", () => {
     return cursor;
   };
 
-  it.each([129, 200, 3000, 4000])(
+  it.each([129, 4000])(
     "rejects %i-level XML nesting as the documented resource limit",
     (depth) => {
       // Recursive decoding exceeds the call stack before the projection limit

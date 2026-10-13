@@ -20,6 +20,7 @@ import { withAdmittedAnalysis } from "./analysisAdmission.js";
 import { runAdmittedToolOperation } from "./admittedToolOperation.js";
 
 import { compareFunctions } from "../domain/functionComparison.js";
+import { uniqueSorted } from "../domain/canonicalOrdering.js";
 /** Register explicit Evidence-backed function comparison. */
 export const registerFunctionComparisonTool = (
   server: EvidenceMcpServer,
@@ -102,12 +103,12 @@ export const registerFunctionComparisonTool = (
           const recorded = recordDerivedEvidence(
             session,
             evidence,
-            functionUnknownInput({
-              status: comparison.status,
+            comparisonUnknownInput(
+              comparison,
               leftIds,
               rightIds,
-              comparisonEvidenceId: evidence.evidence_id,
-            }),
+              evidence.evidence_id,
+            ),
           );
           return server.delivery.toEvidenceToolResult(
             evidence,
@@ -119,26 +120,63 @@ export const registerFunctionComparisonTool = (
   );
 };
 
+const comparisonUnknownInput = (
+  comparison: ReturnType<typeof compareFunctions>,
+  leftIds: readonly string[],
+  rightIds: readonly string[],
+  comparisonEvidenceId: string,
+): RecordUnknownInput | undefined =>
+  functionUnknownInput({
+    status: comparison.status,
+    dimensions: comparison.dimensions
+      .filter(({ status }) =>
+        comparison.status === "unknown"
+          ? status === "unknown"
+          : status === "changed",
+      )
+      .map(({ dimension }) => dimension),
+    leftIds,
+    rightIds,
+    comparisonEvidenceId,
+  });
+
 const functionUnknownInput = ({
   status,
+  dimensions,
   leftIds,
   rightIds,
   comparisonEvidenceId,
 }: {
   status: ReturnType<typeof compareFunctions>["status"];
+  dimensions: readonly ReturnType<
+    typeof compareFunctions
+  >["dimensions"][number]["dimension"][];
   leftIds: readonly string[];
   rightIds: readonly string[];
   comparisonEvidenceId: string;
 }): RecordUnknownInput | undefined => {
   if (status === "unchanged") return undefined;
-  const supportingIds = [...new Set([...leftIds, ...rightIds])];
+  const supportingIds = [
+    ...new Set([...leftIds, ...rightIds, comparisonEvidenceId]),
+  ];
   const contradictingIds = rightIds.filter((id) => !leftIds.includes(id));
   const contradictory = status === "changed";
   return {
     question: `Function comparison is ${status} (comparison ${comparisonEvidenceId})`,
     severity: status === "changed" ? "medium" : "high",
     domain: "function-comparison",
-    supporting_evidence_ids: contradictory ? [...leftIds] : supportingIds,
+    comparison_conclusion_scope: {
+      comparison_evidence_id: comparisonEvidenceId,
+      dimensions: uniqueSorted([
+        ...(status === "unknown" || dimensions.length === 0
+          ? ["overall" as const]
+          : []),
+        ...dimensions,
+      ]),
+    },
+    supporting_evidence_ids: contradictory
+      ? [...leftIds, comparisonEvidenceId]
+      : supportingIds,
     contradicting_evidence_ids: contradictory ? contradictingIds : [],
     required_authority: "shipped-artifact",
     required_confidence: "observed",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseProcessCapture } from "./processCaptureParsing.js";
 import type { ProcessTraceSpecification } from "./processTraceSpecification.js";
+import { processTraceSpecificationSchema as specificationSchema } from "./processTraceSpecification.js";
 import { processTraceComparisonResultSchema } from "./processTraceEvaluation.js";
 import {
   capture,
@@ -98,6 +99,33 @@ describe("generic capture trace comparison", () => {
       verdict: "equivalent",
       left: { matched_variant: "one" },
       right: { matched_variant: "two" },
+    });
+  });
+
+  it("compares a declared identifier the comparison result can represent", () => {
+    // The specification owns the trace identifier vocabulary and the result
+    // echoes those identifiers verbatim, so both must accept the same values
+    // rather than handing the caller a raw schema error for its own input.
+    const eventId = `e${"0".repeat(64)}`;
+    const specification: ProcessTraceSpecification = {
+      events: [
+        {
+          id: eventId,
+          source: "terminal_raw",
+          exact: terminal,
+          cardinality: { kind: "required" },
+        },
+      ],
+      language: {
+        kind: "finite_traces",
+        variants: [{ id: "only", trace: [eventId] }],
+      },
+    };
+    expect(specificationSchema.safeParse(specification).success).toBe(true);
+    const left = capture(values(["terminal", "process"]));
+    expect(compareProcessTraces(left, left, specification)).toMatchObject({
+      verdict: "equivalent",
+      left: { matched_variant: "only", raw_trace: [{ event_id: eventId }] },
     });
   });
 });

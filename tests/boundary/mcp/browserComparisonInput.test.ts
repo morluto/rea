@@ -72,7 +72,10 @@ describe("browser comparison input boundary", () => {
         const compared = await compareWebCaptureEvidence(provider, input);
         return compared.ok
           ? delivery.toEvidenceToolResult(compared.value, contract, undefined)
-          : delivery.toErrorToolResult(compared.error);
+          : delivery.toErrorToolResult(
+              compared.error,
+              contract.returnsTargetContent,
+            );
       },
     );
     try {

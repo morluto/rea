@@ -224,9 +224,7 @@ function initializeDinoDemo(demo) {
         stop(t("Paused. Press Play to continue."));
     }).observe(demo);
   }
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", draw);
+  window.addEventListener("website-theme-change", draw);
   demo.querySelector(".dino-fallback").setAttribute("hidden", "");
   demo.querySelector(".dino-controls").hidden = false;
   canvas.hidden = false;

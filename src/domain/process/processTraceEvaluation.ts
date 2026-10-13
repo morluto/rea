@@ -13,13 +13,12 @@ import {
 import {
   canonicalTraceJson,
   processTraceCardinalityBounds,
+  processTraceIdentifierSchema,
   type ProcessTraceSpecification,
 } from "./processTraceSpecification.js";
 
-const identifierSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._\x2d]{0,63}$/u);
-
 const matchedEventSchema = z.strictObject({
-  event_id: identifierSchema,
+  event_id: processTraceIdentifierSchema,
   location: processObservationLocationSchema,
 });
 
@@ -32,7 +31,7 @@ const sideResultSchema = z.union([
   z.strictObject({
     ...sideResultShape,
     status: z.literal("pass"),
-    matched_variant: identifierSchema.nullable(),
+    matched_variant: processTraceIdentifierSchema.nullable(),
   }),
   z.strictObject({
     ...sideResultShape,
@@ -53,7 +52,7 @@ const diagnosticSchema = z.strictObject({
   ]),
   side: z.enum(["left", "right"]),
   message: z.string(),
-  event_ids: z.array(identifierSchema),
+  event_ids: z.array(processTraceIdentifierSchema),
   locations: z.array(processObservationLocationSchema),
 });
 

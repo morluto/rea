@@ -152,9 +152,16 @@ describe("large complete Evidence MCP delivery", () => {
     expect(Buffer.byteLength(responseWire)).toBeLessThan(
       STDIO_DEFAULT_MAX_BUFFER_SIZE,
     );
+    // Pseudocode is target content, so the delivered result carries the
+    // untrusted provenance marker that the encoder must account for.
+    expect(result._meta).toEqual({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
     const encoded = encodeToolResult(
       jsonObjectSchema.parse(evidence),
       delivery.resultBudgetBytes,
+      "structured-and-text",
+      toolContract("procedure_pseudo_code").returnsTargetContent,
     );
     expect(encoded.ok).toBe(true);
     if (!encoded.ok)

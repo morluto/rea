@@ -2,12 +2,16 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import { installMacHopper, type MacHopperInstallHost } from "./MacHopper.js";
+import {
+  installMacHopper,
+  type MacHopperBundleVerification,
+  type MacHopperInstallHost,
+} from "./MacHopper.js";
 
 class FakeMacHopperHost implements MacHopperInstallHost {
   readonly archive = new TextEncoder().encode("hopper-dmg");
   archiveOk = true;
-  valid = true;
+  verification: MacHopperBundleVerification = "verified";
   existing = false;
   mountSucceeds = true;
   copySucceeds = true;
@@ -15,6 +19,7 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   badHash = false;
   unmounts = 0;
   cleanups = 0;
+  installs = 0;
   opens = 0;
   replaces = false;
 
@@ -47,7 +52,7 @@ class FakeMacHopperHost implements MacHopperInstallHost {
     return Promise.resolve();
   };
   appBundle = () => Promise.resolve("/mounted/Hopper Disassembler.app");
-  validBundle = () => Promise.resolve(this.valid);
+  validBundle = () => Promise.resolve(this.verification);
   destinationExists = () => Promise.resolve(this.existing);
   installBundle = (
     _source: string,
@@ -55,6 +60,7 @@ class FakeMacHopperHost implements MacHopperInstallHost {
     _stage: string,
     replaceExisting: boolean,
   ) => {
+    this.installs += 1;
     this.replaces = replaceExisting;
     return Promise.resolve(this.copySucceeds);
   };
@@ -115,11 +121,24 @@ describe("macOS Hopper installation", () => {
 
   it("cleans and detaches after bundle validation fails", async () => {
     const host = new FakeMacHopperHost();
-    host.valid = false;
+    host.verification = "invalid_signature";
     await expect(installMacHopper({}, host)).resolves.toEqual({
       status: "failed",
       reason: "bundle",
     });
+    expect(host.unmounts).toBe(1);
+    expect(host.cleanups).toBe(1);
+  });
+
+  it("reports a publisher mismatch without copying or launching the bundle", async () => {
+    const host = new FakeMacHopperHost();
+    host.verification = "unverified_publisher";
+    await expect(installMacHopper({}, host)).resolves.toEqual({
+      status: "failed",
+      reason: "publisher_verification_failed",
+    });
+    expect(host.installs).toBe(0);
+    expect(host.opens).toBe(0);
     expect(host.unmounts).toBe(1);
     expect(host.cleanups).toBe(1);
   });

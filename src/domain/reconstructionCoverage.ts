@@ -19,7 +19,10 @@ import {
 } from "./reconstructionCoverageEvaluation.js";
 import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
-import { offsetDateTimeSchema } from "./offsetDateTime.js";
+import {
+  offsetDateTimeInstantFromEpochMilliseconds,
+  offsetDateTimeSchema,
+} from "./offsetDateTime.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const stableIdSchema = z
@@ -213,6 +216,7 @@ const closureReasonSchema = z.strictObject({
     "verifier-result-missing",
     "verifier-result-stale",
     "verifier-result-incompatible",
+    "verifier-result-ambiguous",
     "verifier-failed",
     "verifier-unknown",
     "active-unknown",
@@ -274,10 +278,12 @@ export const evaluateReconstructionClosure = (
   );
   if (boundary === undefined)
     throw new TypeError(`Unknown reconstruction boundary: ${boundaryId}`);
+  const nowInstant = offsetDateTimeInstantFromEpochMilliseconds(nowEpochMs);
   const context: ReconstructionEvaluationContext = {
     coverage,
     boundary,
     nowEpochMs,
+    nowInstant,
     reasons: [],
     evidenceIds: new Set<string>(),
   };
@@ -394,6 +400,7 @@ const closureStatus = (
       [
         "verifier-result-stale",
         "verifier-result-incompatible",
+        "verifier-result-ambiguous",
         "verifier-unknown",
         "active-unknown",
         "owner-path-unknown",

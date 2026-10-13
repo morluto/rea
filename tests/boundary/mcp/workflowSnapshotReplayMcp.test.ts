@@ -412,7 +412,12 @@ describe("MCP investigation history snapshot replay", () => {
         toolContract("list_unknowns").outputSchema.parse(
           listed.structuredContent,
         ).result,
-      ).toEqual({ items: [resolved], total: 1 });
+      ).toEqual({
+        items: [resolved],
+        total: 1,
+        offset: 0,
+        next_offset: null,
+      });
     },
   );
 });

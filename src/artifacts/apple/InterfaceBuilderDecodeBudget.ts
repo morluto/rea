@@ -1,4 +1,5 @@
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 
 /** Reason reported when an archive would exceed the shared decoding budget. */
 export type InterfaceBuilderBudgetReason = "aggregate_decode_budget_exhausted";
@@ -94,13 +95,12 @@ export const preflightPropertyListDecode = (
   maxBytes: number,
   xmlText?: string,
 ): PlistDecodePreflight => {
-  const expansion =
-    bytes.subarray(0, 8).toString("ascii") === "bplist00"
-      ? estimateBinaryPlistExpansion(bytes, maxBytes)
-      : {
-          estimatedBytes: estimateXmlPlistExpansion(bytes, maxBytes, xmlText),
-          binaryPrototypeKeyObserved: false,
-        };
+  const expansion = hasBinaryPlistSignature(bytes)
+    ? estimateBinaryPlistExpansion(bytes, maxBytes)
+    : {
+        estimatedBytes: estimateXmlPlistExpansion(bytes, maxBytes, xmlText),
+        binaryPrototypeKeyObserved: false,
+      };
   if (expansion.estimatedBytes > maxBytes)
     throw new InterfaceBuilderDecodeBudgetExceeded(
       "aggregate_decode_budget_exhausted",
@@ -170,8 +170,8 @@ export interface BinaryPlistExpansionOptions {
   readonly fail?: (kind: BinaryPlistExpansionFailure, message: string) => Error;
   /**
    * Structural bounds: "strict" keeps objects and the offset table before the
-   * trailer; "decoder" admits exactly what plist.parseBinary can read, so
-   * expansion is bounded without rejecting archives that decoder accepts.
+   * trailer; "decoder" follows the decoder's object-table boundary policy
+   * while still rejecting structures whose coercion would lose plist facts.
    */
   readonly bounds?: "strict" | "decoder";
 }
@@ -267,6 +267,8 @@ export const estimateBinaryPlistExpansion = (
       throw new TypeError("binary plist object offset is invalid");
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
+    if (entry.dictionaryKey && type !== 5 && type !== 6)
+      throw new TypeError("binary plist dictionary key is not a string");
     let size = marker & 0x0f;
     let cursor = offset + 1;
     if (size === 0x0f && type !== 0 && type !== 8) {

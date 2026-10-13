@@ -13,6 +13,9 @@ it("labels an envelope containing debugger-derived maps as derived", async () =>
   const fixture = recordedCrashFixture();
   fixture.debugger = recordedCrashDebuggerFixture();
   const service = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
     identity: RECORDED_CRASH_TEST_PROVIDER,
     inspect: () => Promise.resolve(ok(fixture)),
   });
@@ -36,6 +39,9 @@ it.each([
   "rejects malformed selection before starting the provider: %j",
   async (input) => {
     const service = new RecordedCrashService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
       identity: RECORDED_CRASH_TEST_PROVIDER,
       inspect: () => {
         throw new Error("must not run");
@@ -55,6 +61,9 @@ it("preserves a provider's actionable unsupported reason", async () => {
     "ELF core belongs to recorded-crash analysis.",
   );
   const service = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
     identity: RECORDED_CRASH_TEST_PROVIDER,
     inspect: () => Promise.resolve(err(failure)),
   });
@@ -64,6 +73,9 @@ it("preserves a provider's actionable unsupported reason", async () => {
 it("cancels before invocation and after an acquired observation", async () => {
   const controller = new AbortController();
   const service = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
     identity: RECORDED_CRASH_TEST_PROVIDER,
     inspect: () => {
       controller.abort();
@@ -83,6 +95,9 @@ it("cancels before invocation and after an acquired observation", async () => {
     },
   });
   const untouched = new RecordedCrashService({
+    inspectAndClose(input, options) {
+      return this.inspect(input, options);
+    },
     identity: RECORDED_CRASH_TEST_PROVIDER,
     inspect: () => {
       throw new Error("must not run");
@@ -117,6 +132,9 @@ it.each(["different-path", "invalid-digest", "outside-range"])(
         flags: "0x5",
       });
     const service = new RecordedCrashService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
       identity: RECORDED_CRASH_TEST_PROVIDER,
       inspect: () => Promise.resolve(ok(fixture)),
     });

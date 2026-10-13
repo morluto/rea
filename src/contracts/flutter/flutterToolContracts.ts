@@ -1,7 +1,10 @@
+import { z } from "zod";
 import {
   flutterInputSchemas,
+  dartAotInspectionInputSchema,
   flutterResultSchemas,
 } from "../../domain/flutter/flutterBuildAnalysis.js";
+import { dartAotSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";
@@ -27,10 +30,15 @@ export const FLUTTER_TOOL_CONTRACTS = [
     name: "inspect_dart_aot",
     ...toolContractMetadata("inspect_dart_aot"),
     description:
-      "Inspect one ABI's Dart AOT snapshot inside an APK: the four snapshot symbols located through the ELF dynamic symbol table with their offsets, sizes, and section headers (magic, kind, length), the snapshot hash, and a bounded string-pool projection from the isolate data section (package: source URIs, dart: SDK URIs, identifier-like tokens) exposing the app's dependency structure. String-pool entries are byte-pattern observations, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser. No engine, no execution.",
+      "Inspect one ABI's Dart AOT snapshot inside an APK: the four snapshot symbols located through the ELF dynamic symbol table with their offsets, sizes, and section headers (magic, kind, length), the snapshot hash, and a bounded string-pool projection from the isolate data section (package: source URIs, dart: SDK URIs, identifier-like tokens) exposing the app's dependency structure. String-pool entries are byte-pattern observations, not deserialized cluster semantics; typed class and function recovery needs an SDK-specific parser. Omitted or complete detail returns the full observation. Select detail: \"summary\" for target/ABI/library identity, all snapshot headers, coverage and original lower-bound counts without string lists. The complete source stays retained; read returned strings via inspect_analysis_view with parent_evidence_id and kind dart-aot, collection package_uris/dart_uris/class_like_tokens, offset and limit. Exhausting pages does not imply complete pool coverage. No engine, no execution.",
     kind: "flutter-provider",
-    inputSchema: flutterInputSchemas.inspect_dart_aot,
-    outputSchema: evidenceResultOf(flutterResultSchemas.inspect_dart_aot),
+    inputSchema: dartAotInspectionInputSchema,
+    outputSchema: evidenceResultOf(
+      z.union([
+        flutterResultSchemas.inspect_dart_aot,
+        dartAotSummaryViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Inspect the preferred ABI's AOT snapshot",
@@ -39,6 +47,10 @@ export const FLUTTER_TOOL_CONTRACTS = [
       {
         title: "Inspect one ABI explicitly",
         input: { path: "/targets/Example.apk", abi: "arm64-v8a" },
+      },
+      {
+        title: "Inspect snapshot identity with retained string lists",
+        input: { path: "/targets/Example.apk", detail: "summary" },
       },
     ],
   },

@@ -9,7 +9,16 @@ import {
   processObservationSourceSchema,
 } from "./processObservation.js";
 
-const identifierSchema = z.string().regex(IDENTIFIER_PATTERN);
+/**
+ * A declared trace, event or variant identifier. The specification owns this
+ * vocabulary and the comparison result echoes those identifiers verbatim, so
+ * the result module must reuse this schema rather than restate the pattern:
+ * two bounds on the same identifier would reject the result of an accepted
+ * specification.
+ */
+export const processTraceIdentifierSchema = z
+  .string()
+  .regex(IDENTIFIER_PATTERN);
 
 const cardinalitySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("required") }),
@@ -31,7 +40,7 @@ const cardinalitySchema = z.discriminatedUnion("kind", [
 ]);
 
 const eventDeclarationSchema = z.strictObject({
-  id: identifierSchema,
+  id: processTraceIdentifierSchema,
   source: processObservationSourceSchema,
   exact: jsonValueSchema,
   ignore_fields: z
@@ -56,29 +65,31 @@ const partialOrderLanguageSchema = z.strictObject({
   happens_before: z
     .array(
       z.strictObject({
-        before: identifierSchema,
-        after: identifierSchema,
+        before: processTraceIdentifierSchema,
+        after: processTraceIdentifierSchema,
       }),
     )
     .default([]),
   not_before: z
     .array(
       z.strictObject({
-        event: identifierSchema,
-        anchor: identifierSchema,
+        event: processTraceIdentifierSchema,
+        anchor: processTraceIdentifierSchema,
       }),
     )
     .default([]),
   unordered_groups: z
-    .array(z.strictObject({ events: z.array(identifierSchema).min(2) }))
+    .array(
+      z.strictObject({ events: z.array(processTraceIdentifierSchema).min(2) }),
+    )
     .default([]),
-  prefix: z.array(identifierSchema).default([]),
-  suffix: z.array(identifierSchema).default([]),
+  prefix: z.array(processTraceIdentifierSchema).default([]),
+  suffix: z.array(processTraceIdentifierSchema).default([]),
 });
 
 const finiteTraceTokenSchema = z.union([
-  identifierSchema,
-  z.strictObject({ unordered: z.array(identifierSchema).min(2) }),
+  processTraceIdentifierSchema,
+  z.strictObject({ unordered: z.array(processTraceIdentifierSchema).min(2) }),
 ]);
 
 const finiteTraceLanguageSchema = z.strictObject({
@@ -86,7 +97,7 @@ const finiteTraceLanguageSchema = z.strictObject({
   variants: z
     .array(
       z.strictObject({
-        id: identifierSchema,
+        id: processTraceIdentifierSchema,
         trace: z.array(finiteTraceTokenSchema),
       }),
     )
@@ -105,6 +116,17 @@ export type ProcessTraceSpecification = z.infer<
   typeof specificationShapeSchema
 >;
 type PartialOrderLanguage = z.infer<typeof partialOrderLanguageSchema>;
+
+type AcyclicGraphFacts =
+  | {
+      readonly kind: "total-order";
+      readonly rank: ReadonlyMap<string, number>;
+    }
+  | {
+      readonly kind: "partial-order";
+      readonly reverseAdjacency: ReadonlyMap<string, ReadonlySet<string>>;
+    };
+type GraphFacts = { readonly kind: "cyclic" } | AcyclicGraphFacts;
 
 export const canonicalTraceJson = (value: unknown): string => {
   const serialized = canonicalize(value);
@@ -170,7 +192,6 @@ const validateNotBefore = (
   language: PartialOrderLanguage,
   context: z.RefinementCtx,
   known: ReadonlySet<string>,
-  reachable: ReadonlyMap<string, ReadonlySet<string>>,
 ): ReadonlySet<string> => {
   const pairs = new Set<string>();
   for (const [index, constraint] of language.not_before.entries()) {
@@ -191,76 +212,101 @@ const validateNotBefore = (
         path,
       });
     pairs.add(key);
-    if (reachable.get(constraint.event)?.has(constraint.anchor) === true)
-      context.addIssue({
-        code: "custom",
-        message: "not-before constraint conflicts with happens-before order",
-        path,
-      });
   }
   return pairs;
 };
 
-const graphHasCycle = (
+const classifyGraph = (
   ids: readonly string[],
   adjacency: ReadonlyMap<string, ReadonlySet<string>>,
-): boolean => {
-  const active = new Set<string>();
-  const complete = new Set<string>();
-  const visit = (current: string): boolean => {
-    if (active.has(current)) return true;
-    if (complete.has(current)) return false;
-    active.add(current);
-    const cyclic = [...(adjacency.get(current) ?? [])].some(visit);
-    active.delete(current);
-    complete.add(current);
-    return cyclic;
-  };
-  return ids.some(visit);
-};
-
-const computeReachability = (
-  ids: readonly string[],
-  adjacency: ReadonlyMap<string, ReadonlySet<string>>,
-): ReadonlyMap<string, ReadonlySet<string>> => {
-  const reachable = new Map<string, Set<string>>();
-  for (const origin of ids) {
-    const seen = new Set<string>();
-    const pending = [...(adjacency.get(origin) ?? [])];
-    while (pending.length > 0) {
-      const current = pending.pop();
-      if (current === undefined || seen.has(current)) continue;
-      seen.add(current);
-      pending.push(...(adjacency.get(current) ?? []));
+): GraphFacts => {
+  const incoming = new Map(ids.map((id) => [id, 0]));
+  let hasUnknownSuccessor = false;
+  for (const successors of adjacency.values())
+    for (const successor of successors) {
+      const count = incoming.get(successor);
+      if (count === undefined) hasUnknownSuccessor = true;
+      else incoming.set(successor, count + 1);
     }
-    reachable.set(origin, seen);
+  const ready = [...incoming].flatMap(([id, count]) =>
+    count === 0 ? [id] : [],
+  );
+  const order: string[] = [];
+  let unique = true;
+  while (ready.length > 0) {
+    if (ready.length !== 1) unique = false;
+    const current = ready.pop();
+    if (current === undefined) continue;
+    order.push(current);
+    for (const successor of adjacency.get(current) ?? []) {
+      const count = incoming.get(successor);
+      if (count === undefined) continue;
+      incoming.set(successor, count - 1);
+      if (count === 1) ready.push(successor);
+    }
   }
-  return reachable;
+  if (order.length !== incoming.size) return { kind: "cyclic" };
+  if (unique && order.length === ids.length && !hasUnknownSuccessor) {
+    return {
+      kind: "total-order",
+      rank: new Map(order.map((id, index) => [id, index])),
+    };
+  }
+  const reverseAdjacency = new Map(
+    [...incoming.keys()].map((id) => [id, new Set<string>()]),
+  );
+  for (const [before, successors] of adjacency)
+    for (const after of successors) reverseAdjacency.get(after)?.add(before);
+  return { kind: "partial-order", reverseAdjacency };
 };
 
-const isOrdered = (
-  reachable: ReadonlyMap<string, ReadonlySet<string>>,
-  left: string,
-  right: string,
-): boolean =>
-  reachable.get(left)?.has(right) === true ||
-  reachable.get(right)?.has(left) === true;
-
-type OrderingRelations = {
-  readonly reachable: ReadonlyMap<string, ReadonlySet<string>>;
-  readonly notBeforePairs: ReadonlySet<string>;
+const collectReachable = (
+  origin: string,
+  adjacency: ReadonlyMap<string, ReadonlySet<string>>,
+): ReadonlySet<string> => {
+  const seen = new Set<string>();
+  const pending = [...(adjacency.get(origin) ?? [])];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined || seen.has(current)) continue;
+    seen.add(current);
+    for (const successor of adjacency.get(current) ?? [])
+      pending.push(successor);
+  }
+  return seen;
 };
 
 const validateUnorderedGroups = (
   language: PartialOrderLanguage,
   context: z.RefinementCtx,
   known: ReadonlySet<string>,
-  relations: OrderingRelations,
-): ReadonlySet<string> => {
-  const pairs = new Set<string>();
+): {
+  readonly groups: readonly ReadonlySet<string>[];
+  hasPair(left: string, right: string): boolean;
+  markDeclaredPairConflicts(
+    pairs: ReadonlySet<string>,
+    conflicts: boolean[],
+  ): void;
+  markSharedGroups(left: string, right: string, conflicts: boolean[]): void;
+} => {
+  const memberships = new Map<string, Set<number>>();
+  const groups: Set<string>[] = [];
+  const repeatedMemberships = new Map<string, Set<number>>();
   for (const [groupIndex, group] of language.unordered_groups.entries()) {
     const path = ["language", "unordered_groups", groupIndex];
-    if (new Set(group.events).size !== group.events.length)
+    const uniqueIds = new Set<string>();
+    const repeatedIds = new Set<string>();
+    for (const id of group.events) {
+      if (uniqueIds.has(id)) repeatedIds.add(id);
+      else uniqueIds.add(id);
+    }
+    groups.push(uniqueIds);
+    for (const id of repeatedIds) {
+      const groupIndexes = repeatedMemberships.get(id) ?? new Set<number>();
+      groupIndexes.add(groupIndex);
+      repeatedMemberships.set(id, groupIndexes);
+    }
+    if (uniqueIds.size !== group.events.length)
       context.addIssue({
         code: "custom",
         message: "unordered groups must not repeat event ids",
@@ -268,46 +314,136 @@ const validateUnorderedGroups = (
       });
     for (const [eventIndex, id] of group.events.entries())
       addReferenceIssue(context, known, id, [...path, "events", eventIndex]);
-    for (const [leftIndex, leftId] of group.events.entries()) {
-      for (
-        let rightIndex = leftIndex + 1;
-        rightIndex < group.events.length;
-        rightIndex++
-      ) {
-        const rightId = group.events[rightIndex];
-        if (rightId === undefined) continue;
-        const key = pairKey(leftId, rightId);
-        if (pairs.has(key))
-          context.addIssue({
-            code: "custom",
-            message: "unordered event pairs must be declared once",
-            path,
-          });
-        pairs.add(key);
-        if (
-          isOrdered(relations.reachable, leftId, rightId) ||
-          relations.notBeforePairs.has(key)
-        )
-          context.addIssue({
-            code: "custom",
-            message: "ordered events cannot also be declared unordered",
-            path,
-          });
-      }
+    const overlaps = new Map<number, number>();
+    for (const id of uniqueIds) {
+      const priorGroups = memberships.get(id) ?? new Set<number>();
+      for (const prior of priorGroups)
+        overlaps.set(prior, (overlaps.get(prior) ?? 0) + 1);
+      priorGroups.add(groupIndex);
+      memberships.set(id, priorGroups);
     }
+    if ([...overlaps.values()].some((count) => count > 1))
+      context.addIssue({
+        code: "custom",
+        message: "unordered event pairs must be declared once",
+        path,
+      });
   }
-  return pairs;
+  const markSharedGroups = (
+    left: string,
+    right: string,
+    conflicts: boolean[],
+  ): void => {
+    if (left === right) {
+      for (const groupIndex of repeatedMemberships.get(left) ?? [])
+        conflicts[groupIndex] = true;
+      return;
+    }
+    const rightGroups = memberships.get(right);
+    for (const group of memberships.get(left) ?? [])
+      if (rightGroups?.has(group) === true) conflicts[group] = true;
+  };
+  return {
+    groups,
+    hasPair(left, right) {
+      if (left === right) return memberships.has(left);
+      const rightGroups = memberships.get(right);
+      for (const group of memberships.get(left) ?? [])
+        if (rightGroups?.has(group) === true) return true;
+      return false;
+    },
+    markDeclaredPairConflicts(pairs, conflicts) {
+      for (const key of pairs) {
+        const separator = key.indexOf("\0");
+        const left = key.slice(0, separator);
+        const right = key.slice(separator + 1);
+        markSharedGroups(left, right, conflicts);
+      }
+    },
+    markSharedGroups,
+  };
 };
 
-const validateCompletePairDeclarations = (
+const validateTotalOrderRelations = (
+  language: PartialOrderLanguage,
+  graph: Extract<GraphFacts, { kind: "total-order" }>,
+  unorderedGroups: ReturnType<typeof validateUnorderedGroups>,
+  notBeforePairs: ReadonlySet<string>,
+  context: z.RefinementCtx,
+): void => {
+  for (const [index, constraint] of language.not_before.entries()) {
+    const before = graph.rank.get(constraint.event);
+    const after = graph.rank.get(constraint.anchor);
+    if (before !== undefined && after !== undefined && before < after)
+      context.addIssue({
+        code: "custom",
+        message: "not-before constraint conflicts with happens-before order",
+        path: ["language", "not_before", index],
+      });
+  }
+
+  const conflicts = new Array<boolean>(language.unordered_groups.length).fill(
+    false,
+  );
+  for (const [groupIndex, group] of unorderedGroups.groups.entries()) {
+    let comparableEvents = 0;
+    for (const id of group)
+      if (graph.rank.has(id) && ++comparableEvents === 2) {
+        conflicts[groupIndex] = true;
+        break;
+      }
+  }
+  unorderedGroups.markDeclaredPairConflicts(notBeforePairs, conflicts);
+  addUnorderedConflictIssues(conflicts, context);
+};
+
+const addUnorderedConflictIssues = (
+  conflicts: readonly boolean[],
+  context: z.RefinementCtx,
+): void => {
+  for (const [groupIndex, conflict] of conflicts.entries())
+    if (conflict)
+      context.addIssue({
+        code: "custom",
+        message: "ordered events cannot also be declared unordered",
+        path: ["language", "unordered_groups", groupIndex],
+      });
+};
+
+const validatePartialOrderRelations = (
   ids: readonly string[],
-  relations: OrderingRelations,
-  unorderedPairs: ReadonlySet<string>,
+  language: PartialOrderLanguage,
+  adjacency: ReadonlyMap<string, ReadonlySet<string>>,
+  graph: Extract<GraphFacts, { kind: "partial-order" }>,
+  unorderedGroups: ReturnType<typeof validateUnorderedGroups>,
+  notBeforePairs: ReadonlySet<string>,
   context: z.RefinementCtx,
 ): void => {
   let missingPairCount = 0;
   let firstMissingPair = "";
+  const groupConflicts = new Array<boolean>(
+    language.unordered_groups.length,
+  ).fill(false);
+  unorderedGroups.markDeclaredPairConflicts(notBeforePairs, groupConflicts);
+  const notBeforeConflictFlags = new Uint8Array(language.not_before.length);
+  const constraintsBySource = new Map<string, number[]>();
+  for (const [index, constraint] of language.not_before.entries()) {
+    const indexes = constraintsBySource.get(constraint.event) ?? [];
+    indexes.push(index);
+    constraintsBySource.set(constraint.event, indexes);
+  }
+
+  // Keep only one origin's forward and backward closure live at a time. Pair
+  // iteration stays in declaration order so the count and first missing pair
+  // retain the established diagnostic semantics.
   for (const [leftIndex, leftId] of ids.entries()) {
+    const forward = collectReachable(leftId, adjacency);
+    const backward = collectReachable(leftId, graph.reverseAdjacency);
+    for (const constraintIndex of constraintsBySource.get(leftId) ?? []) {
+      const constraint = language.not_before[constraintIndex];
+      if (constraint !== undefined && forward.has(constraint.anchor))
+        notBeforeConflictFlags[constraintIndex] = 1;
+    }
     for (
       let rightIndex = leftIndex + 1;
       rightIndex < ids.length;
@@ -315,14 +451,32 @@ const validateCompletePairDeclarations = (
     ) {
       const rightId = ids[rightIndex];
       if (rightId === undefined) continue;
-      if (isOrdered(relations.reachable, leftId, rightId)) continue;
+      const sameEvent = leftId === rightId;
+      const ordered =
+        !sameEvent && (forward.has(rightId) || backward.has(rightId));
       const key = pairKey(leftId, rightId);
-      if (!relations.notBeforePairs.has(key) && !unorderedPairs.has(key)) {
+      const notBefore = notBeforePairs.has(key);
+      const unordered = unorderedGroups.hasPair(leftId, rightId);
+      if (ordered || notBefore) {
+        if (!sameEvent)
+          unorderedGroups.markSharedGroups(leftId, rightId, groupConflicts);
+      }
+      if (!ordered && !notBefore && !unordered) {
         if (missingPairCount === 0) firstMissingPair = `${leftId}/${rightId}`;
         missingPairCount++;
       }
     }
   }
+
+  for (const [index, conflict] of notBeforeConflictFlags.entries())
+    if (conflict === 1)
+      context.addIssue({
+        code: "custom",
+        message: "not-before constraint conflicts with happens-before order",
+        path: ["language", "not_before", index],
+      });
+  addUnorderedConflictIssues(groupConflicts, context);
+
   if (missingPairCount > 0)
     context.addIssue({
       code: "custom",
@@ -342,27 +496,44 @@ const validatePartialOrder = (
   const ids = specification.events.map(({ id }) => id);
   const known = new Set(ids);
   const adjacency = buildAdjacency(specification.language, context, known);
-  if (graphHasCycle(ids, adjacency))
+  const graph = classifyGraph(ids, adjacency);
+  if (graph.kind === "cyclic")
     context.addIssue({
       code: "custom",
       message: "happens-before graph must be acyclic",
       path: ["language"],
     });
-  const reachable = computeReachability(ids, adjacency);
   const notBeforePairs = validateNotBefore(
     specification.language,
     context,
     known,
-    reachable,
   );
-  const relations = { reachable, notBeforePairs };
-  const unorderedPairs = validateUnorderedGroups(
+  const unorderedGroups = validateUnorderedGroups(
     specification.language,
     context,
     known,
-    relations,
   );
-  validateCompletePairDeclarations(ids, relations, unorderedPairs, context);
+  // Preserve independent declaration diagnostics on cyclic input. Computing
+  // all pair relations cannot establish a valid partial order in that case.
+  if (graph.kind === "total-order") {
+    validateTotalOrderRelations(
+      specification.language,
+      graph,
+      unorderedGroups,
+      notBeforePairs,
+      context,
+    );
+  } else if (graph.kind === "partial-order") {
+    validatePartialOrderRelations(
+      ids,
+      specification.language,
+      adjacency,
+      graph,
+      unorderedGroups,
+      notBeforePairs,
+      context,
+    );
+  }
   for (const [kind, values] of [
     ["prefix", specification.language.prefix],
     ["suffix", specification.language.suffix],

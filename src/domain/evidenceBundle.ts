@@ -16,24 +16,27 @@ import {
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
-const artifactManifestSchema = evidenceSchema.shape.subject.unwrap().pick({
-  digest: true,
-  format: true,
-  architecture: true,
-});
+const artifactManifestSchema = evidenceSchema.shape.subject
+  .unwrap()
+  .pick({
+    digest: true,
+    format: true,
+    architecture: true,
+  })
+  .strict();
 const providerManifestSchema = providerSchema;
 const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
-const scenarioManifestSchema = z.object({
+const scenarioManifestSchema = z.strictObject({
   evidence_id: evidenceSchema.shape.evidence_id,
   operation: z.string().min(1),
   authority: z.literal("controlled-replay"),
 });
-const captureManifestSchema = z.object({
+const captureManifestSchema = z.strictObject({
   evidence_id: evidenceSchema.shape.evidence_id,
   predicate_type: z.string().min(1),
 });
 
-export const evidenceBundleSchema = z.object({
+export const evidenceBundleSchema = z.strictObject({
   artifacts: z.array(artifactManifestSchema),
   providers: z.array(providerManifestSchema),
   environments: z.array(environmentManifestSchema),

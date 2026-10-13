@@ -23,7 +23,7 @@ export const createProgressReporter = (
   } = {},
 ): ProgressReporter => {
   const minimumIntervalMs = options.minimumIntervalMs ?? 100;
-  const now = options.now ?? Date.now;
+  const now = options.now ?? (() => performance.now());
   let lastCompleted = -1;
   let lastSentAt = Number.NEGATIVE_INFINITY;
   let sequence = 0;

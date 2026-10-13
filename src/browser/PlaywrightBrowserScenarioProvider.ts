@@ -172,7 +172,7 @@ const executeStep = async (input: {
       ),
     });
 
-  const actionStartedAt = Date.now();
+  const actionStartedAt = performance.now();
   session.setStep(stepIndex);
   const requestCancelled = (): boolean => signal?.aborted === true;
   let outcome: BrowserScenarioStepOutcome = {
@@ -200,7 +200,7 @@ const executeStep = async (input: {
     stepId: action.step_id,
     action: action.action,
     ...outcome,
-    elapsedMs: Date.now() - actionStartedAt,
+    elapsedMs: Math.max(0, Math.round(performance.now() - actionStartedAt)),
     beforeUrl,
     afterUrl: session.sanitizeUrl(session.currentUrl()),
     eventStart,
@@ -233,7 +233,7 @@ const runScenario = async (
 ): Promise<BrowserScenarioCapture> => {
   if (options.signal?.aborted === true)
     throw new BrowserObservationError(OPERATION, "cancelled");
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   const session = await openSession(scenario, {
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     retainCleanup,
@@ -250,7 +250,7 @@ const runScenario = async (
       await initialStep({
         session,
         scenario,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
         signal: options.signal,
       }),
     );

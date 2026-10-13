@@ -37,6 +37,22 @@ const getClients = (home: string) =>
   );
 
 describe("additional client configuration dialects", () => {
+  it("treats an empty XDG config home as unset for OpenCode setup", async () => {
+    const home = await createTestTempDirectory("rea-opencode-empty-xdg-");
+    const client = supportedClients(home, "linux", {
+      XDG_CONFIG_HOME: "",
+    }).find(({ name }) => name === "opencode");
+    const expectedPath = join(home, ".config/opencode/opencode.json");
+    if (client === undefined) throw new Error("missing opencode client");
+
+    expect(client.configPath).toBe(expectedPath);
+    expect(client.configPaths).toContain(expectedPath);
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "configured" });
+    expect(await readFile(expectedPath, "utf8")).toContain('"mcp"');
+  });
+
   it.each([
     "opencode",
     "antigravity",

@@ -203,6 +203,14 @@ export const createGoBinaryDiagnosticFixtures = () => {
   }
   const damagedPe = createGoBinaryFixture({ format: "pe" }).bytes;
   damagedPe.write("NO", 128, "ascii");
+  const highBitSignatures = ["NE", "LE", "LX", "PE"].map((signature) => {
+    const bytes = createGoBinaryFixture({ format: "pe" }).bytes;
+    bytes.set(
+      [...Buffer.from(signature)].map((byte) => byte | 0x80),
+      128,
+    );
+    return { name: `high-bit-${signature.toLowerCase()}`, bytes };
+  });
   const absentDirectories = createGoBinaryFixture({ format: "pe" }).bytes;
   absentDirectories.writeUInt32LE(1, 152 + 108);
   const shortOptionalHeaders = [0, 1].map((size) => {
@@ -220,6 +228,7 @@ export const createGoBinaryDiagnosticFixtures = () => {
     })),
     ...[
       { name: "damaged-pe", bytes: damagedPe },
+      ...highBitSignatures,
       { name: "absent-directories", bytes: absentDirectories },
       ...shortOptionalHeaders,
     ].map((fixture) => ({

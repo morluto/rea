@@ -54,7 +54,11 @@ export const semanticRequireOrigin = (
   return specifier === undefined
     ? undefined
     : {
-        origin: { specifier, importedPath: members.reverse() },
+        origin: {
+          specifier,
+          importedPath: members.reverse(),
+          resolutionMode: "require",
+        },
         call: current,
       };
 };

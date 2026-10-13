@@ -19,31 +19,6 @@ export const isBeforeSourceMapLeafStop = (
   );
 };
 
-/** Resolve one declaration with the same pinned upstream implementation used by full maps. */
-export const resolveSourceMapSource = (
-  source: string | null,
-  sourceRoot: string | null | undefined,
-  mapUrl: string,
-): string => {
-  const map = new TraceMap(
-    {
-      version: 3,
-      names: [],
-      sources: [source ?? ""],
-      ...(sourceRoot == null ? {} : { sourceRoot }),
-      mappings: "",
-    },
-    mapUrl,
-  );
-  const resolved = map.resolvedSources[0];
-  if (resolved === undefined)
-    throw new SourceMapFormatFailure(
-      "format",
-      "Source-map resolver did not return the requested source identity.",
-    );
-  return resolved;
-};
-
 /** Decode leaf mappings and validate producer indices before any consumer publishes them. */
 export const decodeValidatedSourceMapLeaves = (
   leaves: readonly SourceMapLeaf[],

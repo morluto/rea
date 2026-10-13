@@ -61,7 +61,7 @@ Independent raw verification streams the complete private snapshot digest and
 extent with bounded memory and supports cancellation during the read.
 
 Hopper and IDA refuse raw-binary targets. Windows Ghidra P0 continues to admit
-PE applications only.
+native PE applications and DLLs only; raw-binary targets are unsupported.
 
 ## Limitations
 

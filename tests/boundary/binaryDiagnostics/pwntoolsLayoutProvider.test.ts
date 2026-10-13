@@ -11,6 +11,7 @@ import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/Pwntool
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
@@ -94,6 +95,7 @@ it.runIf(!unsupportedHost)(
   async () => {
     const { path } = await fixture();
     let ownedPath = "";
+    let cleanupAllowed = false;
     const provider = new PwntoolsLayoutProvider(
       { REA_PWNTOOLS_PYTHON: process.execPath },
       async (spawn) => {
@@ -106,22 +108,37 @@ it.runIf(!unsupportedHost)(
         return {
           ...launched,
           cleanup: async () => {
-            await launched.cleanup?.();
+            if (cleanupAllowed)
+              return cleanupOwnedProcessGroup(launched.ownership);
             throw new Error("injected post-cleanup reporting failure");
           },
         };
       },
     );
+    onTestFinished(async () => {
+      cleanupAllowed = true;
+      await provider.close();
+    });
     const result = await provider.inspect({ path });
     if (result.ok) throw new Error("Expected compounded lifecycle failure");
     expect(result.error).toMatchObject({
       cleanupIncomplete: true,
       diagnostics: {
-        reason: "injected post-cleanup reporting failure",
-        previous_error: { failure_kind: "output-limit" },
-        captured_output: { truncated: true, stderr: "" },
+        primary_error: {
+          code: "unreadable_output",
+          details: { captured_output: { truncated: true, stderr: "" } },
+        },
+        cleanup_error: {
+          code: "cleanup_incomplete",
+          details: {
+            diagnostics: { reason: "injected post-cleanup reporting failure" },
+          },
+        },
       },
     });
+    await expect(access(ownedPath)).resolves.toBeUndefined();
+    cleanupAllowed = true;
+    await provider.close();
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
@@ -418,8 +435,11 @@ it.runIf(!unsupportedHost)(
         cleanupIncomplete: true,
         cleanupResources: [root],
         diagnostics: {
-          reason: "root cleanup failed",
-          previous_error: { category: "invalid_input" },
+          primary_error: { category: "invalid_input" },
+          cleanup_error: {
+            code: "cleanup_incomplete",
+            details: { diagnostics: { reason: "root cleanup failed" } },
+          },
         },
       },
     });

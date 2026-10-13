@@ -266,3 +266,47 @@ it("normalizes representative process identities and preserves null, zero, and u
     "<working-directory>/program child 42020 parent 41010 group 43030 session 44040 listen:<port> selected",
   );
 });
+
+it("normalizes nested paths once using the most specific selected identity", () => {
+  const declared = parseProcessScenario({
+    executable: "/workspace/project/bin/program",
+    working_directory: "/workspace/project",
+    filesystem_observation_paths: [
+      "/workspace/project/data",
+      "/workspace/project/data/cache",
+    ],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  expect(
+    normalizeProcessText(
+      "/workspace/project/bin/program /workspace/project/data/cache/item /workspace/project/data/result /workspace/project/log /workspace/tmp",
+      declared,
+      "/workspace",
+      rootPid,
+    ),
+  ).toBe(
+    "<executable> <filesystem-root-1>/item <filesystem-root-0>/result <working-directory>/log <temporary-root>/tmp",
+  );
+});
+
+it("treats path metacharacters literally while preferring nested observed roots", () => {
+  const declared = parseProcessScenario({
+    executable: "/selected/[tool]+",
+    working_directory: "/selected",
+    filesystem_observation_paths: [
+      "/selected/(data)",
+      "/selected/(data)/cache",
+    ],
+    normalization: { paths: true, pids: false, ports: false, patterns: [] },
+  });
+  expect(
+    normalizeProcessText(
+      "/selected/[tool]+ /selected/(data)/cache/item /selected/(data)/file /selected/log /selected/toolll",
+      declared,
+      "/tmp",
+      rootPid,
+    ),
+  ).toBe(
+    "<executable> <filesystem-root-1>/item <filesystem-root-0>/file <working-directory>/log <working-directory>/toolll",
+  );
+});

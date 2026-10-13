@@ -4,7 +4,11 @@ import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
 import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
-import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
+import type {
+  ArtifactInventoryCoverage,
+  ArtifactOccurrence,
+  IntegrityContradiction,
+} from "../../domain/artifactGraph.js";
 import {
   isZipPackageFormat,
   ZIP_NON_ENTRY_TAIL_LIMITATION,
@@ -36,20 +40,42 @@ export const createReader = (
   }
 };
 
-export const inventoryLimitations = (
+/** Classify source coverage and preserve its user-facing explanation once. */
+export const inventoryAssessment = (
   format: ArtifactOccurrence["artifact_format"],
   reader: ArtifactReader | undefined,
-): string[] => {
-  if (reader !== undefined)
-    return isZipPackageFormat(reader.format)
-      ? [ZIP_NON_ENTRY_TAIL_LIMITATION]
-      : [];
-  // dmg and pkg reach here only after classifyRootFormat matched their bytes.
-  if (format === "dmg" || format === "pkg")
-    return [
+  integrityContradictions: readonly IntegrityContradiction[],
+  caseCollisionLimitation: string | undefined,
+): {
+  readonly coverage_status: ArtifactInventoryCoverage;
+  readonly limitations: string[];
+} => {
+  let coverageStatus: ArtifactInventoryCoverage = "complete";
+  const limitations: string[] = [];
+  if (reader !== undefined) {
+    if (isZipPackageFormat(reader.format))
+      limitations.push(ZIP_NON_ENTRY_TAIL_LIMITATION);
+  } else if (format === "dmg" || format === "pkg") {
+    coverageStatus = "partial";
+    limitations.push(
       `${format.toUpperCase()} root hash is observed; child inventory requires a native macOS adapter.`,
-    ];
-  if (format === "mach-o-universal" && process.platform !== "darwin")
-    return ["Universal Mach-O slices require the native macOS lipo adapter."];
-  return ["Artifact has no child container entries."];
+    );
+  } else if (format === "mach-o-universal" && process.platform !== "darwin") {
+    coverageStatus = "partial";
+    limitations.push(
+      "Universal Mach-O slices require the native macOS lipo adapter.",
+    );
+  } else {
+    // The graph's modeled scope is the root itself for recognized leaf formats.
+    limitations.push("Artifact has no child container entries.");
+  }
+  if (caseCollisionLimitation !== undefined) {
+    coverageStatus = "partial";
+    limitations.push(caseCollisionLimitation);
+  }
+  if (integrityContradictions.length > 0)
+    limitations.push(
+      `${String(integrityContradictions.length)} integrity contradiction(s) were recorded; mismatched content is observed-untrusted.`,
+    );
+  return { coverage_status: coverageStatus, limitations };
 };

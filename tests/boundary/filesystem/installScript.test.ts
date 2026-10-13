@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import { spawn as spawnPty } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -182,6 +183,69 @@ describe("curl installer scenarios", { timeout: 20_000 }, () => {
       stderr:
         "REA installation failed: curl is required. Install curl, then rerun this installer.\n",
     });
+  });
+});
+
+describe("installer TTY fallback", { timeout: 20_000 }, () => {
+  it("skips automatic setup when stderr is redirected", async () => {
+    const fixture = await createFixture();
+    const script = join(process.cwd(), "install.sh");
+    const wrapper = `
+      const { spawnSync } = require("node:child_process");
+      const { openSync, closeSync } = require("node:fs");
+      const stderr = openSync(process.argv[2], "w");
+      const child = spawnSync("/bin/bash", [process.argv[1], ...process.argv.slice(3)], {
+        stdio: ["inherit", "inherit", stderr],
+        env: process.env,
+      });
+      closeSync(stderr);
+      process.exit(child.status ?? 1);
+    `;
+    let output = "";
+    const terminal = spawnPty(
+      process.execPath,
+      ["-e", wrapper, script, fixture.installerStderrLog, "--version", "0.3.0"],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: fixture.home,
+          TMPDIR: fixture.temporary,
+          PATH: `${fixture.bin}:/usr/bin:/bin`,
+          FAKE_NPM_LOG: fixture.npmLog,
+          FAKE_REA_LOG: fixture.reaLog,
+          FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
+          FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+          TERM: "xterm-256color",
+        },
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+      },
+    );
+    let timedOut = false;
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        terminal.kill();
+      }, 10_000);
+      terminal.onData((data) => {
+        output += data;
+      });
+      terminal.onExit(({ exitCode: code }) => {
+        clearTimeout(timeout);
+        if (timedOut)
+          reject(new Error(`Installer PTY timed out after output: ${output}`));
+        else resolve(code);
+      });
+    });
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain(
+      `Run ${join(fixture.home, ".local/bin/rea")} setup to configure Hopper and agents.`,
+    );
+    expect(await readFile(fixture.reaLog, "utf8")).toBe("--version\n");
+    expect(await readFile(fixture.installerStderrLog, "utf8")).toBe("");
   });
 });
 
@@ -433,6 +497,7 @@ interface InstallerFixture {
   readonly temporary: string;
   readonly npmLog: string;
   readonly reaLog: string;
+  readonly installerStderrLog: string;
 }
 
 const getProcessOutput = (
@@ -456,6 +521,7 @@ const createFixture = async (): Promise<InstallerFixture> => {
   const temporary = join(root, "tmp");
   const npmLog = join(root, "npm.log");
   const reaLog = join(root, "rea.log");
+  const installerStderrLog = join(root, "installer.stderr.log");
   await Promise.all([mkdir(home), mkdir(bin), mkdir(temporary)]);
   await Promise.all([
     executable(
@@ -507,7 +573,7 @@ exit 0
       symlink(`/usr/bin/${command}`, join(bin, command)),
     ),
   ]);
-  return { home, bin, temporary, npmLog, reaLog };
+  return { home, bin, temporary, npmLog, reaLog, installerStderrLog };
 };
 
 const executable = async (path: string, source: string): Promise<void> => {

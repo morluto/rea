@@ -13,6 +13,38 @@ const selectors = [
 
 describe("CLI analysis selector boundaries", () => {
   cliTest(
+    "accepts file offsets and rejects mixed coordinate selectors before opening a target",
+    async ({ cli }) => {
+      const selected = await cli.run({
+        arguments: [
+          "decompile",
+          "does-not-exist",
+          "--file-offset=0x210",
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(selected.json).toMatchObject({ code: "target_unavailable" });
+      const conflicting = await cli.run({
+        arguments: [
+          "decompile",
+          "does-not-exist",
+          "0x140001010",
+          "--file-offset=0x210",
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(conflicting.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "procedure_pseudo_code",
+          issues: [{ path: ["file-offset"], reason: "invalid_value" }],
+        },
+      });
+    },
+  );
+  cliTest(
     "rejects missing and conflicting selectors before opening a target",
     async ({ cli }) => {
       for (const [command, option, operation] of selectors) {

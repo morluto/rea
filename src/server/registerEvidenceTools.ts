@@ -33,6 +33,16 @@ interface EvidenceToolRegistration {
     operation: Exclude<AnalysisOperation, "health">,
     parameters: Readonly<Record<string, JsonValue>>,
   ) => Readonly<Record<string, JsonValue>>;
+  /** Exclude adapter-only selections, such as delivery detail, from Evidence identity. */
+  readonly parametersForEvidence?: (
+    operation: Exclude<AnalysisOperation, "health">,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ) => Readonly<Record<string, JsonValue>>;
+  /** Refuse an unsatisfiable delivery selection before any analysis runs. */
+  readonly preflight?: (
+    operation: Exclude<AnalysisOperation, "health">,
+    parameters: Readonly<Record<string, JsonValue>>,
+  ) => Result<unknown, AnalysisError>;
   readonly projectEvidence?: (
     operation: Exclude<AnalysisOperation, "health">,
     parameters: Readonly<Record<string, JsonValue>>,
@@ -51,6 +61,12 @@ export const registerEvidenceTools = (
       contract.name,
       toolRegistrationOptions(contract),
       async (input, context) => {
+        const ready = options.preflight?.(
+          contract.name,
+          jsonObjectSchema.parse(input),
+        );
+        if (ready !== undefined && !ready.ok)
+          return server.delivery.toCallToolResult(ready, contract);
         const admitted = await options.withAdmittedAnalysis(
           contract.name,
           context.mcpReq.signal,
@@ -95,7 +111,9 @@ export const registerEvidenceTools = (
               execution.value.provider,
               {
                 operation: contract.name,
-                parameters,
+                parameters:
+                  options.parametersForEvidence?.(contract.name, parameters) ??
+                  parameters,
                 result: execution.value.result,
                 ...(execution.value.analysisProfile === undefined
                   ? {}

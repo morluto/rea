@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+
+import { moduleResolutionModeForJavaScriptReference } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 import { setImmediate } from "node:timers/promises";
 
-import { resolveJavaScriptSourceMapReference } from "../../domain/javascript/javascriptSourceMapPaths.js";
+import { resolveJavaScriptSourceMapReferences } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../../domain/javascript/javascriptStaticAnalysis.js";
 import {
   analyzeParsedJavaScriptSemanticsSteps,
@@ -380,7 +382,13 @@ function* analyzeArtifactFileSteps<
   yield;
   const semantics =
     analysis.parse_status === "complete" || analysis.parse_status === "partial"
-      ? yield* analyzeParsedJavaScriptSemanticsSteps(parsed)
+      ? yield* analyzeParsedJavaScriptSemanticsSteps(
+          parsed,
+          moduleResolutionModeForJavaScriptReference(
+            file.path,
+            "static-import",
+          ),
+        )
       : null;
   const projected =
     semantics === null
@@ -556,21 +564,27 @@ const collectSourceMapOriginals = (
         "Source map sourceRoot must be a string or null.",
       );
     const root = typeof map.sourceRoot === "string" ? map.sourceRoot : null;
-    for (const [index, raw] of names.entries()) {
+    const sourceNames: (string | null)[] = [];
+    for (const raw of names) {
       if (raw !== null && typeof raw !== "string")
         return invalidSourceMap(
           file,
           "Source map contains a non-string source name.",
         );
+      sourceNames.push(raw);
+    }
+    const references = resolveJavaScriptSourceMapReferences(
+      sourceNames,
+      root,
+      file.path,
+    );
+    for (const [index, reference] of references.entries()) {
       const rawContent = Array.isArray(contents) ? contents[index] : undefined;
       const content = typeof rawContent === "string" ? rawContent : null;
       sources.push({
         source_index: index,
         declaration_index: declarationIndex++,
-        reference:
-          typeof raw === "string"
-            ? resolveJavaScriptSourceMapReference(raw, root, file.path)
-            : null,
+        reference,
         content,
         content_sha256: content === null ? null : sha256(content),
       });

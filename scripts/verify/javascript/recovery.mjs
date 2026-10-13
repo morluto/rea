@@ -41,9 +41,10 @@ const cli = async (...args) => {
   return parseEvidence(JSON.parse(stdout));
 };
 const call = async (name, args) => {
-  const result = await client.callTool({ name, arguments: args }, undefined, {
-    timeout: 150000,
-  });
+  const result = await client.callTool(
+    { name, arguments: args },
+    { timeout: 150000 },
+  );
   assert.notEqual(result.isError, true, mcpTextValue(result));
   return parseEvidence(JSON.parse(mcpTextValue(result)));
 };

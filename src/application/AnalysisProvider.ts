@@ -54,6 +54,15 @@ export interface AnalysisExecution {
   readonly subject: EvidenceSubjectTarget | null;
 }
 
+interface CreateAnalysisExecutionOptions {
+  readonly rawResult?: unknown;
+  readonly analysisProfile?: AnalysisProfileCommitment;
+  readonly limitations?: readonly string[];
+  readonly relationshipCoverage?: RelationshipCoverage;
+  readonly locations?: readonly EvidenceLocation[];
+  readonly subject?: EvidenceSubjectTarget;
+}
+
 /**
  * Build a validated atomic provider observation at an adapter boundary.
  *
@@ -61,38 +70,43 @@ export interface AnalysisExecution {
  * `result`. Omitting it records `null` rather than a second complete copy of
  * the normalized result in every Evidence record and tool response.
  */
-export const createAnalysisExecution = (
+export function createAnalysisExecution<Subject extends EvidenceSubjectTarget>(
   result: unknown,
   provider: ProviderIdentity,
-  options: {
-    readonly rawResult?: unknown;
-    readonly analysisProfile?: AnalysisProfileCommitment;
-    readonly limitations?: readonly string[];
-    readonly relationshipCoverage?: RelationshipCoverage;
-    readonly locations?: readonly EvidenceLocation[];
-    readonly subject?: EvidenceSubjectTarget;
-  } = {},
-): AnalysisExecution => ({
-  result: jsonValueSchema.parse(result),
-  rawResult:
-    options.rawResult === undefined
-      ? null
-      : jsonValueSchema.parse(options.rawResult),
-  provider,
-  ...(options.analysisProfile === undefined
-    ? {}
-    : { analysisProfile: structuredClone(options.analysisProfile) }),
-  limitations: [...(options.limitations ?? [])],
-  ...(options.relationshipCoverage === undefined
-    ? {}
-    : {
-        relationshipCoverage: relationshipCoverageSchema.parse(
-          options.relationshipCoverage,
-        ),
-      }),
-  locations: [...(options.locations ?? [])],
-  subject: options.subject ?? null,
-});
+  options: CreateAnalysisExecutionOptions & { readonly subject: Subject },
+): Omit<AnalysisExecution, "subject"> & { readonly subject: Subject };
+export function createAnalysisExecution(
+  result: unknown,
+  provider: ProviderIdentity,
+  options?: CreateAnalysisExecutionOptions,
+): AnalysisExecution;
+export function createAnalysisExecution(
+  result: unknown,
+  provider: ProviderIdentity,
+  options: CreateAnalysisExecutionOptions = {},
+): AnalysisExecution {
+  return {
+    result: jsonValueSchema.parse(result),
+    rawResult:
+      options.rawResult === undefined
+        ? null
+        : jsonValueSchema.parse(options.rawResult),
+    provider,
+    ...(options.analysisProfile === undefined
+      ? {}
+      : { analysisProfile: structuredClone(options.analysisProfile) }),
+    limitations: [...(options.limitations ?? [])],
+    ...(options.relationshipCoverage === undefined
+      ? {}
+      : {
+          relationshipCoverage: relationshipCoverageSchema.parse(
+            options.relationshipCoverage,
+          ),
+        }),
+    locations: [...(options.locations ?? [])],
+    subject: options.subject ?? null,
+  };
+}
 
 /** Provider-neutral application capability for one analysis operation. */
 export interface AnalysisOperationPort {

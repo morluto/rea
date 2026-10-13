@@ -4,7 +4,7 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import { historicalCaptureFailure } from "./CaptureFailures.js";
-import { HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "./CaptureRelease.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
@@ -118,7 +118,7 @@ it.each([
       },
     });
     // The enforced limit is reported only where Bun runs on Windows.
-    if (HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
+    if (NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES === null)
       expect(JSON.stringify(projected)).not.toContain(
         "process_memory_limit_bytes",
       );
@@ -126,12 +126,12 @@ it.each([
       expect(projected).toMatchObject({
         details: {
           reported_limits: {
-            process_memory_limit_bytes: HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+            process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
           },
         },
         remediation: {
           action: expect.stringContaining(
-            `${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
+            `${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes`,
           ),
         },
       });

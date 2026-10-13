@@ -16,6 +16,7 @@ import {
   isProcessEvidenceProvider,
 } from "./process/processEvidenceProvider.js";
 import { functionDossierSchema } from "./hopperValues.js";
+import { functionCallCoverageLimitations } from "./functionCallCoverage.js";
 import {
   deriveProcessComparisonStatus,
   PROCESS_COMPARISON_DIMENSIONS,
@@ -57,6 +58,11 @@ const providers = {
     name: "REA artifact comparison",
   },
 } as const;
+
+interface FunctionSourceFacts {
+  readonly evidence_id: string;
+  readonly callCoverageLimitations: readonly string[];
+}
 
 const acceptsPredicate = (
   expected: readonly string[],
@@ -137,14 +143,19 @@ const evaluateClaim = (
       throw new TypeError(`Missing source Evidence ${id}`);
     return source;
   });
-  validateSourceKinds(claim, sources);
+  const functionSourceFacts = readValidatedSourceFacts(claim, sources);
   const observed = observedStatus(claim, comparison);
-  const limitations = authorityLimitations(claim, sources, sides);
-  const relevantUnknowns = reconstructionClaimUnknowns(
+  const limitations = [
+    ...authorityLimitations(claim, sources, sides),
+    ...sourceCallCoverageLimitations(claim, functionSourceFacts, observed),
+  ];
+  const relatedUnknowns = reconstructionClaimUnknowns(
     heads,
     comparison.evidence_id,
     allSourceIds,
+    claim.dimension,
   );
+  const relevantUnknowns = relatedUnknowns;
   const status = classify(observed, limitations, relevantUnknowns);
   const displayedUnknowns = relevantUnknowns;
   return reconstructionClaimResultSchema.parse({
@@ -168,10 +179,10 @@ const evaluateClaim = (
   });
 };
 
-const validateSourceKinds = (
+const readValidatedSourceFacts = (
   claim: Claim,
   sources: readonly Evidence[],
-): void => {
+): readonly FunctionSourceFacts[] => {
   const expected =
     claim.kind === "behavioral"
       ? ["capture_process_scenario", "rea.process-capture"]
@@ -188,13 +199,22 @@ const validateSourceKinds = (
     throw new TypeError(
       "Comparison source Evidence has an unexpected observation type",
     );
+  const functionSources: FunctionSourceFacts[] = [];
   for (const source of sources) {
     if (claim.kind === "behavioral")
       parseProcessCapture(source.normalized_result);
-    else if (claim.kind === "structural-function")
-      functionDossierSchema.parse(source.normalized_result);
-    else artifactInventoryResultSchema.parse(source.normalized_result);
+    else if (claim.kind === "structural-function") {
+      const dossier = functionDossierSchema.parse(source.normalized_result);
+      functionSources.push({
+        evidence_id: source.evidence_id,
+        callCoverageLimitations: functionCallCoverageLimitations(
+          source.relationship_coverage,
+          dossier,
+        ),
+      });
+    } else artifactInventoryResultSchema.parse(source.normalized_result);
   }
+  return functionSources;
 };
 
 const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
@@ -315,6 +335,22 @@ const authorityLimitations = (
       );
   }
   return limitations;
+};
+
+const sourceCallCoverageLimitations = (
+  claim: Claim,
+  functionSources: readonly FunctionSourceFacts[],
+  observed: ObservedStatus,
+): string[] => {
+  if (
+    claim.kind !== "structural-function" ||
+    (claim.dimension !== "calls" &&
+      !(claim.dimension === "overall" && observed !== "changed"))
+  )
+    return [];
+  return functionSources.flatMap(({ evidence_id, callCoverageLimitations }) =>
+    callCoverageLimitations.map((reason) => `Source ${evidence_id}: ${reason}`),
+  );
 };
 
 const classify = (

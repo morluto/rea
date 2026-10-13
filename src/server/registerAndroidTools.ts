@@ -1,6 +1,8 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
+import { inspectAndroidPackage } from "../application/android/AndroidPackageInspection.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import { summarizeRetainedAndroidSearch } from "../application/android/AndroidSearchEvidenceSummary.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import type { Logger } from "pino";
@@ -18,6 +20,7 @@ export const registerAndroidTools = (
   logger: Logger,
   recordEvidence?: EvidenceWriter["recordEvidence"],
   withAdmittedAnalysis?: WithAdmittedAnalysis,
+  evidenceById?: EvidenceLookup,
 ): void => {
   const handler = createContractToolHandler(
     server,
@@ -44,10 +47,26 @@ export const registerAndroidTools = (
     withAdmittedAnalysis,
   );
   const packageContract = toolContract("inspect_android_package");
+  const packageService: ContractToolService<"inspect_android_package"> = {
+    execute: (_operation, input, options) =>
+      inspectAndroidPackage(
+        service,
+        input,
+        { recordEvidence, evidenceById },
+        options,
+      ),
+  };
+  const packageHandler = createContractToolHandler(
+    server,
+    packageService,
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
   server.registerTool(
     packageContract.name,
     toolRegistrationOptions(packageContract),
-    handler(packageContract),
+    packageHandler(packageContract),
   );
   const searchContract = toolContract("search_android_classes");
   server.registerTool(

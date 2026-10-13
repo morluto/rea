@@ -15,6 +15,7 @@ export const SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS = [
   ["source-map-original-path", 70],
   ["current-path-exact", 60],
   ["current-path-suffix", 40],
+  ["unicode-equivalent-path", 20],
   ["basename-match", 20],
   ["language-extension", 5],
 ] as const;
@@ -24,6 +25,7 @@ const sourceToBundleSignalKindSchema = z.enum([
   "source-map-original-path",
   "current-path-exact",
   "current-path-suffix",
+  "unicode-equivalent-path",
   "basename-match",
   "language-extension",
 ]);

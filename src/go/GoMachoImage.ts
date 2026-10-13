@@ -63,7 +63,11 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
       const maxProtection = reader.u32(offset + (wide ? 56 : 40));
       const protection = reader.u32(offset + (wide ? 60 : 44));
       const sectionCount = reader.u32(offset + (wide ? 64 : 48));
-      if (fileSize > memorySize || address + memorySize > 1n << BigInt(bits))
+      const unmapped = memorySize === 0n && protection === 0;
+      if (
+        (!unmapped && fileSize > memorySize) ||
+        address + memorySize > 1n << BigInt(bits)
+      )
         throw new GoBinaryFormatFailure(
           "malformed",
           "Mach-O segment addresses or sizes are invalid",
@@ -73,16 +77,19 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
           "malformed",
           "Mach-O section table exceeds its segment command",
         );
-      const mapping = {
-        ...(fileSize === 0n
-          ? { offset: 0, size: 0 }
-          : reader.fileRange(fileOffset, fileSize, "Mach-O segment")),
-        address,
-      };
+      const fileRange =
+        fileSize === 0n
+          ? undefined
+          : reader.fileRange(fileOffset, fileSize, "Mach-O segment");
+      const mapping =
+        unmapped || fileRange === undefined
+          ? undefined
+          : { ...fileRange, address };
       const name = fixedName(
         reader.range(offset + 8, 16, "Mach-O segment name"),
       );
-      if (mapping.size !== 0 && name !== "__PAGEZERO") mappings.push(mapping);
+      if (mapping !== undefined && name !== "__PAGEZERO")
+        mappings.push(mapping);
       if (memorySize > fileSize && name !== "__PAGEZERO")
         zeroFills.push({
           address: address + fileSize,
@@ -90,8 +97,8 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
         });
       if (
         fallback === null &&
+        mapping !== undefined &&
         address !== 0n &&
-        mapping.size !== 0 &&
         protection === 3 &&
         maxProtection === 3
       )
@@ -103,6 +110,16 @@ export const readGoMachoImage = (bytes: Buffer): GoBinaryContainer => {
           "__go_buildinfo"
         )
           continue;
+        if (unmapped)
+          throw new GoBinaryFormatFailure(
+            "malformed",
+            "Mach-O build-info section is in an unmapped segment",
+          );
+        if (mapping === undefined)
+          throw new GoBinaryFormatFailure(
+            "malformed",
+            "Mach-O build-info section is not file mapped",
+          );
         const sectionFlags = reader.u32(section + (wide ? 64 : 56));
         if ([1, 0xc, 0x12].includes(sectionFlags & 0xff))
           throw new GoBinaryFormatFailure(

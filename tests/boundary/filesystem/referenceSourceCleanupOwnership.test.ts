@@ -3,6 +3,7 @@ import {
   open as fsOpen,
   opendir as fsOpendir,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -99,8 +100,18 @@ it("preserves admission EIO and retains an invalidated failed-close owner", asyn
   expect(closeCalls).toBe(1);
 });
 
-it("retains partial file bytes and retries the same live owner before new work", async () => {
-  const root = await createTestTempDirectory("rea-reference-file-owner-");
+const assertSourceCleanupRetry = async (enclosingGit: boolean) => {
+  const workspace = await createTestTempDirectory("rea-reference-file-owner-");
+  const root = join(workspace, "source");
+  await mkdir(root);
+  if (enclosingGit) {
+    const gitDirectory = join(workspace, ".git");
+    await mkdir(gitDirectory);
+    await writeFile(
+      join(gitDirectory, "HEAD"),
+      "0123456789abcdef0123456789abcdef01234567\n",
+    );
+  }
   const file = join(root, "source.ts");
   const bytes = "export const answer = 'retained';\n";
   await writeFile(file, bytes);
@@ -113,10 +124,13 @@ it("retains partial file bytes and retries the same live owner before new work",
   });
   let closeCalls = 0;
   let openCalls = 0;
+  let sourceHandle: FileHandle | undefined;
 
   openMock.mockImplementation(async (...args) => {
+    if (args[0] !== file) return actual.open(...args);
     openCalls += 1;
     const handle = await actual.open(...args);
+    sourceHandle = handle;
     const close = handle.close.bind(handle);
     vi.spyOn(handle, "close").mockImplementation(async () => {
       closeCalls += 1;
@@ -157,6 +171,7 @@ it("retains partial file bytes and retries the same live owner before new work",
   });
   expect(openCalls).toBe(1);
   expect(closeCalls).toBe(1);
+  expect(sourceHandle?.fd).toBeGreaterThanOrEqual(0);
 
   const blocked = await readReferenceSource(root, resources);
   expect(blocked).toMatchObject({
@@ -168,12 +183,19 @@ it("retains partial file bytes and retries the same live owner before new work",
   });
   expect(openCalls).toBe(1);
   expect(closeCalls).toBe(2);
+  expect(sourceHandle?.fd).toBeGreaterThanOrEqual(0);
 
   allowClose = true;
   await resources.close();
   expect(openCalls).toBe(1);
   expect(closeCalls).toBe(3);
-});
+  expect(sourceHandle?.fd).toBe(-1);
+};
+
+it.each([false, true])(
+  "retains partial file bytes and retries the same live owner before new work (enclosing Git repository: %s)",
+  assertSourceCleanupRetry,
+);
 
 it("preserves a directory read failure when closing that directory also fails", async () => {
   const root = await createTestTempDirectory(

@@ -1,4 +1,4 @@
-import { request } from "node:http";
+import { request, type ClientRequest, type IncomingMessage } from "node:http";
 
 import { z } from "zod";
 
@@ -7,6 +7,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
 const endpointVersionSchema = z.object({
@@ -27,6 +28,17 @@ const endpointTargetSchema = z.object({
   webSocketDebuggerUrl: z.string().min(1).optional(),
 });
 const endpointTargetsSchema = z.array(endpointTargetSchema);
+
+/** Per-response bounds for loopback CDP discovery documents. */
+const CDP_DISCOVERY_RESPONSE_LIMITS = {
+  bytes: 8 * 1024 * 1024,
+  timeoutMs: 10_000,
+} as const;
+
+interface CdpDiscoveryResponseLimits {
+  readonly bytes: number;
+  readonly timeoutMs: number;
+}
 
 /** Validated direct CDP WebSocket bound to one discovered page target. */
 interface CdpPageWebSocketEndpoint {
@@ -230,8 +242,7 @@ const safeCdpWebSocketEndpoint = (
     parsed.port !== trustedEndpoint.port ||
     parsed.username !== "" ||
     parsed.password !== "" ||
-    parsed.search !== "" ||
-    parsed.hash !== "" ||
+    urlDeclaresQueryOrFragment(parsed) ||
     path === undefined
   )
     throw new BrowserObservationError(operation, "invalid_endpoint_response");
@@ -291,29 +302,71 @@ export const readCdpJson = async (
   url: URL,
   operation: BrowserObservationOperation,
   signal?: AbortSignal,
+  limits: CdpDiscoveryResponseLimits = CDP_DISCOVERY_RESPONSE_LIMITS,
 ): Promise<unknown> =>
   await new Promise((resolve, reject) => {
     if (signal?.aborted === true) {
       reject(new AnalysisCancelledError(operation));
       return;
     }
-    const request_ = request(
+    let response: IncomingMessage | undefined;
+    let request_: ClientRequest | undefined;
+    let timer: NodeJS.Timeout | undefined;
+    let settled = false;
+    const removeAbort = (): void =>
+      signal?.removeEventListener("abort", onAbort);
+    const finish = (error?: Error, value?: unknown): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      removeAbort();
+      if (error !== undefined) {
+        reject(error);
+        response?.destroy();
+        request_?.destroy();
+      } else resolve(value);
+    };
+    const onAbort = (): void => {
+      if (signal?.aborted === true)
+        finish(new AnalysisCancelledError(operation));
+    };
+    request_ = request(
       url,
-      { method: "GET", signal, headers: { Accept: "application/json" } },
-      (response) => {
-        if (response.statusCode !== 200) {
-          response.resume();
-          reject(
+      { method: "GET", headers: { Accept: "application/json" } },
+      (received) => {
+        response = received;
+        if (settled) {
+          received.destroy();
+          return;
+        }
+        if (received.statusCode !== 200) {
+          finish(
             new BrowserObservationError(operation, "invalid_endpoint_response"),
           );
           return;
         }
         const chunks: Buffer[] = [];
-        response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.on("end", () => {
-          const parsed = safeParseJson(Buffer.concat(chunks).toString("utf8"));
+        let bytes = 0;
+        received.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          bytes += chunk.byteLength;
+          if (bytes > limits.bytes) {
+            finish(
+              new BrowserObservationError(operation, "payload_limit", {
+                detail: `CDP discovery response exceeds its ${String(limits.bytes)} byte limit.`,
+              }),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
+        received.on("end", () => {
+          if (settled) return;
+          const parsed = safeParseJson(
+            Buffer.concat(chunks, bytes).toString("utf8"),
+          );
           if (!parsed.ok) {
-            reject(
+            finish(
               new BrowserObservationError(
                 operation,
                 "invalid_endpoint_response",
@@ -322,15 +375,41 @@ export const readCdpJson = async (
             );
             return;
           }
-          resolve(parsed.value);
+          finish(undefined, parsed.value);
         });
-        response.on("error", (cause: unknown) =>
-          reject(endpointFailure(cause, operation, signal)),
+        received.on("aborted", () =>
+          finish(
+            new BrowserObservationError(operation, "invalid_endpoint_response"),
+          ),
+        );
+        received.on("close", () => {
+          if (!settled && !received.complete)
+            finish(
+              new BrowserObservationError(
+                operation,
+                "invalid_endpoint_response",
+              ),
+            );
+        });
+        received.on("error", (cause: unknown) =>
+          finish(endpointFailure(cause, operation, signal)),
         );
       },
     );
     request_.on("error", (cause: unknown) =>
-      reject(endpointFailure(cause, operation, signal)),
+      finish(endpointFailure(cause, operation, signal)),
+    );
+    signal?.addEventListener("abort", onAbort, { once: true });
+    onAbort();
+    if (settled) return;
+    timer = setTimeout(
+      () =>
+        finish(
+          new BrowserObservationError(operation, "timeout", {
+            detail: `CDP discovery response exceeded its ${String(limits.timeoutMs)} ms deadline.`,
+          }),
+        ),
+      limits.timeoutMs,
     );
     request_.end();
   });

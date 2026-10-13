@@ -93,7 +93,7 @@ def project_record(state, secrets):
             safe_bytes, credential_url = transport_value(value, path, transport_url)
             content_base64 = base64.b64encode(value).decode("ascii")
             digest = hashlib.sha256(value).hexdigest()
-            hidden = any(secret in value or secret in safe_bytes for secret in byte_secrets) or any(secret in content_base64 or secret in digest for secret in secrets)
+            hidden = any(secret in value or secret in safe_bytes for secret in byte_secrets) or any(secret in content_base64 or secret in digest or secret in str(len(value)) for secret in secrets)
             safe_text = None
             try:
                 safe_text = safe_bytes.decode("utf-8", errors="strict")

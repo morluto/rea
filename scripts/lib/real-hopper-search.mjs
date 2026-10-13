@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
 
+const fixtureSymbolPrefix = process.platform === "darwin" ? "_" : "";
+
 /** Exercise literal/regex search, Unicode identities and cache invalidation in Hopper. */
 export async function verifyHopperSearch(call, invalid, procedure) {
   const address = procedure.address;
   const original = await call("address_name", { address });
+  let stringCoverage;
   try {
     await verifySymbolNames(call, invalid, address);
-    await verifySearchModes(call, address);
+    stringCoverage = await verifySearchModes(call, address);
   } finally {
     await call("set_address_name", { address, name: original });
   }
@@ -26,7 +29,7 @@ export async function verifyHopperSearch(call, invalid, procedure) {
     symbolUtf16LimitValidatedBeforeMutation: true,
     regexAndCaseModes: true,
     annotationCacheInvalidation: true,
-    escapedUtf8AndByteStrings: true,
+    stringCoverage,
   };
 }
 
@@ -103,11 +106,26 @@ async function verifySearchModes(call, address) {
     [{ address, value: "REA_Search_Upper" }],
   );
   const strings = await call("list_strings");
-  const long = "REA_LONG_LITERAL_" + "x".repeat(4096) + "needle";
-  const longItem = strings.find((item) =>
-    item.value.startsWith("REA_LONG_LITERAL_"),
+  const linux = process.platform === "linux";
+  const fullLiteral = "REA_LONG_LITERAL_" + "x".repeat(4096) + "needle";
+  // Recognition is a provider/loader capability, not an adapter guarantee.
+  // Always retain the original size in raw-byte coverage; Linux additionally
+  // requires an extent observed to produce native fragmented string objects.
+  const fullBytes = Buffer.from(fullLiteral + "\0");
+  const raw = await call("read_bytes", {
+    address: `${fixtureSymbolPrefix}rea_long_literal`,
+    length: fullBytes.length,
+  });
+  assert.equal(raw.complete, true);
+  assert.equal(raw.bytes_hex, fullBytes.toString("hex"));
+  const long = linux
+    ? "REA_FRAGMENTED_LITERAL_" + "x".repeat(512) + "fragment_tail"
+    : fullLiteral;
+  const longItem = strings.find(
+    (item) => long.startsWith(item.value) && item.value.startsWith("REA_"),
   );
   assert.ok(longItem, "fixture omitted its real long literal");
+  if (!linux) assert.equal(longItem.address, raw.address);
   assert.ok(long.startsWith(longItem.value));
   assert.ok(longItem.provider_value.endsWith("…"));
   assert.equal(longItem.string.termination, "missing");
@@ -158,7 +176,7 @@ async function verifySearchModes(call, address) {
   }
   assert.deepEqual(
     await call("search_strings", {
-      pattern: "needle",
+      pattern: linux ? "fragment_tail" : "needle",
       mode: "literal",
       case_sensitive: true,
     }),
@@ -176,36 +194,122 @@ async function verifySearchModes(call, address) {
     }),
     expected,
   );
-  await verifyHopperStringObjects(call, [
-    { value: "REA_UTF8_é_😀", encoding: "utf-8" },
-    { value: 'REA_ESCAPED_"\\line\nend\t\r', encoding: "utf-8" },
-    { value: "REA_LITERAL_BACKSLASH_\\n", encoding: "utf-8" },
-    { value: "REA_LITERAL_…", encoding: "utf-8" },
-    { value: "REA_LATIN1_ÿ", encoding: "latin-1" },
-  ]);
+  const objects = await verifyHopperStringObjects(
+    call,
+    [
+      {
+        value: "REA_UTF8_é_😀",
+        encoding: "utf-8",
+        symbol: `${fixtureSymbolPrefix}rea_utf8_literal`,
+        recognitionOptional: linux,
+      },
+      { value: 'REA_ESCAPED_"\\line\nend\t\r', encoding: "utf-8" },
+      { value: "REA_LITERAL_BACKSLASH_\\n", encoding: "utf-8" },
+      {
+        value: "REA_LITERAL_…",
+        encoding: "utf-8",
+        symbol: `${fixtureSymbolPrefix}rea_ellipsis_literal`,
+        recognitionOptional: linux,
+      },
+      {
+        value: "REA_LATIN1_ÿ",
+        encoding: "latin-1",
+        symbol: `${fixtureSymbolPrefix}rea_latin1_literal`,
+        recognitionOptional: linux,
+      },
+    ],
+    strings,
+  );
+  return {
+    fullLiteralSourceBytes: fullBytes.length,
+    fragmentedLiteralSourceBytes: Buffer.byteLength(long),
+    fullLiteralRecognition: {
+      address: raw.address,
+      state: strings.some((item) => item.address === raw.address)
+        ? "observed"
+        : "not_observed",
+      // Linux validates the original through raw bytes; its required decoded
+      // fragment/dossier checks exercise the separate supported-size literal.
+      decodedObject: linux ? "unverified" : "verified",
+    },
+    ...objects,
+  };
 }
 
 /** Compare native string identities and values with the source fixture's bytes. */
-export async function verifyHopperStringObjects(call, expectations) {
-  const strings = await call("list_strings");
-  for (const { value, encoding } of expectations) {
-    const item = strings.find((candidate) => candidate.value === value);
-    assert.ok(
-      item,
-      `Hopper omitted the decoded string ${JSON.stringify(value)}`,
-    );
-    assert.equal(item.string.encoding, encoding);
-    assert.equal(item.string.encoding_status, "inferred");
-    assert.equal(item.string.termination, "present_or_not_required");
+export async function verifyHopperStringObjects(
+  call,
+  expectations,
+  inventory = null,
+) {
+  // Reuse only the caller's inventory for this unchanged document, never live
+  // state from an earlier session. Address-filter and search checks remain real.
+  const strings = inventory ?? (await call("list_strings"));
+  const recognition = [];
+  for (const {
+    value,
+    encoding,
+    symbol,
+    recognitionOptional = false,
+  } of expectations) {
     const expectedBytes = Buffer.from(
       value + "\0",
       encoding.replaceAll("-", ""),
     );
-    assert.equal(item.string.byte_length, expectedBytes.length);
-    const bytes = await call("read_bytes", {
+    let sourceBytes;
+    if (symbol !== undefined) {
+      const raw = await call("read_bytes", {
+        address: symbol,
+        length: expectedBytes.length,
+      });
+      sourceBytes = raw;
+      assert.equal(raw.complete, true);
+      assert.equal(raw.bytes_hex, expectedBytes.toString("hex"));
+    }
+    const item = strings.find((candidate) =>
+      sourceBytes === undefined
+        ? candidate.value === value
+        : candidate.address === sourceBytes.address,
+    );
+    if (item === undefined && recognitionOptional) {
+      assert.ok(
+        symbol,
+        "optional recognition requires independent source-byte coverage",
+      );
+      recognition.push({
+        value,
+        address: sourceBytes.address,
+        state: "not_observed",
+        decodedObject: "unverified",
+      });
+      continue;
+    }
+    assert.ok(
+      item,
+      `Hopper omitted the decoded string ${JSON.stringify(value)}`,
+    );
+    assert.equal(
+      item.value,
+      value,
+      "native string decoding changed the source value",
+    );
+    recognition.push({
+      value,
       address: item.address,
-      length: expectedBytes.length,
+      state: "observed",
+      decodedObject: "verified",
     });
+    assert.equal(item.string.encoding, encoding);
+    assert.equal(item.string.encoding_status, "inferred");
+    assert.equal(item.string.termination, "present_or_not_required");
+    assert.equal(item.string.byte_length, expectedBytes.length);
+    const bytes =
+      sourceBytes ??
+      (await call("read_bytes", {
+        address: item.address,
+        length: expectedBytes.length,
+      }));
+    assert.equal(bytes.complete, true);
     assert.equal(bytes.bytes_hex, expectedBytes.toString("hex"));
     assert.deepEqual(await call("list_strings", { address: item.address }), [
       item,
@@ -225,7 +329,7 @@ export async function verifyHopperStringObjects(call, expectations) {
   );
   return {
     sourceBytesVerified: true,
-    inferredEncodingReported: true,
+    recognition,
     displayEscapesExcludedFromMatching: true,
   };
 }

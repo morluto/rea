@@ -15,6 +15,60 @@ import {
 } from "../../../support/javascriptApplicationFixture.js";
 
 describe("TypeScript source module loader semantics", () => {
+  it("keeps whole type-only declarations out of runtime module relationships", async () => {
+    const root = await createTestTempDirectory("rea-type-module-links-");
+    await writeFixtureFiles(root, {
+      "main.ts": `
+        import type { Whole } from "./whole";
+        export type { Remote } from "./remote";
+        import { type Inline } from "./inline";
+        export type LocalType = string;
+        export interface LocalInterface { value: string }
+      `,
+      "whole.ts": "export interface Whole { value: string }",
+      "remote.ts": "export interface Remote { value: string }",
+      "inline.ts": "export interface Inline { value: string }",
+    });
+
+    const { graph } = await reconstructJavaScriptFixture(root);
+    const source = findSourceModule(graph, "main.ts");
+    const sourceProperties = source?.observations.find(
+      ({ properties }) => properties.semantic_role === "source-module",
+    )?.properties;
+
+    expect(sourceProperties).toMatchObject({
+      import_relationships: 0,
+      type_relationships: 5,
+      export_names: [],
+      type_export_names: ["LocalInterface", "LocalType", "Remote"],
+    });
+    expect(
+      graph.edges.filter(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          ["./whole", "./remote"].includes(String(properties.specifier)),
+      ),
+    ).toEqual([]);
+    expect(
+      graph.edges.find(
+        ({ source_node_id, relation, properties }) =>
+          source_node_id === source?.node_id &&
+          relation === "imports" &&
+          properties.kind === "static-import" &&
+          properties.specifier === "./inline",
+      ),
+    ).toBeDefined();
+    expect(
+      source?.observations
+        .flatMap(({ evidence }) => evidence.limitations)
+        .join(" "),
+    ).toContain(
+      "inline type-only imports or re-exports may preserve a module side-effect dependency",
+    );
+    expect(findExportNode(graph, "main.ts", "LocalType")).toBeUndefined();
+    expect(findExportNode(graph, "main.ts", "LocalInterface")).toBeUndefined();
+  });
+
   it("uses emitted TypeScript loader semantics without changing dynamic imports", async () => {
     const root = await createTestTempDirectory("rea-cts-module-loader-");
     await writeFixtureFiles(root, {
@@ -98,7 +152,7 @@ describe("TypeScript source module loader semantics", () => {
   });
 });
 
-describe("CommonJS and ESM module relationships", () => {
+describe("JavaScript module relationships", () => {
   it("composes bindings, re-exports, dynamic imports, and JSON modules", async () => {
     const root = await moduleFixture();
     const first = await reconstructJavaScriptFixture(root);
@@ -231,6 +285,122 @@ describe("CommonJS and ESM module relationships", () => {
       truncated: false,
     });
     expect(graph.limitations.join(" ")).toMatch(/incomplete/iu);
+  });
+});
+
+describe("Compiler-dependent TypeScript resolution", () => {
+  it("retains only compiler-independent targets for .ts static imports", async () => {
+    const root = await createTestTempDirectory("rea-ts-conditional-loader-");
+    await writeFixtureFiles(root, {
+      "package.json": '{"type":"commonjs"}',
+      "main.ts": `import { value as different } from "different";
+import { value as same } from "same";
+void different; void same;`,
+      "node_modules/different/package.json": JSON.stringify({
+        exports: {
+          ".": {
+            import: "./import.mjs",
+            require: "./require.cjs",
+          },
+        },
+      }),
+      "node_modules/different/import.mjs": "export const value = 'import';",
+      "node_modules/different/require.cjs": "exports.value = 'require';",
+      "node_modules/same/package.json": JSON.stringify({
+        exports: { ".": { import: "./shared.js", require: "./shared.js" } },
+      }),
+      "node_modules/same/shared.js": "export const value = 'shared';",
+    });
+
+    const { graph } = await reconstructJavaScriptFixture(root);
+    const different = findRelationshipEdge(graph, {
+      kind: "import",
+      specifier: "different",
+      localName: "different",
+    });
+    const same = findRelationshipEdge(graph, {
+      kind: "import",
+      specifier: "same",
+      localName: "same",
+      resolvedPath: "node_modules/same/shared.js",
+    });
+    const staticFinding = (specifier: string) =>
+      graph.edges.find(
+        ({ relation, properties }) =>
+          relation === "imports" &&
+          properties.kind === "static-import" &&
+          properties.specifier === specifier,
+      );
+
+    expect(
+      findSourceModule(graph, "main.ts")?.observations[0]?.properties,
+    ).toMatchObject({ module_format: "unknown" });
+    expect(different).toMatchObject({
+      properties: {
+        resolution_mode: "compiler-dependent",
+        resolution_status: "unavailable",
+        resolved_path: null,
+        conditional_resolutions: [
+          {
+            mode: "import",
+            resolution_status: "resolved",
+            resolved_path: "node_modules/different/import.mjs",
+          },
+          {
+            mode: "require",
+            resolution_status: "resolved",
+            resolved_path: "node_modules/different/require.cjs",
+          },
+        ],
+      },
+    });
+    expect(same).toMatchObject({
+      properties: {
+        resolution_mode: "compiler-dependent",
+        resolved_path: "node_modules/same/shared.js",
+        resolution_status: "resolved",
+      },
+      evidence: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            "compiler-dependent without retained compiler options",
+          ),
+        ]),
+      },
+    });
+    expect(staticFinding("different")).toMatchObject({
+      properties: {
+        resolution_mode: "compiler-dependent",
+        resolution_status: "unavailable",
+        conditional_resolutions: [
+          {
+            mode: "import",
+            resolved_path: "node_modules/different/import.mjs",
+          },
+          {
+            mode: "require",
+            resolved_path: "node_modules/different/require.cjs",
+          },
+        ],
+      },
+      evidence: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            "compiler-dependent without retained compiler options",
+          ),
+        ]),
+      },
+    });
+    expect(staticFinding("same")).toMatchObject({
+      properties: { resolved_path: "node_modules/same/shared.js" },
+      evidence: {
+        limitations: expect.arrayContaining([
+          expect.stringContaining(
+            "compiler-dependent without retained compiler options",
+          ),
+        ]),
+      },
+    });
   });
 });
 

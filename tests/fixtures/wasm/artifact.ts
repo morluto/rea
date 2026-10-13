@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import type { WasmArtifactExecution } from "../../../src/application/wasm/WasmArtifactPort.js";
 import type { WasmArtifact } from "../../../src/domain/wasm/wasmArtifact.js";
 /** Source-owned transport seam; upstream binaries are verified in a separate lane. */
 export const wasmArtifactFixture = (
@@ -42,8 +43,10 @@ export const wasmArtifactFixture = (
   network_fetch: "not-performed" as const,
   limitations: ["Source-owned transport seam."],
 });
-export const wasmArtifactExecution = (value = wasmArtifactFixture()) =>
-  createAnalysisExecution(
+export const wasmArtifactExecution = (
+  value = wasmArtifactFixture(),
+): WasmArtifactExecution => {
+  return createAnalysisExecution(
     value,
     { id: "fixture-wabt", name: "Source-owned WABT seam", version: "1" },
     {
@@ -55,3 +58,4 @@ export const wasmArtifactExecution = (value = wasmArtifactFixture()) =>
       limitations: value.limitations,
     },
   );
+};

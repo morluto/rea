@@ -122,11 +122,18 @@ it("advertises the complete currently available inventory with a session", async
 
   const listed = await client.listTools();
   const names = listed.tools.map((t) => t.name);
+  const sessionTool = listed.tools.find(
+    ({ name }) => name === "binary_session",
+  );
+  if (sessionTool === undefined)
+    throw new Error("Missing advertised binary_session tool");
+  // Validate this reply with its current advertised schema. The SDK otherwise
+  // builds output validators for the entire catalog on the first cached call.
   const status = structured(
-    await client.callTool({
-      name: "binary_session",
-      arguments: {},
-    }),
+    await client.callTool(
+      { name: "binary_session", arguments: {} },
+      { toolDefinition: sessionTool },
+    ),
   );
   const inventory = expandToolAvailability(
     toolContract("binary_session").outputSchema.parse(status).result

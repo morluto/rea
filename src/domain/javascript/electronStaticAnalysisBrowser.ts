@@ -9,6 +9,7 @@ import type {
   ElectronUtilityProcessFinding,
   ElectronWebPreference,
 } from "./electronStaticAnalysisTypes.js";
+import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposure.js";
 import {
   boundedExpression,
   collectContextBridgeMembers,
@@ -166,18 +167,19 @@ const inspectContextBridge = (
   context: JavaScriptFindingContext,
 ): void => {
   const path = electronCalleePath(node.callee, context);
-  const exposureMethod =
-    path?.length === 2 && path[0] === "contextBridge" ? path[1] : undefined;
-  const main = exposureMethod === "exposeInMainWorld";
-  const isolated = exposureMethod === "exposeInIsolatedWorld";
-  if (!main && !isolated) return;
-  const keyNode = argumentNode(node.arguments[isolated ? 1 : 0]);
-  const apiNode = argumentNode(node.arguments[isolated ? 2 : 1]);
+  const exposure =
+    path?.length === 2 && path[0] === "contextBridge"
+      ? contextBridgeExposureArguments(path[1] ?? "", node.arguments)
+      : undefined;
+  if (exposure === undefined) return;
+  const keyNode = argumentNode(exposure.apiKey);
+  const apiNode = argumentNode(exposure.api);
   const key = electronStaticValue(context.source, keyNode);
   const api = collectContextBridgeMembers(apiNode);
-  const worldId = isolated
-    ? electronStaticValue(context.source, argumentNode(node.arguments[0]))
-    : null;
+  const worldId =
+    exposure.worldId === null
+      ? null
+      : electronStaticValue(context.source, argumentNode(exposure.worldId));
   const unknown =
     (key.status === "dynamic" ? 1 : 0) +
     (worldId?.status === "dynamic" ? 1 : 0) +
@@ -191,7 +193,7 @@ const inspectContextBridge = (
         : { api_key: null, api_key_expression: null };
   const finding: ElectronContextBridgeFinding = {
     ...apiKey,
-    world: isolated ? "isolated" : "main",
+    world: exposure.world,
     world_id: worldId,
     api_status: api.status,
     members: api.members,
@@ -201,7 +203,7 @@ const inspectContextBridge = (
   };
   addLocatedFinding(context, {
     collection: context.accumulator.contextBridgeApis,
-    key: `context-bridge\0${isolated ? "isolated" : "main"}\0${finding.api_key ?? finding.api_key_expression ?? "[missing]"}`,
+    key: `context-bridge\0${exposure.world}\0${finding.api_key ?? finding.api_key_expression ?? "[missing]"}`,
     node,
     value: finding,
   });

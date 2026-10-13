@@ -6,6 +6,7 @@ import {
 } from "./javascriptSemanticSlots.js";
 
 import type {
+  JavaScriptSemanticBinding,
   JavaScriptSemanticCallable,
   JavaScriptSemanticModuleLink,
   JavaScriptSemanticReturnSite,
@@ -89,13 +90,18 @@ const semanticReturnSiteId = (
     String(location.end.column),
   ].join(":");
 
-/** Link exports to callables only when lexical resolution is unique and exact. */
+/** Finalize exported bindings only when lexical resolution is unique and exact. */
 export const resolveSemanticModuleCallables = (
   state: JavaScriptSemanticAnalysisState,
   callables: readonly JavaScriptSemanticCallable[],
+  bindings: readonly JavaScriptSemanticBinding[],
 ): JavaScriptSemanticModuleLink[] => {
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
+  const provenanceByBinding = new Map(
+    bindings.map(({ bindingId, provenance }) => [bindingId, provenance]),
+  );
   return state.moduleLinks.map((link) => {
+    if (link.kind === "type-import") return { ...link, callableId: null };
     // Named exports follow their lexical binding, including every assignment.
     // A declaration's ID or a callable's display name cannot prove that link.
     if (link.localName === null)
@@ -107,8 +113,17 @@ export const resolveSemanticModuleCallables = (
       binding === undefined
         ? []
         : callableIdsForBinding(binding, state, callableIds, new Set());
+    const provenance =
+      binding === undefined || link.specifier !== null
+        ? undefined
+        : provenanceByBinding.get(binding.bindingId);
+    const resolutionMode =
+      provenance?.status === "module"
+        ? provenance.origins[0].resolutionMode
+        : undefined;
     return {
       ...link,
+      ...(resolutionMode !== undefined ? { resolutionMode } : {}),
       callableId: resolved.length === 1 ? (resolved[0] ?? null) : null,
     };
   });

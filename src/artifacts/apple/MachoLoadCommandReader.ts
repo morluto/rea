@@ -3,9 +3,11 @@ import type {
   MachoImageFacts,
   MachoSlice,
 } from "../../domain/apple/dylibResolution.js";
+import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 import {
-  readFatSliceDeclarations,
-  validateFatSlice,
+  classifyFatContainerIdentity,
+  readFatContainerHeader,
+  validateFatSliceIdentity,
   type FatSliceDeclaration,
 } from "../../domain/apple/machoContainer.js";
 
@@ -14,13 +16,6 @@ export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
 
 /** Load commands larger than this are refused instead of buffered. */
 export const MAX_LOAD_COMMAND_BYTES = 16 * 1024 * 1024;
-/** Target opening accepts up to 128 FAT records; Java class files share the FAT magic. */
-const MAX_FAT_ARCHITECTURES = 128;
-/** CPU types of real Mach-O slices (x86, x86_64, arm, arm64, arm64_32, ppc, ppc64). */
-const KNOWN_CPU_TYPES: readonly number[] = [
-  7, 0x01000007, 12, 0x0100000c, 0x0200000c, 18, 0x01000012,
-];
-
 const MH_MAGIC = 0xfeedface;
 const MH_MAGIC_64 = 0xfeedfacf;
 const MH_CIGAM = 0xcefaedfe;
@@ -146,69 +141,41 @@ export const readMachoImage = async (
         : { status: "not-mach-o" };
     const view = viewOf(head);
     const magic = view.getUint32(0, false);
-    if ([FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(magic)) {
-      // FAT headers are big-endian; the swapped magics store them little-endian.
-      const littleEndian = magic === FAT_CIGAM || magic === FAT_CIGAM_64;
-      const count = view.getUint32(4, littleEndian);
-      const wide = magic === FAT_MAGIC_64 || magic === FAT_CIGAM_64;
-      // A Java class file's nonzero major version reads as the count, so an
-      // empty architecture table can only be a malformed universal header.
-      if (count === 0)
-        return {
-          status: "malformed",
-          reason: "FAT header declares no architectures",
-        };
-      if (count > MAX_FAT_ARCHITECTURES || 8 + count * (wide ? 32 : 20) > size)
-        return { status: "not-mach-o" };
-      const tableBytes = await readExact(
-        readAt,
-        8,
-        count * (wide ? 32 : 20),
-        "FAT table",
-      );
-      const declarations = readFatSliceDeclarations(tableBytes, {
-        count,
-        wide,
-        littleEndian,
-      });
-      if (declarations.status !== "parsed")
-        throw new MachoFormatIssue("malformed", declarations.reason);
-      // A Java class file's version fields read as a FAT count; its "table" names no CPU.
-      if (
-        !declarations.slices.some(({ cpuType }) =>
-          KNOWN_CPU_TYPES.includes(cpuType),
-        )
-      ) {
-        let hasMachOSliceHeader = false;
-        for (const declaration of declarations.slices) {
-          if (
-            validateFatSlice(
-              declaration,
-              size,
-              8 + count * (wide ? 32 : 20),
-            ) !== null
-          )
-            continue;
-          const bytes = await readAt(declaration.offset, 4);
-          if (bytes.byteLength < 4) continue;
-          const sliceMagic = viewOf(bytes).getUint32(0, false);
-          if (
-            [MH_MAGIC, MH_MAGIC_64, MH_CIGAM, MH_CIGAM_64].includes(sliceMagic)
-          ) {
-            hasMachOSliceHeader = true;
-            break;
-          }
-        }
-        if (!hasMachOSliceHeader) return { status: "not-mach-o" };
+    let header = readFatContainerHeader(head, size);
+    if (header.state !== "not-fat") {
+      if (header.state === "needs-data") {
+        header = readFatContainerHeader(
+          await readAt(0, header.requiredBytes),
+          size,
+        );
       }
+      if (header.state === "not-fat") return { status: "not-mach-o" };
+      if (header.state === "needs-data")
+        throw new MachoFormatIssue("malformed", "FAT table is truncated");
+      if (header.state === "malformed")
+        throw new MachoFormatIssue("malformed", header.reason);
+      let identity = classifyFatContainerIdentity(header, () => undefined);
+      if (identity.state === "needs-slice-header") {
+        const sliceHeaders = new Map<number, number | null>();
+        for (const offset of identity.offsets) {
+          const bytes = await readAt(offset, 4);
+          sliceHeaders.set(
+            offset,
+            bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false),
+          );
+        }
+        identity = classifyFatContainerIdentity(header, (offset) =>
+          sliceHeaders.get(offset),
+        );
+      }
+      if (identity.state === "not-mach-o") return { status: "not-mach-o" };
+      if (identity.state === "malformed")
+        throw new MachoFormatIssue(identity.category, identity.reason);
+      if (identity.state === "needs-slice-header")
+        return { status: "not-mach-o" };
       return {
         status: "parsed",
-        slices: await readFatSlices(
-          readAt,
-          size,
-          8 + count * (wide ? 32 : 20),
-          declarations.slices,
-        ),
+        slices: await readFatSlices(readAt, header.slices),
       };
     }
     if (magic === MH_CIGAM || magic === MH_CIGAM_64)
@@ -228,25 +195,17 @@ export const readMachoImage = async (
 
 const readFatSlices = async (
   readAt: ReadAt,
-  size: number,
-  tableEnd: number,
   declarations: readonly FatSliceDeclaration[],
 ): Promise<MachoSlice[]> => {
   const slices: MachoSlice[] = [];
   for (const declaration of declarations) {
     const { offset, size: length, cpuType, cpuSubtype } = declaration;
-    const rangeIssue = validateFatSlice(declaration, size, tableEnd);
-    if (rangeIssue !== null)
-      throw new MachoFormatIssue(
-        rangeIssue.includes("unsupported") ? "unsupported" : "malformed",
-        rangeIssue,
-      );
     const slice = await readSlice(readAt, offset, length, {
       fatCpuType: cpuType,
       fatCpuSubtype: cpuSubtype,
       alignmentExponent: declaration.alignmentExponent,
     });
-    const identityIssue = validateFatSlice(declaration, size, tableEnd, {
+    const identityIssue = validateFatSliceIdentity(declaration, {
       cpuType: slice.cpu_type,
       cpuSubtype: slice.cpu_subtype,
     });
@@ -524,13 +483,12 @@ const CPU_ARCH_ABI64 = 0x01000000;
 const CPU_ARCH_ABI64_32 = 0x02000000;
 const CPU_TYPE_X86 = 7;
 const CPU_TYPE_ARM = 12;
-const CPU_SUBTYPE_MASK = 0xff000000;
 const CPU_SUBTYPE_ARM64E = 2;
 const CPU_SUBTYPE_ARM64E_X1 = 12;
 const CPU_SUBTYPE_X86_64_H = 8;
 
 const architectureName = (cpuType: number, cpuSubtype: number): string => {
-  const subtype = cpuSubtype & ~CPU_SUBTYPE_MASK;
+  const subtype = machoCpuSubtypeBase(cpuSubtype);
   if (cpuType === (CPU_TYPE_ARM | CPU_ARCH_ABI64))
     // Both pointer-authentication subtypes belong to the arm64e family.
     return subtype === CPU_SUBTYPE_ARM64E || subtype === CPU_SUBTYPE_ARM64E_X1

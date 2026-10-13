@@ -50,6 +50,18 @@ it("does not infer a bootstrap from a function table without a matching loader",
   expect(analysis.bundler_registrations).toEqual([]);
 });
 
+it("does not treat a same-named shadow as the factory exports parameter", () => {
+  const analysis =
+    analyzeJavaScriptStaticSource(`globalThis.webpackChunkApp.push([[1], {
+    first(module, e, require) {
+      { const e = {}; require.d(e, { shadowed: () => 1 }); e.other = 2; }
+    }
+  }]);`);
+  expect(analysis.bundler_registrations[0]?.modules).toMatchObject([
+    { module_key: "first", exports: [] },
+  ]);
+});
+
 it("does not confuse a shadowed dispatch table with the outer module table", () => {
   const analysis = analyzeJavaScriptStaticSource(`(() => {
     const modules = { 17(module) { module.exports = require("electron"); } };

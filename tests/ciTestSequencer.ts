@@ -5,14 +5,13 @@ import { BaseSequencer, type TestSpecification } from "vitest/node";
 import { z } from "zod";
 
 const reportSchema = z.object({
+  version: z.literal(1),
   success: z.literal(true),
-  numFailedTests: z.literal(0),
-  testResults: z.array(z.unknown()),
+  files: z.array(z.unknown()),
 });
 const fileSchema = z.object({
   name: z.string(),
-  startTime: z.number(),
-  endTime: z.number(),
+  durationMs: z.number().finite().positive(),
 });
 
 export function parseTestDurations(
@@ -30,15 +29,12 @@ export function parseTestDurations(
   if (!report.success) return undefined;
 
   const durations = new Map<string, number>();
-  for (const value of report.data.testResults) {
+  for (const value of report.data.files) {
     const result = fileSchema.safeParse(value);
     if (!result.success) continue;
-    const { name, startTime, endTime } = result.data;
-    const duration = endTime - startTime;
+    const { name, durationMs } = result.data;
     const path = relative(root, resolve(root, name));
     if (
-      !Number.isFinite(duration) ||
-      duration <= 0 ||
       path === "" ||
       path === ".." ||
       path.startsWith(".." + sep) ||
@@ -46,7 +42,7 @@ export function parseTestDurations(
     )
       continue;
     const key = path.split(sep).join("/");
-    durations.set(key, Math.max(durations.get(key) ?? 0, duration));
+    durations.set(key, Math.max(durations.get(key) ?? 0, durationMs));
   }
   return durations.size ? durations : undefined;
 }

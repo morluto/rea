@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 
+import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
@@ -7,6 +8,7 @@ import {
 } from "./javascriptStaticAnalysisFindings.js";
 import {
   STATIC_ROUTE_CALL_NAMES,
+  argumentNode,
   argumentValue,
   calleeName,
   endpointArgument as endpointArgumentHelper,
@@ -19,13 +21,24 @@ import {
   storageKind,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
 import type {
   JavaScriptAnalysisAccumulator as AnalysisAccumulator,
   JavaScriptEndpointInput as EndpointInput,
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
+import {
+  resolveSemanticBindingState,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
+import {
+  isUnmodifiedGlobalReference,
+  isUnmodifiedImportMetaUrl,
+} from "./javascriptSemanticAmbientWrites.js";
 
 type JavaScriptCallLike =
   | t.CallExpression
@@ -37,6 +50,7 @@ export const inspectCall = (
   source: string,
   node: JavaScriptCallLike,
   context: FindingContext,
+  bindings: JavaScriptSemanticAnalysisState,
 ): void => {
   const { accumulator } = context;
   const name = calleeName(node.callee);
@@ -59,8 +73,27 @@ export const inspectCall = (
     });
   for (const specifier of vitePreloadDependencySpecifiers(source, node, name))
     addReference(context, { node, kind: "dynamic-import", specifier });
-  if (name === "Worker" || name.endsWith(".Worker"))
-    addReference(context, { node, kind: "worker", specifier: first });
+  const worker = t.isNewExpression(node) ? node : undefined;
+  const workerConstructor =
+    worker === undefined
+      ? undefined
+      : workerConstructorKind(worker.callee, bindings);
+  if (
+    workerConstructor !== undefined ||
+    name === "Worker" ||
+    name.endsWith(".Worker")
+  )
+    addReference(context, {
+      node,
+      kind: "worker",
+      // Node string paths use the process cwd or filesystem root, neither of
+      // which is established by the analyzed source's artifact location.
+      specifier:
+        (workerConstructor === "node" ? undefined : first) ??
+        (workerConstructor === undefined || worker === undefined
+          ? undefined
+          : workerUrlSpecifier(worker, bindings)),
+    });
   if (name.endsWith("serviceWorker.register"))
     addReference(context, { node, kind: "service-worker", specifier: first });
   inspectEndpointCall(node, name, first, context);
@@ -95,6 +128,69 @@ export const inspectCall = (
         location: range(node),
       },
     });
+};
+
+const workerUrlSpecifier = (
+  worker: t.NewExpression,
+  bindings: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  const argumentExpression = argumentNode(worker.arguments[0]);
+  if (argumentExpression === undefined) return undefined;
+  const node = unwrapJavaScriptExpression(argumentExpression).node;
+  if (!t.isNewExpression(node)) return undefined;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  if (
+    !isUnmodifiedGlobalReference(callee, bindings, "URL") ||
+    !isUnmodifiedImportMetaUrl(argumentNode(node.arguments[1]), bindings)
+  )
+    return undefined;
+  const specifier = stringValue(node.arguments[0]);
+  if (specifier === undefined) return undefined;
+  const pathname = stripQueryAndFragment(specifier);
+  // The module URL's scheme and filesystem/origin root are unavailable. Only
+  // relative pathnames can establish a location within the artifact; retain
+  // rooted paths and paths requiring URL text normalization as expressions.
+  // Malformed percent escapes survive HTTP URL parsing but cannot be converted
+  // from a file URL to a Node Worker path. Without the base scheme, keep that
+  // ambiguity unknown; query and fragment bytes do not affect pathname lookup.
+  return pathname.length > 0 &&
+    !pathname.startsWith("/") &&
+    !/%(?![0-9a-f]{2})/iu.test(pathname) &&
+    stripQueryAndFragment(htmlUrlText(specifier)) === pathname
+    ? specifier
+    : undefined;
+};
+
+const workerConstructorKind = (
+  callee: t.Node,
+  bindings: JavaScriptSemanticAnalysisState,
+): "browser" | "node" | undefined => {
+  const node = unwrapJavaScriptExpression(callee).node;
+  const member =
+    t.isMemberExpression(node) &&
+    semanticStaticPropertyName(node.property, node.computed) === "Worker";
+  const root = unwrapJavaScriptExpression(member ? node.object : node).node;
+  if (!t.isIdentifier(root)) return undefined;
+  const browserGlobal = member
+    ? ["globalThis", "window", "self"].includes(root.name)
+    : root.name === "Worker";
+  if (browserGlobal && isUnmodifiedGlobalReference(node, bindings, "Worker"))
+    return "browser";
+  const binding = resolveSemanticBindingState(bindings, root, root.name);
+  const [origin] = binding?.directOrigins ?? [];
+  // Named ESM exports and module namespace exports are read-only. Default
+  // imports and CommonJS objects can replace Worker, so their identity is unknown.
+  return binding?.runtimeImport === true &&
+    binding.definitions.length === 1 &&
+    binding.directOrigins.length === 1 &&
+    origin !== undefined &&
+    (origin.specifier === "worker_threads" ||
+      origin.specifier === "node:worker_threads") &&
+    (member
+      ? origin.importedPath.length === 0
+      : origin.importedPath.length === 1 && origin.importedPath[0] === "Worker")
+    ? "node"
+    : undefined;
 };
 
 // Element factories such as jsx("audio", props) and createElement("video",

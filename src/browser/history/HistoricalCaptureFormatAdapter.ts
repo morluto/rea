@@ -3,6 +3,7 @@ import type { InspectWebNetworkCaptureInput } from "../../domain/webNetworkCaptu
 /** Format-specific process profile keeps mature upstream code behind a replaceable adapter seam. */
 export interface HistoricalCaptureFormatAdapter {
   readonly format: InspectWebNetworkCaptureInput["format"];
+  readonly limitations?: readonly string[];
   readonly identity: {
     readonly id: string;
     readonly name: string;

@@ -18,11 +18,11 @@ export const workflowAnalysisProfile = (
 ): AnalysisProfileCommitment =>
   createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
     upstream_analysis_profile: upstream,
-    ...(operation === "binary_overview" ||
-    operation === "batch_decompile" ||
-    operation === "get_call_graph"
-      ? { workflow_revision: 2 }
-      : {}),
+    ...(operation === "binary_overview"
+      ? { workflow_revision: 3 }
+      : operation === "batch_decompile" || operation === "get_call_graph"
+        ? { workflow_revision: 2 }
+        : {}),
   });
 
 /** Provider identity for deterministic artifact inventories. */

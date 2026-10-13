@@ -39,6 +39,9 @@ export const evmInterfaceFailure = (
   limiter = "/usr/bin/prlimit",
   fileFailure?: EvmFileSizeFailureEvidence,
 ): AnalysisError => {
+  const cleanup =
+    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+  const cleanupOptions = cleanup === undefined ? {} : { cleanup };
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
     const outputOptions =
@@ -64,12 +67,15 @@ export const evmInterfaceFailure = (
         { operation: "inspect_evm_interface", cause },
       );
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_evm_interface", outputOptions);
+      return new AnalysisCancelledError("inspect_evm_interface", {
+        ...outputOptions,
+        ...cleanupOptions,
+      });
     if (cause.reason === "timeout")
       return new AnalysisTimeoutError(
         "inspect_evm_interface",
         EVM_INTERFACE_LIMITS.timeoutMs,
-        outputOptions,
+        { ...outputOptions, ...cleanupOptions },
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(
@@ -122,25 +128,33 @@ export const evmInterfaceFailure = (
   }
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError("inspect_evm_interface");
+      return new AnalysisCancelledError("inspect_evm_interface", {
+        cause,
+        ...cleanupOptions,
+      });
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(
         "inspect_evm_interface",
         path,
         cause.message,
-        { cause },
+        { cause, ...cleanupOptions },
       );
     if (
       phase === "artifact-read" &&
       ["limit", "path", "format"].includes(cause.reason)
     )
-      return new AnalysisInputError("inspect_evm_interface", { cause }, [
-        {
-          path: ["path"],
-          reason: cause.reason === "limit" ? "out_of_range" : "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        "inspect_evm_interface",
+        { cause, ...cleanupOptions },
+        [
+          {
+            path: ["path"],
+            reason:
+              cause.reason === "limit" ? "out_of_range" : "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (phase === "artifact-read" && cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -148,22 +162,27 @@ export const evmInterfaceFailure = (
         "inspect_evm_interface",
         path,
         cause.code,
-        { cause },
+        { cause, ...cleanupOptions },
       );
     if (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-      return new AnalysisInputError("inspect_evm_interface", { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected bytecode carrier could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
+      return new AnalysisInputError(
+        "inspect_evm_interface",
+        { cause, ...cleanupOptions },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Selected bytecode carrier could not be read (${String(cause.code)}): ${path}.`,
+          },
+        ],
+      );
   }
   return new ProviderAdapterError(
     EVMOLE_PROVIDER_IDENTITY.id,
     "inspect_evm_interface",
     {
       cause,
+      ...cleanupOptions,
       diagnostics: {
         phase,
         path,

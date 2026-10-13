@@ -5,9 +5,16 @@ export const elf = (
   machine: number,
 ): Buffer => {
   const bytes = Buffer.alloc(class_ === 1 ? 52 : 64);
-  bytes.set([0x7f, 0x45, 0x4c, 0x46, class_, endian]);
-  if (endian === 1) bytes.writeUInt16LE(machine, 18);
-  else bytes.writeUInt16BE(machine, 18);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, class_, endian, 1]);
+  if (endian === 1) {
+    bytes.writeUInt16LE(machine, 18);
+    bytes.writeUInt32LE(1, 20);
+    bytes.writeUInt16LE(class_ === 1 ? 52 : 64, class_ === 1 ? 40 : 52);
+  } else {
+    bytes.writeUInt16BE(machine, 18);
+    bytes.writeUInt32BE(1, 20);
+    bytes.writeUInt16BE(class_ === 1 ? 52 : 64, class_ === 1 ? 40 : 52);
+  }
   return bytes;
 };
 

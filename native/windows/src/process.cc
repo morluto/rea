@@ -68,6 +68,18 @@ static ULONGLONG jobMemoryLimit(napi_env env, napi_value value) {
   return limit;
 }
 
+// An affinity mask is meaningful only inside one processor group, so only a
+// process occupying exactly one group has a group a child can inherit. A
+// process whose threads span groups, or whose membership cannot be read, has no
+// single group.
+static bool singleProcessorGroup(HANDLE process, USHORT& group) {
+  USHORT count = 1;
+  std::array<USHORT, 1> groups{};
+  if (!GetProcessGroupAffinity(process, &count, groups.data()) || count != 1) return false;
+  group = groups[0];
+  return true;
+}
+
 static void pipe(Handle& read, Handle& write, bool parentReads = true) {
   SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE rawRead, rawWrite;
@@ -168,11 +180,27 @@ std::unique_ptr<Process> spawnProcess(const std::wstring& command, const std::ws
   TOKEN_OWNER owner{reinterpret_cast<TOKEN_USER*>(tokenUser.data())->User.Sid};
   require(SetTokenInformation(token.get(), TokenOwner, &owner, sizeof(owner)),
           "Set suspended process file owner failed", command);
+  // A mask names processors inside one processor group, and Windows assigns a
+  // new process to a group of its own choosing, so a mask belonging to another
+  // group is rejected (ERROR_INVALID_PARAMETER). An unconstrained caller, whose
+  // mask is its group's whole active set, asks for no bound the child's own
+  // group cannot give, so such a child keeps that group's default and the spawn
+  // proceeds. A narrower mask is a deliberate CPU constraint that a child in
+  // another group cannot express, and silently widening it would hand the
+  // provider tree the whole group, so that spawn fails naming the constraint.
   DWORD_PTR affinity = 0, systemAffinity = 0;
   require(GetProcessAffinityMask(GetCurrentProcess(), &affinity, &systemAffinity),
           "Read caller process affinity failed", command);
-  if (affinity != 0)
+  USHORT callerGroup = 0, childGroup = 0;
+  const bool sharedGroup = singleProcessorGroup(GetCurrentProcess(), callerGroup) &&
+                           singleProcessorGroup(result->process.get(), childGroup) &&
+                           callerGroup == childGroup;
+  if (affinity != 0 && sharedGroup)
     require(SetProcessAffinityMask(result->process.get(), affinity), "Preserve caller process affinity failed", command);
+  else
+    require(affinity == 0 || affinity == systemAffinity,
+            "Caller CPU affinity cannot bound an owned process in another processor group", command,
+            ERROR_INVALID_PARAMETER);
   const DWORD priority = GetPriorityClass(GetCurrentProcess());
   require(priority != 0 && SetPriorityClass(result->process.get(), priority),
           "Preserve caller process priority failed", command);

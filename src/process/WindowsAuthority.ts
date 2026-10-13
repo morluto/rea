@@ -11,6 +11,7 @@ export type WindowsNativeCapability =
       readonly available: false;
       readonly reason: string;
       readonly proof: "not-proven" | "not-applicable";
+      readonly retryable?: true;
     };
 
 /** Security controls required before REA may claim Windows isolation. */
@@ -52,6 +53,7 @@ export const windowsNativeCapabilities = (
           available: false,
           reason: loaded.reason,
           proof: "not-proven",
+          ...(loaded.retryable === true ? { retryable: true as const } : {}),
         } as const);
     return {
       job_object_process_ownership: capability,

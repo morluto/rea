@@ -6,6 +6,12 @@ for the reviewed setup transaction and [client IDs](installation.md#supported-ag
 The versioned verification notes below describe their stated runs; live service
 acceptance is verified only where explicitly recorded.
 
+## Fiddler Everywhere alongside REA
+
+Connect Fiddler Everywhere's MCP server separately for HTTP traffic debugging,
+preserving your REA client entry. See the
+[setup instructions and public skills](web-network-captures.md#fiddler-everywhere-mcp-and-public-skills).
+
 ## GitHub Copilot CLI
 
 For GitHub Copilot CLI 1.0.95, `gpt-4.1` model metadata can block ordinary
@@ -94,6 +100,11 @@ user-level `~/.qwen/settings.json`, or `$QWEN_HOME/settings.json` when configure
 Setup and doctor follow Qwen Code's tilde and working-directory-relative home
 overrides. Qwen Code also discovers personal skills in `~/.agents/skills`,
 where setup installs the bundled workflow.
+
+## Antigravity
+
+Antigravity 2.0 discovers personal skills in `~/.gemini/config/skills`.
+Setup installs its selected skill copy there.
 
 ## Gemini CLI
 

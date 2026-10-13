@@ -1,7 +1,13 @@
 import type { FixupCommands } from "./AppleMachoFixups.js";
 import {
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+} from "./MachoArchitectureSelection.js";
+import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
+import {
   readFatSliceDeclarations,
   validateFatSlice,
+  type FatSliceDeclaration,
 } from "../domain/apple/machoContainer.js";
 
 /** One mapped Mach-O segment with file-backed VA range. */
@@ -90,32 +96,44 @@ export const selectMachoSlice = (
   const headerEnd = 8 + count * stride;
   if (count > 128 || headerEnd > bytes.length)
     throw malformed("Malformed FAT architecture table");
-  const cpu = MACHO_CPU_TYPE[architecture];
-  if (cpu === undefined) throw invalid("Requested FAT architecture is absent");
+  const policy = MACHO_ARCHITECTURE_POLICIES[architecture];
+  if (policy === undefined)
+    throw invalid("Requested FAT architecture is absent");
   const declarations = readFatSliceDeclarations(bytes.subarray(8, headerEnd), {
     count,
     wide: fat64,
     littleEndian,
   });
   if (declarations.status !== "parsed") throw malformed(declarations.reason);
-  let selected: MachoSlice | undefined;
+  let best: FatSliceDeclaration | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
   for (const declaration of declarations.slices) {
     const issue = validateFatSlice(declaration, bytes.length, headerEnd);
     if (issue !== null) throw malformed(issue);
-    if (declaration.cpuType !== cpu) continue;
-    if (selected !== undefined)
-      throw invalid("Ambiguous FAT architecture slice");
-    selected = {
-      slice: declaration.offset,
-      sliceEnd: declaration.offset + declaration.size,
-      fatDeclaration: {
-        ...declaration,
-        tableEnd: headerEnd,
-      },
-    };
+    if (declaration.cpuType !== policy.cpuType) continue;
+    const rank = machoSubtypeRank(policy, declaration.cpuSubtype);
+    if (best !== undefined && rank >= bestRank) {
+      // Equal ranks keep FAT table order unless the slices share a subtype.
+      if (
+        rank === bestRank &&
+        machoCpuSubtypeBase(declaration.cpuSubtype) ===
+          machoCpuSubtypeBase(best.cpuSubtype)
+      )
+        ambiguous = true;
+      continue;
+    }
+    best = declaration;
+    bestRank = rank;
+    ambiguous = false;
   }
-  if (selected === undefined)
-    throw invalid("Requested FAT architecture is absent");
+  if (best === undefined) throw invalid("Requested FAT architecture is absent");
+  if (ambiguous) throw invalid("Ambiguous FAT architecture slice");
+  const selected: MachoSlice = {
+    slice: best.offset,
+    sliceEnd: best.offset + best.size,
+    fatDeclaration: { ...best, tableEnd: headerEnd },
+  };
   if (selected.slice + 4 > bytes.length)
     throw malformed("Truncated Mach-O header");
   const sliceMagic = bytes.readUInt32LE(selected.slice);
@@ -126,13 +144,6 @@ export const selectMachoSlice = (
   return selected;
 };
 
-/** CPU types admitted by `machArchitecture` in the domain binary target parser. */
-const MACHO_CPU_TYPE: Readonly<Record<string, number>> = {
-  x86: 7,
-  x86_64: 0x01000007,
-  arm: 12,
-  arm64: 0x0100000c,
-};
 const MH_MAGIC = 0xfeedface;
 const MH_CIGAM = 0xcefaedfe;
 
@@ -260,7 +271,8 @@ const collectSegment = (
     state.sections.push({
       name: bytes
         .subarray(position, position + 16)
-        .toString("ascii")
+        // ASCII decoding masks high bits and can fabricate known metadata names.
+        .toString("latin1")
         .replace(/\0.*$/u, ""),
       address: bytes.readBigUInt64LE(position + 32),
       size: Number(sectionSize),

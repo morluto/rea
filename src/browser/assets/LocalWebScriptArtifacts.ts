@@ -1,6 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
@@ -19,10 +20,36 @@ import {
 
 /** Read one digest-verified captured source under the manifest's current location. */
 export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
-  constructor(readonly operation: WebArtifactReadContext["operation"]) {}
+  constructor(
+    readonly operation: WebArtifactReadContext["operation"],
+    readonly resources = new ArtifactResourceScope(),
+  ) {}
+
+  close(): Promise<void> {
+    return this.resources.close();
+  }
 
   /** Read the selected source; relocated exports retain their reported original root. */
   async load(input: SelectedWebScriptInput, options?: ExecutionOptions) {
+    try {
+      return await this.resources.run(() => this.#load(input, options));
+    } catch (cause: unknown) {
+      return err(
+        webArtifactReadError(
+          cause,
+          {
+            operation: this.operation,
+            field: ["manifest_path"],
+            targetPath: input.manifest_path,
+            callerSelected: true,
+          },
+          options?.signal,
+        ),
+      );
+    }
+  }
+
+  async #load(input: SelectedWebScriptInput, options?: ExecutionOptions) {
     let field: readonly (string | number)[] = ["manifest_path"];
     let targetPath = input.manifest_path;
     let callerSelected = true;
@@ -31,6 +58,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         input.manifest_path,
         32 * 1024 * 1024,
         options?.signal,
+        this.resources,
       );
       const manifest = webScriptExportManifestSchema.parse(manifestBytes.value);
       field = ["script_index"];
@@ -65,6 +93,8 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         sourcePath,
         16 * 1024 * 1024,
         options?.signal,
+        undefined,
+        this.resources,
       );
       await assertContained(root, sourcePath);
       if (

@@ -46,7 +46,9 @@
       ]
     },
     "lint": {
+      "outputs": [".cache/static-checks/oxlint.json"],
       "inputs": [
+        ".gitignore",
         ".nvmrc",
         ".oxlintrc.json",
         "package.json",
@@ -54,12 +56,21 @@
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "experiments/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "!docs/.vitepress/cache/**",
+        "!docs/.vitepress/dist/**",
+        "!website/_site/**",
+        "!experiments/analysis-efficiency/results/**",
         "vitest.config.ts"
       ]
     },
     "lint:built": {
       "dependsOn": ["compile"],
+      "outputs": [".cache/static-checks/oxlint.json"],
       "inputs": [
+        ".gitignore",
         ".nvmrc",
         ".oxlintrc.json",
         "package.json",
@@ -67,6 +78,13 @@
         "scripts/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "experiments/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "!docs/.vitepress/cache/**",
+        "!docs/.vitepress/dist/**",
+        "!website/_site/**",
+        "!experiments/analysis-efficiency/results/**",
         "vitest.config.ts"
       ]
     },
@@ -91,9 +109,11 @@
         ".jscpd.json",
         "package.json",
         "package-lock.json",
+        "scripts/ci/static-check-report.mjs",
         "src/**",
         "tests/**"
-      ]
+      ],
+      "outputs": [".cache/static-checks/jscpd/jscpd-report.json"]
     },
     "scan:todos": {
       "inputs": [
@@ -131,6 +151,7 @@
         "scripts/fixtures/apple/*.mjs",
         "src/generated*.ts",
         "src/contracts/**/*.ts",
+        "licenses/**",
         "docs/**",
         "!docs/public/product-catalog.json",
         "!docs/verification/managed-conformance-*.json",

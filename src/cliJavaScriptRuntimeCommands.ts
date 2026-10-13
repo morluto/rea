@@ -12,7 +12,7 @@ import {
   listJavaScriptRuntimeTargetsInputSchema,
   observeJavaScriptRuntimeInputSchema,
 } from "./domain/javascript/javascriptRuntimeObservation.js";
-import { AnalysisInputError } from "./domain/analysisErrorCore.js";
+import { analysisInputErrorFromIssues } from "./domain/inputIssueProjection.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "pino";
@@ -47,11 +47,19 @@ export const registerJavaScriptRuntimeObservationCommands = (
         CLI_COMMANDS.listJavaScriptRuntimeTargets,
         async () => {
           const context = runtimeContext();
-          const parsed = listJavaScriptRuntimeTargetsInputSchema.safeParse({
+          const input = {
             inspector_endpoint: args.endpoint,
-          });
+          };
+          const parsed =
+            listJavaScriptRuntimeTargetsInputSchema.safeParse(input);
           if (!parsed.success)
-            return inputError("list_javascript_runtime_targets");
+            return cliError(
+              analysisInputErrorFromIssues(
+                "list_javascript_runtime_targets",
+                parsed.error.issues,
+                input,
+              ),
+            );
           const result = await listJavaScriptRuntimeTargets(
             context.provider,
             parsed.data,
@@ -73,13 +81,21 @@ export const registerJavaScriptRuntimeObservationCommands = (
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.observeJavaScriptRuntime, async () => {
         const context = runtimeContext();
-        const parsed = observeJavaScriptRuntimeInputSchema.safeParse({
+        const input = {
           inspector_endpoint: args.endpoint,
           target_id: args.targetId,
           runtime_kind: options.runtimeKind,
           observation_ms: options.observationMs,
-        });
-        if (!parsed.success) return inputError("observe_javascript_runtime");
+        };
+        const parsed = observeJavaScriptRuntimeInputSchema.safeParse(input);
+        if (!parsed.success)
+          return cliError(
+            analysisInputErrorFromIssues(
+              "observe_javascript_runtime",
+              parsed.error.issues,
+              input,
+            ),
+          );
         const result = await observeJavaScriptRuntime(
           context.provider,
           parsed.data,
@@ -92,9 +108,6 @@ export const registerJavaScriptRuntimeObservationCommands = (
 const runtimeContext = () => ({
   provider: createJavaScriptRuntimeObservationProvider(),
 });
-
-const inputError = (operation: string): JsonValue =>
-  cliError(new AnalysisInputError(operation));
 
 const cliError = (
   error: Parameters<typeof projectAnalysisError>[0],

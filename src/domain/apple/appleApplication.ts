@@ -17,7 +17,10 @@ import {
   isSwiftRuntimeLibrary,
   nativeRuntimeConvention,
 } from "../nativeConvention.js";
-import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import {
+  hasCompleteInventoryCoverage,
+  parseArtifactInventoryEvidence,
+} from "../artifactInventoryEvidence.js";
 import { evidenceSchema } from "../evidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
@@ -88,6 +91,7 @@ export const appleApplicationProjectionResultSchema = z.strictObject({
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
+    // Count completeness is separate from the declared coverage status.
     inventory_complete: z.boolean(),
   }),
   limitations: z.array(z.string().min(1)),
@@ -165,9 +169,10 @@ export const projectAppleApplication = (
   );
   const uninventoriedImage =
     rootFormat === "dmg" && inventory.occurrences.length === 1;
-  const complete = inventory.complete && !uninventoriedImage;
+  const inventoryComplete = hasCompleteInventoryCoverage(inventory);
+  const complete = inventoryComplete && !uninventoriedImage;
   const limitations = projectionLimitations({
-    complete: inventory.complete,
+    complete: inventoryComplete,
     uninventoriedImage,
     roots,
     bundles,
@@ -390,7 +395,7 @@ const projectionLimitations = (facts: {
   readonly bridgeCandidateCoverage: AppleApplicationProjectionResult["bridge_candidate_coverage"];
 }): string[] => [
   ...(!facts.complete
-    ? ["Source inventory pages are incomplete; absence is unknown."]
+    ? ["Source inventory coverage is partial; absence is unknown."]
     : []),
   ...(facts.uninventoriedImage
     ? [

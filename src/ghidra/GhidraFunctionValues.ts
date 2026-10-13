@@ -26,6 +26,7 @@ import {
 } from "../domain/jsonValue.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { nativeValueFlowSchema } from "../domain/native/nativeValueFlow.js";
+import type { EvidenceLocation } from "../domain/evidence.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import {
@@ -399,11 +400,19 @@ const functionBoundaryObservationOperations: ReadonlySet<GhidraFunctionOperation
 const functionObservationEnvelope = z.strictObject({
   value: z.unknown(),
   limitations: z.array(z.string()),
+  selection: z
+    .strictObject({
+      file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      mapped_address: ghidraCanonicalAddressSchema,
+      procedure_address: ghidraCanonicalAddressSchema,
+    })
+    .exactOptional(),
 });
 
 export interface ParsedGhidraFunctionResult {
   readonly value: JsonValue;
   readonly limitations: readonly string[];
+  readonly locations?: readonly EvidenceLocation[];
 }
 
 /** Require exact, bounded Java-bridge function output before creating Evidence. */
@@ -414,15 +423,22 @@ export const parseGhidraFunctionResult = (
   let observation: {
     readonly value: unknown;
     readonly limitations: readonly string[];
+    readonly selection?: z.infer<
+      typeof functionObservationEnvelope
+    >["selection"];
   };
   if (functionBoundaryObservationOperations.has(operation)) {
     const envelope = functionObservationEnvelope.safeParse(value);
-    if (!envelope.success)
+    if (
+      !envelope.success ||
+      (operation !== "procedure_pseudo_code" &&
+        envelope.data.selection !== undefined)
+    )
       return err(
         new AnalysisOutputError(
           operation,
           "Ghidra bridge omitted the function observation envelope",
-          { cause: envelope.error },
+          envelope.success ? undefined : { cause: envelope.error },
         ),
       );
     observation = envelope.data;
@@ -434,6 +450,24 @@ export const parseGhidraFunctionResult = (
     ? ok({
         value: jsonValueSchema.parse(parsed.data),
         limitations: observation.limitations,
+        ...(observation.selection === undefined
+          ? {}
+          : {
+              locations: [
+                {
+                  kind: "file-offset" as const,
+                  offset: observation.selection.file_offset,
+                },
+                {
+                  kind: "address" as const,
+                  address: observation.selection.mapped_address,
+                },
+                {
+                  kind: "address" as const,
+                  address: observation.selection.procedure_address,
+                },
+              ],
+            }),
       })
     : err(
         new AnalysisOutputError(

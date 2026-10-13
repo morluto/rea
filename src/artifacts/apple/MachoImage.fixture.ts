@@ -21,6 +21,7 @@ export const CPU = {
   i386: { type: 7, subtype: 3 },
   arm64: { type: 0x0100000c, subtype: 0 },
   arm64e: { type: 0x0100000c, subtype: 0x80000002 },
+  arm64eX1: { type: 0x0100000c, subtype: 0x8000000c },
   x86_64: { type: 0x01000007, subtype: 3 },
 } as const;
 

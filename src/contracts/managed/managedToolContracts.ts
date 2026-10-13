@@ -6,6 +6,7 @@ import { managedOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
+import { analysisDetailSchema } from "../analysisDetail.js";
 
 /** Exact caller boundary for execution-free PE/CLI triage and identity. */
 export const managedTargetInputSchema = z.strictObject({
@@ -18,6 +19,11 @@ export const managedTargetInputSchema = z.strictObject({
       "Explicit absolute managed PE/CLI path; omit to reuse the previously selected managed target",
     )
     .optional(),
+});
+
+/** Delivery selection belongs only to artifact inspection, not member/native queries. */
+export const managedArtifactInputSchema = managedTargetInputSchema.extend({
+  detail: analysisDetailSchema.unwrap().optional(),
 });
 
 /** Member inspection may select declaring types before members are decoded. */
@@ -61,14 +67,19 @@ export const MANAGED_TOOL_CONTRACTS = [
     name: "inspect_managed_artifact",
     ...toolContractMetadata("inspect_managed_artifact"),
     description:
-      "Open and classify an explicit managed PE/CLI path, or inspect the active managed target, then inventory exact assembly/module identity, target framework evidence, references, resources, and custom attributes without loading or executing target code. Returns complete inline inventories when metadata is admitted and explicit partial or malformed coverage otherwise.",
+      'Inspect an explicit PE/CLI path, or the selected managed target, without loading or executing target code. Omitted or complete detail returns complete metadata inventories with original coverage. Select detail: "summary" on the first call for complete identity, PE/CLI, classification with its evidence, module/MVID, assembly, frameworks, returned-collection counts, coverage/issues and limitations. It retains complete Evidence and returns a distinct linked inspect_analysis_view summary. Page original references/resources/attributes with view kind managed and normalized_result.parent_evidence_id. Counts cover producer-returned rows; partial, unavailable or malformed metadata remains explicit and tokens remain build-local.',
     kind: "managed-provider",
-    inputSchema: managedTargetInputSchema,
+    inputSchema: managedArtifactInputSchema,
     outputSchema,
     examples: [
       {
         title: "Example inspect managed artifact request",
         input: { path: "/tmp/Example.dll" },
+      },
+      {
+        title:
+          "Inspect identity and coverage without unrelated metadata inventories",
+        input: { path: "/tmp/Example.dll", detail: "summary" },
       },
     ],
   },

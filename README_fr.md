@@ -143,6 +143,7 @@ REA nécessite Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, ainsi que npm. Les
 | JavaScript / Electron        | Modules, imports, source maps, routes, IPC et relations avec les modules natifs                             | Node.js et npm ; [analyse d'applications](https://rea.tools/fr/guides/javascript/)                                                    |
 | Sites web                    | Structure des pages, scripts, observations réseau et captures d'écran demandées                             | Un navigateur de la famille Chrome ; [analyse du navigateur](https://rea.tools/fr/guides/browser/)                                    |
 | Captures réseau enregistrées | Requêtes, réponses, payloads exposés et emplacements dans le code source                                    | HAR ; mitmdump sous Linux pour les captures mitmproxy natives ; [guide des captures](docs/web-network-captures.md)                    |
+| Captures de paquets          | Points de terminaison, DNS, TLS SNI, distribution des protocoles et requêtes HTTP                           | tshark et capinfos fournis par l'appelant ; [guide pcap](docs/pcap-analysis.md)                                                       |
 | Assemblys .NET               | Métadonnées, instructions CIL, dépendances natives déclarées et comparaisons de builds                      | Inspection statique ; [guide du code managé](docs/managed-code-analysis.md)                                                           |
 | APK Android                  | Déclarations du manifeste, classes, méthodes décompilées et références                                      | JADX headless et un JDK complet sous Linux/macOS/Windows x64 ; [guide Android](docs/android-analysis.md)                              |
 | Appareils Android            | Appareils, paquets, processus, journaux, dumps, captures d'écran et transferts d'APK/fichiers               | adb fourni par l'appelant (émulateur ou appareil) ; [guide ADB](docs/adb-device-analysis.md)                                          |
@@ -150,6 +151,8 @@ REA nécessite Node.js 22.x (>=22.19), 24.x (>=24.11) ou 26+, ainsi que npm. Les
 | Ressources Android           | Manifeste décodé, tables de chaînes, langues et faits de version                                            | Lanceur Apktool fourni par l'appelant ; [guide des ressources](docs/apktool-resource-analysis.md)                                     |
 | Applications Flutter         | Empreinte de snapshot Dart, condensés de bibliothèques par ABI et provenance de build du moteur             | Aucune (analyse APK statique) ; [guide Flutter](docs/flutter-analysis.md)                                                             |
 | Firmware                     | Régions, résultats d'extraction et passage de relais vers l'analyse native                                  | Binwalk / Unblob sous Linux ; [guide firmware](docs/firmware-analysis.md)                                                             |
+| Paquets enregistrés          | Champs sélectionnés, valeurs répétées, filtres et règles de décodage                                        | Linux: TShark 4.x + prlimit; [guide des captures](docs/packet-captures.md)                                                            |
+| Signaux logiques enregistrés | Annotations du décodeur, plages d’échantillons et diagnostics                                               | Linux: sigrok-cli 0.7.2 + prlimit; [guide des signaux](docs/signal-recordings.md)                                                     |
 | Paquets et ressources        | Inventaires de fichiers, empreintes, plists, anatomie des bundles Apple et ressources extraites             | [Guide artefacts et JavaScript](docs/javascript-artifact-reconstruction.md), [applications Apple](docs/apple-application-analysis.md) |
 | Comportement des processus   | Sortie du terminal, interactions, code de sortie, observations du système de fichiers et comparaisons       | Linux/macOS avec un PTY natif ; [capture de processus](docs/process-capture.md)                                                       |
 
@@ -263,7 +266,7 @@ Signalez les vulnérabilités via [SECURITY.md](SECURITY.md).
 
 ## Historique des étoiles
 
-🎉 **110 000 étoiles GitHub — merci !**
+🎉 **170 000 étoiles GitHub — merci !**
 
 Merci à toutes les personnes qui utilisent REA, signalent des bugs, proposent des fonctionnalités, testent les builds et contribuent des correctifs.
 

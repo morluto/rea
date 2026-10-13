@@ -7,7 +7,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 
 describe("withPlaywrightExecutionBoundary", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it("rejects work that exceeds its absolute remaining duration", async () => {
     vi.useFakeTimers();
@@ -30,5 +33,21 @@ describe("withPlaywrightExecutionBoundary", () => {
     );
     controller.abort();
     await expect(result).rejects.toBeInstanceOf(AnalysisCancelledError);
+  });
+
+  it("keeps its timeout stable across a wall-clock jump", async () => {
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(1_000)
+      .mockReturnValue(10_000_000);
+
+    await expect(
+      withPlaywrightExecutionBoundary(
+        () =>
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("done"), 5),
+          ),
+        1_000,
+      ),
+    ).resolves.toBe("done");
   });
 });

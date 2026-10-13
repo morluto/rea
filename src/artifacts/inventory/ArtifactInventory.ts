@@ -1,8 +1,8 @@
 import { realpath } from "node:fs/promises";
 
 import {
-  artifactInventoryResultSchema,
-  type ArtifactInventoryResult,
+  artifactInventoryOutputSchema,
+  type ArtifactInventoryOutput,
 } from "../../domain/artifactGraph.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { scanCanonicalArtifactInventoryInScope } from "./scanCanonical.js";
@@ -13,9 +13,9 @@ import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySn
 export const inventoryArtifact = async (
   inputPath: string,
   options: ArtifactInventoryOptions,
-): Promise<ArtifactInventoryResult> => {
+): Promise<ArtifactInventoryOutput> => {
   const snapshot = await scanArtifactInventory(inputPath, options);
-  return artifactInventoryResultSchema.parse(snapshot);
+  return artifactInventoryOutputSchema.parse(snapshot);
 };
 
 /** Scan an artifact once and retain the complete immutable graph for projection. */

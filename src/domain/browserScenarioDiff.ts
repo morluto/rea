@@ -5,6 +5,7 @@ import {
   artifactEvidenceState,
   captured,
   eventEvidenceState,
+  eventFamilyCoverageReason,
   eventsFor,
   networkContentCoverageReason,
   screenshotProjection,
@@ -332,12 +333,23 @@ const compareStepArtifacts = (
       ),
       beforeState: eventEvidenceState(input.beforeCapture, input.beforeStep),
       afterState: eventEvidenceState(input.afterCapture, input.afterStep),
-      incomparableReason: networkContentCoverageReason(
+      incomparableReason: eventCoverageReason(
         input.beforeCapture,
         input.afterCapture,
       ),
     }),
   ];
+};
+
+const eventCoverageReason = (
+  before: BrowserScenarioCapture,
+  after: BrowserScenarioCapture,
+): string | undefined => {
+  const reasons = [
+    eventFamilyCoverageReason(before, after),
+    networkContentCoverageReason(before, after),
+  ].filter((reason) => reason !== undefined);
+  return reasons.length === 0 ? undefined : reasons.join(" ");
 };
 
 interface CompareCapturedValuesInput<Value> {

@@ -41,6 +41,80 @@ does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
 
+## Loaded addresses and file offsets
+
+`rea analyze <path> --provider ghidra --json` and MCP `binary_overview` report
+the observed loaded `image_base` in `normalized_result`. They retain each
+segment's reported `image_base` and `address_space`. A provider that does not
+report a base, or whose segments disagree, omits the overview field, following
+the existing contract on main. REA does not substitute zero or the first
+segment's address. All reported bases and address spaces remain visible in the
+complete segment inventory, including conflicting observations.
+
+`function` and most MCP procedure selectors use procedure names or
+provider analysis addresses. Ghidra `decompile` / MCP `procedure_pseudo_code`
+also accept source-file byte offsets. Existing symbols and analysis addresses
+take precedence; a `0x`-prefixed number that resolves to no procedure falls back
+to its observed source mapping. Use `--file-offset=0x...` on the CLI or
+`procedure: "file-offset:0x..."` through MCP to select file coordinates explicitly.
+Multiple mapping candidates fail as ambiguous rather than selecting a bank or
+address space. A successful conversion retains the file offset, mapped address
+and procedure entry in raw Evidence and `locations`.
+
+If an offset maps to loaded target bytes but no procedure starts at or contains
+the mapped address, the failure preserves both the original file offset and
+analysis address. This differs from an unmapped offset and does not recommend
+retrying the same offset syntax.
+If the function resolves but the backend fails or cancels decompilation, the
+failure retains the selector, mapped address and procedure entry without
+changing the backend failure code.
+
+Both mapping directions require a complete original `FileBytes` source whose
+SHA-256 matches the admitted target. Auxiliary files and partial source objects
+remain visible in the load-image inventory but do not establish offsets in the
+original target. Ghidra's object-local offsets are not silently treated as
+original-file coordinates. Original-source identity is checked once per source
+object per session; analysis-memory edits do not change the original bytes.
+
+ELF virtual addresses and file offsets are
+different coordinates. Ghidra can rebase a PIE ELF during import: in the
+source-owned verification fixture, ELF entry `0x1013` becomes Ghidra procedure
+`0x101013` with image base `0x100000`. That example is not a general conversion
+rule.
+
+Use `list_procedures` to select an observed procedure address. To relate file
+bytes to loaded memory, call MCP `inspect_native_load_image` or:
+
+```sh
+rea search <path> . --kind procedures --mode regex --provider ghidra --json
+rea inspect-native-load-image <path> --provider ghidra --json
+rea decompile <path> <observed-procedure-address> --provider ghidra --json
+rea decompile <path> --file-offset=0x1013 --provider ghidra --json
+rea address-to-file-offset <path> <observed-procedure-address> --provider ghidra --json
+```
+
+The load-image result preserves source-file indexes, file offsets, address
+spaces, and inclusive mapping ranges. Follow the mapping for the selected
+source file and region; adding `image_base` to an arbitrary file offset is not
+valid. For a linear byte-addressed, file-backed mapping, a file offset `F` in
+`[mapping.file_offset, mapping.file_offset + mapping.length)` maps to
+`mapping.start + (F - mapping.file_offset)` in the reported `address_space`.
+If several mappings cover the same file offset, keep those candidates distinct
+and select the procedure from the observed inventory. Uninitialized regions may
+have no file backing. ELF mappings are observed
+without independent format-specific load-image verification, as the result's
+status and limitations state.
+
+An unsuccessful numeric procedure lookup reports the current Ghidra image base
+and gives the CLI commands above alongside the corresponding MCP operations.
+Repeat any target-format, architecture, and entry-point options used to open the
+target. Other procedure operations keep their analysis-address semantics;
+file-offset fallback applies only to decompilation.
+
+Overview workflow revision 3 binds this output to snapshot identity. Older
+serialized overview Evidence remains readable; it is not replayed as a current
+overview merely because its source artifact is unchanged.
+
 ## Admitted function-analysis semantics
 
 | Concern                 | Ghidra contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |

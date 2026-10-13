@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { lstat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -32,18 +32,24 @@ export const readReferenceSourceVcs = async (
 ): Promise<Result<ReferenceSourceVcsInfo, ReferenceSourceReaderError>> => {
   try {
     return await resources.run(async () => {
-      if (isAborted(signal)) return ok(unknownVcs());
-      try {
-        await lstat(join(root, ".git"));
-      } catch (cause: unknown) {
-        return ok(
-          errorCode(cause) === "ENOENT"
-            ? { kind: "none", head: null, dirty: null }
-            : unknownVcs(),
-        );
+      // Like Git, a subdirectory belongs to its nearest enclosing repository;
+      // only a missing `.git` at every ancestor means no version control.
+      let repository = resolve(root);
+      for (;;) {
+        if (isAborted(signal)) return ok(unknownVcs());
+        try {
+          await lstat(join(repository, ".git"));
+          break;
+        } catch (cause: unknown) {
+          if (errorCode(cause) !== "ENOENT") return ok(unknownVcs());
+        }
+        const parent = dirname(repository);
+        if (parent === repository)
+          return ok({ kind: "none", head: null, dirty: null });
+        repository = parent;
       }
       try {
-        const head = await resolveSourceHead(root, resources, signal);
+        const head = await resolveSourceHead(repository, resources, signal);
         if (isAborted(signal)) return ok(unknownVcs());
         return ok({ kind: "git", head, dirty: null });
       } catch (cause: unknown) {

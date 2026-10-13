@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { assertCleanLinuxHopperRuntime } from "./lib/clean-linux-hopper-runtime.mjs";
 
 const execFileAsync = promisify(execFile);
 const verifierRun = createVerifierRun();
@@ -19,12 +20,12 @@ const command = process.env.REA_VERIFY_SERVER_COMMAND;
 if (process.platform !== "linux" || process.getuid?.() !== 0)
   throw new Error("Linux setup verification requires a root Linux runner");
 if (!command) throw new Error("REA_VERIFY_SERVER_COMMAND is required");
+await assertCleanLinuxHopperRuntime();
 try {
   await access("/opt/hopper/bin/Hopper");
   throw new Error("Linux setup verification requires a clean runner");
 } catch (error) {
-  if (error instanceof Error && error.message.includes("clean runner"))
-    throw error;
+  if (error?.code !== "ENOENT") throw error;
 }
 
 const runJson = async (args) => {
@@ -35,14 +36,25 @@ const runJson = async (args) => {
   return JSON.parse(stdout);
 };
 
-const plan = await runJson(["setup", "--json"]);
-if (plan.status !== "needs_confirmation")
-  throw new Error("setup did not produce a read-only confirmation plan");
+const plan = await runJson([
+  "setup",
+  "--install-hopper",
+  "--dry-run",
+  "--json",
+]);
+if (
+  plan.status !== "planned" ||
+  !plan.plannedActions.some(({ kind }) => kind === "install_hopper") ||
+  plan.appliedActions.length !== 0
+)
+  throw new Error("setup did not produce a read-only Hopper installation plan");
 await access("/opt/hopper/bin/Hopper").then(
   () => {
     throw new Error("setup plan mutated the clean runner");
   },
-  () => undefined,
+  (error) => {
+    if (error?.code !== "ENOENT") throw error;
+  },
 );
 
 const installed = await runJson([
@@ -58,7 +70,7 @@ if (
   throw new Error(
     `approved setup did not become ready: ${JSON.stringify(installed)}`,
   );
-const doctor = await runJson(["doctor", "--json"]);
+const doctor = await runJson(["doctor", "--provider", "hopper", "--json"]);
 if (doctor.healthy !== true)
   throw new Error(`doctor is unhealthy: ${JSON.stringify(doctor)}`);
 
@@ -67,8 +79,6 @@ await execFileAsync(command, ["analyze", "/usr/bin/true"], {
   timeout: 180_000,
   maxBuffer: 10 * 1024 * 1024,
 });
-process.env.HOPPER_TARGET_PATH = "/usr/bin/true";
-process.env.HOPPER_SECOND_TARGET_PATH = "/usr/bin/false";
 process.env.REA_VERIFY_SERVER_ARGS_JSON = '["mcp"]';
 await import("./verify-real-hopper-linux.mjs");
 
@@ -95,28 +105,24 @@ try {
   await rm(modifiedDirectory, { recursive: true, force: true });
 }
 
-const repeated = await runJson([
-  "setup",
-  "--yes",
-  "--install-hopper",
-  "--json",
-]);
+const repeated = await runJson(["setup", "--yes", "--json"]);
 if (
   repeated.status !== "ready" ||
-  repeated.appliedActions.includes("installed_hopper")
+  repeated.plannedActions.length !== 0 ||
+  repeated.appliedActions.length !== 0
 )
   throw new Error("a second setup was not idempotent");
-const { stdout: processes } = await execFileAsync("ps", [
-  "-ax",
-  "-o",
-  "command=",
-]);
-if (/\/opt\/hopper\/bin\/Hopper|\bXvfb\b|hopper-demo-x11\.py/u.test(processes))
-  throw new Error("Linux setup verification leaked a Hopper demo session");
+await assertCleanLinuxHopperRuntime();
+const completedVerifierRun = await completeVerifierRun(verifierRun);
+if (
+  completedVerifierRun.process_lineage.status !== "verified" ||
+  completedVerifierRun.process_lineage.descendants.length !== 0
+)
+  throw new Error("Linux setup verification did not prove owned child cleanup");
 
 console.log(
   JSON.stringify({
-    verifier_run: await completeVerifierRun(verifierRun),
+    verifier_run: completedVerifierRun,
     status: "verified",
     setup: true,
     cli: true,

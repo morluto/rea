@@ -3,3 +3,6 @@
 
 # Windows command fixtures retain their native line endings.
 *.cmd text eol=crlf
+
+# Preserve whitespace in original upstream licensing texts.
+licenses/npm-runtime-notices.txt whitespace=-blank-at-eol

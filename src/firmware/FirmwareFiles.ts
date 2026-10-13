@@ -213,19 +213,15 @@ export const inventoryFirmwareOutput = async (
     });
     if (handle === undefined) continue;
     const names: string[] = [];
-    try {
-      for await (const entry of handle) {
-        throwIfFirmwareInventoryCancelled(signal, operation);
-        count++;
-        if (count > maxEntries)
-          throw new AnalysisOutputError(
-            operation,
-            `Staging entry budget exceeded (${maxEntries})`,
-          );
-        names.push(entry.name);
-      }
-    } finally {
-      await handle.close().catch(() => undefined);
+    for await (const entry of handle) {
+      throwIfFirmwareInventoryCancelled(signal, operation);
+      count++;
+      if (count > maxEntries)
+        throw new AnalysisOutputError(
+          operation,
+          `Staging entry budget exceeded (${maxEntries})`,
+        );
+      names.push(entry.name);
     }
     for (const name of names.sort()) {
       const path = join(directory, name);

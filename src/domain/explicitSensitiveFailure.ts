@@ -6,6 +6,8 @@ import {
   AnalysisOutputError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { redactExplicitText } from "./explicitSensitiveValues.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -72,24 +74,57 @@ export const redactExplicitFailure = (
     if (typeof value === "object" && value !== null) return diagnostics(value);
     return value;
   };
+  const context = {
+    cause: error,
+    ...(error.diagnostics === undefined
+      ? {}
+      : { diagnostics: diagnostics(error.diagnostics) }),
+    ...(error.capturedOutput === undefined
+      ? {}
+      : {
+          capturedOutput: {
+            ...error.capturedOutput,
+            stdout: text(error.capturedOutput.stdout),
+            stderr: text(error.capturedOutput.stderr),
+          },
+        }),
+    ...(error.cleanup === undefined
+      ? {}
+      : {
+          cleanup: {
+            reason: text(error.cleanup.reason),
+            resources: error.cleanup.resources.map(text),
+          },
+        }),
+  };
+  if (error instanceof AnalysisCancelledError)
+    return new AnalysisCancelledError(error.operation, {
+      ...context,
+      partialObservation: error.partialObservation,
+    });
+  if (error instanceof AnalysisTimeoutError)
+    return new AnalysisTimeoutError(error.operation, error.timeoutMs, {
+      ...context,
+      partialObservation: error.partialObservation,
+    });
   if (error instanceof AnalysisAccessDeniedError)
     return new AnalysisAccessDeniedError(
       error.operation,
       text(error.path),
       error.systemCode,
-      { cause: error },
+      context,
     );
   if (error instanceof AnalysisArtifactChangedError)
     return new AnalysisArtifactChangedError(
       error.operation,
       text(error.path),
       text(error.reason),
-      { cause: error },
+      context,
     );
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      { cause: error },
+      context,
       error.issues.map((issue) => ({
         ...issue,
         // Unknown-argument paths contain literal field names, including names
@@ -104,19 +139,22 @@ export const redactExplicitFailure = (
       })),
     );
   if (error instanceof AnalysisOutputError)
-    return new AnalysisOutputError(error.operation, text(error.reason), {
-      cause: error,
-    });
+    return new AnalysisOutputError(
+      error.operation,
+      text(error.reason),
+      context,
+    );
   if (error instanceof AnalysisCapabilityUnavailableError)
     return new AnalysisCapabilityUnavailableError(
       error.providerId,
       error.operation,
       text(error.reason),
       {
-        cause: error,
+        ...context,
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.retryable ? { retryable: true } : {}),
       },
     );
   if (error instanceof AnalysisResourceConstraintError)
@@ -126,19 +164,10 @@ export const redactExplicitFailure = (
       text(error.reason),
       error.reportedLimits === null ? null : diagnostics(error.reportedLimits),
       {
-        cause: error,
+        ...context,
         ...(error.remediationAction === undefined
           ? {}
           : { remediationAction: text(error.remediationAction) }),
-        ...(error.capturedOutput === undefined
-          ? {}
-          : {
-              capturedOutput: {
-                stdout: text(error.capturedOutput.stdout),
-                stderr: text(error.capturedOutput.stderr),
-                truncated: error.capturedOutput.truncated,
-              },
-            }),
       },
     );
   if (error instanceof ProviderCleanupError)
@@ -149,11 +178,6 @@ export const redactExplicitFailure = (
       { operation: error.operation, cause: error },
     );
   if (error instanceof ProviderAdapterError)
-    return new ProviderAdapterError(error.providerId, error.operation, {
-      cause: error,
-      ...(error.diagnostics === undefined
-        ? {}
-        : { diagnostics: diagnostics(error.diagnostics) }),
-    });
+    return new ProviderAdapterError(error.providerId, error.operation, context);
   return error;
 };

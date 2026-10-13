@@ -67,6 +67,7 @@ describe("Swift vtable coverage facts: unresolved Swift dispatch slots", () => {
         issues: [],
         decode: (_address, raw) => ({ kind: "rebase", target: raw }),
         examined: 0,
+        decoded: 0,
         unreadRebaseBytes: 0,
       },
       swift: {
@@ -181,6 +182,7 @@ describe("Swift vtable coverage facts: unsupported pointer fixup coverage", () =
           reason: "Unsupported chained pointer format 99",
         }),
         examined: 0,
+        decoded: 0,
         unreadRebaseBytes: 0,
       },
       swift: {

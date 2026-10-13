@@ -25,7 +25,11 @@ import {
 import { isOwnedClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { resolveClientConfigTransactionPath } from "./ClientConfigPath.js";
-import { readRegularFileText } from "./RegularFileRead.js";
+import {
+  InvalidUtf8FileError,
+  RegularFileCleanupFailure,
+  readRegularFileText,
+} from "./RegularFileRead.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   manualRegistrationRemediation,
@@ -269,13 +273,17 @@ const readClientConfiguration = async (
   try {
     original = await fileSystem.readText(transactionPath);
   } catch (cause: unknown) {
+    const readFailure =
+      cause instanceof RegularFileCleanupFailure ? cause.cause : cause;
     return itemRead(
       isMissing(cause)
         ? item(client.name, "skipped", "Configuration does not exist.")
         : item(
             client.name,
             "failed",
-            "Configuration could not be read. Check file permissions, then rerun uninstall.",
+            readFailure instanceof InvalidUtf8FileError
+              ? "Configuration is not valid UTF-8 and was not changed. Repair it, then rerun uninstall."
+              : "Configuration could not be read. Check file permissions, then rerun uninstall.",
           ),
     );
   }

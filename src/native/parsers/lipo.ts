@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { machoCpuSubtypeBase } from "../../domain/apple/machoCpuIdentity.js";
 
 const architectureSchema = z.object({
   name: z.string().min(1),
@@ -6,6 +7,7 @@ const architectureSchema = z.object({
   cpu_subtype: z.string().nullable(),
   cpu_type_code: z.number().int().nonnegative().nullable(),
   cpu_subtype_code: z.number().int().nonnegative().nullable(),
+  cpu_subtype_base: z.number().int().nonnegative().nullable(),
   capabilities: z.string().nullable(),
   file_offset: z.number().int().min(0).nullable(),
   size: z.number().int().min(0).nullable(),
@@ -30,6 +32,7 @@ export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
         cpu_subtype: null,
         cpu_type_code: null,
         cpu_subtype_code: null,
+        cpu_subtype_base: null,
         capabilities: null,
         file_offset: null,
         size: null,
@@ -54,6 +57,7 @@ export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
             current.cpusubtype,
             current.capabilities,
           ),
+          cpu_subtype_base: cpuSubtypeBase(current.cpusubtype),
           capabilities: current.capabilities ?? null,
           file_offset: integer(current.offset),
           size: integer(current.size),
@@ -158,10 +162,10 @@ const cpuSubtypeCode = (
 };
 
 /** The subtype bits a lipo record names, without its capability byte. */
-export const lipoSubtypeBits = (value: string | null): number | null => {
-  if (value === null) return null;
+const cpuSubtypeBase = (value: string | undefined): number | null => {
+  if (value === undefined) return null;
   const subtype = unsigned32(value) ?? CPU_SUBTYPES[value];
-  return subtype === undefined ? null : subtype & 0x00ffffff;
+  return subtype === undefined ? null : machoCpuSubtypeBase(subtype);
 };
 
 /** lipo names the LIB64 capability and prints other capability bits in hex. */

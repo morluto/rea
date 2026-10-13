@@ -104,6 +104,15 @@ static inferences. Dynamic or ambiguous IPC is retained without a pairing edge.
 Runtime entities retain passive-CDP authority, while a successful static/runtime
 correspondence is a separately identified cross-layer inference.
 
+Source module links retain their resolution mode. Static imports in `.ts` and
+`.tsx` are `compiler-dependent` when compiler options have not been retained.
+REA compares Node import and require resolution: a shared outcome remains
+available with a limitation; divergent outcomes remain unavailable with both
+conditional branches and their limitations. This models source relationships,
+not verified emitted code or execution. A declaration file found only through
+an emitted-extension fallback is retained as a candidate, not a runtime target;
+an explicitly selected path keeps its original identity.
+
 ## Evidence and authority
 
 Every observation and edge carries all of the following:

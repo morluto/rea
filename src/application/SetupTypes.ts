@@ -26,6 +26,16 @@ export type ClientConfigurationResult =
   | {
       readonly status: "failed";
       readonly reason: "path" | "backup" | "write" | "readback";
+    }
+  | {
+      readonly status: "failed";
+      readonly reason: "rollback";
+      readonly backupPath?: string;
+      readonly failure: {
+        readonly kind: "restore";
+        readonly path: string;
+        readonly detail: string;
+      };
     };
 
 /** Read-only state used to block unsafe setup plans before any mutation. */

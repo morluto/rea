@@ -1,7 +1,7 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -248,12 +248,12 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   expect(inspected.isError).not.toBe(true);
   expect(inspected.structuredContent).toMatchObject({
     normalized_result: {
-      target: { file_path: expect.stringMatching(/\/index\.html$/u) },
+      target: { file_path: expect.stringMatching(/[\\/]index\.html$/u) },
       scripts: {
         items: [
           expect.objectContaining({
             frame_id: "frame-main",
-            file_path: expect.stringMatching(/\/app\.js$/u),
+            file_path: expect.stringMatching(/[\\/]app\.js$/u),
             cdp_hash: null,
             length: null,
             is_module: null,
@@ -264,7 +264,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
         expect.objectContaining({
           target_id: "electron-worker",
           opener_target_id: "electron-page",
-          file_path: expect.stringMatching(/\/worker\.js$/u),
+          file_path: expect.stringMatching(/[\\/]worker\.js$/u),
         }),
       ],
     },
@@ -276,8 +276,13 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   temporary.push(root);
   const applicationPath = join(root, "main.js");
   await writeFile(applicationPath, "module.exports = {};\n");
-  const aliasedRoot = join(root, "..", `${root.split("/").at(-1)}-alias`);
-  await symlink(root, aliasedRoot, "dir");
+  const aliasedRoot = join(root, "..", `${basename(root)}-alias`);
+  // A junction needs no symlink privilege on Windows.
+  await symlink(
+    root,
+    aliasedRoot,
+    process.platform === "win32" ? "junction" : "dir",
+  );
   temporary.push(aliasedRoot);
   const workingDirectory = await createTestTempDirectory(
     "rea-electron-working-directory-",

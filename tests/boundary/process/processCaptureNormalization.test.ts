@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -195,6 +195,64 @@ itWithLinuxCaptureCapability.each([false, true])(
       state: "quiesced",
       cleanup_outcome: "not_required",
     });
+    expect(capture.cleanup).toMatchObject({
+      owned_process_group: "verified",
+      temporary_root: "removed",
+    });
+  },
+  20_000,
+);
+
+itWithCaptureCapability(
+  "preserves selected nested path identities in actual PTY Evidence",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-nested-paths-");
+    const executable = join(root, "selected-node");
+    const observed = join(root, "data");
+    await symlink(process.execPath, executable);
+    await mkdir(observed);
+    const original = `${executable}\n${observed}/result\n${root}/log`;
+    const scenario = parseProcessScenario({
+      executable,
+      working_directory: root,
+      filesystem_observation_paths: [observed],
+      arguments: ["-e", `process.stdout.write(${JSON.stringify(original)})`],
+      normalization: { paths: true, pids: false, ports: false, patterns: [] },
+      settle_ms: 100,
+    });
+    const result = await captureProcessScenario(scenario);
+    if (!result.ok) throw result.error;
+    const capture = parseProcessCapture(
+      createProcessCaptureEvidence(scenario, result.value).normalized_result,
+    );
+    expect(capture.frames.map(({ data }) => data).join("")).toBe(
+      "<executable>\r\n<filesystem-root-0>/result\r\n<working-directory>/log",
+    );
+    expect(
+      capture.frames.map(({ raw_data, data }) => raw_data ?? data).join(""),
+    ).toBe(original.replaceAll("\n", "\r\n"));
+    expect(capture.manifest.comparison_contract).toHaveProperty(
+      "path_normalization_version",
+      "longest-original-paths-v1",
+    );
+    const legacyContract = { ...capture.manifest.comparison_contract };
+    delete legacyContract.path_normalization_version;
+    const legacy = parseProcessCapture({
+      ...capture,
+      manifest: {
+        ...capture.manifest,
+        comparison_contract: legacyContract,
+        comparison_contract_sha256: digestProcessCommitment(legacyContract),
+      },
+    });
+    expect(() => compareProcessCaptures(legacy, capture)).toThrow(
+      expect.objectContaining({
+        issues: [
+          expect.objectContaining({ expected: ["path_normalization_version"] }),
+        ],
+      }),
+    );
+    expect(capture.exit).toMatchObject({ code: 0, reason: "exited" });
     expect(capture.cleanup).toMatchObject({
       owned_process_group: "verified",
       temporary_root: "removed",

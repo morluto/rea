@@ -11,6 +11,8 @@ import subprocess
 import tempfile
 import time
 
+from codex_context import capture_tool_context
+
 
 def file_digest(path):
     digest = hashlib.sha256()
@@ -48,7 +50,20 @@ def main():
     parser.add_argument('--providers', type=Path)
     parser.add_argument('--enabled-tools', type=Path)
     parser.add_argument('--authority', choices=['static', 'browser'], default='static')
+    parser.add_argument('--capture-tool-context', action='store_true',
+                        help='Retain owned tool/usage items; excludes account/ambient state')
+    parser.add_argument('--guide-enabled-tools', action='store_true',
+                        help='Opt-in exact-name discovery guidance for selected REA tools')
     args = parser.parse_args()
+    if args.guide_enabled_tools and args.enabled_tools is None:
+        parser.error('--guide-enabled-tools requires --enabled-tools')
+    enabled_tools = None
+    if args.enabled_tools:
+        enabled_tools = json.loads(args.enabled_tools.read_text())
+        if not isinstance(enabled_tools, list) or not all(isinstance(name, str) and name for name in enabled_tools) or len(enabled_tools) != len(set(enabled_tools)):
+            raise ValueError('enabled-tools must be a unique list of exact tool names')
+    if args.guide_enabled_tools and not enabled_tools:
+        parser.error('--guide-enabled-tools requires a nonempty selected tool list')
     def terminate(signum, _frame):
         # The outer resource scope terminates descendants together. Ensure the
         # runner's copied credentials are also removed on a resource abort.
@@ -130,11 +145,14 @@ def main():
             'possible and select the requested normalized_result fields before returning '
             'intermediate output to model context. Keep real Evidence IDs and limitations.'
         )
-    enabled_tools = None
-    if args.enabled_tools:
-        enabled_tools = json.loads(args.enabled_tools.read_text())
-        if not isinstance(enabled_tools, list) or not all(isinstance(name, str) and name for name in enabled_tools) or len(enabled_tools) != len(set(enabled_tools)):
-            raise ValueError('enabled-tools must be a unique list of exact tool names')
+    if args.guide_enabled_tools:
+        instruction += (
+            ' Configured REA tool function names for this trial: '
+            + json.dumps(['mcp__rea__' + name for name in enabled_tools])
+            + '. For discovery select only these exact names from ALL_TOOLS and '
+            'return only their metadata. Preserve the original analyst question, '
+            'dependency order and source Evidence.'
+        )
     quote = json.dumps
     config = '\n'.join([
         'approval_policy = "never"', 'sandbox_mode = "read-only"',
@@ -160,6 +178,7 @@ def main():
                  'inspect_android_package', 'search_android_classes',
                  'inspect_android_class', 'inspect_android_method',
                  'inspect_firmware_regions', 'inspect_managed_artifact',
+                 'inspect_sqlite_database',
                  'inspect_managed_members', 'inspect_managed_native_boundaries',
                  'inspect_artifact', 'inspect_wasm_artifact',
                  'inspect_evm_interface', 'get_evidence_bundle', 'export_evidence_bundle',
@@ -183,6 +202,8 @@ def main():
         (args.output / 'prompt.txt').write_text(prompt)
         (args.output / 'trial-settings.json').write_text(json.dumps({
             'mode': args.mode, 'model': args.model, 'reasoning': args.reasoning,
+            'capture_tool_context': args.capture_tool_context,
+            'guide_enabled_tools': args.guide_enabled_tools,
             'driver_commit': subprocess.check_output(
                 ['git', 'rev-parse', 'HEAD'], cwd=driver_repository, text=True).strip(),
             'runtime_revision': args.revision,
@@ -196,7 +217,7 @@ def main():
             'package_lock_sha256': file_digest(repository / 'package-lock.json'),
             'experiment_sources_sha256': {
                 name: hashlib.sha256((experiment / name).read_bytes()).hexdigest()
-                for name in ['agent-trial.py', 'provider-environment.json']
+                for name in ['agent-trial.py', 'codex_context.py', 'provider-environment.json']
             },
             'developer_instructions': instruction,
             'developer_instructions_sha256': hashlib.sha256(instruction.encode()).hexdigest(),
@@ -212,7 +233,8 @@ def main():
                          'multi_agent': False, 'code_mode': args.mode == 'client-code',
                          'code_mode_only': args.mode == 'client-code'},
         }, indent=2) + '\n')
-        invocation = [args.codex, '--no-daemon', 'exec', '--strict-config', '--ephemeral',
+        invocation = [args.codex, '--no-daemon', 'exec', '--strict-config',
+                      *([] if args.capture_tool_context else ['--ephemeral']),
                       '--skip-git-repo-check', '--ignore-rules', '--json',
                       '--color', 'never', '-C', str(workspace),
                       '--output-last-message', str(args.output.resolve() / 'answer.txt'), '-']
@@ -234,26 +256,28 @@ def main():
         usage = []
         tools = []
         event_types = {}
-        for line in (args.output / 'events.jsonl').open():
-            if not line.strip():
-                continue
-            event = json.loads(line)
-            kind = event.get('type', 'unknown')
-            event_types[kind] = event_types.get(kind, 0) + 1
-            if 'usage' in event:
-                usage.append(event['usage'])
-            item = event.get('item', {})
-            if item.get('type') == 'mcp_tool_call' and kind == 'item.completed':
-                tools.append({
-                    **{k: item.get(k) for k in ['server', 'tool', 'arguments', 'status', 'error']},
-                    'codex_event_result_json_utf8_bytes': len(json.dumps(
-                        item.get('result'), separators=(',', ':'), ensure_ascii=False
-                    ).encode()),
-                })
+        with (args.output / 'events.jsonl').open() as event_file:
+            for line in event_file:
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                kind = event.get('type', 'unknown')
+                event_types[kind] = event_types.get(kind, 0) + 1
+                if 'usage' in event:
+                    usage.append(event['usage'])
+                item = event.get('item', {})
+                if item.get('type') == 'mcp_tool_call' and kind == 'item.completed':
+                    tools.append({
+                        **{k: item.get(k) for k in ['server', 'tool', 'arguments', 'status', 'error']},
+                        'codex_event_result_json_utf8_bytes': len(json.dumps(
+                            item.get('result'), separators=(',', ':'), ensure_ascii=False
+                        ).encode()),
+                    })
         final_target_digest = file_digest(Path(args.artifact_path)) if args.artifact_path else None
         summary = {
             'mode': args.mode, 'requested_model': args.model, 'reasoning': args.reasoning,
             'runtime_revision': args.revision,
+            'capture_tool_context_requested': args.capture_tool_context,
             'selected_artifact_sha256_before': target_digest,
             'selected_artifact_sha256_after': final_target_digest,
             'selected_artifact_bytes_unchanged': target_digest == final_target_digest if target_digest else None,
@@ -268,9 +292,13 @@ def main():
         (args.output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(json.dumps(summary))
     finally:
-        # Always remove copied credentials, config, caches and profile state.
-        shutil.rmtree(profile)
-        (args.output / 'cleanup.json').write_text(json.dumps({'profile_removed': not profile.exists()}) + '\n')
+        try:
+            if args.capture_tool_context:
+                capture_tool_context(trial_codex_home, args.output)
+        finally:
+            # Capture failure must never prevent copied-credential cleanup.
+            shutil.rmtree(profile)
+            (args.output / 'cleanup.json').write_text(json.dumps({'profile_removed': not profile.exists()}) + '\n')
     raise SystemExit(124 if timeout else exit_code)
 
 

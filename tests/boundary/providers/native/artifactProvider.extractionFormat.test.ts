@@ -3,10 +3,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { writeOrderedZip } from "../../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import { artifactExtractionExecutionSchema } from "../../../../src/contracts/artifactToolContracts.js";
+import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 
 describe("artifact extraction format support", () => {
@@ -42,6 +44,33 @@ describe("artifact extraction format support", () => {
     });
     await expect(access(output)).rejects.toThrow();
   });
+
+  it.each(["zip", "hap", "hsp", "app-pack"] as const)(
+    "extracts the ZIP-backed %s package family that inventory already supports",
+    async (format) => {
+      const root = await createTestTempDirectory("rea-extract-zip-family-");
+      const archive = join(
+        root,
+        `Payload.${format === "app-pack" ? "app" : format}`,
+      );
+      await writeOrderedZip(archive, ["payload.txt"]);
+      const result = await new ArtifactProvider(process.env)
+        .createClient(archiveTarget(archive, format))
+        .execute(
+          "extract_artifact",
+          artifactExtractionExecutionSchema.parse({
+            output_root: join(root, "output"),
+          }),
+        );
+      if (!result.ok) throw result.error;
+      const extracted = artifactExtractionResultSchema.parse(
+        result.value.result,
+      );
+      expect(
+        extracted.artifacts.map(({ relative_path }) => relative_path),
+      ).toEqual(["payload.txt"]);
+    },
+  );
 });
 
 const archiveTarget = (

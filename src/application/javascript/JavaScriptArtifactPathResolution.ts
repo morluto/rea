@@ -19,7 +19,13 @@ import {
   classifyPackageImportTargetString,
   lookupExactPackageImport,
 } from "../../domain/javascript/javascriptPackageImportAliases.js";
-import { typescriptEmittedSourceCandidates } from "../TypeScriptEmittedSourceCandidates.js";
+import {
+  typescriptEmittedSourceCandidates,
+  type TypeScriptEmittedSourceCandidate,
+} from "../TypeScriptEmittedSourceCandidates.js";
+import { isRelativeJavaScriptModuleSpecifier } from "../../domain/javascript/javascriptModuleSpecifier.js";
+import type { JavaScriptModuleResolutionMode } from "../../domain/javascript/javascriptModuleResolutionMode.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 type ArtifactPathResolutionContext =
   | "package-entrypoint"
@@ -37,6 +43,16 @@ type UnresolvedArtifactPathStatus =
 interface ArtifactPathResolutionBase {
   readonly declared_path: string;
   readonly resolution_context: ArtifactPathResolutionContext;
+  readonly limitations: readonly string[];
+  readonly conditional_resolutions?: readonly ConditionalModuleResolution[];
+  readonly candidate_path?: string;
+}
+
+export interface ConditionalModuleResolution {
+  readonly mode: "import" | "require";
+  readonly resolution_status: UnresolvedArtifactPathStatus | "resolved";
+  readonly resolved_path: string | null;
+  readonly candidate_path?: string;
   readonly limitations: readonly string[];
 }
 
@@ -61,19 +77,14 @@ export interface ResolveArtifactPathInput {
   readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
   readonly htmlBaseHref?: string | null;
   /** Import/require semantics; runtime resource paths omit this provenance. */
-  readonly moduleKind?: "import" | "require";
+  readonly moduleKind?: JavaScriptModuleResolutionMode;
 }
 
-/** Loader selected by a source-level JavaScript module reference. */
-export const moduleKindForJavaScriptReference = (
-  sourcePath: string,
-  referenceKind: "static-import" | "dynamic-import" | "require",
-): "import" | "require" =>
-  referenceKind === "require" ||
-  (referenceKind === "static-import" &&
-    posix.extname(sourcePath).toLowerCase() === ".cts")
-    ? "require"
-    : "import";
+/** Preserve an explicitly retained loader mode on graph relationships. */
+export const moduleResolutionModeProperties = (
+  mode: JavaScriptModuleResolutionMode | undefined,
+): Readonly<Record<string, JavaScriptModuleResolutionMode>> =>
+  mode === undefined ? {} : { resolution_mode: mode };
 
 const EXTENSIONS = [
   ".js",
@@ -101,43 +112,116 @@ interface PackageFileTarget {
   readonly url: URL;
 }
 
-type CandidateResolution =
-  | {
-      readonly resolvedPath: string;
-      readonly status: "resolved";
-      readonly limitations: readonly string[];
-    }
+type CandidateResolution = {
+  readonly limitations: readonly string[];
+  readonly candidatePath?: string;
+  readonly conditionalResolutions?: readonly ConditionalModuleResolution[];
+} & (
+  | { readonly resolvedPath: string; readonly status: "resolved" }
   | {
       readonly resolvedPath: null;
       readonly status: UnresolvedArtifactPathStatus;
-      readonly limitations: readonly string[];
       /** A truthy package main failed, so Node must not try ancestor packages. */
       readonly stopsAncestorLookup?: true;
-    };
+    }
+);
 
 /** Resolve one declaration while preserving its original input identity. */
 export const resolveArtifactPathByContext = (
   input: ResolveArtifactPathInput,
 ): ArtifactPathResolution => {
   const resolution = resolvePath(input);
+  const facts = {
+    declared_path: input.declaredPath,
+    resolution_context: input.context,
+    limitations: resolution.limitations,
+    ...(resolution.candidatePath === undefined
+      ? {}
+      : { candidate_path: resolution.candidatePath }),
+    ...(resolution.conditionalResolutions === undefined
+      ? {}
+      : { conditional_resolutions: resolution.conditionalResolutions }),
+  };
   return resolution.status === "resolved"
     ? {
-        declared_path: input.declaredPath,
-        resolution_context: input.context,
+        ...facts,
         resolved_path: resolution.resolvedPath,
         resolution_status: resolution.status,
-        limitations: resolution.limitations,
       }
-    : {
-        declared_path: input.declaredPath,
-        resolution_context: input.context,
-        resolved_path: null,
-        resolution_status: resolution.status,
-        limitations: resolution.limitations,
-      };
+    : { ...facts, resolved_path: null, resolution_status: resolution.status };
 };
 
+/** Project retained conditional identities without flattening them into display text. */
+export const artifactPathResolutionProperties = (
+  resolution: ArtifactPathResolution | undefined,
+): Readonly<Record<string, JsonValue>> => ({
+  ...(resolution?.candidate_path === undefined
+    ? {}
+    : { candidate_path: resolution.candidate_path }),
+  ...(resolution?.conditional_resolutions === undefined
+    ? {}
+    : {
+        conditional_resolutions: resolution.conditional_resolutions.map(
+          (branch) => ({
+            mode: branch.mode,
+            resolution_status: branch.resolution_status,
+            resolved_path: branch.resolved_path,
+            limitations: [...branch.limitations],
+            ...(branch.candidate_path === undefined
+              ? {}
+              : { candidate_path: branch.candidate_path }),
+          }),
+        ),
+      }),
+});
+
+const conditionalResolution = (
+  mode: "import" | "require",
+  result: CandidateResolution,
+): ConditionalModuleResolution => ({
+  mode,
+  resolution_status: result.status,
+  resolved_path: result.resolvedPath,
+  limitations: result.limitations,
+  ...(result.candidatePath === undefined
+    ? {}
+    : { candidate_path: result.candidatePath }),
+});
+
 const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
+  if (input.moduleKind === "compiler-dependent") {
+    const imported = resolvePath({ ...input, moduleKind: "import" });
+    const required = resolvePath({ ...input, moduleKind: "require" });
+    const sameOutcome =
+      imported.status === required.status &&
+      imported.resolvedPath === required.resolvedPath &&
+      imported.candidatePath === required.candidatePath;
+    const limitation =
+      "Static TypeScript loader mode is compiler-dependent without retained compiler options. " +
+      (sameOutcome
+        ? "Node import and require resolution agree on this outcome."
+        : "Node import and require resolution disagree; neither branch is an established target.");
+    return sameOutcome
+      ? {
+          ...imported,
+          limitations: [
+            ...new Set([
+              ...imported.limitations,
+              ...required.limitations,
+              limitation,
+            ]),
+          ],
+        }
+      : {
+          resolvedPath: null,
+          status: "unavailable",
+          limitations: [limitation],
+          conditionalResolutions: [
+            conditionalResolution("import", imported),
+            conditionalResolution("require", required),
+          ],
+        };
+  }
   // Package import keys are literal lookup identities, not artifact paths.
   // The selected target is admitted separately by resolveExportTarget.
   if (
@@ -145,22 +229,20 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
     input.declaredPath.startsWith("#")
   )
     return resolvePackageImportAlias(input, input.declaredPath);
-  const rejected = rejectDeclaration(input.declaredPath);
-  if (rejected !== null) return rejected;
   const candidate = contextualCandidate(input);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);
   if (typeof confined !== "string") return confined;
-  if (input.context === "html-reference")
+  if (input.context === "html-reference" || input.context === "url-reference")
     return (
       resolveFileCandidates(input, [confined]) ??
       unresolvedCandidate("not-found", [
-        `The exact HTML resource ${confined} was not found among the selected application files.`,
+        `The exact ${input.context === "html-reference" ? "HTML" : "URL"} resource ${confined} was not found among the selected application files.`,
       ])
     );
   const isModuleUrlPath =
     input.context === "module-specifier" &&
-    (input.declaredPath.startsWith(".") ||
+    (isRelativeJavaScriptModuleSpecifier(input.declaredPath) ||
       input.declaredPath.startsWith("/") ||
       fileUrlPath(input.declaredPath) !== undefined);
   const emittedSourceCandidates =
@@ -169,10 +251,45 @@ const resolvePath = (input: ResolveArtifactPathInput): CandidateResolution => {
       : [];
   if (isModuleUrlPath && input.moduleKind === "import")
     return (
-      resolveFileCandidates(input, [confined, ...emittedSourceCandidates]) ??
-      notFoundCandidate()
+      resolveRuntimeSourceCandidates(
+        input,
+        confined,
+        emittedSourceCandidates,
+      ) ?? notFoundCandidate()
     );
   return resolveCandidate(input, confined, new Set(), emittedSourceCandidates);
+};
+
+const resolveRuntimeSourceCandidates = (
+  input: ResolveArtifactPathInput,
+  exactPath: string,
+  sourceCandidates: readonly TypeScriptEmittedSourceCandidate[],
+): CandidateResolution | null => {
+  const source = input.files.get(input.sourcePath);
+  const exactCandidate: TypeScriptEmittedSourceCandidate = {
+    path: exactPath,
+    kind: "implementation",
+  };
+  for (const candidate of [exactCandidate, ...sourceCandidates]) {
+    const target = input.files.get(candidate.path);
+    if (
+      target === undefined ||
+      (source !== undefined &&
+        target.container_sha256 !== source.container_sha256)
+    )
+      continue;
+    return candidate.kind === "declaration"
+      ? {
+          resolvedPath: null,
+          status: "unavailable",
+          candidatePath: candidate.path,
+          limitations: [
+            "Only a TypeScript declaration fallback was found; it does not establish the requested runtime module.",
+          ],
+        }
+      : { resolvedPath: candidate.path, status: "resolved", limitations: [] };
+  }
+  return null;
 };
 
 const rejectDeclaration = (declared: string): CandidateResolution | null => {
@@ -193,24 +310,40 @@ const contextualCandidate = (
   input: ResolveArtifactPathInput,
 ): string | CandidateResolution => {
   const { context } = input;
+  // URL suffixes are evidence, not pathname bytes. Admit only the path while
+  // retaining the complete declaration on the resolution result.
   let declared =
-    context === "html-reference" || context === "url-reference"
+    context === "url-reference"
       ? stripQueryAndFragment(input.declaredPath)
       : input.declaredPath;
-  if (context === "html-reference") return htmlCandidate(input);
-  if (context === "module-specifier") {
+  if (context === "module-specifier" && /^file:/iu.test(declared)) {
     const fileUrl = fileUrlPath(declared);
+    if (fileUrl === null)
+      return unresolvedCandidate("rejected", [
+        "The file URL path contains syntax that cannot identify a canonical artifact path.",
+      ]);
     if (fileUrl !== undefined)
       return input.moduleKind === "require"
         ? unresolvedCandidate("external", [
             "Node CommonJS require specifiers do not resolve file URLs as local artifacts.",
           ])
         : fileUrl;
+    return unresolvedCandidate("external", [
+      "File URL authorities or invalid file URL forms cannot be mapped to artifact-local paths.",
+    ]);
+  }
+  const rejected = rejectDeclaration(declared);
+  if (rejected !== null) return rejected;
+  if (context === "html-reference") return htmlCandidate(input);
+  if (context === "module-specifier") {
     if (hasScheme(declared))
       return unresolvedCandidate("external", [
         "URL and Node builtin schemes are outside static artifact module resolution.",
       ]);
-    if (!declared.startsWith(".") && !declared.startsWith("/"))
+    if (
+      !isRelativeJavaScriptModuleSpecifier(declared) &&
+      !declared.startsWith("/")
+    )
       return bareModuleCandidate(input);
     if (input.moduleKind !== "require") {
       const decoded = decodeModuleUrlPath(stripQueryAndFragment(declared));
@@ -222,14 +355,44 @@ const contextualCandidate = (
       "URL schemes and protocol-relative URLs are outside this local artifact path context.",
     ]);
   if (context === "url-reference") {
+    // A file base gives raw drive-letter segments special meaning, including
+    // after dot segments reach the root. Parse before percent decoding so an
+    // encoded drive-like filename stays literal. The synthetic base establishes
+    // only this ambiguity; it does not establish the source's runtime scheme.
+    const sourceUrlPath = input.sourcePath
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+    const fileReference = URL.parse(declared, `file:///${sourceUrlPath}`);
+    if (fileReference === null)
+      return unresolvedCandidate("rejected", [
+        "The URL reference cannot be parsed as a URL.",
+      ]);
+    if (/^\/[A-Za-z]:(?:\/|$)/u.test(fileReference.pathname))
+      return unresolvedCandidate("unavailable", [
+        "Drive-letter URL paths cannot be mapped without the source URL scheme and filesystem root.",
+      ]);
     const decoded = percentDecodeUrlPath(declared);
     if (decoded === null)
       return unresolvedCandidate("rejected", [
         "The URL reference path percent-decodes to NUL or to bytes that are not UTF-8.",
       ]);
-    declared = decoded;
+    // Empty URL segments are significant; canonical filesystem paths cannot
+    // preserve them, including their interaction with following dot segments.
+    if (decoded.includes("//"))
+      return unresolvedCandidate("unavailable", [
+        "Repeated URL path separators cannot be mapped to an exact canonical artifact file.",
+      ]);
+    return exactUrlPathCandidate(
+      decoded,
+      relativeCandidate(input.sourcePath, decoded),
+      "URL",
+    );
   }
-  return relativeCandidate(input.sourcePath, declared);
+  const candidate = relativeCandidate(input.sourcePath, declared);
+  return context === "module-specifier" && input.moduleKind === "import"
+    ? exactUrlPathCandidate(declared, candidate, "module URL")
+    : candidate;
 };
 
 const decodeModuleUrlPath = (
@@ -264,9 +427,12 @@ const bareModuleCandidate = (
     return unresolvedCandidate("external", [
       "The bare specifier is a Node builtin or invalid package name.",
     ]);
-  if (input.moduleKind === "import" && request.packageName.includes("%"))
+  if (
+    input.moduleKind === "import" &&
+    (request.packageName.startsWith(".") || request.packageName.includes("%"))
+  )
     return unresolvedCandidate("rejected", [
-      "Percent signs are not admitted in ES module package names.",
+      "ES module package names cannot start with a dot or contain percent signs.",
     ]);
   const self = packageSelfCandidate(input, request);
   if (self !== null) return self;
@@ -681,37 +847,34 @@ const htmlCandidate = (
   const basePath = decodedBase.startsWith("/")
     ? decodedBase.slice(1)
     : posix.join(posix.dirname(input.sourcePath), decodedBase);
-  if (declaredPath === "") return emptyHtmlReference(decodedBase, basePath);
+  if (declaredPath === "")
+    return exactUrlPathCandidate(decodedBase, basePath, "HTML");
   return posix.join(htmlBaseDirectory(decodedBase, basePath), declaredPath);
 };
 
-const emptyHtmlReference = (
-  base: string,
-  basePath: string,
+const exactUrlPathCandidate = (
+  declared: string,
+  candidate: string,
+  kind: "HTML" | "URL" | "module URL",
 ): string | CandidateResolution => {
-  if (!htmlBaseIsDirectory(base)) return basePath;
-  const confined = confineCandidate(basePath);
+  if (!urlPathIsDirectory(declared)) return candidate;
+  const confined = confineCandidate(candidate);
   if (typeof confined !== "string") return confined;
   return unresolvedCandidate("not-found", [
-    `The HTML reference resolves to directory ${confined || "."}, not an exact selected application file.`,
+    `The ${kind} reference resolves to directory ${confined || "."}, not an exact selected application file.`,
   ]);
 };
 
-/**
- * The directory a relative HTML reference resolves against. A base path
- * ending in "/" or in a "." or ".." segment is already a directory, because a
- * relative reference resolves against the base URL's directory and those
- * segments are dropped rather than stepped through.
- */
-const htmlBaseIsDirectory = (base: string): boolean =>
-  base.endsWith("/") ||
-  base.endsWith("/.") ||
-  base.endsWith("/..") ||
-  base === "." ||
-  base === "..";
+/** Whether a URL path retains directory form after dot-segment normalization. */
+const urlPathIsDirectory = (path: string): boolean =>
+  path.endsWith("/") ||
+  path.endsWith("/.") ||
+  path.endsWith("/..") ||
+  path === "." ||
+  path === "..";
 
 const htmlBaseDirectory = (base: string, basePath: string): string =>
-  htmlBaseIsDirectory(base) ? basePath : posix.dirname(basePath);
+  urlPathIsDirectory(base) ? basePath : posix.dirname(basePath);
 
 const confineCandidate = (candidate: string): string | CandidateResolution => {
   const normalized = normalizeJoinedLogicalPath(candidate);
@@ -796,12 +959,10 @@ const resolveCandidate = (
   input: ResolveArtifactPathInput,
   candidate: string,
   packageChain: ReadonlySet<string>,
-  emittedSourceCandidates: readonly string[] = [],
+  emittedSourceCandidates: readonly TypeScriptEmittedSourceCandidate[] = [],
 ): CandidateResolution =>
-  resolveFileCandidates(input, [
-    ...fileCandidates(candidate, input.moduleKind),
-    ...emittedSourceCandidates,
-  ]) ??
+  resolveFileCandidates(input, fileCandidates(candidate, input.moduleKind)) ??
+  resolveRuntimeSourceCandidates(input, candidate, emittedSourceCandidates) ??
   resolveDirectory(
     input,
     candidate,
@@ -854,8 +1015,6 @@ const resolveDirectory = (
     files: input.files,
     ...(input.moduleKind === undefined ? {} : { moduleKind: input.moduleKind }),
   };
-  const rejected = rejectDeclaration(entryInput.declaredPath);
-  if (rejected !== null) return rejected;
   const candidate = contextualCandidate(entryInput);
   if (typeof candidate !== "string") return candidate;
   const confined = confineCandidate(candidate);
@@ -889,10 +1048,25 @@ const resolveFileCandidates = (
       (source === undefined ||
         target.container_sha256 === source.container_sha256)
     )
-      return { resolvedPath: path, status: "resolved", limitations: [] };
+      return isRuntimeDeclarationPath(input, path)
+        ? {
+            resolvedPath: null,
+            status: "unavailable",
+            candidatePath: path,
+            limitations: [
+              `The TypeScript declaration ${path} is compile-time evidence and cannot identify a runtime module implementation.`,
+            ],
+          }
+        : { resolvedPath: path, status: "resolved", limitations: [] };
   }
   return null;
 };
+
+const isRuntimeDeclarationPath = (
+  input: ResolveArtifactPathInput,
+  path: string,
+): boolean =>
+  input.moduleKind !== undefined && /\.d\.(?:ts|mts|cts)$/iu.test(path);
 
 const NODE_MODULE_EXTENSIONS = [".js", ".json", ".node"] as const;
 
@@ -1162,12 +1336,26 @@ const exactPackageTargetNotFound = (
   ],
 });
 
-const fileUrlPath = (value: string): string | undefined => {
-  if (!value.startsWith("file://")) return undefined;
+const fileUrlPath = (value: string): string | null | undefined => {
+  if (!/^file:\/\//iu.test(value)) return undefined;
+  // URL parsing removes tabs and newlines and normalizes encoded dot segments.
+  // Check the raw path first, excluding URL identity suffixes, then check the
+  // parsed pathname so parser normalization cannot introduce a separator.
+  const rawPath = stripQueryAndFragment(value);
+  if (
+    value.includes("\0") ||
+    value.includes("\\") ||
+    /[\t\n\r]/u.test(rawPath) ||
+    !admitsCanonicalPathSyntax(rawPath)
+  )
+    return null;
   try {
     const url = new URL(value);
     if (url.protocol !== "file:" || url.hostname !== "") return undefined;
-    return decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    if (!admitsCanonicalPathSyntax(url.pathname)) return null;
+    const decoded = decodeURIComponent(url.pathname);
+    if (decoded.includes("\0")) return null;
+    return decoded.replace(/^\/+/, "");
   } catch (cause: unknown) {
     // Unparseable file URLs have no path to resolve.
     void cause;

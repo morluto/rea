@@ -3,6 +3,16 @@ import type {
   ReconstructionCoverageData,
   ReconstructionVerifierContract,
 } from "./reconstructionCoverage.js";
+import {
+  compareOffsetDateTimeInstants,
+  offsetDateTimeInstantFromEpochMilliseconds,
+  type OffsetDateTimeInstant,
+} from "./offsetDateTime.js";
+import {
+  latestVerifierObservationsByVerifier,
+  sameVerifierAssessment,
+  type VerifierObservation,
+} from "./reconstructionCoverageVerifierResults.js";
 
 export const recommendedReconstructionProbes = (
   reasons: readonly ClosureReason[],
@@ -29,6 +39,7 @@ export interface ReconstructionEvaluationContext {
   readonly coverage: ReconstructionCoverageData;
   readonly boundary: Boundary;
   readonly nowEpochMs: number;
+  readonly nowInstant: OffsetDateTimeInstant;
   readonly reasons: ClosureReason[];
   readonly evidenceIds: Set<string>;
 }
@@ -184,7 +195,7 @@ interface VerifierIndexes {
   >;
   readonly latestResultsByVerifier: ReadonlyMap<
     string,
-    ReconstructionCoverageData["verifier_results"][number]
+    readonly VerifierObservation[]
   >;
   readonly artifactDigests: ReadonlySet<string>;
   readonly ownerDigests: ReadonlySet<string>;
@@ -213,20 +224,6 @@ const createVerifierIndexes = (
       contractsByClaim.set(claimId, contracts);
     }
 
-  const latestResultsByVerifier = new Map<
-    string,
-    ReconstructionCoverageData["verifier_results"][number]
-  >();
-  for (const result of coverage.verifier_results) {
-    const latest = latestResultsByVerifier.get(result.verifier_id);
-    // Stable descending sort used to choose the first input record on ties.
-    if (
-      latest === undefined ||
-      Date.parse(result.observed_at) > Date.parse(latest.observed_at)
-    )
-      latestResultsByVerifier.set(result.verifier_id, result);
-  }
-
   const ownersBySurface = new Map<
     string,
     ReconstructionCoverageData["owners"][number][]
@@ -239,7 +236,9 @@ const createVerifierIndexes = (
 
   return {
     contractsByClaim,
-    latestResultsByVerifier,
+    latestResultsByVerifier: latestVerifierObservationsByVerifier(
+      coverage.verifier_results,
+    ),
     artifactDigests: new Set(
       coverage.artifacts.map(({ artifact_sha256: value }) => value),
     ),
@@ -260,8 +259,10 @@ const evaluateVerifierResult = (
   contract: ReconstructionVerifierContract,
   indexes: VerifierIndexes,
 ): void => {
-  const result = indexes.latestResultsByVerifier.get(contract.verifier_id);
-  if (result === undefined) {
+  const latestResults = indexes.latestResultsByVerifier.get(
+    contract.verifier_id,
+  );
+  if (latestResults === undefined) {
     addReason(
       context,
       "verifier-result-missing",
@@ -270,7 +271,26 @@ const evaluateVerifierResult = (
     );
     return;
   }
-  addEvidence(context, result.evidence_ids);
+  addEvidence(
+    context,
+    latestResults.flatMap(({ result }) => result.evidence_ids),
+  );
+  const latest = latestResults[0];
+  if (latest === undefined) return;
+  const { result } = latest;
+  if (
+    !latestResults.every((candidate) =>
+      sameVerifierAssessment(result, candidate.result),
+    )
+  ) {
+    addReason(
+      context,
+      "verifier-result-ambiguous",
+      claim.claim_id,
+      "Latest verifier observations have conflicting assessment content.",
+    );
+    return;
+  }
   if (!verifierResultIsCompatible(claim, contract, result, indexes)) {
     addReason(
       context,
@@ -280,10 +300,14 @@ const evaluateVerifierResult = (
     );
     return;
   }
-  const observedAt = Date.parse(result.observed_at);
+  const cutoffEpochMs = context.nowEpochMs - contract.max_age_ms;
   if (
-    observedAt > context.nowEpochMs ||
-    context.nowEpochMs - observedAt > contract.max_age_ms
+    compareOffsetDateTimeInstants(latest.instant, context.nowInstant) > 0 ||
+    (cutoffEpochMs >= -Number.MAX_SAFE_INTEGER &&
+      compareOffsetDateTimeInstants(
+        latest.instant,
+        offsetDateTimeInstantFromEpochMilliseconds(cutoffEpochMs),
+      ) < 0)
   ) {
     addReason(
       context,

@@ -96,7 +96,7 @@ export const publishFirmwareExtraction = async (context: {
       published_bytes: files.reduce((sum, file) => sum + file.size, 0),
     });
     context.signal.throwIfAborted();
-    await tree.commit();
+    await tree.commit(context.signal);
     return result;
   } catch (cause: unknown) {
     if (cause instanceof SafeOutputTreeCreationFailure) tree = cause.tree;

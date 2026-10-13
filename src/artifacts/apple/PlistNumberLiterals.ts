@@ -1,5 +1,6 @@
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import { decodeXmlText } from "../../domain/propertyListKeys.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 
 const collector = () => {
   const integers = new Map<number, Set<string>>();
@@ -124,10 +125,7 @@ export const binaryPlistNumberLiterals = (
   bytes: Buffer,
 ): PlistNumberLiterals => {
   const output = collector();
-  if (
-    bytes.length < 40 ||
-    bytes.subarray(0, 8).toString("ascii") !== "bplist00"
-  )
+  if (bytes.length < 40 || !hasBinaryPlistSignature(bytes))
     return output.result(true);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const trailer = bytes.length - 32;

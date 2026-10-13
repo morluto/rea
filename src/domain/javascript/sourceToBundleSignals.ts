@@ -102,8 +102,12 @@ export const buildSourceToBundleCandidateIndex = (
     for (const path of projection.paths) {
       for (const suffix of path.allowSuffix
         ? pathSuffixes(path.value)
-        : [path.value])
+        : [path.value]) {
         addIndexValue(byPathSuffix, suffix, projection.node.node_id);
+        const canonical = suffix.normalize("NFC");
+        if (canonical !== suffix)
+          addIndexValue(byPathSuffix, canonical, projection.node.node_id);
+      }
       addIndexValue(
         byBasename,
         posix.basename(path.value),
@@ -126,9 +130,13 @@ export const candidateIdsForSource = (
   source: SourceFile,
   index: SourceToBundleCandidateIndex,
 ): string[] => {
+  const canonicalPath = source.path.normalize("NFC");
   const groups = [
     source.sha256 === null ? undefined : index.byDigest.get(source.sha256),
     index.byPathSuffix.get(source.path),
+    canonicalPath === source.path
+      ? undefined
+      : index.byPathSuffix.get(canonicalPath),
     index.byBasename.get(posix.basename(source.path)),
   ];
   const seen = new Set<string>();
@@ -220,6 +228,14 @@ const candidateSignals = (
     signals.push(
       signal("source-map-original-path", source.path, sourceMapPaths),
     );
+  const unicodeEquivalentPaths = matchingUnicodePaths(
+    source.path,
+    current.paths,
+  );
+  if (unicodeEquivalentPaths.length > 0)
+    signals.push(
+      signal("unicode-equivalent-path", source.path, unicodeEquivalentPaths),
+    );
   const otherPaths = current.paths.filter(
     ({ kind }) => kind !== "source-map-original",
   );
@@ -285,6 +301,27 @@ const matchingPaths = (
         (allowSuffix && value.endsWith(`/${sourcePath}`)),
     )
     .map(({ value }) => value);
+
+const matchingUnicodePaths = (
+  sourcePath: string,
+  currentPaths: readonly CurrentPath[],
+): string[] => {
+  const canonicalSource = sourcePath.normalize("NFC");
+  return currentPaths
+    .filter(({ value, allowSuffix }) => {
+      if (
+        value === sourcePath ||
+        (allowSuffix && value.endsWith(`/${sourcePath}`))
+      )
+        return false;
+      const canonicalValue = value.normalize("NFC");
+      return (
+        canonicalValue === canonicalSource ||
+        (allowSuffix && canonicalValue.endsWith(`/${canonicalSource}`))
+      );
+    })
+    .map(({ value }) => value);
+};
 
 const addJsonPath = (paths: CurrentPath[], value: unknown): void => {
   if (typeof value === "string") addPath(paths, "observation-path", value);

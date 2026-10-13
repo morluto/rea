@@ -36,7 +36,7 @@ check project-owned conformance fixtures and fail-closed report behavior.
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `discover-classify`             | target-free startup, artifact inventory, compatible workflow selection, and exact visible limits                      |
 | `diagnose-environment`          | broken runtime separated from analysis failure, version skew detected, and revision changed after recovery            |
-| `declare-request`               | exact target, operation, and lifecycle are carried by the request before launch                                       |
+| `acquire-authority`             | missing scope reported, narrow grant resumed, expansion reprompted, and denial launched nothing                       |
 | `static-analysis`               | native and JavaScript routing plus preserved ambiguity, truncation, unsupported syntax, and residual unknowns         |
 | `reactive-scenarios`            | predicate-driven interaction, descendant settlement, Electron correlation, and cancellation cleanup Evidence          |
 | `compare-authority-candidate`   | explicit partial-order/finite-trace semantics, primary divergence localization, and unknown for incomplete comparison |

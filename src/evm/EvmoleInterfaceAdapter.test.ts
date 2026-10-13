@@ -61,6 +61,13 @@ it.each([
     functions: [{ selector: "aabbccdd", bytecodeOffset: -1, dispatch: "abi" }],
   },
   { metadata: {} },
+  {
+    metadata: {
+      bytecodeOffset: 1,
+      cborLength: 4,
+      entries: [{ key: "reported", value: { type: "integer", value: 1.5 } }],
+    },
+  },
 ])("rejects producer representations outside the selected profile", (raw) => {
   expect(() => projectEvmoleInterface(raw)).toThrow();
 });

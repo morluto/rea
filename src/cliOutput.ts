@@ -20,6 +20,8 @@ interface ParsedCliOutputArguments {
   readonly parseError: boolean;
   readonly tokenCount: boolean;
   readonly tokenWindow: boolean;
+  readonly tokenLimit: number | undefined;
+  readonly tokenOffset: number | undefined;
 }
 
 /** Read effective Incur output controls at the executable boundary. */
@@ -30,14 +32,18 @@ export const parseCliOutputArguments = (
   let filterOutput: string | undefined;
   let fullOutput = false;
   let tokenCount = false;
-  let tokenWindow = false;
+  let tokenLimit: number | undefined;
+  let tokenOffset: number | undefined;
   const parsed = (parseError: boolean): ParsedCliOutputArguments => ({
     filterOutput,
     format,
     fullOutput,
     parseError,
     tokenCount,
-    tokenWindow: parseError ? false : tokenWindow,
+    tokenWindow:
+      !parseError && (tokenLimit !== undefined || tokenOffset !== undefined),
+    tokenLimit: parseError ? undefined : tokenLimit,
+    tokenOffset: parseError ? undefined : tokenOffset,
   });
   for (let index = 0; index < arguments_.length; index += 1) {
     const argument = arguments_[index];
@@ -71,7 +77,8 @@ export const parseCliOutputArguments = (
         const numericValue = Number(value);
         if (!Number.isFinite(numericValue) || value.trim() === "")
           return parsed(true);
-        tokenWindow = true;
+        if (argument === "--token-limit") tokenLimit = numericValue;
+        else tokenOffset = numericValue;
         index += 1;
       }
       continue;

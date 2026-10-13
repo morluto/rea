@@ -7,13 +7,13 @@ import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
 import { digestSchema } from "./../domain/digests.js";
 
 /** Concrete provider identity committed by an analysis profile. */
-export const committedProviderSchema = z.object({
+export const committedProviderSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().min(1),
 });
 
-const unsignedAnalysisProfileSchema = z.object({
+const unsignedAnalysisProfileSchema = z.strictObject({
   provider: committedProviderSchema,
   parameters: jsonObjectSchema,
 });
@@ -40,7 +40,11 @@ export const createAnalysisProfile = (
   parameters: Readonly<Record<string, JsonValue>>,
 ): AnalysisProfileCommitment => {
   const unsigned = unsignedAnalysisProfileSchema.parse({
-    provider,
+    provider: {
+      id: provider.id,
+      name: provider.name,
+      version: provider.version,
+    },
     parameters,
   });
   return analysisProfileSchema.parse({

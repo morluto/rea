@@ -17,6 +17,11 @@ targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
 boundaries are checked by `npm run verify:module-boundaries`, included in lint.
 
+For analysis workflows and agent interfaces, follow the
+[performance priorities](AGENTS.md#performance). Explain the selected output
+scope, reuse/cache decisions, and relevant before/after measurements when these
+costs change.
+
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
 
 ## Contribution scope

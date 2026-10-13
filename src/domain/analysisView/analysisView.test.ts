@@ -1,6 +1,5 @@
 import { expect, it } from "vitest";
 
-import { resolveJavaScriptSourceMapReference } from "../javascript/javascriptSourceMapPaths.js";
 import { functionDossierSchema } from "../hopperValues.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -24,13 +23,14 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { javascriptModulePath } from "./javascriptApplicationView.js";
-
 import {
   inspectAnalysisViewInputSchema,
   projectAnalysisView,
   type AnalysisViewParent,
 } from "./analysisView.js";
+
 const layoutParent = (): AnalysisViewParent => {
   const evidence = analysisViewLayoutEvidence();
   return {
@@ -532,7 +532,7 @@ it("pages actual modules, including unknown and empty paths, without unrelated r
         observations: original.observations.map((observation) => ({
           ...(kind === "source-module"
             ? {
-                source_map_reference: resolveJavaScriptSourceMapReference(
+                source_map_reference: sourceMapReference(
                   "",
                   null,
                   "renderer.js",
@@ -733,6 +733,14 @@ it("does not match unavailable layout names using a display placeholder", () => 
 });
 
 it("rejects unsupported parent operations and incompatible collections", () => {
+  expect(
+    projectAnalysisView(layoutParent(), {
+      kind: "managed",
+      collection: "attributes",
+      offset: 0,
+      limit: 1,
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const unsupported = projectAnalysisView(
     {
       evidenceId: `ev_${"d".repeat(64)}`,

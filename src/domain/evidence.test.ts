@@ -52,6 +52,30 @@ it("preserves omitted relationship diagnostics and authenticates reported diagno
   ).toThrow("semantic identifier");
 });
 
+it("projects known provider fields and preserves open JSON payloads", () => {
+  const liveProvider = { ...PROVIDER, transient_status: "starting" };
+  const evidence = createEvidence(TARGET, liveProvider, {
+    operation: "inspect",
+    parameters: { caller_metadata: { note: "kept" } },
+    result: { producer_extension: { value: "kept" } },
+    analysisProfile: PROFILE,
+    environment: {
+      id: "fixture",
+      platform: "linux",
+      architecture: "x86_64",
+      isolation: "process",
+    },
+    locations: [{ kind: "address", address: "0x1000" }],
+  });
+
+  expect(evidence.provider).toEqual(PROVIDER);
+  expect(evidence.parameters).toEqual({ caller_metadata: { note: "kept" } });
+  expect(evidence.normalized_result).toEqual({
+    producer_extension: { value: "kept" },
+  });
+  expect(parseEvidence(evidence)).toEqual(evidence);
+});
+
 it("preserves identity and bytes when reusing an owned immutable result", () => {
   const value = { nested: { values: ["observed", 1] } };
   const mutable = createEvidence(TARGET, PROVIDER, {

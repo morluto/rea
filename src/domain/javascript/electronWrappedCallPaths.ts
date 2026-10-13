@@ -14,9 +14,17 @@ import type { JavaScriptAnalysisAccumulator } from "./javascriptStaticAnalysisSt
 import type {
   ElectronCallPath,
   ElectronCallPathStep,
+  ElectronContextBridgeFinding,
   ElectronIpcDescriptor,
   ElectronIpcFinding,
+  ElectronStaticValue,
 } from "./electronStaticAnalysisTypes.js";
+import {
+  contextBridgeExposureArguments,
+  type JavaScriptContextBridgeExposureArguments,
+} from "./javascriptContextBridgeExposure.js";
+import { boundedExpression } from "./electronStaticAnalysisValues.js";
+import { argumentNode } from "./javascriptStaticAnalysisHelpers.js";
 import {
   childNodes,
   traverseJavaScriptAst,
@@ -114,6 +122,41 @@ export const collectElectronWrappedCallPaths = (
   };
   const hasConditions = (value: SymbolicValue): boolean =>
     symbolicVariants(value).some((variant) => variant.conditions?.length);
+  const isolatedBridgeCall = (
+    node: t.CallExpression | t.OptionalCallExpression,
+  ):
+    | { readonly env: SymbolicEnvironment; readonly callee: SymbolicValue }
+    | undefined => {
+    const env = resolver.environmentAt(node);
+    const callee = resolver.evaluate(node.callee, env);
+    return symbolicVariants(callee).some(
+      (callee) =>
+        callee.kind === "external" &&
+        identity.intactExport(callee.path) &&
+        callee.path.slice(1).join(".") ===
+          "contextBridge.exposeInIsolatedWorld",
+    )
+      ? { env, callee }
+      : undefined;
+  };
+  const electronStaticSymbolicValue = (
+    value: SymbolicValue | undefined,
+    node: t.Node | undefined,
+  ): ElectronStaticValue => {
+    const variants = value === undefined ? [] : symbolicVariants(value);
+    const variant = variants.length === 1 ? variants[0] : undefined;
+    if (variant?.kind === "literal" && variant.value !== undefined)
+      return {
+        status: "literal",
+        value: variant.value,
+        expression: null,
+      };
+    return {
+      status: "dynamic",
+      value: null,
+      expression: boundedExpression(source, node),
+    };
+  };
   const emit = (
     context: PathContext,
     node: t.Node,
@@ -288,17 +331,34 @@ export const collectElectronWrappedCallPaths = (
   };
   const bridge = (
     node: t.CallExpression | t.OptionalCallExpression,
-    args: readonly SymbolicValue[],
+    exposure: JavaScriptContextBridgeExposureArguments<SymbolicValue>,
     context: PathContext,
     guardedDispatch: boolean,
   ): void => {
-    const key = args[0];
-    const object = args[1];
+    const key = exposure.apiKey;
+    const object = exposure.api;
+    const worldValue =
+      exposure.worldId === null
+        ? null
+        : (exposure.worldId ?? symbolicUnknown("missing world id"));
+    const worldContext =
+      worldValue === null ? context : metadataContext(context, worldValue);
+    if (!worldContext) return;
+    const worldId =
+      worldValue === null
+        ? null
+        : electronStaticSymbolicValue(
+            worldValue,
+            exposure.worldIdIndex === null
+              ? undefined
+              : argumentNode(node.arguments[exposure.worldIdIndex]),
+          );
+    if (worldId?.status === "dynamic") accumulator.unknownFindings += 1;
     if (key?.kind !== "literal" || typeof key.value !== "string" || !object) {
       accumulator.unknownFindings += 1;
       return;
     }
-    const keyContext = metadataContext(context, key);
+    const keyContext = metadataContext(worldContext, key);
     if (!keyContext || !metadataContext(keyContext, object)) return;
     const members = [...resolver.members(object)].sort();
     const location = range(node);
@@ -306,9 +366,9 @@ export const collectElectronWrappedCallPaths = (
       ({ value }) =>
         JSON.stringify(value.location) === JSON.stringify(location),
     );
-    const finding = {
-      world: "main" as const,
-      world_id: null,
+    const finding: ElectronContextBridgeFinding = {
+      world: exposure.world,
+      world_id: worldId,
       api_key: key.value,
       api_key_expression: null,
       api_status: "dynamic" as const,
@@ -320,10 +380,12 @@ export const collectElectronWrappedCallPaths = (
     };
     // This report shape has no predicate field, so a guarded world or object
     // cannot be recorded as an unconditional exposure fact.
+    const guardedWorld = worldValue !== null && hasConditions(worldValue);
     const guardedKey = hasConditions(key);
     const guardedObject = hasConditions(object);
     const guarded =
       context.conditions.length > 0 ||
+      guardedWorld ||
       guardedKey ||
       guardedObject ||
       guardedDispatch;
@@ -370,8 +432,9 @@ export const collectElectronWrappedCallPaths = (
     node: t.CallExpression | t.OptionalCallExpression,
     env: SymbolicEnvironment,
     context: PathContext,
+    evaluatedCallee?: SymbolicValue,
   ): void => {
-    const value = resolver.evaluate(node.callee, env);
+    const value = evaluatedCallee ?? resolver.evaluate(node.callee, env);
     const args = resolver.arguments(node, env);
     for (const callee of symbolicVariants(value)) {
       const branchContext = metadataContext(context, callee);
@@ -394,7 +457,13 @@ export const collectElectronWrappedCallPaths = (
         const endpoint = path.join(".");
         if (identity.intactExport(path)) {
           const descriptor = ipcDescriptor(path.slice(1));
-          if (descriptor)
+          const exposure =
+            path.length === 3 && path[1] === "contextBridge"
+              ? contextBridgeExposureArguments(path[2] ?? "", args)
+              : undefined;
+          if (exposure)
+            bridge(node, exposure, branchContext, hasConditions(callee));
+          else if (descriptor)
             ipc(
               node,
               descriptor,
@@ -403,10 +472,6 @@ export const collectElectronWrappedCallPaths = (
               endpoint,
               hasConditions(callee),
             );
-          else if (
-            path.slice(1).join(".") === "contextBridge.exposeInMainWorld"
-          )
-            bridge(node, args, branchContext, hasConditions(callee));
           else if (path[1] === "clipboard") emit(branchContext, node, endpoint);
         } else if (
           (path[0] === "navigator" && path[1] === "clipboard") ||
@@ -488,8 +553,12 @@ export const collectElectronWrappedCallPaths = (
     enter: (node) => {
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
         return;
-      if (!t.isStringLiteral(node.arguments[0])) return;
-      const env = resolver.environmentAt(node);
+      const isolatedSeed = t.isStringLiteral(node.arguments[0])
+        ? undefined
+        : isolatedBridgeCall(node);
+      if (!t.isStringLiteral(node.arguments[0]) && isolatedSeed === undefined)
+        return;
+      const env = isolatedSeed?.env ?? resolver.environmentAt(node);
       let context: PathContext = {
         entryNode: node,
         entry: "",
@@ -536,7 +605,7 @@ export const collectElectronWrappedCallPaths = (
             return;
         }
       }
-      call(node, env, context);
+      call(node, env, context, isolatedSeed?.callee);
     },
   });
   if (remainingVisits < 0 || resolver.truncated) {

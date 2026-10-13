@@ -22,6 +22,26 @@ const exampleMethod = () => {
 };
 
 describe("managed decompiler reconstruction import", () => {
+  it("reports UTF-8 byte totals while preserving UTF-16 text lengths", () => {
+    const text = 'return "é"; // 😀';
+    const method = exampleMethod();
+    const result = importManagedReconstructionEvidence({
+      ...MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
+      methods: [
+        {
+          ...method,
+          reconstruction: { ...method.reconstruction, text },
+        },
+      ],
+    });
+    if (!result.ok) throw result.error;
+
+    expect(result.value.normalized_result).toMatchObject({
+      summary: { total_text_bytes: 20 },
+      methods: [{ reconstruction: { text, text_length: 17 } }],
+    });
+  });
+
   it("rejects reconstruction text hash drift", () => {
     expect(() =>
       importManagedReconstruction({

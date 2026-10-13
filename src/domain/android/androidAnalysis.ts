@@ -45,6 +45,12 @@ export const androidInputSchemas = {
   }),
 } as const;
 
+/** Optional retained delivery is separate from the engine's APK request. */
+export const androidPackageInspectionInputSchema =
+  androidInputSchemas.inspect_android_package.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  });
+
 /** Supported static Android operations. */
 export type AndroidOperation = keyof typeof androidInputSchemas;
 /** Validated Android requests carry their selected operation. */

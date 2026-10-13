@@ -43,8 +43,9 @@ for asset notes and the source of case-study claims.
   from HTML automatically. Mark example applications `noindex` in the head and
   keep them crawlable. Maintain the SVG sharing source, not the generated PNG.
 - Check both local root and `/rea/` paths, mobile layouts, expanded details,
-  copying and downloads. Run `python3 scripts/website.py check`, using the Python
-  environment described in the README. It rejects drift rather than silently
+  copying and downloads. Check light and dark themes, including a manual choice
+  opposite to the system preference. Run `python3 scripts/website.py check`,
+  using the Python environment described in the README. It rejects drift rather than silently
   rewriting shared HTML. Use `website.py links` for an optional network audit;
   distinguish missing targets from access denials and unverified fragments.
 - Check setup and support statements against the current installation/provider

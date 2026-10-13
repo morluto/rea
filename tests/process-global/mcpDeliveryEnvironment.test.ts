@@ -86,6 +86,7 @@ it("keeps independent server budgets for successful results and oversized errors
               message: diagnostic,
             },
           ]),
+          false,
         ),
     );
 
