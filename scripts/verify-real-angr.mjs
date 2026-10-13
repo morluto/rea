@@ -66,6 +66,8 @@ const report = {
   mode: config.mode,
   transport: "command" in config ? "stdio" : "http",
   checks: [],
+  /** Claims this lane makes no observation for; listed so a passing report does not imply them. */
+  unverified: [],
   observations: [],
 };
 let phase = "target admission";
@@ -335,11 +337,39 @@ const mcp = async (cliDossier) => {
     phase = completedPhase;
   }
 };
-const cleanup = async () => {
+/** PIDs of angr MCP stdio servers visible on this host, or null when it cannot list them. */
+const angrServerPids = async () => {
+  if (process.platform === "win32") return null;
+  try {
+    const { stdout } = await promisify(execFile)("pgrep", [
+      "-f",
+      "--",
+      "-m angr\\.mcp",
+    ]);
+    return new Set(stdout.split(/\s+/u).filter((pid) => pid.length > 0));
+  } catch (cause) {
+    // pgrep exits 1 when nothing matches; anything else means no observation.
+    return cause?.code === 1 ? new Set() : null;
+  }
+};
+const cleanup = async (serversBefore) => {
   phase = "upstream lifecycle verification";
   if (!("url" in config)) {
+    const serversAfter = await angrServerPids();
+    if (serversBefore === null || serversAfter === null) {
+      report.unverified.push(
+        "owned stdio server exit: this host cannot list angr MCP processes",
+      );
+      return;
+    }
+    const leaked = [...serversAfter].filter((pid) => !serversBefore.has(pid));
+    assert.deepEqual(
+      leaked,
+      [],
+      `angr MCP servers still running: ${leaked.join(", ")}`,
+    );
     report.checks.push(
-      "owned stdio server processes ended with their REA sessions",
+      "no angr MCP stdio server started by this lane remains running after close",
     );
     return;
   }
@@ -356,11 +386,15 @@ const cleanup = async () => {
   }
 };
 try {
+  const serversBefore = await angrServerPids();
   const before = await digest();
   await mcp(await cli());
-  await cleanup();
+  await cleanup(serversBefore);
   assert.equal(await digest(), before);
-  report.checks.push("original binary unchanged and never executed");
+  report.checks.push("original binary bytes unchanged (SHA-256 identical)");
+  report.unverified.push(
+    "target execution: unchanged bytes do not establish that the target was never run; the adapter issues no execution request",
+  );
   report.passed = true;
 } catch (cause) {
   report.failure = {
@@ -390,6 +424,7 @@ try {
         mode: report.mode,
         transport: report.transport,
         checks: report.checks,
+        unverified: report.unverified,
         ...(report.passed
           ? {}
           : {

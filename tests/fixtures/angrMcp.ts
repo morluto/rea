@@ -239,7 +239,7 @@ export class RecordingAngrMcp implements AngrMcpConnection {
           edge_count: 2,
           nodes: FUNCTIONS.map(({ address, name, is_plt }) => ({
             address,
-            name,
+            name: this.names.get(address) ?? name,
             is_plt,
           })),
           edges: [

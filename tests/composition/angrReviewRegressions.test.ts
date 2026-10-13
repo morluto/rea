@@ -98,6 +98,16 @@ describe("cancellation and applied edits", () => {
       expect(
         producer.calls.filter(({ name }) => name === "get_callgraph"),
       ).toHaveLength(2);
+      expect(callers.value.result).toEqual(["0x1040"]);
+      const dossier = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!dossier.ok) throw dossier.error;
+      expect(
+        (dossier.value.result as { callers: { name: string }[] }).callers.map(
+          ({ name }) => name,
+        ),
+      ).toEqual(["helper_renamed"]);
     } finally {
       await client.close();
     }
