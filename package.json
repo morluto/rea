@@ -62,6 +62,8 @@
     "bridge/android/ReaJadxBridge.java",
     "bridge/mitmproxy/capture.py",
     "scripts/rea.mjs",
+    "scripts/plugin-mcp-launcher.mjs",
+    "src/process/packageRunnerCommand.mjs",
     "scripts/electron-active-hook.cjs",
     "scripts/electron-active-hook-boundaries.cjs",
     "scripts/hopper-demo-x11.py",

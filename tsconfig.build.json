@@ -2,9 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    "allowJs": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/process/packageRunnerCommand.mjs"],
   "exclude": [
     "src/**/*.fixture.ts",
     "src/**/*.test.ts",

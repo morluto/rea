@@ -2,6 +2,7 @@ import { basename, isAbsolute, resolve } from "node:path";
 import { valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { packageRunnerCommand } from "../process/packageRunnerCommand.mjs";
 
 /** Package runners whose pinned launcher setup can register. */
 export type PackageRunner = "npx" | "bunx";
@@ -53,14 +54,12 @@ export const withoutPackageRunnerIdentity = (
 export const packageRunnerRegistrationCommand = (
   runner: PackageRunner,
   platform: NodeJS.Platform = process.platform,
-): readonly string[] => {
-  const command =
-    runner === "npx"
-      ? ["npx", "-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"]
-      : ["bunx", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"];
-  // Both runners may be .cmd shims on Windows, which clients cannot spawn directly.
-  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...command] : command;
-};
+): readonly string[] =>
+  packageRunnerCommand(
+    runner,
+    PRODUCT_IDENTITY.registrationPackageSpecifier,
+    platform,
+  );
 
 /** Resolve a pinned npx launcher that stdio clients can spawn on the host. */
 export const npxRegistrationCommand = (
