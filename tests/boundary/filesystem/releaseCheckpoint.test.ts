@@ -24,7 +24,7 @@ const pluginManifestPaths = [
   ".codex-plugin/plugin.json",
 ] as const;
 
-const pluginManifest = (version: string, launch = `rea-agents@${version}`) => ({
+const pluginManifest = (version: string, launch = version) => ({
   version,
   mcpServers: { rea: { args: ["-y", launch, "mcp"] } },
 });
@@ -47,7 +47,7 @@ async function metadata(
     await mkdir(join(directory, dirname(path)), { recursive: true });
   const files = {
     [cursorManifestPath]: { version },
-    [cursorLaunchPath]: cursorLaunch(`rea-agents@${version}`),
+    [cursorLaunchPath]: cursorLaunch(version),
     ...Object.fromEntries(
       pluginManifestPaths.map((path) => [path, pluginManifest(version)]),
     ),
@@ -598,35 +598,35 @@ it.each([
   {
     path: cursorLaunchPath,
     stale: "server launch",
-    manifest: cursorLaunch("rea-agents@5.1.0"),
-    failure:
-      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
+    manifest: cursorLaunch("5.1.0"),
+    failure: "launches 5.1.0; release branch requires 6.0.0",
   },
   {
     path: cursorLaunchPath,
-    stale: "server launch without the package name",
-    manifest: cursorLaunch("6.0.0"),
-    failure: "launches 6.0.0; release branch requires rea-agents@6.0.0",
+    stale: "server launch using the legacy package specifier",
+    manifest: cursorLaunch("rea-agents@6.0.0"),
+    failure: "launches rea-agents@6.0.0; release branch requires 6.0.0",
   },
   ...pluginManifestPaths.flatMap((path) => [
     {
       path,
       stale: "version",
-      manifest: pluginManifest("5.1.0", "rea-agents@6.0.0"),
+      manifest: pluginManifest("5.1.0", "6.0.0"),
       failure: "declares 5.1.0; release branch requires 6.0.0",
     },
     {
       path,
       stale: "server launch",
-      manifest: pluginManifest("6.0.0", "rea-agents@5.1.0"),
+      manifest: pluginManifest("6.0.0", "5.1.0"),
       failure:
-        "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
+        "launches 5.1.0; release branch requires 6.0.0",
     },
     {
       path,
-      stale: "server launch without the package name",
-      manifest: pluginManifest("6.0.0", "6.0.0"),
-      failure: "launches 6.0.0; release branch requires rea-agents@6.0.0",
+      stale: "server launch using the legacy package specifier",
+      manifest: pluginManifest("6.0.0", "rea-agents@6.0.0"),
+      failure:
+        "launches rea-agents@6.0.0; release branch requires 6.0.0",
     },
   ]),
 ])("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {

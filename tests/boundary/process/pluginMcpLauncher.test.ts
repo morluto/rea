@@ -11,8 +11,8 @@ const launcher = fileURLToPath(
   new URL("../../../scripts/plugin-mcp-launcher.mjs", import.meta.url),
 );
 
-const start = (path: string, packageSpecifier = "rea-agents@6.4.0") => {
-  const child = spawn(process.execPath, [launcher, packageSpecifier], {
+const start = (path: string, version = "6.4.0") => {
+  const child = spawn(process.execPath, [launcher, version], {
     env: {
       ...process.env,
       PATH: `${path}${delimiter}${process.env.PATH ?? ""}`,
@@ -87,7 +87,7 @@ it.skipIf(process.platform === "win32")(
       process.stdin.pipe(process.stdout);
       process.stdin.on("end", () => { process.exitCode = 7; });
     `);
-    const { child, closed } = start(bin, "rea-agents@6.4.0-rc.1");
+    const { child, closed } = start(bin, "6.4.0-rc.1");
     child.stdin.end('{"jsonrpc":"2.0","id":1}\n');
     expect(await closed).toEqual({
       code: 7,
@@ -143,11 +143,11 @@ it.skipIf(process.platform === "win32")(
 
 it("rejects a shell expression instead of treating it as the pinned package", async () => {
   const root = await createTestTempDirectory("rea-plugin-invalid-pin-");
-  const { child, closed } = start(root, "rea-agents@6.4.0&echo wrong");
+  const { child, closed } = start(root, "6.4.0&echo wrong");
   child.stdin.end();
   expect(await closed).toMatchObject({
     code: 1,
     stdout: "",
-    stderr: "REA plugin requires one exact rea-agents@VERSION pin.\n",
+    stderr: "REA plugin requires one exact package version.\n",
   });
 });

@@ -240,9 +240,9 @@ async function validateCandidate(git, sha, version, commits) {
       );
     }
   }
-  // Compare the whole specifier: a bare version would make npx fetch a
-  // package named after the release number.
-  const requiredLaunch = `${PLUGIN_PACKAGE_NAME}@${version}`;
+  // The launcher owns the fixed package name; Release Please writes only the
+  // version to this argument.
+  const requiredLaunch = version;
   for (const [location, launched] of launches) {
     if (launched !== requiredLaunch) {
       throw new Error(

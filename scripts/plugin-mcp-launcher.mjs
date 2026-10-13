@@ -7,22 +7,20 @@ import { join } from "node:path";
 
 import { packageRunnerCommand } from "./lib/packageRunnerCommand.mjs";
 
-// The manifest owns this exact package pin; args[1] remains release-managed.
+// The manifest owns the exact release-managed version; keep the package name here.
 // No build, dependency installation or ambient latest-version lookup is needed
 // to run this bootstrap from a Git-installed plugin.
-const [packageSpecifier, ...extra] = process.argv.slice(2);
+const [version, ...extra] = process.argv.slice(2);
 if (
   extra.length !== 0 ||
-  !/^rea-agents@\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/u.test(
-    packageSpecifier ?? "",
-  )
+  !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/u.test(version ?? "")
 ) {
   process.stderr.write(
-    "REA plugin requires one exact rea-agents@VERSION pin.\n",
+    "REA plugin requires one exact package version.\n",
   );
   process.exitCode = 1;
 } else {
-  await launch(packageSpecifier);
+  await launch(`rea-agents@${version}`);
 }
 
 async function launch(packageSpecifier) {
@@ -48,6 +46,7 @@ async function launch(packageSpecifier) {
   const child = spawn(command, args, {
     stdio: "inherit",
     shell: false,
+    windowsVerbatimArguments: process.platform === "win32",
   });
   let spawnFailed = false;
   const signals = new Map();

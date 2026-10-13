@@ -185,7 +185,7 @@ describe("plugin manifests", () => {
               path === ".claude-plugin/plugin.json"
                 ? "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"
                 : "./scripts/plugin-mcp-launcher.mjs",
-              `${packageJson.name}@${packageJson.version}`,
+              packageJson.version,
             ],
             ...(path === ".codex-plugin/plugin.json" ? { cwd: "." } : {}),
           },
@@ -211,7 +211,7 @@ describe("plugin manifests", () => {
           command: "node",
           args: [
             "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
-            `${packageJson.name}@${packageJson.version}`,
+            packageJson.version,
           ],
         },
       },

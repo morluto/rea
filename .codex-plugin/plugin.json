@@ -23,7 +23,7 @@
       "command": "node",
       "args": [
         "./scripts/plugin-mcp-launcher.mjs",
-        "rea-agents@6.4.0"
+        "6.4.0"
       ],
       "startup_timeout_sec": 30,
       "cwd": "."
