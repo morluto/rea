@@ -1215,7 +1215,9 @@ output.
 Adapter, composition, and conformance tests use a recording MCP fixture at the
 connection seam. They cover registration parsing, result decoding, target
 binding, missing upstream tools, cancellation draining, invalid selectors,
-output contracts, incomplete cleanup, the function-versus-global naming rule,
+output contracts, digest-based and path-based target identity, owned-process
+teardown when `close_project` fails versus attached retention, call-graph
+edges to unlisted functions, the function-versus-global naming rule,
 per-item edit outcomes, inline-comment rejection, call-graph invalidation after
 a rename, the configured default flavor, and flavor operations on an angr
 without flavor tools. They do not establish real angr

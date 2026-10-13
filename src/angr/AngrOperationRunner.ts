@@ -339,24 +339,39 @@ export class AngrOperationRunner {
         related.add(edge.to);
     }
     const items: ProcedureIdentity[] = [];
+    const unlisted: string[] = [];
     for (const address of related) {
       const node = nodes.get(address);
-      if (node === undefined)
-        throw new AnalysisProtocolError(
-          `angr call graph edge names an unlisted function ${address}.`,
-        );
-      items.push(summaryIdentity(node));
+      if (node === undefined) unlisted.push(address);
+      else items.push(summaryIdentity(node));
     }
     items.sort((left, right) => {
       const a = BigInt(left.address);
       const b = BigInt(right.address);
       return a < b ? -1 : a > b ? 1 : 0;
     });
-    this.limitations.push(CALL_GRAPH_LIMITATION);
-    return {
-      items,
-      coverage: { status: "partial", limitations: [CALL_GRAPH_LIMITATION] },
-    };
+    const limitations = [CALL_GRAPH_LIMITATION];
+    if (unlisted.length > 0)
+      limitations.push(
+        `angr's call graph has ${direction} edges to addresses it lists no function for (${unlisted.sort().join(", ")}); those ${direction} are omitted.`,
+      );
+    this.limitations.push(...limitations);
+    return { items, coverage: { status: "partial", limitations } };
+  }
+
+  /** The function whose entry is exactly `address`, or undefined when angr lists none there. */
+  async functionEntryAt(address: string): Promise<AngrFunction | undefined> {
+    try {
+      const fn = await this.resolve(address);
+      return fn.address === address ? fn : undefined;
+    } catch (cause: unknown) {
+      if (
+        cause instanceof AnalysisProtocolError &&
+        MISSING_FUNCTION_ANSWER.test(cause.message)
+      )
+        return undefined;
+      throw cause;
+    }
   }
 
   async run(

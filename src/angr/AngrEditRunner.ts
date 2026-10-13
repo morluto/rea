@@ -21,7 +21,6 @@ import {
   editBatchSchema,
   flavorSchema,
   type AngrEditBatch,
-  type AngrFunction,
 } from "./AngrProtocolValues.js";
 
 const SESSION_EFFECTS = {
@@ -121,14 +120,8 @@ export class AngrEditRunner {
     address: string,
     newName: string,
   ): Promise<Record<string, JsonValue>> {
-    let fn: AngrFunction | undefined;
-    try {
-      fn = await this.runner.resolve(address);
-    } catch (cause: unknown) {
-      if (!(cause instanceof AnalysisProtocolError)) throw cause;
-      fn = undefined;
-    }
-    return fn !== undefined && fn.address === address
+    const fn = await this.runner.functionEntryAt(address);
+    return fn !== undefined
       ? { kind: "function", address, new_name: newName }
       : { kind: "global", address, new_name: newName };
   }

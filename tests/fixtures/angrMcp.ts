@@ -59,6 +59,8 @@ export class RecordingAngrMcp implements AngrMcpConnection {
   closes = 0;
   projectId = "p1";
   loadedPath: string;
+  /** Digest the fixture server reports; undefined models an angr without one. */
+  loadedSha256: string | undefined;
   openProjects = new Set<string>();
   pseudocode = "int main(void) { return 42; }";
   flavor = "pseudocode";
@@ -79,6 +81,7 @@ export class RecordingAngrMcp implements AngrMcpConnection {
 
   constructor(readonly target: BinaryTarget) {
     this.loadedPath = target.path;
+    this.loadedSha256 = target.sha256;
   }
   async connect() {
     this.connects += 1;
@@ -103,6 +106,9 @@ export class RecordingAngrMcp implements AngrMcpConnection {
       return {
         project_id: this.projectId,
         binary_path: this.loadedPath,
+        ...(this.loadedSha256 === undefined
+          ? {}
+          : { sha256: this.loadedSha256 }),
         arch: "AMD64",
         bits: 64,
         endianness: "little",

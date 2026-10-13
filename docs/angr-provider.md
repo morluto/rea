@@ -46,7 +46,7 @@ Optional keys on either form: `timeoutMs` (per request, default 300000), `startu
 
 ## What each mode observes
 
-In both modes, REA loads its own project on the server and checks that the server reports the selected target path before analysis. Each REA session owns exactly one angr project and closes it on `close_binary`; the headless process ends with the connection.
+In both modes, REA loads its own project on the server and verifies that it is the selected target before analysis. An angr that reports the loaded file's SHA-256 is checked by digest, which also covers a server whose filesystem view differs from REA's host (a container or bind mount). An older angr without a digest is checked by path, so it must share this host's filesystem, and the Evidence carries a limitation saying so. Each REA session owns exactly one angr project and closes it on `close_binary`. In headless mode the owned process ends with the connection (the transport ends stdin, then sends SIGTERM and SIGKILL); if `close_project` itself fails, REA still ends the process, since an in-memory project cannot outlive it. In attached mode a failed `close_project` retains the project id as an incomplete-cleanup resource for a later `close_binary` retry.
 
 In attached mode the server is shared with other clients. Results reflect its current knowledge base, including renames or type edits applied by other agents through angr's own edit tools, and are reported as live Evidence that is never replayed from analysis snapshots. Closing a REA session closes only its own project. If another client closes that project, the next REA request fails with the upstream reason.
 
@@ -57,7 +57,7 @@ REA passes every executable kind to angr and reports angr's loader errors unchan
 This adapter provides function and string inventory and search, function lookup, assembly, pseudocode, callers, callees, data xrefs, instruction windows, function dossiers, knowledge-base edits, and the decompilation flavor. Observed facts have these boundaries:
 
 - Function bodies come from angr's recovered basic blocks and are reported as merged inclusive ranges.
-- Callers and callees come from angr's call graph, fetched once per session. Unresolved indirect calls are absent, so relationship coverage is reported as partial.
+- Callers and callees come from angr's call graph, fetched once per session. Unresolved indirect calls are absent, so relationship coverage is reported as partial. An edge whose endpoint angr lists no function for is omitted and named in the coverage limitations rather than failing the query.
 - `xrefs` returns the instruction addresses of data references recorded during CFG recovery. Call and jump references are not included; use `procedure_callers`.
 - Pseudocode is angr's decompiler output. Functions above angr's complexity limits fail with the upstream reason; a function dossier retains assembly and relationships and reports the missing pseudocode as a limitation.
 - Signatures are angr's recovered prototypes when present. Locals, comments, typed reference flags, referenced strings and names, and basic-block successors are not reported.

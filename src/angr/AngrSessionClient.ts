@@ -80,6 +80,8 @@ export class AngrSessionClient implements AnalysisClient {
   #callGraph: Promise<AngrCallGraph> | undefined;
   #flavor: string | null = null;
   #flavorToolsAvailable = false;
+  /** Session-wide limitations established at startup. */
+  readonly #limitations: string[] = [];
 
   constructor(
     private readonly config: AngrConfiguration,
@@ -173,7 +175,11 @@ export class AngrSessionClient implements AnalysisClient {
             decompilation_flavor: this.#flavor,
             observations: jsonValueSchema.parse(runner.raw),
           },
-          limitations: [...ANGR_LIMITATIONS, ...new Set(runner.limitations)],
+          limitations: [
+            ...ANGR_LIMITATIONS,
+            ...this.#limitations,
+            ...new Set(runner.limitations),
+          ],
           ...(runner.relationshipCoverage === undefined
             ? {}
             : { relationshipCoverage: runner.relationshipCoverage }),
@@ -332,14 +338,7 @@ export class AngrSessionClient implements AnalysisClient {
       ),
     );
     this.#loaded = loaded;
-    const [expected, reported] = await Promise.all([
-      realpath(this.target.path).catch(() => this.target.path),
-      realpath(loaded.binary_path).catch(() => loaded.binary_path),
-    ]);
-    if (expected !== reported)
-      throw new AnalysisProtocolError(
-        `angr loaded ${loaded.binary_path} instead of the selected target ${this.target.path}.`,
-      );
+    await this.#verifyLoadedTarget(loaded);
     const cfg = cfgStatsSchema.parse(
       await this.connection.call(
         "get_cfg",
@@ -382,6 +381,31 @@ export class AngrSessionClient implements AnalysisClient {
     }
   }
 
+  /**
+   * A reported digest proves identity across filesystem views; without one,
+   * only a server sharing this host's filesystem can be checked, by path.
+   */
+  async #verifyLoadedTarget(loaded: AngrLoadedBinary): Promise<void> {
+    if (loaded.sha256 !== undefined) {
+      if (loaded.sha256.toLowerCase() !== this.target.sha256.toLowerCase())
+        throw new AnalysisProtocolError(
+          `angr loaded a file whose SHA-256 ${loaded.sha256} differs from the selected target ${this.target.path}.`,
+        );
+      return;
+    }
+    const [expected, reported] = await Promise.all([
+      realpath(this.target.path).catch(() => this.target.path),
+      realpath(loaded.binary_path).catch(() => loaded.binary_path),
+    ]);
+    if (expected !== reported)
+      throw new AnalysisProtocolError(
+        `angr loaded ${loaded.binary_path} instead of the selected target ${this.target.path}. This angr reports no file digest, so the server must share this host's filesystem; upgrade angr for digest-based verification.`,
+      );
+    this.#limitations.push(
+      "The connected angr reports no file digest; target identity was verified by path on this host only.",
+    );
+  }
+
   async close(): Promise<Result<null, AnalysisError>> {
     if (this.#closePromise !== undefined) return this.#closePromise;
     const closing = this.#closeOnce();
@@ -404,24 +428,39 @@ export class AngrSessionClient implements AnalysisClient {
       if (this.#startup !== undefined) {
         // A failed startup may still have loaded the project before CFG recovery.
         await this.#startup.catch(() => undefined);
-        if (this.#loaded !== undefined) {
-          const closed = closeProjectSchema.parse(
-            await this.connection.call("close_project", {
-              project_id: this.#loaded.project_id,
-            }),
-          );
-          if (closed.project_id !== this.#loaded.project_id)
-            throw new AnalysisProtocolError(
-              "angr closed a different project than the one this session loaded.",
-            );
-          this.#loaded = undefined;
-        }
-        await this.connection.close();
+        const transportClosed =
+          this.#loaded !== undefined && (await this.#closeProject());
+        if (!transportClosed) await this.connection.close();
       }
       this.#closed = true;
       return ok(null);
     } catch (cause: unknown) {
       return err(new AngrCleanupError(resource, cause));
     }
+  }
+
+  /** Closes the loaded project; true when the owned transport was ended to release it. */
+  async #closeProject(): Promise<boolean> {
+    if (this.#loaded === undefined) return false;
+    try {
+      const closed = closeProjectSchema.parse(
+        await this.connection.call("close_project", {
+          project_id: this.#loaded.project_id,
+        }),
+      );
+      if (closed.project_id !== this.#loaded.project_id)
+        throw new AnalysisProtocolError(
+          "angr closed a different project than the one this session loaded.",
+        );
+    } catch (cause: unknown) {
+      // An attached server keeps the project for a later retry. An owned stdio
+      // server holds it only in memory, so ending the process releases it.
+      if ("url" in this.config) throw cause;
+      await this.connection.close();
+      this.#loaded = undefined;
+      return true;
+    }
+    this.#loaded = undefined;
+    return false;
   }
 }

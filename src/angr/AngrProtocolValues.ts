@@ -13,6 +13,10 @@ export const loadBinarySchema = z
   .object({
     project_id: z.string().min(1),
     binary_path: z.string().min(1),
+    sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/iu)
+      .optional(),
     arch: z.string(),
     bits: z.number().int(),
     endianness: z.string(),

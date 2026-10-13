@@ -113,26 +113,105 @@ describe("angr session client boundaries", () => {
       await client.close();
     }
   });
-  it("refuses a server that loaded a different file or lacks the required tools", async () => {
+  it("verifies target identity by digest, or by path on a digest-less angr", async () => {
     const { root, target } = await createAngrTarget();
     roots.push(root);
-    const wrongFile = new RecordingAngrMcp(target);
-    wrongFile.loadedPath = `${target.path}.other`;
-    const client = new AngrSessionClient(configuration(), target, wrongFile);
-    const result = await client.execute("list_procedures", {});
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.message).toContain("instead of");
-    expect((await client.close()).ok).toBe(true);
-    expect(wrongFile.openProjects.size).toBe(0);
+    // A matching digest proves identity even when the server's path differs.
+    const otherPath = new RecordingAngrMcp(target);
+    otherPath.loadedPath = `${target.path}.container-view`;
+    const client = new AngrSessionClient(configuration(), target, otherPath);
+    expect((await client.execute("list_procedures", {})).ok).toBe(true);
+    await client.close();
 
+    const wrongDigest = new RecordingAngrMcp(target);
+    wrongDigest.loadedSha256 = "f".repeat(64);
+    const client2 = new AngrSessionClient(configuration(), target, wrongDigest);
+    const rejected = await client2.execute("list_procedures", {});
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.error.message).toContain("SHA-256");
+    expect((await client2.close()).ok).toBe(true);
+    expect(wrongDigest.openProjects.size).toBe(0);
+    expect(wrongDigest.closes).toBe(1);
+
+    const legacy = new RecordingAngrMcp(target);
+    legacy.loadedSha256 = undefined;
+    const client3 = new AngrSessionClient(configuration(), target, legacy);
+    const accepted = await client3.execute("list_procedures", {});
+    if (!accepted.ok) throw accepted.error;
+    expect(accepted.value.limitations).toContainEqual(
+      expect.stringContaining("verified by path"),
+    );
+    await client3.close();
+
+    const legacyOtherPath = new RecordingAngrMcp(target);
+    legacyOtherPath.loadedSha256 = undefined;
+    legacyOtherPath.loadedPath = `${target.path}.other`;
+    const client4 = new AngrSessionClient(
+      configuration(),
+      target,
+      legacyOtherPath,
+    );
+    const result = await client4.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain("share this host");
+    await client4.close();
+  });
+  it("refuses a server that lacks the required tools without calling it", async () => {
+    const { root, target } = await createAngrTarget();
+    roots.push(root);
     const limited = new RecordingAngrMcp(target);
     limited.tools = ["load_binary"];
-    const client2 = new AngrSessionClient(configuration(), target, limited);
-    const missing = await client2.execute("list_procedures", {});
+    const client = new AngrSessionClient(configuration(), target, limited);
+    const missing = await client.execute("list_procedures", {});
     expect(missing.ok).toBe(false);
     if (!missing.ok) expect(missing.error.message).toContain("missing tools");
-    await client2.close();
+    await client.close();
     expect(limited.calls).toHaveLength(0);
+    expect(limited.closes).toBe(1);
+  });
+});
+
+describe("angr session client degradation and teardown", () => {
+  it("omits call-graph edges to unlisted functions and reports them", async () => {
+    const { root, target } = await createAngrTarget();
+    roots.push(root);
+    const producer = new RecordingAngrMcp(target);
+    producer.overrideCall = (name) =>
+      name === "get_callgraph"
+        ? {
+            project_id: "p1",
+            node_count: 1,
+            edge_count: 2,
+            nodes: [{ address: "0x1000", name: "main", is_plt: false }],
+            edges: [
+              { from: "0x1000", to: "0x2000" },
+              { from: "0x9000", to: "0x1000" },
+            ],
+          }
+        : undefined;
+    const client = new AngrSessionClient(configuration(), target, producer);
+    try {
+      const callees = await client.execute("procedure_callees", {
+        procedure: "main",
+      });
+      if (!callees.ok) throw callees.error;
+      expect(callees.value.result).toEqual([]);
+      expect(callees.value.relationshipCoverage).toMatchObject({
+        status: "partial",
+        limitations: expect.arrayContaining([
+          expect.stringContaining("0x2000"),
+        ]),
+      });
+      const callers = await client.execute("procedure_callers", {
+        procedure: "main",
+      });
+      if (!callers.ok) throw callers.error;
+      expect(callers.value.limitations).toContainEqual(
+        expect.stringContaining("0x9000"),
+      );
+    } finally {
+      await client.close();
+    }
   });
   it("drains cancellation and retains partial Evidence from completed replies", async () => {
     const { root, target } = await createAngrTarget();
@@ -160,24 +239,42 @@ describe("angr session client boundaries", () => {
       await client.close();
     }
   });
-  it("retains the upstream project for retry when close cannot be verified", async () => {
+  it("ends an owned server when its project cannot be closed, but retains an attached one", async () => {
     const { root, target } = await createAngrTarget();
     roots.push(root);
-    const producer = new RecordingAngrMcp(target);
-    producer.overrideCall = (name) =>
+    const owned = new RecordingAngrMcp(target);
+    owned.overrideCall = (name) =>
       name === "close_project"
         ? { project_id: "other", closed: true }
         : undefined;
-    const client = new AngrSessionClient(configuration(), target, producer);
+    const client = new AngrSessionClient(configuration(), target, owned);
     await client.execute("list_procedures", {});
-    const closed = await client.close();
+    expect((await client.close()).ok).toBe(true);
+    expect(owned.closes).toBe(1);
+
+    const attached = new RecordingAngrMcp(target);
+    attached.overrideCall = owned.overrideCall;
+    const client2 = new AngrSessionClient(
+      {
+        ...configuration(),
+        url: "http://127.0.0.1:8000/mcp",
+        headers: {},
+        mode: "attached",
+      } as never,
+      target,
+      attached,
+    );
+    await client2.execute("list_procedures", {});
+    const closed = await client2.close();
     expect(closed.ok).toBe(false);
     if (!closed.ok) {
       expect(closed.error.cleanupIncomplete).toBe(true);
       expect(closed.error.cleanupResources).toEqual(["angr project p1"]);
     }
-    delete producer.overrideCall;
-    expect((await client.close()).ok).toBe(true);
-    expect(producer.openProjects.size).toBe(0);
+    expect(attached.closes).toBe(0);
+    delete attached.overrideCall;
+    expect((await client2.close()).ok).toBe(true);
+    expect(attached.openProjects.size).toBe(0);
+    expect(attached.closes).toBe(1);
   });
 });
