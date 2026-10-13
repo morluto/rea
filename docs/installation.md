@@ -817,8 +817,16 @@ The repository root is also a Cursor plugin (`.cursor-plugin/plugin.json`).
 It registers the same pinned stdio server from `.cursor-plugin/mcp.json` and
 does not bundle the skill: Cursor loads plugin skills from a directory of
 skill folders, and `.agents/skills/` also holds maintainer-only skills. Run
-`npx -y rea-agents@6.4.0 setup --client cursor` instead when you want the workflow instructions
-installed with the server.
+this version-pinned setup command instead when you want the workflow
+instructions installed with the server:
+
+<!-- x-release-please-start-version -->
+
+```bash
+npx -y rea-agents@6.4.0 setup --client cursor
+```
+
+<!-- x-release-please-end -->
 
 All three clients start a bundled plain Node launcher. It preserves the MCP
 standard streams and forwards termination signals to the package-runner child;

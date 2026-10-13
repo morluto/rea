@@ -13,7 +13,11 @@ const readJson = async (path: string): Promise<unknown> =>
 const versionedDocumentation = [
   {
     path: "docs/installation.md",
-    examples: ["doctor --provider ghidra --json", '"command": "npx"'],
+    examples: [
+      "doctor --provider ghidra --json",
+      '"command": "npx"',
+      "setup --client cursor",
+    ],
   },
 ] as const;
 const pluginManifests = [
@@ -205,7 +209,10 @@ describe("plugin manifests", () => {
       mcpServers: {
         rea: {
           command: "node",
-          args: ["${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs", `${packageJson.name}@${packageJson.version}`],
+          args: [
+            "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+            `${packageJson.name}@${packageJson.version}`,
+          ],
         },
       },
     });

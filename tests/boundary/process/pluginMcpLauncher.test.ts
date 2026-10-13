@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 
+import { packageRunnerCommand } from "../../../scripts/lib/packageRunnerCommand.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const launcher = fileURLToPath(
@@ -57,6 +58,27 @@ const fakeRunner = async (body: string) => {
   return bin;
 };
 
+it("escapes a Windows temporary prefix through cmd.exe and npx.cmd", () => {
+  expect(
+    packageRunnerCommand("npx", "rea-agents@6.4.0", "win32", "C:\\Temp&A"),
+  ).toEqual([
+    "cmd.exe",
+    "/d",
+    "/c",
+    "npx",
+    "-y",
+    "--prefix=C:\\Temp^^^&A",
+    "rea-agents@6.4.0",
+    "mcp",
+  ]);
+});
+
+it("rejects command separators in a Windows temporary prefix", () => {
+  expect(() =>
+    packageRunnerCommand("npx", "rea-agents@6.4.0", "win32", "C:\\Temp\nA"),
+  ).toThrow("command separator");
+});
+
 it.skipIf(process.platform === "win32")(
   "passes the exact pin and protocol streams through the source-only plugin launcher",
   async () => {
@@ -71,7 +93,9 @@ it.skipIf(process.platform === "win32")(
       code: 7,
       signal: null,
       stdout: '{"jsonrpc":"2.0","id":1}\n',
-      stderr: expect.stringMatching(/^\["-y","--prefix=.+","rea-agents@6\.4\.0-rc\.1","mcp"\]$/u),
+      stderr: expect.stringMatching(
+        /^\["-y","--prefix=.+","rea-agents@6\.4\.0-rc\.1","mcp"\]$/u,
+      ),
     });
   },
 );
@@ -97,12 +121,17 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "isolates local package resolution and removes the owned runner directory",
   async () => {
-    const bin = await fakeRunner("process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));");
+    const bin = await fakeRunner(
+      "process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));",
+    );
     const { child, closed } = start(bin);
     child.stdin.end();
     const result = await closed;
     expect(result.code).toBe(0);
-    const observed = JSON.parse(result.stdout) as { cwd: string; args: string[] };
+    const observed = JSON.parse(result.stdout) as {
+      cwd: string;
+      args: string[];
+    };
     expect(observed.cwd).toBe(process.cwd());
     const prefix = observed.args[1]?.slice("--prefix=".length);
     expect(prefix).toContain("rea-plugin-launcher-");
