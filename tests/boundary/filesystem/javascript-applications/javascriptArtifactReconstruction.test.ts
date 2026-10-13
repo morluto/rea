@@ -388,7 +388,7 @@ it("produces deterministic ASAR graphs with unpacked native linkage and complete
   await mkdir(source);
   await writeJavaScriptArtifactFixture(source);
   const archive = join(root, "app.asar");
-  await createPackageWithOptions(source, archive, { unpack: "**/*.node" });
+  await createPackageWithOptions(source, archive, { unpack: "*.node" });
 
   const first = await reconstructJavaScriptArtifact({
     input_path: archive,
@@ -487,7 +487,7 @@ it("keeps ASAR analysis usable when unpacked native companion bytes are absent",
   await mkdir(source);
   await writeJavaScriptArtifactFixture(source);
   const archive = join(root, "app.asar");
-  await createPackageWithOptions(source, archive, { unpack: "**/*.node" });
+  await createPackageWithOptions(source, archive, { unpack: "*.node" });
   await rm(join(`${archive}.unpacked`, "native", "addon.node"));
 
   const snapshot = await scanArtifactInventory(archive);
@@ -515,7 +515,7 @@ it("recurses into filesystem-backed ASAR containers without losing container-rel
   const resources = join(outer, "resources");
   await mkdir(resources, { recursive: true });
   await createPackageWithOptions(source, join(resources, "app.asar"), {
-    unpack: "**/*.node",
+    unpack: "*.node",
   });
 
   const result = await reconstructJavaScriptArtifact({

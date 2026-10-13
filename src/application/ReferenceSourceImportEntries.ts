@@ -97,18 +97,22 @@ const resolveInternalSpecifier = (
   );
   if (logicalPathEscapesRoot(normalized))
     return { to: normalized, resolution: "unresolved" };
+  // Preserve directory intent before normalization removes terminal dot segments.
+  const directoryReference =
+    specifier.endsWith("/") || [".", ".."].includes(posix.basename(specifier));
   const suffixes = ["", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx"];
   const candidates = suffixes.flatMap((suffix) => [
-    `${normalized}${suffix}`,
-    `${normalized}/index${suffix}`,
+    ...(directoryReference ? [] : [`${normalized}${suffix}`]),
+    posix.join(normalized, `index${suffix}`),
   ]);
   // Retain present runtime files first; substitute only a missing counterpart.
   // Counterparts cover explicit filenames, not directory/index resolution.
-  candidates.push(
-    ...typescriptEmittedSourceCandidates(fromPath, normalized).map(
-      ({ path }) => path,
-    ),
-  );
+  if (!directoryReference)
+    candidates.push(
+      ...typescriptEmittedSourceCandidates(fromPath, normalized).map(
+        ({ path }) => path,
+      ),
+    );
   const match = lookupPath.resolveCandidates(candidates);
   return match === undefined
     ? { to: normalized, resolution: "unresolved" }

@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -37,28 +37,76 @@ const dshClient = (
   env: Parameters<typeof supportedClients>[2],
   platform: NodeJS.Platform = "linux",
 ) =>
-  supportedClients(join("/home/a"), platform, env).find(
+  supportedClients(resolve("/home/a"), platform, env).find(
     ({ name }) => name === "dsh",
   );
 
 describe("DeepSeek Harness configuration paths", () => {
+  it.each([
+    [undefined, ".dsh", ".agents", "shared"],
+    ["", ".dsh", ".agents", "shared"],
+    [" \t ", ".dsh", ".agents", "shared"],
+    ["~", "", "", "dsh"],
+    ["~/selected home", "selected home", "selected home", "dsh"],
+    ["~\\selected home", "selected home", "selected home", "dsh"],
+  ] as const)(
+    "resolves Harness and agents roots for %j",
+    (override, dshRoot, agentsRoot, client) => {
+      const home = resolve("/home/a");
+      const environment = { DSH_HOME: override, DSH_AGENTS_HOME: override };
+      expect(
+        supportedClients(home, process.platform, environment).find(
+          ({ name }) => name === "dsh",
+        ),
+      ).toMatchObject({
+        configPath: join(home, dshRoot, "cordis.patch.yml"),
+        markerPath: join(home, dshRoot),
+      });
+      expect(clientSkillDirectories(home, ["dsh"], environment)).toEqual([
+        { client, directory: join(home, agentsRoot, "skills") },
+      ]);
+    },
+  );
+
+  it.each(["relative home", "  literal home  ", "~someone"])(
+    "resolves a literal root %j relative to cwd without trimming it",
+    (override) => {
+      const home = resolve("/home/a");
+      const root = resolve(override);
+      const environment = { DSH_HOME: override, DSH_AGENTS_HOME: override };
+      expect(
+        supportedClients(home, process.platform, environment).find(
+          ({ name }) => name === "dsh",
+        ),
+      ).toMatchObject({
+        configPath: join(root, "cordis.patch.yml"),
+        markerPath: root,
+      });
+      expect(clientSkillDirectories(home, ["dsh"], environment)).toEqual([
+        { client: "dsh", directory: join(root, "skills") },
+      ]);
+    },
+  );
+
   it("resolves the home Cordis patch under the Harness home", () => {
     expect(dshClient({})).toEqual({
       name: "dsh",
       displayName: "DeepSeek Harness",
-      configPath: join("/home/a", ".dsh", "cordis.patch.yml"),
-      markerPath: join("/home/a", ".dsh"),
+      configPath: resolve("/home/a", ".dsh", "cordis.patch.yml"),
+      markerPath: resolve("/home/a", ".dsh"),
       format: "dsh",
     });
     // The home patch applies to every profile; DSH_HOME relocates it.
     expect(dshClient({ DSH_HOME: "/custom/harness" })?.configPath).toBe(
-      join("/custom/harness", "cordis.patch.yml"),
+      resolve("/custom/harness", "cordis.patch.yml"),
     );
     expect(
       clientSkillDirectories(join("/home/a"), ["dsh"], {
         DSH_AGENTS_HOME: "/custom/agents",
       }),
-    ).toEqual([{ client: "dsh", directory: join("/custom/agents", "skills") }]);
+    ).toEqual([
+      { client: "dsh", directory: resolve("/custom/agents", "skills") },
+    ]);
   });
 });
 

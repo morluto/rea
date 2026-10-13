@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
+import { dexDescriptorSchema } from "../domain/android/androidAnalysis.js";
 
 const count = z.number().int().nonnegative();
 /** Selector failures authored by REA's bridge, separate from arbitrary engine errors. */
@@ -50,6 +51,7 @@ export const jadxClassSchema = z.object({
     z.object({
       name: z.string(),
       signature: z.string(),
+      dex_descriptor: dexDescriptorSchema,
       is_constructor: z.boolean(),
       def_pos: z.number().int(),
     }),
@@ -72,6 +74,8 @@ export const jadxMethodSchema = z.object({
 });
 export const jadxXrefsSchema = z.object({
   target: z.string(),
+  overload_index: count.optional(),
+  reported_signature: z.string().optional(),
   total: count,
   count,
   resolve_line: z.literal(false),
@@ -83,6 +87,18 @@ export const jadxXrefsSchema = z.object({
       containing_class: z.string(),
       top_class: z.string(),
       def_pos: z.number().int(),
+      direct_invokes_exhaustive: z.boolean().optional(),
+      direct_invokes: z
+        .array(
+          z.object({
+            dex_entry: z.string().min(1),
+            source_raw_method_id: z.string().min(1),
+            dex_code_unit_offset: count,
+            dex_method_index: count,
+            opcode: z.string().regex(/^INVOKE_/u),
+          }),
+        )
+        .optional(),
     }),
   ),
 });

@@ -60,6 +60,10 @@ server; older servers keep the complete request after schema discovery.
   [Dart 2.14 layout](https://github.com/dart-lang/sdk/blob/2.14.0/runtime/vm/snapshot.h).
   Kind numbers vary across Dart releases; other values are preserved with
   partial coverage, without guessing their interpretation.
+  Address resolution examines every overlapping `PT_LOAD` interpretation,
+  including partial overlaps. Equivalent mappings are coalesced; conflicting
+  mappings leave affected symbols unresolved and qualify coverage. Dynamic
+  hash, symbol and string tables use the same mapping checks.
   A payload without exported snapshot symbols is refused rather
   than guessed at.
 - **The snapshot hash** from the header at the start of each exported data
@@ -133,8 +137,11 @@ server; older servers keep the complete request after schema discovery.
   `resource_constraint`.
 - **Engine notes.** Engine libraries are spooled into the owned root. ELF
   headers, note tables and note payloads share an 8 MiB metadata budget;
-  up to 64 distinct build IDs are retained. Exceeding either bound preserves
-  the candidates already examined and reports partial coverage.
+  up to 64 distinct build IDs and 1024 distinct nonempty note ranges are retained.
+  The range cap bounds bookkeeping and separate positional reads even for tiny
+  overlapping declarations. Exact duplicates share one read and empty ranges
+  consume no inventory slots. Exceeding a bound preserves the candidates examined
+  from retained ranges and reports partial coverage with `build_id: null`.
 - **Metadata and candidate capacity.** Both operations refuse duplicate
   relevant library paths. Inventory is limited to 32 ABIs and 1024 bytes per
   relevant library path, independently of compressed size. Identification
@@ -174,3 +181,9 @@ engine build-ids, no labeled Dart version (as expected for a release
 engine), and the Android clang toolchain line; a plain aapt2-built APK
 reports not-detected with complete coverage. The suite uses self-contained
 synthetic ELF images and scanner payloads; it does not read private local files.
+
+The Gallery workflow and all 147 focused Flutter tests also pass on macOS Sonoma
+14.8.9 x86-64 and Windows 11 x64 build 26300.9457 guests with Node 24.18.0,
+including the conflicting-load and note-range-limit CLI/MCP regressions. Windows
+verification runs under a non-administrator account. Verifiers use a shared
+temporary parent so each CLI/MCP process can own and release its own snapshots.

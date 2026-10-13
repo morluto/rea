@@ -51,6 +51,7 @@ import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
 import {
+  APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
   apktoolInvocation,
@@ -155,10 +156,9 @@ const runApktool = async (
 ): Promise<Result<{ stdout: string; stderr: string }, AnalysisError>> => {
   if (signal?.aborted === true)
     return err(new AnalysisCancelledError(operation));
-  const hostEnvironment = { ...process.env, ...environment };
   let invocation: ReturnType<typeof apktoolInvocation>;
   try {
-    invocation = apktoolInvocation(selection, arguments_, hostEnvironment);
+    invocation = apktoolInvocation(selection, arguments_, environment);
   } catch (cause) {
     if (!(cause instanceof WindowsBatchCommandError)) throw cause;
     const reason = `The apktool batch launcher cannot receive REA's decode paths through cmd.exe: ${cause.message}`;
@@ -178,7 +178,7 @@ const runApktool = async (
         arguments: invocation.arguments,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments,
         runId: randomUUID(),
-        hostEnvironment,
+        hostEnvironment: environment,
       },
       {
         timeoutMs: limits.timeoutMs,
@@ -317,7 +317,9 @@ export interface ApktoolProviderOptions {
  * (`--no-src`) because Java-source recovery belongs to the JADX family.
  */
 export class ApktoolProvider {
-  private readonly environment: Readonly<Record<string, string | undefined>>;
+  private readonly selectedEnvironment:
+    | Readonly<Record<string, string | undefined>>
+    | undefined;
 
   private readonly workspaces = new Set<string>();
   private readonly removeWorkspace: (path: string) => Promise<void>;
@@ -328,14 +330,25 @@ export class ApktoolProvider {
   #closePromise: Promise<void> | undefined;
 
   constructor(options: ApktoolProviderOptions = {}) {
-    this.environment = snapshotEnvironment(options.environment ?? process.env);
+    this.selectedEnvironment =
+      options.environment === undefined
+        ? undefined
+        : snapshotEnvironment(options.environment);
     this.removeWorkspace =
       options.removeWorkspace ??
       ((path) => rm(path, { recursive: true, force: true }));
   }
 
-  private selection(): ApktoolCommandSelection {
-    return resolveApktoolCommand(this.environment);
+  private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
+    const ambient = snapshotEnvironment(process.env);
+    if (this.selectedEnvironment === undefined) return ambient;
+    // Child inheritance is sampled per operation. An explicit map keeps its
+    // launcher choice authoritative, including an omitted command selecting PATH.
+    return snapshotEnvironment({
+      ...ambient,
+      ...this.selectedEnvironment,
+      [APKTOOL_COMMAND_ENV]: this.selectedEnvironment[APKTOOL_COMMAND_ENV],
+    });
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
@@ -354,9 +367,14 @@ export class ApktoolProvider {
   async #inspectAvailability(
     signal: AbortSignal,
   ): Promise<ProviderAvailability> {
+    const environment = this.operationEnvironment();
     try {
-      const selection = this.selection();
-      await inspectApktoolClient(selection, signal, this.environment);
+      const selection = await resolveApktoolCommand(
+        environment,
+        process.platform,
+        signal,
+      );
+      await inspectApktoolClient(selection, signal, environment);
       throwIfCancelled("inspect_apktool_client", signal);
       return {
         status: "available",
@@ -406,17 +424,22 @@ export class ApktoolProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (signal?.aborted === true)
       return err(new AnalysisCancelledError(request.operation));
+    const environment = this.operationEnvironment();
     let selection: ApktoolCommandSelection;
     let identity: ApktoolClientIdentity;
     try {
-      selection = this.selection();
-      identity = await inspectApktoolClient(
-        selection,
+      selection = await resolveApktoolCommand(
+        environment,
+        process.platform,
         signal,
-        this.environment,
       );
+      identity = await inspectApktoolClient(selection, signal, environment);
     } catch (cause) {
-      if (cause instanceof AnalysisCancelledError) return err(cause);
+      if (
+        cause instanceof AnalysisCancelledError ||
+        cause instanceof AnalysisTimeoutError
+      )
+        return err(cause);
       if (cause instanceof ApktoolConfigurationFailure) {
         return err(
           providerConfigurationRefusal(
@@ -449,6 +472,7 @@ export class ApktoolProvider {
     return this.decodeResources(
       request.operation,
       selection,
+      environment,
       client,
       provider,
       request.input,
@@ -500,6 +524,7 @@ export class ApktoolProvider {
   private async decodeResources(
     operation: "decode_android_resources",
     selection: ApktoolCommandSelection,
+    environment: Readonly<NodeJS.ProcessEnv>,
     client: {
       command: string;
       command_source: string;
@@ -628,7 +653,7 @@ export class ApktoolProvider {
           maxOutputBytes: DECODE_MAX_OUTPUT_BYTES,
         },
         signal,
-        this.environment,
+        environment,
         (owner) => this.#pendingCommandOwners.set(owner, root),
       );
       if (!decoded.ok) {

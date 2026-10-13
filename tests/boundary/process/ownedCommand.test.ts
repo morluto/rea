@@ -257,9 +257,11 @@ it.skipIf(process.platform === "win32").each(["cancelled", "timeout"] as const)(
         failures: [expect.objectContaining({ reason: "run-token-mismatch" })],
       });
       expect(failure.cleanupResult).toEqual(cleanup);
-      expect(failure.resources).toEqual(
-        expect.arrayContaining([request.runId]),
-      );
+      expect(failure.resources).toEqual([
+        request.runId,
+        `pid:${launched.ownership.leaderPid}`,
+        `process-group:${launched.ownership.processGroupId}`,
+      ]);
       // An unresolved member does not grant authority to signal the shared group.
       const acquiredPid = launched.ownership.leaderPid;
       expect(() => process.kill(acquiredPid, 0)).not.toThrow();

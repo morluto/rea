@@ -208,6 +208,22 @@ it("preserves missing callgraph coverage through direct, graph, and trace workfl
       ]),
     );
 
+    const dossier = await client.execute("analyze_function", {
+      procedure: "main",
+    });
+    if (!dossier.ok) throw dossier.error;
+    expect(dossier.value.result).toMatchObject({
+      callers: [],
+      callees: [],
+      facet_availability: {
+        callers: { available: false },
+        callees: {
+          available: false,
+          reason: expect.stringContaining("callgraph was unavailable"),
+        },
+      },
+    });
+
     const application = new EnhancedTools(client);
     const graph = await application.execute("get_call_graph", {
       address: "main",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { nativeMetadataRecoverySummarySchema } from "./nativeMetadataRecovery.js";
 import { jsonValueSchema } from "../jsonValue.js";
+import { binaryArchitectureSchema } from "../rawBinary.js";
 
 const integer = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -112,7 +113,7 @@ export const nativeLoadImageSchema = z.union([
     status: z.enum(["verified", "mismatch"]),
     format: z.literal("raw-binary"),
     target_sha256: digest,
-    architecture: z.enum(["x86", "x86_64", "arm", "arm64"]),
+    architecture: binaryArchitectureSchema,
     language_id: z.string().min(1),
     compiler_spec_id: z.string().min(1),
     base_address: address,

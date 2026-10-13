@@ -1,6 +1,6 @@
 import { constants as fsConstants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, isAbsolute, join, resolve, sep } from "node:path";
 
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -71,7 +71,9 @@ export const resolveExecutable = async (
         : resolve(workingDirectory, directory),
     );
   const candidates =
-    isAbsolute(command) || command.includes("/") || command.includes("\\")
+    isAbsolute(command) ||
+    command.includes("/") ||
+    (sep === "\\" && command.includes("\\"))
       ? [resolve(workingDirectory, command)]
       : directories.map((directory) => join(directory, command));
   const failures: string[] = [];

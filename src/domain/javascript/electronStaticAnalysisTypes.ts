@@ -219,6 +219,8 @@ export interface ElectronCallPathStep {
 export interface ElectronCallPath {
   readonly entry_kind: "bridge-member" | "ipc-handler";
   readonly entry: string;
+  /** Exact bridge API and property segments; `entry` remains display text. */
+  readonly entry_path?: readonly string[];
   readonly channel: string | null;
   readonly terminal: string;
   readonly resolution: "candidate";

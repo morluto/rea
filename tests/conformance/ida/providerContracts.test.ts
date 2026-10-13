@@ -29,15 +29,25 @@ const parametersFor = (
   operation: string,
 ): Readonly<Record<string, JsonValue>> => {
   if (operation.startsWith("search_")) return { pattern: "a.b" };
-  if (operation === "xrefs") return { address: "0x1000" };
+  if (operation === "xrefs" || operation === "resolve_containing_procedure")
+    return { address: "0x1000" };
   if (operation.startsWith("list_")) return {};
   return { procedure: "main" };
 };
 
+/** Operations only the headless profile declares. */
+const HEADLESS_ONLY: ReadonlySet<string> = new Set([
+  "resolve_containing_procedure",
+  "list_documents",
+]);
+
 describe.each(["attached", "headless"] as const)(
   "IDA %s caller-visible contracts",
   (mode) => {
-    it.each(IDA_OPERATIONS)(
+    const operations = IDA_OPERATIONS.filter(
+      (operation) => mode === "headless" || !HEADLESS_ONLY.has(operation),
+    );
+    it.each(operations)(
       "declares %s UI effects matching the upstream tools it reaches",
       async (operation) => {
         const { root, target } = await createIdaTarget();
@@ -69,7 +79,7 @@ describe.each(["attached", "headless"] as const)(
       },
     );
 
-    it.each(IDA_OPERATIONS)(
+    it.each(operations)(
       "serializes %s against its named advertised output contract",
       async (operation) => {
         const { root, target } = await createIdaTarget();

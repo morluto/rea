@@ -8,6 +8,10 @@ import {
   type GoBinaryContainer,
   type GoFileMapping,
 } from "./GoBinaryContainer.js";
+import {
+  classifyFatContainerIdentity,
+  readFatContainerHeader,
+} from "../domain/apple/machoContainer.js";
 import { readGoElfImage } from "./GoElfImage.js";
 import { readGoMachoImage } from "./GoMachoImage.js";
 import { readGoPeImage } from "./GoPeImage.js";
@@ -187,11 +191,27 @@ const readContainer = (bytes: Buffer): GoBinaryContainer => {
     return readGoPeImage(bytes);
   if (bytes.length >= 4) {
     const magic = bytes.readUInt32BE();
-    if ([0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca].includes(magic))
-      throw new GoBinaryFormatFailure(
-        "unsupported",
-        "Universal/fat Mach-O containers require selecting a thin slice",
-      );
+    if ([0xcafebabe, 0xcafebabf, 0xbebafeca, 0xbfbafeca].includes(magic)) {
+      const fatHeader = readFatContainerHeader(bytes, bytes.length);
+      if (fatHeader.state === "malformed")
+        throw new GoBinaryFormatFailure("malformed", fatHeader.reason);
+      const identity =
+        fatHeader.state === "parsed"
+          ? classifyFatContainerIdentity(fatHeader, (offset) => {
+              if (offset >= bytes.length) return undefined;
+              if (offset + 4 > bytes.length) return null;
+              return bytes.readUInt32BE(offset);
+            })
+          : undefined;
+      // An invalid FAT-shaped table is not proof of a Mach-O container: JVM
+      // constant-pool bytes can share both the magic and a known CPU value.
+      const confirmedFatMachO = identity?.state === "mach-o";
+      if (confirmedFatMachO)
+        throw new GoBinaryFormatFailure(
+          "unsupported",
+          "Universal/fat Mach-O containers require selecting a thin slice",
+        );
+    }
     if ([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe].includes(magic))
       return readGoMachoImage(bytes);
   }

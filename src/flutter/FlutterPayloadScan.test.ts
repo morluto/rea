@@ -70,6 +70,37 @@ describe("SnapshotHashScanner", () => {
     });
   });
 
+  it.each([49, 50, 51])(
+    "finds a section %i bytes after a rejected record at any chunking",
+    (start) => {
+      // A stray magic whose hash field is not hex, then a real section that
+      // starts inside the stray record's magic-to-hash span.
+      const payload = new Uint8Array(start + 52);
+      payload.set([0xf5, 0xf5, 0xdc, 0xdc], 0);
+      payload.set(
+        realSnapshotSection("65817c30a78bb44c3dc3771876b6010a"),
+        start,
+      );
+      const whole = new SnapshotHashScanner();
+      whole.push(payload);
+      expect(whole.result()).toEqual({
+        capped: false,
+        sources: 1,
+        candidates: ["65817c30a78bb44c3dc3771876b6010a"],
+      });
+      for (let split = 1; split < payload.length; split += 1) {
+        const scanner = new SnapshotHashScanner();
+        scanner.push(payload.subarray(0, split));
+        scanner.push(payload.subarray(split));
+        expect(scanner.result(), `split at ${split}`).toEqual(whole.result());
+      }
+      const bytewise = new SnapshotHashScanner();
+      for (let offset = 0; offset < payload.length; offset += 1)
+        bytewise.push(payload.subarray(offset, offset + 1));
+      expect(bytewise.result()).toEqual(whole.result());
+    },
+  );
+
   it("ignores a magic without a following hash", () => {
     const scanner = new SnapshotHashScanner();
     scanner.push(Uint8Array.from([0xf5, 0xf5, 0xdc, 0xdc, 0xff, 0xff, 0xff]));

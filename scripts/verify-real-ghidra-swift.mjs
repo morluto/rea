@@ -45,8 +45,13 @@ const transport = new StdioClientTransport({
 const source = fileURLToPath(
   new URL("../tests/conformance/swift/type-inventory.swift", import.meta.url),
 );
+const literalSource = fileURLToPath(
+  new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
+);
 const binary = join(root, "swift-inventory");
+const literalBinary = join(root, "swift-literals");
 const reports = [];
+let literalReport;
 try {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
@@ -54,6 +59,19 @@ try {
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
+  // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
+  await execute(
+    "swiftc",
+    [
+      "-O",
+      "-target",
+      "arm64-apple-macosx13.0",
+      literalSource,
+      "-o",
+      literalBinary,
+    ],
+    { timeout: 60_000 },
+  );
   await client.connect(transport);
   for (const [variant, path] of [
     ["debug", binary],
@@ -132,6 +150,7 @@ try {
       await call("close_binary", {});
     }
   }
+  literalReport = await verifyStringLiterals();
 } finally {
   await client.close();
   await transport.close();
@@ -143,6 +162,7 @@ console.log(
       ok: true,
       provider: "ghidra",
       fixtures: reports,
+      swift_string_literals: literalReport,
       verifier_run: await completeVerifierRun(run),
     },
     null,
@@ -158,4 +178,52 @@ async function call(name, arguments_) {
   if (name === "analyze_swift_types")
     toolContract(name).outputSchema.parse(response.structuredContent);
   return requireMcpOperationResult(response, name);
+}
+
+// Literal text lives only in register constants, so it must come from the decoded pairs.
+async function verifyStringLiterals() {
+  await call("open_binary", { path: literalBinary, provider_id: "ghidra" });
+  try {
+    const procedures = await call("list_procedures", {});
+    const expected = {
+      smallLiteral: [["SleepDisabled", "small"]],
+      largeLiteral: [["The power setting could not be changed.", "large"]],
+      unicodeLiterals: [
+        ["café", "small"],
+        ["Résumé of the naïve décor, written twice", "large"],
+      ],
+      emptyAndControlLiterals: [
+        ["", "small"],
+        ["tab\there", "small"],
+      ],
+      returnedLiteral: [["Holding awake", "small"]],
+    };
+    const decoded = {};
+    for (const [name, literals] of Object.entries(expected)) {
+      const procedure = procedures.find(({ value }) => value.includes(name));
+      assert(procedure, `${name} is missing from the procedure inventory`);
+      const dossier = await call("analyze_function", {
+        procedure: procedure.address,
+      });
+      const observed = dossier.swift_string_literals;
+      assert(Array.isArray(observed), `${name} recorded no Swift literals`);
+      assert.deepEqual(dossier.swift_string_literal_omissions, []);
+      assert.deepEqual(
+        observed.map(({ value, representation }) => [value, representation]),
+        literals,
+      );
+      for (const literal of observed) {
+        assert.deepEqual(literal.registers, ["x0", "x1"]);
+        assert.equal(
+          literal.address === null,
+          literal.representation === "small",
+          `${literal.value} storage does not match its representation`,
+        );
+      }
+      decoded[name] = observed.length;
+    }
+    return decoded;
+  } finally {
+    await call("close_binary", {});
+  }
 }

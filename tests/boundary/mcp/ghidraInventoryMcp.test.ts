@@ -1,9 +1,85 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { nativeAotPeFixture } from "../../fixtures/nativeaotPe.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionIdentity } from "../../../src/domain/ghidraValues.fixture.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
+
+it("retains missing PDB coverage in empty PE name-search Evidence and snapshot replay", async () => {
+  const root = await createTestTempDirectory("rea-pdb-evidence-");
+  const targetPath = join(root, "fixture.exe");
+  await writeFile(targetPath, nativeAotPeFixture());
+  // Synthetic post-analysis facts at the real provider boundary; no engine is simulated as verified.
+  const pdb = {
+    file: "C:\\build\\fixture.pdb",
+    guid: "01234567-89AB-CDEF-0123-456789ABCDEF",
+    age: "a",
+    signature: null,
+    version: "RSDS",
+    loaded: false,
+  };
+  const harness = await connectGhidraMcp(
+    "ghidra-pdb-coverage",
+    (operation) =>
+      Promise.resolve(
+        ok(
+          operation === "procedure_pseudo_code"
+            ? {
+                value: "int FUN_140001000(void) { return 0; }",
+                limitations: [],
+              }
+            : [],
+        ),
+      ),
+    {
+      targetPath,
+      pdb,
+    },
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: { pattern: "add_numbers" },
+    });
+    expect(reply.isError).not.toBe(true);
+    const evidence = sessionEvidence(harness.session, reply.structuredContent);
+    expect(evidence.normalized_result).toEqual([]);
+    expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
+      "program-info-v1",
+    );
+    const limitation = evidence.limitations.find((value) =>
+      value.includes(pdb.file),
+    );
+    expect(limitation).toContain(pdb.guid);
+    expect(limitation).toContain("age (hex) a");
+    expect(limitation).toContain("not loaded");
+    const decompiled = await harness.mcp.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "0x140001000", document: "fixture" },
+    });
+    expect(decompiled.isError).not.toBe(true);
+    const functionEvidence = sessionEvidence(
+      harness.session,
+      decompiled.structuredContent,
+    );
+    expect(functionEvidence.limitations).toContain(limitation);
+    const replay = await harness.session.execute(
+      "procedure_pseudo_code",
+      functionEvidence.parameters,
+    );
+    if (!replay.ok) throw replay.error;
+    expect(replay.value.limitations).toContain(limitation);
+    expect(replay.value.limitations).toContainEqual(
+      expect.stringContaining("Loaded from a local REA analysis snapshot"),
+    );
+  } finally {
+    await harness.close();
+  }
+});
 
 it("retains defined-string coverage in empty and matching search Evidence", async () => {
   let output = jsonValueSchema.parse([]);

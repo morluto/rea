@@ -47,6 +47,14 @@ interface SymbolicReturnFlow {
   readonly fallsThrough: boolean;
 }
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
+const isObjectPrototypeSetter = (
+  property: t.ObjectMethod | t.ObjectProperty,
+  name: string,
+): boolean =>
+  t.isObjectProperty(property) &&
+  !property.computed &&
+  !property.shorthand &&
+  name === "__proto__";
 
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
@@ -243,15 +251,30 @@ export class JavaScriptSymbolicBindings {
             index = null;
             break;
           }
+          if (isObjectPrototypeSetter(property, name)) continue;
           properties.set(name, property);
         }
         this.#literalPropertyIndex.set(value.node, index);
       }
       if (index !== null) {
         const property = index.get(key);
-        return property === undefined
-          ? symbolicUnknown("missing property")
-          : this.#objectPropertyValue(property, value.environment);
+        if (property !== undefined)
+          return this.#objectPropertyValue(property, value.environment);
+        if (key === "__proto__") {
+          const prototypeSetter = [...value.node.properties]
+            .reverse()
+            .filter(
+              (candidate): candidate is t.ObjectMethod | t.ObjectProperty =>
+                !t.isSpreadElement(candidate),
+            )
+            .find((candidate) => isObjectPrototypeSetter(candidate, key));
+          if (prototypeSetter !== undefined)
+            return this.#objectPropertyValue(
+              prototypeSetter,
+              value.environment,
+            );
+        }
+        return symbolicUnknown("missing property");
       }
       for (const p of [...value.node.properties].reverse()) {
         if (t.isSpreadElement(p)) {
@@ -314,7 +337,8 @@ export class JavaScriptSymbolicBindings {
           t.isSpreadElement(p)
             ? this.members(this.evaluate(p.argument, value.environment), active)
             : [semanticStaticPropertyKey(p.key, p.computed)].filter(
-                (k): k is string => k !== null,
+                (k): k is string =>
+                  k !== null && !isObjectPrototypeSetter(p, k),
               ),
         ),
       ),

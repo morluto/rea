@@ -5,7 +5,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { err, ok } from "../../domain/result.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
 import type {
   AnalysisClient,
   AnalysisClientContext,

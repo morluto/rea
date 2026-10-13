@@ -147,6 +147,28 @@ opposite observation's selection unknown, and application graphs report their
 selected scope as partial. Neither makes an absence claim about the whole
 assembly. Older member Evidence without `selection` remains readable.
 
+### Edge target declaring types
+
+`member_refs[].parent_name`, `call_edges[].target_declaring_type`, and
+`field_accesses[].field_declaring_type` name the type that declares each
+target. Referenced spec signatures validate encoded type coordinates against
+the metadata tables, including nested type arguments and custom modifiers.
+TypeRef resolution scopes are checked transitively with cycle detection;
+readable names survive malformed scopes as partial evidence.
+TypeDef and TypeRef names use the namespace-qualified `full_name`
+form, and nested types keep bare names. A generic-instantiation TypeSpec
+parent names its generic type, such as ``System.Collections.Generic.List`1``.
+Other well-formed TypeSpec forms and ModuleRef or MethodDef parents stay
+`null`. A `method-spec` call edge reports the name and declaring type of the
+generic method it instantiates. A field access is named only by a field or a
+field-signature MemberRef. TypeSpec and MethodSpec blobs are decoded with the
+member-signature grammar, and a MethodSpec must instantiate a generic method
+with as many type arguments as it declares. Malformed or unsupported rows and
+blobs, and arity mismatches, make coverage partial. A readable MethodSpec
+method column that names a method, or a TypeRef whose resolution scope is
+invalid, keeps its name.
+Older member Evidence without these fields reads them as `null`: unknown.
+
 ## Analysis objective
 
 Start by identifying the artifact with `inspect_managed_artifact`, then inspect

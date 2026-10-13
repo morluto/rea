@@ -13,6 +13,8 @@ import java.net.UnixDomainSocketAddress;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
@@ -22,7 +24,9 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -52,6 +56,8 @@ import ghidra.app.decompiler.DecompiledFunction;
 import ghidra.app.decompiler.ClangCaseToken;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.framework.Application;
+import ghidra.app.util.bin.format.pdb.PdbParserConstants;
+import ghidra.framework.options.Options;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
@@ -82,6 +88,7 @@ import ghidra.program.model.address.SegmentedAddress;
 import ghidra.program.model.reloc.Relocation;
 import java.io.ByteArrayOutputStream;
 import ghidra.program.model.symbol.Namespace;
+import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
@@ -100,8 +107,13 @@ import ghidra.program.model.pcode.PcodeBlock;
 import ghidra.program.model.pcode.PcodeBlockBasic;
 import ghidra.program.model.pcode.Varnode;
 import ghidra.program.model.pcode.VarnodeAST;
+import ghidra.program.util.ContextEvaluatorAdapter;
+import ghidra.program.util.SymbolicPropogator;
+import ghidra.program.util.VarnodeContext;
 
 public final class ReaGhidraBridge extends HeadlessScript {
+    // At most 24 KiB after worst-case JSON escaping (six bytes per UTF-16 unit).
+    private static final int PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
     private static final int MAX_HIGH_PCODE_OPS = 3000;
     private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
     private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
@@ -446,6 +458,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 .toArray(String[]::new)
         ));
         result.add("target", target);
+        result.add("pdb", pdbObservation());
         JsonArray extensions = analysisExtensions.reports();
         if (extensions.size() > 0) result.add("analysis_extensions", extensions);
         // Written by ReaGhidraApplySeeds before auto-analysis; REA checks it
@@ -459,6 +472,41 @@ public final class ReaGhidraBridge extends HeadlessScript {
             .getString("REA MIPS soft-float storage", null);
         if (softFloat != null) result.add("mips_soft_float_storage", JsonParser.parseString(softFloat));
         return result;
+    }
+
+    /** Read loader/analyzer-owned facts without searching for or applying companions. */
+    private JsonObject pdbObservation() {
+        Options info = currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO);
+        JsonObject pdb = new JsonObject();
+        String[] names = {"file", "guid", "age", "signature", "version"};
+        String[] attributes = {
+            PdbParserConstants.PDB_FILE, PdbParserConstants.PDB_GUID,
+            PdbParserConstants.PDB_AGE, PdbParserConstants.PDB_SIGNATURE,
+            PdbParserConstants.PDB_VERSION
+        };
+        int remaining = PDB_ATTRIBUTE_UTF16_BUDGET;
+        JsonArray omitted = new JsonArray();
+        for (int index = 0; index < names.length; index++) {
+            String value = info.getString(attributes[index], null);
+            if (value != null && value.length() > remaining) {
+                omitted.add(names[index]);
+                pdb.add(names[index], JsonNull.INSTANCE);
+            } else {
+                pdb.addProperty(names[index], value);
+                if (value != null) remaining -= value.length();
+            }
+        }
+        if (omitted.size() > 0) {
+            JsonObject limit = new JsonObject();
+            limit.addProperty("utf16_budget", PDB_ATTRIBUTE_UTF16_BUDGET);
+            limit.add("omitted_attributes", omitted);
+            pdb.add("resource_limit", limit);
+        }
+        if (info.contains(PdbParserConstants.PDB_LOADED))
+            pdb.addProperty("loaded", info.getBoolean(PdbParserConstants.PDB_LOADED, false));
+        else
+            pdb.add("loaded", JsonNull.INSTANCE);
+        return pdb;
     }
 
     private static String bytesHex(byte[] bytes) {
@@ -804,7 +852,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return functionObservation(result, boundaryLimitations);
     }
 
-    private JsonArray procedureCalls(JsonObject params, boolean callers) throws Exception {
+    private JsonObject procedureCalls(JsonObject params, boolean callers) throws Exception {
         requireKeys(params, Set.of("document", "procedure"));
         requireDocument(params);
         Function function = resolveProcedure(requireString(params, "procedure"));
@@ -817,7 +865,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         for (Function item : ordered) {
             result.add(canonicalAddress(item.getEntryPoint()));
         }
-        return result;
+        return functionObservation(
+            result,
+            noReturnCallLimitations(
+                currentProgram.getListing().getInstructions(function.getBody(), true)
+            )
+        );
     }
 
     private JsonObject procedureInfo(JsonObject params) throws Exception {
@@ -1319,6 +1372,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("outgoing_references", outgoing);
         result.add("referenced_strings", referencedStrings);
         result.add("referenced_names", referencedNames);
+        boolean swift = swiftProgram();
+        boolean aarch64 = currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:");
+        SwiftStringLiteralDecode swiftLiterals = swift && aarch64 ? swiftStringLiterals(function) : null;
+        if (swiftLiterals != null) {
+            result.add("swift_string_literals", swiftLiterals.literals());
+            result.add("swift_string_literal_omissions", swiftLiterals.omissions());
+        }
         result.add("basic_blocks", blocks);
         result.add(
             "native_api",
@@ -1338,6 +1398,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
         limitations.add(
             "Synthetic Ghidra entry-point references without actionable memory sources are omitted."
         );
+        if (swift && aarch64) {
+            limitations.add(
+                "Swift String literals are decoded from constant register pairs at calls, returns and paired stores; literals stored one word at a time, chosen by conditional selects, passed through unresolved jumps, or built at runtime are not reported."
+            );
+            if (swiftLiterals.omissions().size() > 0) {
+                limitations.add(
+                    "Swift String literal records listed in swift_string_literal_omissions could not be retained or decoded within this dossier's remaining heap budget; later symbolic flows remain unexamined."
+                );
+            }
+        } else if (swift) {
+            limitations.add(
+                "Swift String literal decoding is implemented for AArch64 register pairs only; no Swift literals were decoded for this architecture."
+            );
+        }
         List<String> boundaryLimitations = noReturnCallLimitations(scan.instructions);
         for (String limitation : boundaryLimitations) {
             limitations.add(limitation);
@@ -3391,6 +3465,349 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private boolean swiftProgram() {
+        for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
+            String name = block.getName();
+            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Swift passes a String as two words: small literals carry their bytes in the words and
+     * immortal large literals carry their count and a biased pointer to the bytes. Ghidra keeps
+     * neither as a data reference, so decode constant pairs where Swift consumes them: argument
+     * and return registers at calls, tail calls and returns, and both registers of one STP.
+     * The canonical empty string is a small literal with a zero count.
+     */
+    private SwiftStringLiteralDecode swiftStringLiterals(Function function) throws Exception {
+        Register[] registers = new Register[31];
+        for (int index = 0; index < registers.length; index++) {
+            registers[index] = currentProgram.getRegister("x" + index);
+        }
+        TreeMap<String, JsonObject> observed = new TreeMap<>();
+        TreeMap<String, JsonObject> omitted = new TreeMap<>();
+        SwiftLiteralBudget budget = new SwiftLiteralBudget();
+        Map<String, Boolean> selectedValues = new HashMap<>();
+        SymbolicPropogator propagator = new SymbolicPropogator(currentProgram, false);
+        propagator.flowConstants(function.getEntryPoint(), function.getBody(), new ContextEvaluatorAdapter() {
+            @Override
+            public boolean evaluateContextBefore(VarnodeContext context, Instruction instruction) {
+                // Returning true ends only the current flow, so every queued flow checks the shared stop.
+                if (budget.stopped()) return true;
+                for (Register[] pair : swiftStringPairs(function, instruction, registers)) {
+                    Long word = registerConstant(context, pair[0]);
+                    Long object = registerConstant(context, pair[1]);
+                    if (word == null || object == null) continue;
+                    SwiftLiteralLayout layout = swiftLiteralLayout(word, object);
+                    if (layout == null) continue;
+                    // A selected word can combine with a path-dependent ordinary move. Cache the
+                    // provenance question per site/register, charging retained cache state to the
+                    // same dossier budget before allocating it.
+                    boolean selected = false;
+                    boolean provenanceOverCapacity = false;
+                    for (Register register : pair) {
+                        String provenanceKey = canonicalAddress(instruction.getAddress()) + "\u0000" +
+                            register.getBaseRegister().getName();
+                        Boolean value = selectedValues.get(provenanceKey);
+                        if (value == null) {
+                            if (!budget.takeState()) {
+                                provenanceOverCapacity = true;
+                                break;
+                            }
+                            value = selectedValue(function, instruction, register);
+                            selectedValues.put(provenanceKey, value);
+                        }
+                        if (value) {
+                            selected = true;
+                            break;
+                        }
+                    }
+                    if (selected) continue;
+                    // Forks can reach one site with different constants, so the words are part of the key.
+                    String key = canonicalAddress(instruction.getAddress()) + "\u0000" + pair[0].getName() +
+                        "\u0000" + pair[1].getName() + "\u0000" + Long.toUnsignedString(word, 16) +
+                        "\u0000" + Long.toUnsignedString(object, 16);
+                    if (observed.containsKey(key) || omitted.containsKey(key)) continue;
+                    // Every record draws on the budget; the first one that does not fit is kept as an
+                    // omission and decoding stops, so later sites are never examined.
+                    String value = layout.smallValue();
+                    boolean overCapacity = provenanceOverCapacity || !budget.take(layout.byteLength());
+                    if (!overCapacity && value == null) {
+                        try {
+                            value = swiftLargeLiteralText(layout);
+                        } catch (OutOfMemoryError exhausted) {
+                            overCapacity = true;
+                        }
+                    }
+                    if (value == null && !overCapacity) continue;
+                    JsonObject item = overCapacity
+                        ? swiftStringOmission(layout, word, object)
+                        : swiftStringItem(value, layout, word, object);
+                    item.addProperty("source_address", canonicalAddress(instruction.getAddress()));
+                    JsonArray pairRegisters = new JsonArray();
+                    pairRegisters.add(pair[0].getName());
+                    pairRegisters.add(pair[1].getName());
+                    item.add("registers", pairRegisters);
+                    (overCapacity ? omitted : observed).put(key, item);
+                    if (overCapacity) {
+                        budget.stop();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }, false, monitor);
+        JsonArray literals = new JsonArray();
+        observed.values().forEach(literals::add);
+        JsonArray omissions = new JsonArray();
+        omitted.values().forEach(omissions::add);
+        return new SwiftStringLiteralDecode(literals, omissions);
+    }
+
+    private static List<Register[]> swiftStringPairs(
+        Function function,
+        Instruction instruction,
+        Register[] registers
+    ) {
+        List<Register[]> pairs = new ArrayList<>();
+        if (instruction.getMnemonicString().equals("stp")) {
+            Register first = instruction.getRegister(0);
+            Register second = instruction.getRegister(1);
+            if (first != null && second != null && first.getBitLength() == 64 && second.getBitLength() == 64) {
+                pairs.add(new Register[] {first, second});
+            }
+            return pairs;
+        }
+        FlowType flow = instruction.getFlowType();
+        boolean returns = false;
+        for (PcodeOp operation : instruction.getPcode()) {
+            if (operation.getOpcode() == PcodeOp.RETURN) returns = true;
+        }
+        // A jump is a proven tail call only when it has resolved targets and all leave the
+        // body. A targetless computed jump can still dispatch inside the function.
+        Address[] targets = instruction.getFlows();
+        boolean tailCall = flow.isJump() && !flow.isConditional() && targets.length > 0 &&
+            Arrays.stream(targets).allMatch(target -> !function.getBody().contains(target));
+        if (!flow.isCall() && !returns && !tailCall) return pairs;
+        // A String occupies two consecutive registers among x0-x7, or x0 and x1 when returned.
+        int lastFirstRegister = returns ? 0 : 6;
+        for (int index = 0; index <= lastFirstRegister; index++) {
+            pairs.add(new Register[] {registers[index], registers[index + 1]});
+        }
+        return pairs;
+    }
+
+    private static Long registerConstant(VarnodeContext context, Register register) {
+        Varnode value = context.getRegisterVarnodeValue(register);
+        return value != null && context.isConstant(value) ? value.getOffset() : null;
+    }
+
+    // Search every predecessor path for the reaching definitions, following register copies,
+    // since a select copied into an argument register or defined before a branch forks just as
+    // independently as one written there directly.
+    private boolean selectedValue(Function function, Instruction use, Register register) {
+        ArrayDeque<Instruction> instructions = new ArrayDeque<>();
+        ArrayDeque<Register> targets = new ArrayDeque<>();
+        Set<String> visited = new HashSet<>();
+        for (Instruction predecessor : predecessors(function, use)) {
+            instructions.push(predecessor);
+            targets.push(register.getBaseRegister());
+        }
+        while (!instructions.isEmpty()) {
+            Instruction instruction = instructions.pop();
+            Register target = targets.pop();
+            if (!visited.add(canonicalAddress(instruction.getAddress()) + "\u0000" + target.getName())) continue;
+            boolean defines = false;
+            for (Object result : instruction.getResultObjects()) {
+                if (result instanceof Register written && written.getBaseRegister().equals(target)) defines = true;
+            }
+            Register next = target;
+            if (defines) {
+                PcodeOp[] operations = instruction.getPcode();
+                for (PcodeOp operation : operations) {
+                    if (operation.getOpcode() == PcodeOp.CBRANCH && operation.getInput(0).isConstant()) return true;
+                }
+                Register source = copiedRegister(operations);
+                if (source == null) continue;
+                next = source.getBaseRegister();
+            }
+            for (Instruction predecessor : predecessors(function, instruction)) {
+                instructions.push(predecessor);
+                targets.push(next);
+            }
+        }
+        return false;
+    }
+
+    private List<Instruction> predecessors(Function function, Instruction instruction) {
+        List<Instruction> result = new ArrayList<>();
+        Address from = instruction.getFallFrom();
+        if (from != null) {
+            Instruction previous = currentProgram.getListing().getInstructionAt(from);
+            if (previous != null) result.add(previous);
+        }
+        for (Reference reference : currentProgram.getReferenceManager().getReferencesTo(instruction.getAddress())) {
+            if (!reference.getReferenceType().isFlow() || reference.getReferenceType().isCall()) continue;
+            if (!function.getBody().contains(reference.getFromAddress())) continue;
+            Instruction source = currentProgram.getListing().getInstructionAt(reference.getFromAddress());
+            if (source != null) result.add(source);
+        }
+        return result;
+    }
+
+    private Register copiedRegister(PcodeOp[] operations) {
+        if (operations.length != 1) return null;
+        int opcode = operations[0].getOpcode();
+        Varnode input = operations[0].getInput(0);
+        if ((opcode != PcodeOp.COPY && opcode != PcodeOp.INT_ZEXT) || input == null || !input.isRegister()) return null;
+        return currentProgram.getRegister(input);
+    }
+
+    /** Validate the ABI layout of a pair; a small literal is decoded here, a large one only located. */
+    private SwiftLiteralLayout swiftLiteralLayout(long word, long object) {
+        int discriminator = (int) (object >>> 60);
+        if (discriminator == 0xE || discriminator == 0xA) {
+            int count = (int) ((object >>> 56) & 0xF);
+            byte[] bytes = new byte[15];
+            for (int index = 0; index < 8; index++) bytes[index] = (byte) (word >>> (8 * index));
+            for (int index = 0; index < 7; index++) bytes[8 + index] = (byte) (object >>> (8 * index));
+            for (int index = count; index < bytes.length; index++) {
+                if (bytes[index] != 0) return null;
+            }
+            // Count zero is the canonical empty string (object 0xE000000000000000, word 0).
+            String value = swiftStringText(bytes, count, discriminator == 0xE);
+            return value == null ? null : new SwiftLiteralLayout("small", null, count, true, value);
+        }
+        int flags = (int) (word >>> 60);
+        long count = word & 0xFFFFFFFFFFFFL;
+        // Immortal literals: ASCII and NFC or neither, tail allocated, with a pointer biased by 32.
+        if ((object >>> 56) != 0x80 || (flags != 0xD && flags != 0x1) || ((word >>> 48) & 0xFFF) != 0) {
+            return null;
+        }
+        try {
+            Address address = currentProgram.getAddressFactory().getDefaultAddressSpace()
+                .getAddress((object & 0x00FFFFFFFFFFFFFFL) + 0x20);
+            MemoryBlock block = currentProgram.getMemory().getBlock(address);
+            // The bytes and their terminator must lie in one initialized, non-executable block,
+            // and Java arrays bound one read.
+            if (block == null || !block.isInitialized() || block.isExecute() ||
+                count >= block.getEnd().subtract(address) + 1 || count >= Integer.MAX_VALUE) {
+                return null;
+            }
+            return new SwiftLiteralLayout("large", address, count, flags == 0xD, null);
+        } catch (Exception unaddressable) {
+            return null;
+        }
+    }
+
+    private String swiftLargeLiteralText(SwiftLiteralLayout layout) {
+        int count = (int) layout.byteLength();
+        byte[] bytes = new byte[count + 1];
+        try {
+            if (currentProgram.getMemory().getBytes(layout.address(), bytes) != bytes.length) return null;
+        } catch (Exception unreadable) {
+            return null;
+        }
+        return bytes[count] == 0 ? swiftStringText(bytes, count, layout.ascii()) : null;
+    }
+
+    /**
+     * Every literal record of one dossier draws on half of the heap that was free when decoding
+     * began. Text is charged at the worst case per UTF-8 byte: two bytes of UTF-16 text, then up
+     * to six escaped JSON characters ("\\u0000") held as UTF-16 in Gson's growing writer buffer
+     * (up to twice its length), again in the returned String, and once more as UTF-8 on the
+     * socket. Each record also pays a fixed cost for its map key, JSON members, addresses, words
+     * and their serialized form, so many empty or small literals are bounded too. Retained
+     * provenance-cache entries draw on that same fixed-state allowance.
+     */
+    private static final class SwiftLiteralBudget {
+        private static final long BYTES_PER_LITERAL_BYTE = 2 + 6 * 2 * 2 + 6 * 2 + 6;
+        private static final long BYTES_PER_RECORD = 4096;
+        private long remaining;
+        private boolean stopped;
+
+        SwiftLiteralBudget() {
+            Runtime runtime = Runtime.getRuntime();
+            remaining = Math.max(0, (runtime.maxMemory() - runtime.totalMemory() + runtime.freeMemory()) / 2);
+        }
+
+        boolean takeState() {
+            if (remaining < BYTES_PER_RECORD) return false;
+            remaining -= BYTES_PER_RECORD;
+            return true;
+        }
+
+        boolean take(long bytes) {
+            if (remaining < BYTES_PER_RECORD ||
+                bytes > (remaining - BYTES_PER_RECORD) / BYTES_PER_LITERAL_BYTE) {
+                return false;
+            }
+            remaining -= BYTES_PER_RECORD + bytes * BYTES_PER_LITERAL_BYTE;
+            return true;
+        }
+
+        void stop() {
+            stopped = true;
+        }
+
+        boolean stopped() {
+            return stopped;
+        }
+    }
+
+    // Swift String values may contain any scalar, including controls; JSON escapes them.
+    private static String swiftStringText(byte[] bytes, int length, boolean ascii) {
+        if (length < 0 || length > bytes.length) return null;
+        for (int index = 0; index < length; index++) {
+            if (ascii && bytes[index] < 0) return null;
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes, 0, length)).toString();
+        } catch (CharacterCodingException invalid) {
+            return null;
+        }
+    }
+
+    private static JsonObject swiftStringOmission(SwiftLiteralLayout layout, long word, long object) {
+        JsonObject item = new JsonObject();
+        item.addProperty("representation", layout.representation());
+        if (layout.address() == null) {
+            item.add("address", JsonNull.INSTANCE);
+        } else {
+            item.addProperty("address", canonicalAddress(layout.address()));
+        }
+        item.addProperty("byte_length", layout.byteLength());
+        item.addProperty("reason", "capacity");
+        item.add("words", swiftStringWords(word, object));
+        return item;
+    }
+
+    private static JsonObject swiftStringItem(
+        String value,
+        SwiftLiteralLayout layout,
+        long word,
+        long object
+    ) {
+        JsonObject item = new JsonObject();
+        item.addProperty("value", value);
+        item.addProperty("representation", layout.representation());
+        if (layout.address() == null) {
+            item.add("address", JsonNull.INSTANCE);
+        } else {
+            item.addProperty("address", canonicalAddress(layout.address()));
+        }
+        item.add("words", swiftStringWords(word, object));
+        return item;
+    }
+
+    private static JsonArray swiftStringWords(long word, long object) {
+        JsonArray words = new JsonArray();
+        words.add("0x" + Long.toUnsignedString(word, 16));
+        words.add("0x" + Long.toUnsignedString(object, 16));
+        return words;
+    }
+
     private static String exclusiveAddress(Address inclusive) {
         Address next = inclusive.next();
         if (next != null && next.getAddressSpace().equals(inclusive.getAddressSpace())) {
@@ -3930,6 +4347,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record FunctionEntry(Function function, InventoryItem item) {}
     private record FunctionAnalysisObservation(JsonObject dossier, List<String> limitations) {}
+    private record SwiftStringLiteralDecode(JsonArray literals, JsonArray omissions) {}
+    private record SwiftLiteralLayout(
+        String representation,
+        Address address,
+        long byteLength,
+        boolean ascii,
+        String smallValue
+    ) {}
     private record InstructionScan(List<Instruction> instructions, boolean truncated) {}
     private record SessionDescriptor(
         String transport,

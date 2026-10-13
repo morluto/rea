@@ -3,6 +3,7 @@ import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   readStableArtifact,
@@ -166,6 +167,16 @@ const verifyInactiveJournal = async (
   }
 };
 
+// Absence is a caller value to correct, not malformed path or content.
+const missingDatabase = (path: string): AnalysisInputError =>
+  new AnalysisInputError("inspect_sqlite_database", undefined, [
+    {
+      path: ["path"],
+      reason: "invalid_value",
+      message: `Selected SQLite database does not exist: ${path}`,
+    },
+  ]);
+
 /** Freeze a stable offline file set without ever opening the source through SQLite. */
 export const captureSqliteDatabaseSnapshot = async (
   path: string,
@@ -183,11 +194,7 @@ export const captureSqliteDatabaseSnapshot = async (
   const wal = before[1];
   if (database === undefined || wal === undefined || before[2] === undefined)
     throw new Error("Incomplete database file-set observation");
-  if (database === null)
-    throw new ArtifactReaderFailure(
-      "path",
-      `Selected SQLite database does not exist: ${path}`,
-    );
+  if (database === null) throw missingDatabase(path);
   if (before[2] !== null)
     await verifyInactiveJournal(
       `${path}-journal`,

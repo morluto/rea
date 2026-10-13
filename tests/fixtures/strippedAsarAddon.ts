@@ -29,7 +29,7 @@ export const createStrippedAsarAddon = async (
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, file.contents);
   }
-  await createPackageWithOptions(source, archive, { unpack: "**/*.node" });
+  await createPackageWithOptions(source, archive, { unpack: "*.node" });
   await writeFile(
     join(`${archive}.unpacked`, "node_modules", "btime", "binding.node"),
     stripped,

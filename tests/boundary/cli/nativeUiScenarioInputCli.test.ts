@@ -71,4 +71,27 @@ describe("native UI scenario CLI input", () => {
       });
     },
   );
+
+  cliTest(
+    "refuses scenario steps on passive observation instead of dropping them",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          "observe-native-ui",
+          "/provider-must-not-be-invoked",
+          "--pid",
+          "1",
+          "--window-id",
+          "1",
+          "--steps",
+          '[{"kind":"wait","milliseconds":0}]',
+          "--json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stdout).toContain("Unknown flag: --steps");
+    },
+  );
 });

@@ -1,6 +1,7 @@
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { IdaProvider } from "../../src/ida/IdaProvider.js";
 import { createIdaTarget, RecordingIdaMcp } from "../fixtures/idaMcp.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
@@ -20,6 +21,73 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
+
+const reobservesExternallyMutableState = async (): Promise<void> => {
+  const { root, target } = await createIdaTarget();
+  roots.push(root);
+  const path = join(root, "registration.json");
+  await writeFile(path, JSON.stringify({ command: "fixture" }));
+  const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+  if (!config.ok) throw config.error;
+  const producer = new RecordingIdaMcp(target);
+  const session = createTestBinarySession(
+    new IdaProvider(config.value, {}, () => producer),
+  );
+  expect((await session.open(target.path)).ok).toBe(true);
+  const query = { procedure: "main", document: target.path };
+  const first = await session.execute("procedure_pseudo_code", query);
+  expect(first.ok && first.value.result).toContain("42");
+  const snapshot = session.exportAnalysisSnapshot();
+  if (!snapshot.ok) throw snapshot.error;
+  expect(snapshot.value.entries).toEqual([]);
+  const profile = session.analysisProfile();
+  if (profile === undefined) throw new Error("Missing profile");
+  const cached = createAnalysisExecution(
+    "stale output",
+    IDA_PROVIDER_IDENTITY,
+    {
+      analysisProfile: profile,
+      subject: {
+        path: target.path,
+        sha256: target.sha256,
+        format: target.format,
+        ...(target.architecture === undefined
+          ? {}
+          : { architecture: target.architecture }),
+      },
+    },
+  );
+  snapshot.value.entries.push(
+    createAnalysisSnapshotEntry({
+      target: snapshotTarget(target),
+      binding: snapshotBinding(profile),
+      operation: "procedure_pseudo_code",
+      parameters: query,
+      execution: cached,
+    }),
+  );
+  snapshot.value.evidence_bundle = createEvidenceBundle([
+    ...snapshot.value.evidence_bundle.records,
+    createEvidence(target, IDA_PROVIDER_IDENTITY, {
+      operation: "procedure_pseudo_code",
+      parameters: query,
+      result: cached.result,
+      rawResult: cached.rawResult,
+      analysisProfile: profile,
+    }),
+  ]);
+  expect(session.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
+  expect(session.allowsSnapshotReplay("procedure_pseudo_code")).toBe(false);
+  expect(session.allowsSnapshotReplay("binary_overview")).toBe(false);
+  producer.pseudocode = "int main(void) { return 99; }";
+  const second = await session.execute("procedure_pseudo_code", query);
+  expect(second.ok && second.value.result).toContain("99");
+  expect(
+    producer.calls.filter(({ name }) => name === "decompile_function"),
+  ).toHaveLength(2);
+  await session.close();
+  expect(producer.closes).toBe(1);
+};
 
 describe("IDA provider composition", () => {
   it("discovers without launching and commits adapter semantics without persisting credentials", async () => {
@@ -58,72 +126,10 @@ describe("IDA provider composition", () => {
         .find(({ operation }) => operation === "procedure_callers")?.available,
     ).toBe(false);
   });
-  it("re-observes externally mutable state even when a document is explicit and a snapshot is imported", async () => {
-    const { root, target } = await createIdaTarget();
-    roots.push(root);
-    const path = join(root, "registration.json");
-    await writeFile(path, JSON.stringify({ command: "fixture" }));
-    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
-    if (!config.ok) throw config.error;
-    const producer = new RecordingIdaMcp(target);
-    const session = createTestBinarySession(
-      new IdaProvider(config.value, {}, () => producer),
-    );
-    expect((await session.open(target.path)).ok).toBe(true);
-    const query = { procedure: "main", document: target.path };
-    const first = await session.execute("procedure_pseudo_code", query);
-    expect(first.ok && first.value.result).toContain("42");
-    const snapshot = session.exportAnalysisSnapshot();
-    if (!snapshot.ok) throw snapshot.error;
-    expect(snapshot.value.entries).toEqual([]);
-    const profile = session.analysisProfile();
-    if (profile === undefined) throw new Error("Missing profile");
-    const cached = createAnalysisExecution(
-      "stale output",
-      IDA_PROVIDER_IDENTITY,
-      {
-        analysisProfile: profile,
-        subject: {
-          path: target.path,
-          sha256: target.sha256,
-          format: target.format,
-          ...(target.architecture === undefined
-            ? {}
-            : { architecture: target.architecture }),
-        },
-      },
-    );
-    snapshot.value.entries.push(
-      createAnalysisSnapshotEntry({
-        target: snapshotTarget(target),
-        binding: snapshotBinding(profile),
-        operation: "procedure_pseudo_code",
-        parameters: query,
-        execution: cached,
-      }),
-    );
-    snapshot.value.evidence_bundle = createEvidenceBundle([
-      ...snapshot.value.evidence_bundle.records,
-      createEvidence(target, IDA_PROVIDER_IDENTITY, {
-        operation: "procedure_pseudo_code",
-        parameters: query,
-        result: cached.result,
-        rawResult: cached.rawResult,
-        analysisProfile: profile,
-      }),
-    ]);
-    expect(session.importAnalysisSnapshot(snapshot.value).ok).toBe(true);
-    expect(session.allowsSnapshotReplay("procedure_pseudo_code")).toBe(false);
-    expect(session.allowsSnapshotReplay("binary_overview")).toBe(false);
-    producer.pseudocode = "int main(void) { return 99; }";
-    const second = await session.execute("procedure_pseudo_code", query);
-    expect(second.ok && second.value.result).toContain("99");
-    expect(
-      producer.calls.filter(({ name }) => name === "decompile_function"),
-    ).toHaveLength(2);
-    await session.close();
-    expect(producer.closes).toBe(1);
-  });
+  it(
+    "re-observes externally mutable state even when a document is explicit and a snapshot is imported",
+    reobservesExternallyMutableState,
+  );
   it("rejects unsupported target kinds and reports incomplete upstream profiles on first analysis", async () => {
     const { root, target } = await createIdaTarget();
     roots.push(root);
@@ -157,10 +163,19 @@ describe("IDA provider composition", () => {
     expect(analyzed).toMatchObject({
       ok: false,
       error: {
-        _tag: "AnalysisProtocolError",
-        message: expect.stringContaining(
+        _tag: "ProviderAdapterError",
+        userMessage: expect.stringContaining(
           "headless compatibility profile is missing tools: idb_open",
         ),
+      },
+    });
+    if (analyzed.ok) throw new Error("Expected incompatible IDA profile");
+    expect(projectAnalysisError(analyzed.error).details).toMatchObject({
+      provider_id: "ida",
+      diagnostics: {
+        mode: "headless",
+        expected_profile: "database-supervisor",
+        missing_tools: expect.arrayContaining(["idb_open"]),
       },
     });
     expect(producer.connects).toBe(1);

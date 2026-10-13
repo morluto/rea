@@ -410,18 +410,26 @@ export const buildInterfaceBuilderAnalysis = (input: {
     const connectionsTruncated =
       parserOmittedConnections > 0 ||
       parsed.connections.length > input.limits.max_connections;
+    // A recognized connector the parser could not attach to an owner produces
+    // no connection record, so its coverage is partial with its own reason
+    // rather than absent or truncated.
+    const connectionsUnresolved = parsed.unresolvedConnections > 0;
     omittedObjects +=
       parsed.omittedObjects +
       Math.max(0, parsed.objects.length - documentObjectCount);
     omittedConnections +=
       Math.max(0, parsed.connections.length - input.limits.max_connections) +
-      parserOmittedConnections;
+      parserOmittedConnections +
+      parsed.unresolvedConnections;
     summaries.push({
       relative_path: document.relativePath,
       archive_sha256: document.archiveSha256,
       document_kind: document.documentKind,
       object_count: parsed.objectCount,
-      connection_count: parsed.connections.length + parserOmittedConnections,
+      connection_count:
+        parsed.connections.length +
+        parserOmittedConnections +
+        parsed.unresolvedConnections,
       hierarchy_complete:
         parsed.hierarchy.length > 0 &&
         !truncated &&
@@ -440,13 +448,17 @@ export const buildInterfaceBuilderAnalysis = (input: {
       {
         facet: `connections:${document.relativePath}`,
         status:
-          connectionsTruncated || documentOmittedConnections > 0
+          connectionsTruncated ||
+          documentOmittedConnections > 0 ||
+          connectionsUnresolved
             ? "partial"
             : "complete",
         reason:
           connectionsTruncated || documentOmittedConnections > 0
             ? "connection_limit_reached"
-            : null,
+            : connectionsUnresolved
+              ? "connection_unresolved"
+              : null,
         examined: Math.min(
           parsed.connections.length,
           input.limits.max_connections,
@@ -457,7 +469,8 @@ export const buildInterfaceBuilderAnalysis = (input: {
             parsed.connections.length - input.limits.max_connections,
           ) +
           documentOmittedConnections +
-          parserOmittedConnections,
+          parserOmittedConnections +
+          parsed.unresolvedConnections,
       },
       {
         facet: `hierarchy:${document.relativePath}`,

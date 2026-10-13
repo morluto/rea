@@ -62,6 +62,7 @@ import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
+  failureCapture,
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
@@ -73,7 +74,7 @@ import {
 } from "./SignatureTargetBinding.js";
 import { parseCodeSignature } from "./parsers/codesign.js";
 import { parseDemangledSymbols } from "./parsers/demangle.js";
-import { parseLipoArchitectures } from "./parsers/lipo.js";
+import { parseLipoOutput } from "./parsers/lipo.js";
 import {
   parsePlistJson,
   parsePlistXml,
@@ -507,7 +508,10 @@ class NativeMacOSClient implements AnalysisClient {
     );
     if (!capture.ok) return capture;
     const provenance = [invocation(capture.value, this.target.path)];
-    const architectures = parseLipoArchitectures(capture.value.stdout);
+    const { architectures } = parseLipoOutput(
+      capture.value.stdout,
+      this.target.path,
+    );
     const result = listArchitecturesSchema.parse({
       architectures: {
         items: architectures,
@@ -561,6 +565,19 @@ class NativeMacOSClient implements AnalysisClient {
   async #inspectSignature(
     signal?: AbortSignal,
   ): Promise<Result<NativeObservation, AnalysisError>> {
+    // This provider's signature inspection covers Mach-O code signatures
+    // only. On another container, codesign's "not signed" verdict cannot
+    // see a format-level signature such as a xar pkg signature, so
+    // reporting it would claim unsigned for a layer that was never
+    // evaluated.
+    if (this.target.kind !== "executable" || !isMachOFormat(this.target.format))
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          IDENTITY.id,
+          "inspect_signature",
+          "Active artifact is not Mach-O; its container-level signature layer is not evaluated by codesign.",
+        ),
+      );
     return withSignatureTarget(
       this.target,
       this.#signatureResources,
@@ -981,15 +998,8 @@ const translateCodeSignExitFailure = (
       "nonzero-exit",
       capture.exitCode,
       undefined,
-      {
-        stdout: capture.stdout,
-        stderr: capture.stderr,
-        stdoutBytes: capture.stdoutBytes,
-        stderrBytes: capture.stderrBytes,
-        exitCode: capture.exitCode,
-        signal: capture.signal,
-        truncated: false,
-      },
+      // Accepted output stays complete until the provider decides it failed.
+      failureCapture(capture, false),
     ),
   );
 

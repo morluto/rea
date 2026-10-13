@@ -1,5 +1,6 @@
 import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
@@ -87,4 +88,37 @@ it("compares available nanosecond timestamps without rounding away source change
   expect(
     sameRegularFileState(before, { ...before, ctimeNs: before.ctimeNs + 1n }),
   ).toBe(false);
+});
+
+it.each([
+  ["EACCES", -13, "keeps"],
+  ["ENXIO", -6, "reclassifies"],
+] as const)(
+  "%s from opening a non-regular path: admission %s the failure",
+  async (code, errno, outcome) => {
+    const failure = Object.assign(new Error(`open ${code}`), { code, errno });
+    mockOpen.mockRejectedValue(failure);
+    // The selected path itself is a directory that stat can still describe.
+    const cause = await openRegularFile(tmpdir(), { symlinks: "follow" }).catch(
+      (rejected: unknown) => rejected,
+    );
+    if (outcome === "keeps") expect(cause).toBe(failure);
+    else expect(cause).toBeInstanceOf(NonRegularFileReadError);
+  },
+);
+
+it("keeps cancellation that arrives during the non-regular metadata probe", async () => {
+  const controller = new AbortController();
+  const cancellation = new Error("cancelled during probe");
+  mockOpen.mockImplementation(async () => {
+    // The probe stats the path after this rejection; abort before it settles.
+    queueMicrotask(() => controller.abort(cancellation));
+    throw Object.assign(new Error("open ENXIO"), { code: "ENXIO", errno: -6 });
+  });
+  await expect(
+    openRegularFile(tmpdir(), {
+      symlinks: "follow",
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(cancellation);
 });

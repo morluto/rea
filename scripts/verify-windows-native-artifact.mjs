@@ -27,9 +27,9 @@ if (
   );
 const offset = bytes.length >= 64 ? bytes.readUInt32LE(0x3c) : bytes.length;
 if (
-  bytes.toString("ascii", 0, 2) !== "MZ" ||
+  bytes.toString("latin1", 0, 2) !== "MZ" ||
   offset > bytes.length - 26 ||
-  bytes.toString("ascii", offset, offset + 4) !== "PE\0\0" ||
+  bytes.toString("latin1", offset, offset + 4) !== "PE\0\0" ||
   bytes.readUInt16LE(offset + 4) !== 0x8664 ||
   bytes.readUInt16LE(offset + 24) !== 0x20b
 )

@@ -342,16 +342,29 @@ it("exposes overload candidates and executes only an explicitly selected ambiguo
   expect(result.method).toMatchObject({
     overload_index: 1,
     reported_signature: "choose(int): void",
-    dex_descriptor: null,
+    dex_descriptor: "(I)V",
   });
   expect(result.source.text).toContain("overload 1");
   const references = await service.execute("trace_android_references", input);
   expect(references).toMatchObject({
     ok: false,
     error: {
-      _tag: "AnalysisCapabilityUnavailableError",
-      reason: expect.stringContaining("unique method name"),
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["overload_index"] })],
     },
+  });
+  const selectedReferences = await service.execute("trace_android_references", {
+    ...input,
+    overload_index: 1,
+  });
+  if (!selectedReferences.ok) throw selectedReferences.error;
+  expect(
+    androidResultSchemas.trace_android_references.parse(
+      selectedReferences.value.normalized_result,
+    ),
+  ).toMatchObject({
+    overload_index: 1,
+    reported_signature: "choose(int): void",
   });
   await provider.close();
   await verifyCleanup(launches);

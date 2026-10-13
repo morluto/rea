@@ -46,6 +46,8 @@ it("retains terminal-call qualifications across function views and snapshot repl
         limitations: [limitation],
       },
     ],
+    ["procedure_callees", ["0x402000"]],
+    ["procedure_callers", [identity.address]],
     ["analyze_function", jsonValueSchema.parse(dossier)],
   ]);
   const harness = await connectGhidraMcp(
@@ -81,7 +83,7 @@ it("retains terminal-call qualifications across function views and snapshot repl
       });
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        function_boundary_observations: "ghidra-terminal-call-limitations-v1",
+        function_boundary_observations: "ghidra-terminal-call-limitations-v2",
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;

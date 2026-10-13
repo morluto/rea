@@ -265,3 +265,50 @@ export const engineFixtureImage = (options: {
   labels.copy(image, noteAt + options.notes.length);
   return image;
 };
+
+/** Relocate one table and append declarations without disturbing payload bytes. */
+export const appendElfRanges = (
+  image: Buffer,
+  table: "program" | "section",
+  ranges: readonly {
+    type: number;
+    offset: number;
+    size: number;
+    address?: number;
+  }[],
+): Buffer => {
+  const is64 = image[4] === 2;
+  const program = table === "program";
+  const offsetAt = program ? (is64 ? 0x20 : 0x1c) : is64 ? 0x28 : 0x20;
+  const widthAt = program ? (is64 ? 0x36 : 0x2a) : is64 ? 0x3a : 0x2e;
+  const countAt = widthAt + 2;
+  const oldOffset = is64
+    ? Number(image.readBigUInt64LE(offsetAt))
+    : image.readUInt32LE(offsetAt);
+  const oldWidth = image.readUInt16LE(widthAt);
+  const oldCount = image.readUInt16LE(countAt);
+  const width = oldWidth || (is64 ? 64 : 40);
+  const count = oldCount || 1; // A section table starts with its null entry.
+  const offset = Math.ceil(image.length / 8) * 8;
+  const result = Buffer.alloc(offset + (count + ranges.length) * width);
+  image.copy(result);
+  image.copy(result, offset, oldOffset, oldOffset + oldCount * oldWidth);
+  const word = (value: number, at: number): void => {
+    if (is64) result.writeBigUInt64LE(BigInt(value), at);
+    else result.writeUInt32LE(value, at);
+  };
+  word(offset, offsetAt);
+  result.writeUInt16LE(width, widthAt);
+  result.writeUInt16LE(count + ranges.length, countAt);
+  ranges.forEach((range, index) => {
+    const at = offset + (count + index) * width;
+    result.writeUInt32LE(range.type, at + (program ? 0 : 4));
+    word(range.offset, at + (program ? (is64 ? 8 : 4) : is64 ? 0x18 : 0x10));
+    word(
+      range.size,
+      at + (program ? (is64 ? 0x20 : 0x10) : is64 ? 0x20 : 0x14),
+    );
+    if (program) word(range.address ?? 0, at + (is64 ? 0x10 : 8));
+  });
+  return result;
+};

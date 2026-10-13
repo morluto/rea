@@ -33,7 +33,10 @@ export type ArtifactAnalysisRuntime = Pick<
 
 /** Own admission, artifact descriptors, producer cleanup and private workspaces together. */
 export class ArtifactAnalysisResources {
-  readonly #artifacts = new ArtifactResourceScope();
+  readonly #artifacts: {
+    readonly scope: ArtifactResourceScope;
+    operation: string;
+  };
   readonly #pending = new Map<
     ArtifactAnalysisRuntime,
     {
@@ -54,7 +57,9 @@ export class ArtifactAnalysisResources {
       readonly message: string;
       readonly details: Readonly<Record<string, JsonValue>>;
     },
-  ) {}
+  ) {
+    this.#artifacts = { scope: new ArtifactResourceScope(), operation };
+  }
 
   run<T>(
     work: () => Promise<Result<T, AnalysisError>>,
@@ -76,8 +81,15 @@ export class ArtifactAnalysisResources {
       );
     this.#busy = true;
     const running = this.#tail
-      .then(() => this.#artifacts.run(work))
-      .catch((cause: unknown) => err(this.#artifactFailure(cause, operation)))
+      .then(() =>
+        this.#artifacts.scope.run(() => {
+          // Failed descriptor cleanup still belongs to the preceding request until
+          // this scope has drained it and admits acquisition for the new request.
+          this.#artifacts.operation = operation;
+          return work();
+        }),
+      )
+      .catch((cause: unknown) => err(this.#artifactFailure(cause)))
       .finally(() => {
         this.#busy = false;
       });
@@ -94,20 +106,23 @@ export class ArtifactAnalysisResources {
       maximumBytes,
       signal,
       undefined,
-      this.#artifacts,
+      this.#artifacts.scope,
     );
   }
 
   readLimits(limits: LinuxResourceLimits): Promise<LinuxResourceLimits> {
-    return this.readKernelLimits(limits, this.#artifacts);
+    return this.readKernelLimits(limits, this.#artifacts.scope);
   }
 
   retain(
     root: ArtifactAnalysisRuntime,
     owner?: ProviderProcessSupervisor,
-    operation = this.operation,
   ): void {
-    this.#pending.set(root, { owner, operation });
+    this.#pending.set(root, {
+      owner,
+      operation:
+        this.#pending.get(root)?.operation ?? this.#artifacts.operation,
+    });
   }
 
   get pendingPaths(): readonly string[] {
@@ -251,7 +266,7 @@ export class ArtifactAnalysisResources {
   async #closeResources(): Promise<void> {
     let descriptorFailure: AnalysisError | undefined;
     try {
-      await this.#artifacts.close();
+      await this.#artifacts.scope.close();
     } catch (cause: unknown) {
       descriptorFailure = this.#artifactFailure(cause);
     }
@@ -262,14 +277,17 @@ export class ArtifactAnalysisResources {
         throw analysisErrorWithCleanupFailure(
           descriptorFailure,
           cause,
-          this.operation,
+          this.#artifacts.operation,
         );
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;
   }
 
-  #artifactFailure(cause: unknown, operation = this.operation): AnalysisError {
+  #artifactFailure(
+    cause: unknown,
+    operation = this.#artifacts.operation,
+  ): AnalysisError {
     if (cause instanceof AnalysisError) return cause;
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.cleanupFailure(cause.cleanup, cause, undefined, operation);

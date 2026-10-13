@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -10,7 +10,8 @@ import { createServer } from "../../../src/server/createServer.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import type { AnalysisProvider } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
-import { ok } from "../../../src/domain/result.js";
+import { ProviderAdapterError } from "../../../src/domain/providerAdapterError.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
   createCacheProvider,
@@ -18,6 +19,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { silentLogger } from "../../../src/logger.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 const connect = async (
@@ -50,29 +52,97 @@ const structured = (result: CallToolResult): Record<string, unknown> => {
   return z.record(z.string(), z.unknown()).parse(result.structuredContent);
 };
 
-it("opens a headerless image when architecture and entry are supplied", async () => {
-  const root = await createTestTempDirectory("rea-raw-mcp-");
-  const path = join(root, "ecu.bin");
-  await writeFile(path, Buffer.from("1eff2fe1", "hex"));
-  const { client } = await connect();
-  const opened = await client.callTool({
-    name: "open_binary",
-    arguments: {
+const withGhidraFixtureIdentity = (
+  provider: AnalysisProvider,
+): AnalysisProvider => {
+  const identity = { ...GHIDRA_PROVIDER_IDENTITY, version: "12.1.4" };
+  const profile = createAnalysisProfile(identity, { fixture: true });
+  return {
+    ...provider,
+    identity: () => identity,
+    capabilities: () =>
+      provider.capabilities().map((capability) => ({
+        ...capability,
+        provider: identity,
+      })),
+    resolveAnalysisProfile: () => Promise.resolve(ok({ profile })),
+    createClient: (target, _profile, context) => {
+      const client = provider.createClient(target, profile, context);
+      return {
+        ...client,
+        execute: async (operation, parameters, options) => {
+          const result = await client.execute(operation, parameters, options);
+          return result.ok
+            ? ok({
+                ...result.value,
+                provider: identity,
+                analysisProfile: profile,
+              })
+            : result;
+        },
+      };
+    },
+  };
+};
+
+it("keeps 6502 out of detected lifecycle output contracts", () => {
+  const schema = toolContract("open_binary").outputSchema;
+  const result = {
+    path: "/fixture/image.bin",
+    kind: "executable",
+    sha256: "a".repeat(64),
+    architecture: "6502",
+  };
+  expect(
+    schema.safeParse({ result: { ...result, format: "pe" } }).success,
+  ).toBe(false);
+  expect(
+    schema.safeParse({
+      result: { ...result, format: "raw-binary", entry_point: "0x8001" },
+    }).success,
+  ).toBe(true);
+  const validateAdvertised = new Ajv2020({ strict: false }).compile(
+    z.toJSONSchema(schema),
+  );
+  expect(validateAdvertised({ result: { ...result, format: "pe" } })).toBe(
+    false,
+  );
+  expect(
+    validateAdvertised({
+      result: { ...result, format: "raw-binary", entry_point: "0x8001" },
+    }),
+  ).toBe(true);
+});
+
+it.each([
+  ["arm", "0x08000000", "0x8000000", "1eff2fe1"],
+  ["6502", "0x008001", "0x8001", "a92a60"],
+])(
+  "opens a headerless %s image when architecture and entry are supplied",
+  async (architecture, entryPoint, canonical, bytes) => {
+    const root = await createTestTempDirectory("rea-raw-mcp-");
+    const path = join(root, "ecu.bin");
+    await writeFile(path, Buffer.from(bytes, "hex"));
+    const { client } = await connect();
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: {
+        path,
+        format: "raw-binary",
+        architecture,
+        entry_point: entryPoint,
+      },
+    });
+    expect(opened.isError).not.toBe(true);
+    expect(structured(opened).result).toMatchObject({
       path,
       format: "raw-binary",
-      architecture: "arm",
-      entry_point: "0x08000000",
-    },
-  });
-  expect(opened.isError).not.toBe(true);
-  expect(structured(opened).result).toMatchObject({
-    path,
-    format: "raw-binary",
-    kind: "executable",
-    architecture: "arm",
-    entry_point: "0x8000000",
-  });
-});
+      kind: "executable",
+      architecture,
+      entry_point: canonical,
+    });
+  },
+);
 
 it("rejects an unaligned AArch64 entry before selecting or starting a provider", async () => {
   const root = await createTestTempDirectory("rea-raw-mcp-alignment-");
@@ -217,3 +287,118 @@ it("reuses a canonical raw entry and replaces the session when the entry changes
   expect(created).toEqual(["0x8000000", "0x9000000"]);
   expect(closed).toEqual(["0x8000000"]);
 });
+
+it.skipIf(process.platform !== "win32")(
+  "does not replay a saved read after switching to a Windows junction",
+  async () => {
+    const root = await createTestTempDirectory("rea-raw-mcp-linked-reopen-");
+    const actual = join(root, "actual");
+    const linked = join(root, "linked");
+    await mkdir(actual);
+    const path = join(actual, "image.bin");
+    await writeFile(path, Buffer.from("a92a60", "hex"));
+    await symlink(actual, linked, "junction");
+    const created: string[] = [];
+    const executed: string[] = [];
+    const fixture = createCacheProvider([]);
+    const { client } = await connect(
+      withGhidraFixtureIdentity({
+        ...fixture,
+        createClient: (target) => {
+          created.push(target.sourcePath ?? target.path);
+          return {
+            execute: (operation) => {
+              if (operation === "address_name")
+                executed.push(target.sourcePath ?? target.path);
+              if (
+                operation === "address_name" &&
+                target.sourcePath === join(linked, "image.bin")
+              )
+                return Promise.resolve(
+                  err(new ProviderAdapterError("fixture", operation)),
+                );
+              return Promise.resolve(
+                observed(operation === "address_name" ? "entry" : null),
+              );
+            },
+            close: () => Promise.resolve(ok(null)),
+          };
+        },
+      }),
+    );
+    const linkedPath = join(linked, "image.bin");
+    for (const requested of [path, linkedPath]) {
+      const opened = await client.callTool({
+        name: "open_binary",
+        arguments: {
+          path: requested,
+          format: "raw-binary",
+          architecture: "6502",
+          entry_point: "0x8001",
+        },
+      });
+      expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+      const address = await client.callTool({
+        name: "address_name",
+        arguments: { address: "0x8001", document: "image.bin" },
+      });
+      expect(address.isError === true, JSON.stringify(address)).toBe(
+        requested === linkedPath,
+      );
+    }
+    expect(created).toEqual([path, linkedPath]);
+    expect(executed).toEqual([path, linkedPath]);
+  },
+);
+
+it.skipIf(process.platform !== "win32")(
+  "reuses saved reads after a fixture admits a noncanonical Windows path",
+  async () => {
+    const root = await createTestTempDirectory("rea-raw-mcp-admitted-path-");
+    const actual = join(root, "actual");
+    const linked = join(root, "linked");
+    await mkdir(actual);
+    const path = join(actual, "image.bin");
+    await writeFile(path, Buffer.from("a92a60", "hex"));
+    await symlink(actual, linked, "junction");
+    const calls: string[] = [];
+    const fixture = createCacheProvider([]);
+    // This fixture accepts the alias to isolate cache behavior after admission.
+    // The real Ghidra verifier checks that a junction itself is rejected.
+    const { client, session } = await connect(
+      withGhidraFixtureIdentity({
+        ...fixture,
+        createClient: () => ({
+          execute: (operation) => {
+            if (operation === "address_name") calls.push(operation);
+            return Promise.resolve(
+              observed(operation === "health" ? null : "entry"),
+            );
+          },
+          close: () => Promise.resolve(ok(null)),
+        }),
+      }),
+    );
+    const linkedPath = join(linked, "image.bin");
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: {
+        path: linkedPath,
+        format: "raw-binary",
+        architecture: "6502",
+        entry_point: "0x8001",
+      },
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    expect(session.activeTarget()?.sourcePath).toBe(linkedPath);
+    expect(session.activeTarget()?.path).toBe(path);
+    for (const _ of [0, 1]) {
+      const address = await client.callTool({
+        name: "address_name",
+        arguments: { address: "0x8001", document: "image.bin" },
+      });
+      expect(address.isError, JSON.stringify(address)).not.toBe(true);
+    }
+    expect(calls).toEqual(["address_name"]);
+  },
+);

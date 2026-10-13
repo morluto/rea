@@ -810,6 +810,36 @@ exit 1`,
   expect(result.error.message).toContain("overwrite");
 });
 
+it.each([
+  ["offline", false, "error: device offline"],
+  ["unauthorized", false, "error: device unauthorized"],
+  ["offline", true, "error: device offline"],
+] as const)(
+  "reports the %s device state when the push existence probe cannot run (overwrite %s)",
+  async (state, overwrite, stderr) => {
+    const { binary, root } = await writeAdbStub(
+      (stubRoot) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ]; then printf '%s\\n' "$3" >> "${stubRoot}/calls"; printf '%s\\n' "${stderr}" >&2; exit 1; fi`,
+    );
+    const localFile = join(root, "payload.bin");
+    await writeFile(localFile, "x");
+    const projected = await refusedBy(providerOver(binary), {
+      operation: "push_adb_file",
+      input: {
+        serial: "emulator-5554",
+        local_path: localFile,
+        device_path: "/data/local/tmp/payload.bin",
+        overwrite,
+      },
+    });
+    // Existence is unknown, so nothing is claimed about the path and no push runs.
+    expect(projected).toMatchObject({ code: "unsupported_target" });
+    expect(projected.message).toContain(state);
+    expect(projected.message).not.toContain("already exists");
+    expect(await readFile(join(root, "calls"), "utf8")).toBe("shell\n");
+  },
+);
+
 it("reports a local push source that does not exist", async () => {
   const { binary } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi

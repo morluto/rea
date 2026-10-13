@@ -159,3 +159,22 @@ describe("read-only NativeAOT PE parser", () => {
     });
   });
 });
+
+describe("NativeAOT PE signature admission", () => {
+  it.each([
+    ["MZ", "Not a PE image"],
+    ["PE", "Invalid PE signature"],
+  ])(
+    "rejects a high-bit lookalike of the %s signature",
+    (signature, reason) => {
+      const bytes = nativeAotPeFixture();
+      const offset = signature === "MZ" ? 0 : bytes.readUInt32LE(0x3c);
+      for (const position of [offset, offset + 1])
+        bytes.writeUInt8(bytes.readUInt8(position) | 0x80, position);
+      expect(
+        parseNativeAotPe(bytes, nativeAotPeDigest(bytes), SUMMARY_BUDGET)
+          .summary,
+      ).toMatchObject({ status: "not_applicable", reason });
+    },
+  );
+});

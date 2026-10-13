@@ -31,6 +31,20 @@ export interface ManagedCliHeader {
   readonly readyToRunSignature: boolean;
 }
 
+/**
+ * How the CLI header constrains process bitness. 32BITREQUIRED and
+ * 32BITPREFERRED are one two-bit field: required alone is x86-only, both set
+ * is platform-neutral code that prefers a 32-bit process, and preferred alone
+ * is reserved and constrains nothing.
+ */
+export const managedCli32BitRequirement = (
+  flags: number,
+): "required" | "preferred" | "none" => {
+  const pair = flags & 0x0002_0002;
+  if (pair === 0x0000_0002) return "required";
+  return pair === 0x0002_0002 ? "preferred" : "none";
+};
+
 export interface ManagedPeLayout {
   readonly machine: number;
   readonly architecture: "x86" | "x86_64" | "arm" | "arm64";

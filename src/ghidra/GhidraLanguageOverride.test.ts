@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -188,6 +189,28 @@ describe("Ghidra language catalog", () => {
     expect(await readGhidraLanguageCatalog(join(installDir, "absent"))).toEqual(
       [],
     );
+  });
+
+  it("reads a UTF-8 signed definition beside an unsigned sibling", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-bom-");
+    const module = (name: string) =>
+      join(root, "Ghidra/Processors", name, "data/languages");
+    await mkdir(module("probe"), { recursive: true });
+    await mkdir(module("x86"), { recursive: true });
+    await writeFile(
+      join(module("probe"), "probe.ldefs"),
+      Buffer.concat([
+        Buffer.from([0xef, 0xbb, 0xbf]),
+        Buffer.from(
+          '<?xml version="1.0" encoding="UTF-8"?>\n<language_definitions><language id="probe:LE:32:default"/></language_definitions>',
+        ),
+      ]),
+    );
+    await writeFile(join(module("x86"), "x86.ldefs"), X86_LDEFS);
+    expect(await readGhidraLanguageCatalog(root)).toEqual([
+      { id: "probe:LE:32:default", compilerSpecIds: [] },
+      ...parseGhidraLanguageDefinitions(X86_LDEFS),
+    ]);
   });
 
   it("admits only languages and compiler specs the installation defines", () => {

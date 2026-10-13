@@ -15,11 +15,18 @@ import type {
   ProviderProcessSupervisor,
   SpawnedOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
+import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 
 /** Maximum wall-clock duration for one native command. */
 export const NATIVE_COMMAND_TIMEOUT_MS = 60_000;
 /** Retain complete command output up to a bounded aggregate size. */
 export const NATIVE_COMMAND_OUTPUT_BUDGET_BYTES = 64 * 1024 * 1024;
+/**
+ * Failure diagnostics keep only an excerpt of each stream. Successful
+ * analysis needs complete output, but a failed command's error would
+ * otherwise repeat up to the whole output budget to the caller.
+ */
+export const NATIVE_FAILURE_DIAGNOSTIC_BYTES = 64 * 1024;
 
 export interface NativeCommandCapture {
   readonly tool: string;
@@ -383,18 +390,30 @@ type ProcessCapture = Omit<
   | "arguments"
 >;
 
-const failureCapture = (
+/** Bound one command's output for failure diagnostics, keeping observed byte totals. */
+export const failureCapture = (
   capture: ProcessCapture,
   truncated: boolean,
-): NativeCommandFailureCapture => ({
-  stdout: capture.stdout,
-  stderr: capture.stderr,
-  stdoutBytes: capture.stdoutBytes,
-  stderrBytes: capture.stderrBytes,
-  exitCode: capture.exitCode,
-  signal: capture.signal,
-  truncated,
-});
+): NativeCommandFailureCapture => {
+  const stdout = boundedUtf8Text(
+    capture.stdout,
+    NATIVE_FAILURE_DIAGNOSTIC_BYTES,
+  );
+  const stderr = boundedUtf8Text(
+    capture.stderr,
+    NATIVE_FAILURE_DIAGNOSTIC_BYTES,
+  );
+  return {
+    stdout: stdout.text,
+    stderr: stderr.text,
+    // Byte counts stay the observed totals, not the excerpt lengths.
+    stdoutBytes: capture.stdoutBytes,
+    stderrBytes: capture.stderrBytes,
+    exitCode: capture.exitCode,
+    signal: capture.signal,
+    truncated: truncated || stdout.truncated || stderr.truncated,
+  };
+};
 
 const captureProcess = async (
   executable: string,

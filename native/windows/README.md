@@ -90,8 +90,10 @@ without this lane reports Windows native controls as unavailable.
   root and ancestor leases for retry; a partially removed runtime accepts only
   cleanup, and its registry entry remains until removal succeeds. Normal close, cancellation,
   startup failure, and timeout release provider resources. Abrupt owner death
-  kills the owned job; it can leave private runtime files for later operator
-  cleanup and does not claim transactional deletion after a crash.
+  kills the owned job. The Android provider additionally uses a detached helper
+  that owns its private runtime directory and cleans it when the owner pipe
+  closes. Other providers can leave private runtime files after owner death;
+  helper death and host power loss are not transactional deletion.
 
 Windows failures retain their constraint, requested coordinate, Win32 code,
 and system message. Unsupported filesystems and reparse paths are distinct
@@ -115,8 +117,10 @@ the supported device/UNC namespaces; existing admission checks still apply.
 
 The bearer-token descriptor remains under its immutable private lease until
 `runtime_close` on Windows; POSIX removes the descriptor after the bridge reads
-it. Job ownership guarantees process termination on owner death, not deletion
-of private files after a crash. SUBST drive aliases and changing DOS-device
+it. Job ownership guarantees process termination on owner death. Android's
+detached workspace helper provides a separate cleanup owner for that provider,
+but simultaneous helper death or power loss can still leave private files.
+SUBST drive aliases and changing DOS-device
 namespaces are outside the verified P0 scope and are not detected as a separate
 alias policy. Mounted-folder paths that report a reparse tag are rejected by
 component admission; broader namespace variants remain unverified. Preserve
@@ -163,9 +167,14 @@ V8 heap flags cannot bound (limit notification, peak commit at the limit, all
 members settled, with the notification present in the first native exit report
 and the wrapper's exit event), and a control under the same limit that
 completes normally.
-An optional independently built
-`tests/fixtures/windows/processBoundary.cc` executable adds breakaway and
-caller/child token observations and an in-place ancestor reparse attempt:
+A separately built `tests/fixtures/windows/processBoundary.cc` executable adds
+breakaway, caller/child token and environment semantics observations and an
+in-place ancestor reparse attempt. The lane skips all of them when the
+executable is absent, so both Windows workflows cross-build it in the same
+MinGW job that builds their artifact and pass it: the capability and package
+lane in `.github/workflows/ci.yml`, and the real Ghidra proof run in
+`.github/workflows/real-ghidra-windows.yml`. Build it locally with any Windows
+C++ compiler, or the same way they do, and pass its path:
 
 ```powershell
 node scripts/verify-windows-native.mjs . C:\fixtures\process-boundary.exe

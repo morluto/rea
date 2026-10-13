@@ -27,6 +27,8 @@ import {
   typeRanges,
   type TypeRange,
 } from "./ManagedMemberInspectorCore.js";
+import { edgeTargets } from "./ManagedMethodSpecs.js";
+import { typeNameLookup } from "./ManagedTypeNames.js";
 import {
   edges,
   parseExportedTypes,
@@ -171,7 +173,11 @@ export const inspectManagedMembersBytes = (
     const exportedTypes = parseExportedTypes(bytes, layout);
     issues.push(...exportedTypes.issues);
     const fields = parseFields(bytes, layout, ranges, selected);
-    const memberRefs = parseMemberRefs(bytes, layout);
+    const memberRefs = parseMemberRefs(
+      bytes,
+      layout,
+      typeNameLookup(bytes, layout, ranges, issues),
+    );
     issues.push(...memberRefs.issues);
     const methods = parseMethods({
       bytes,
@@ -181,6 +187,12 @@ export const inspectManagedMembersBytes = (
       selected,
     });
     issues.push(...fields.issues, ...methods.issues);
+    const targets = edgeTargets(bytes, layout, methods.methods, [
+      fields.core,
+      memberRefs.core,
+      methods.core,
+    ]);
+    issues.push(...targets.issues);
     const coverageIssues = uniqueManagedParseIssues(issues);
     const incompleteMembers =
       [...fields.fields, ...memberRefs.refs, ...methods.methods].some(
@@ -193,9 +205,7 @@ export const inspectManagedMembersBytes = (
       );
     const related = edges(
       methods.methods,
-      methods.core,
-      fields.core,
-      memberRefs.core,
+      targets.members,
       managedDecodeBudget(layout),
     );
     return managedMemberInspectionSchema.parse(

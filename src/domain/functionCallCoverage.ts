@@ -2,6 +2,9 @@ import type { RelationshipCoverage } from "./relationshipCoverage.js";
 import type { FunctionDossier } from "./hopperValues.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 
+const callerCoveragePrefix = "Callers: ";
+const calleeCoveragePrefix = "Callees: ";
+
 /** Combine caller and callee read outcomes without losing either explanation. */
 export const combineFunctionRelationshipCoverage = (
   callers: RelationshipCoverage | undefined,
@@ -20,7 +23,8 @@ export const combineFunctionRelationshipCoverage = (
   );
   const details = diagnostics.length > 0 ? { diagnostics } : {};
   const reasons = reads.flatMap(({ direction, coverage }) => {
-    const label = direction === "callers" ? "Callers" : "Callees";
+    const label =
+      direction === "callers" ? callerCoveragePrefix : calleeCoveragePrefix;
     const limitations =
       coverage === undefined
         ? ["Provider did not report relationship coverage."]
@@ -29,7 +33,7 @@ export const combineFunctionRelationshipCoverage = (
           : coverage.status === "partial"
             ? coverage.limitations
             : [];
-    return limitations.map((reason) => `${label}: ${reason}`);
+    return limitations.map((reason) => `${label}${reason}`);
   });
   if (
     reads.some(
@@ -49,6 +53,20 @@ export const combineFunctionRelationshipCoverage = (
     };
   return { status: "complete", ...details };
 };
+
+/**
+ * Whether combined relationship coverage is unknown only on the caller side.
+ * The combine helper above prefixes each direction's reasons, so a reason
+ * that carries the caller prefix and no callee prefix records observed
+ * callees with unobservable callers. Forward (callee-edge) searches stay
+ * exhaustive under that caveat; the caller reason remains a limitation.
+ */
+export const isCallerOnlyUnknownCoverage = (
+  coverage: RelationshipCoverage,
+): boolean =>
+  coverage.status === "unknown" &&
+  coverage.reason.startsWith(callerCoveragePrefix) &&
+  !coverage.reason.includes(calleeCoveragePrefix);
 
 /** Explain why two resolved call sets cannot establish call-set equality. */
 export const functionCallCoverageLimitations = (

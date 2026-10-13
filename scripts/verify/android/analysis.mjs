@@ -173,6 +173,50 @@ try {
     assert.deepEqual(structured.normalized_result, evidence.normalized_result);
     console.log(`PASS MCP/CLI parity ${task.name}`);
   }
+  const overloadedInput = {
+    path,
+    class_name: "androidx.activity.ComponentActivity",
+    method_name: "setContentView",
+    overload_index: 0,
+  };
+  const overloadedCli = await execute(
+    process.execPath,
+    [
+      entrypoint,
+      "trace-android-references",
+      path,
+      overloadedInput.class_name,
+      "--method-name",
+      overloadedInput.method_name,
+      "--overload-index",
+      "0",
+      "--format",
+      "json",
+    ],
+    {
+      cwd: repository,
+      env: environment,
+      timeout: 150_000,
+      maxBuffer: 8 * 1024 * 1024,
+    },
+  );
+  const overloadedEvidence = parseEvidence(JSON.parse(overloadedCli.stdout));
+  assert.equal(overloadedEvidence.normalized_result.overload_index, 0);
+  assert.equal(
+    overloadedEvidence.normalized_result.reported_signature,
+    "setContentView(int): void",
+  );
+  assert.equal(overloadedEvidence.normalized_result.total, 1);
+  const overloadedMcp = await client.callTool(
+    { name: "trace_android_references", arguments: overloadedInput },
+    { timeout: 150_000 },
+  );
+  assert.notEqual(overloadedMcp.isError, true, JSON.stringify(overloadedMcp));
+  assert.deepEqual(
+    parseEvidence(overloadedMcp.structuredContent).normalized_result,
+    overloadedEvidence.normalized_result,
+  );
+  console.log("PASS real overloaded method references through CLI/MCP");
 } catch (cause) {
   process.stderr.write(stderr);
   throw cause;
@@ -205,7 +249,7 @@ assert.equal(method.body_status, "available");
 assert.equal(method.source.status, "complete");
 assert.ok(method.source.text.includes("getIntent()"));
 assert.ok(method.source.text.includes("setListAdapter"));
-assert.equal(method.method.dex_descriptor, null);
+assert.equal(method.method.dex_descriptor, "(Landroid/os/Bundle;)V");
 const references = cliResults.get("trace_android_references").normalized_result;
 assert.ok(references.total > 0);
 assert.ok(
@@ -264,3 +308,8 @@ if (process.env.REA_ANDROID_REPORT !== undefined)
     JSON.stringify(report, null, 2) + "\n",
   );
 console.log(JSON.stringify(report, null, 2));
+assert.notEqual(
+  windowsLifecycle?.cli_abrupt_owner_exit_workspace_cleanup,
+  false,
+  "Android workspace remained after abrupt owner exit",
+);

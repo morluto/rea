@@ -109,6 +109,11 @@ class OutputBudget {
 }
 const quoteIdentifier = (name: string): string =>
   `"${name.replaceAll('"', '""')}"`;
+const missingSelectedTable = (name: string): SqliteInspectionFailure =>
+  new SqliteInspectionFailure(
+    "selection",
+    `Selected ordinary table does not exist with that exact name: ${name}`,
+  );
 // SQLite folds only ASCII letters when matching virtual/shadow table names.
 const sqliteIdentifierKey = (name: string): string =>
   name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
@@ -236,12 +241,49 @@ const readSchema = (
       metadata.set(value.name, value);
     }
   }
+  // A trigger stores its target as written in CREATE TRIGGER, which SQLite
+  // resolves by ASCII case folding; report the stored table or view name.
+  // A selected-table scan returns only the selected table's dependents, and
+  // other scopes fold stored names once, only when a spelling differs.
+  let foldedNames: Map<string, string> | undefined;
+  const triggerTable = (written: string): string => {
+    if (selectedName !== undefined) return selectedName;
+    if (metadata.has(written)) return written;
+    foldedNames ??= new Map(
+      [...metadata.keys()].map((name) => [sqliteIdentifierKey(name), name]),
+    );
+    return foldedNames.get(sqliteIdentifierKey(written)) ?? written;
+  };
   const unresolvedVirtualTables = [...metadata.values()]
     .filter((value) => value.type === "virtual" && value.ncol === 0)
     .map((value) => ({
       name: value.name,
       prefix: sqliteIdentifierKey(`${value.name}_`),
     }));
+  const shadowParentOf = (
+    name: string,
+    listed: z.output<typeof tableRow>,
+  ): (typeof unresolvedVirtualTables)[number] | undefined => {
+    if (listed.type !== "table") return undefined;
+    const identifier = sqliteIdentifierKey(name);
+    return unresolvedVirtualTables.find((parent) =>
+      identifier.startsWith(parent.prefix),
+    );
+  };
+  const selected =
+    selectedName === undefined ? undefined : metadata.get(selectedName);
+  if (selectedName !== undefined && selected === undefined)
+    throw missingSelectedTable(selectedName);
+  const selectedShadowParent =
+    selectedName === undefined || selected === undefined
+      ? undefined
+      : shadowParentOf(selectedName, selected);
+  // NOCASE folds only ASCII letters, as SQLite does when it resolves the
+  // table named by an index or trigger. Fold only for an ordinary table whose
+  // rows can be selected; a selection refused later keeps the exact filter,
+  // so its failure does not depend on declarations under another spelling.
+  const foldDependents =
+    selected?.type === "table" && selectedShadowParent === undefined;
   const schema: SqliteDatabase["schema"] = {
     scope,
     completeness: "complete",
@@ -254,7 +296,9 @@ const readSchema = (
   // duplicate large names or definitions beyond SQLite's native record limit.
   const declaration = scope === "inventory" ? "" : ", CAST(sql AS BLOB) AS sql";
   const selection =
-    scope === "selected_table" ? " WHERE tbl_name = ? COLLATE BINARY" : "";
+    scope === "selected_table"
+      ? ` WHERE tbl_name = ? COLLATE ${foldDependents ? "NOCASE" : "BINARY"}`
+      : "";
   const statement = db.prepare(
     `SELECT type, CAST(name AS BLOB) AS name, CAST(tbl_name AS BLOB) AS tbl_name, rootpage${declaration} FROM main.sqlite_schema${selection}`,
   );
@@ -280,13 +324,10 @@ const readSchema = (
           "format",
           `SQLite schema/table inventory mismatch: ${value.name}`,
         );
-      const identifier = sqliteIdentifierKey(value.name);
       const possibleShadowParent =
-        listed.type === "table"
-          ? unresolvedVirtualTables.find((parent) =>
-              identifier.startsWith(parent.prefix),
-            )
-          : undefined;
+        value.name === selectedName
+          ? selectedShadowParent
+          : shadowParentOf(value.name, listed);
       const table: SqliteDatabase["schema"]["tables"][number] = {
         name: value.name,
         ...(scope === "inventory" ? {} : { sql: value.sql }),
@@ -349,7 +390,7 @@ const readSchema = (
     } else {
       const trigger = {
         name: value.name,
-        table: value.tbl_name,
+        table: triggerTable(value.tbl_name),
         ...(scope === "inventory" ? {} : { sql: value.sql }),
       };
       budget.retain(trigger);
@@ -370,11 +411,7 @@ const readRows = (
 ): SqliteDatabase["rows"] => {
   const { encoding, budget } = context;
   if (input.table === undefined) return null;
-  if (table === undefined)
-    throw new SqliteInspectionFailure(
-      "selection",
-      `Selected ordinary table does not exist with that exact name: ${input.table}`,
-    );
+  if (table === undefined) throw missingSelectedTable(input.table);
   if (table.kind === "unknown")
     throw new SqliteInspectionFailure(
       "selection",
@@ -394,7 +431,7 @@ const readRows = (
   for (const name of columns)
     if (!available.has(name))
       throw new SqliteInspectionFailure(
-        "selection",
+        "column-selection",
         `Selected column does not exist with that exact name in table ${input.table}: ${name}`,
       );
   const projection = columns

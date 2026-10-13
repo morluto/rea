@@ -16,7 +16,7 @@ const dossier = (text: string) =>
       locals: [],
     },
     pseudocode: text,
-    assembly: [],
+    assembly: ["ret"],
     comments: [],
     callers: [],
     callees: [],
@@ -27,6 +27,16 @@ const dossier = (text: string) =>
     basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
     native_api: null,
     native_value_flow: null,
+    facet_availability: {
+      pseudocode: { available: true },
+      assembly: { available: true },
+      comments: { available: true },
+      callers: { available: true },
+      callees: { available: true },
+      references: { available: true },
+      strings_names: { available: true },
+      cfg: { available: true },
+    },
     limitations: ["The fixture omits native API and value-flow observations."],
   });
 

@@ -218,6 +218,14 @@ export const openDatabaseSchema = z
       .passthrough(),
   })
   .passthrough();
+/** Only an explicit completed rejection preserves legacy no-worker cleanup. */
+export const rejectedOpenDatabaseSchema = z
+  .object({
+    error: z.string().min(1),
+    success: z.never().optional(),
+  })
+  .passthrough();
+
 export const databaseListSchema = z
   .object({
     sessions: z.array(
@@ -247,3 +255,53 @@ export const absentDatabaseCloseSchema = (sessionId: string) =>
   z
     .object({ error: z.literal(`Session not found: ${sessionId}`) })
     .passthrough();
+
+// Piped, so a malformed coordinate is a schema issue and never reaches BigInt.
+const hexCoordinate = z
+  .string()
+  .regex(/^0x[0-9a-f]+$/iu)
+  .pipe(z.transform((value) => BigInt(value)));
+
+/**
+ * The minimal `survey_binary` reply, reduced to validated segment intervals
+ * (exclusive ends). Any malformed, reversed or inconsistent fact rejects the
+ * whole reply, because a membership answer needs every segment.
+ */
+export const surveySegmentsSchema = z
+  .object({
+    statistics: z
+      .object({ total_segments: z.number().int().nonnegative().optional() })
+      .passthrough()
+      .optional(),
+    segments: z
+      .array(
+        z
+          .object({
+            start: hexCoordinate,
+            end: hexCoordinate,
+            size: hexCoordinate.optional(),
+          })
+          .passthrough(),
+      )
+      .min(1),
+  })
+  .passthrough()
+  .superRefine(({ statistics, segments }, context) => {
+    if (
+      statistics?.total_segments !== undefined &&
+      statistics.total_segments !== segments.length
+    )
+      context.addIssue({
+        code: "custom",
+        message: "survey segment count disagrees with its statistics",
+      });
+    for (const { start, end, size } of segments) {
+      // A malformed row has already reported its own issue; refinements still run.
+      if (typeof start !== "bigint" || typeof end !== "bigint") continue;
+      if (start >= end || (size !== undefined && size !== end - start))
+        context.addIssue({
+          code: "custom",
+          message: "survey segment bounds are reversed or inconsistent",
+        });
+    }
+  });

@@ -444,11 +444,11 @@ const lifecycleTargetFields = {
   path: z.string(),
   kind: targetKindSchema,
   sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-  architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
 };
 const detectedLifecycleTargetSchema = z.object({
   ...lifecycleTargetFields,
   format: targetFormatSchema.exclude(["raw-binary"]),
+  architecture: z.enum(BINARY_ARCHITECTURES).exclude(["6502"]).nullable(),
 });
 const rawLifecycleTargetSchema = z.object({
   ...lifecycleTargetFields,

@@ -105,6 +105,34 @@ it("keeps a contradicted nested ASAR opaque during JavaScript reconstruction", a
   expect(result.graph.coverage.omitted_count).toBeNull();
 });
 
+it("keeps an ASAR-named file without an ASAR header opaque during JavaScript reconstruction", async () => {
+  const root = await createTestTempDirectory("rea-opaque-asar-name-");
+  await writeFile(join(root, "main.js"), "export const outer = true;\n");
+  // Inventory records this file as ordinary bytes and does not expand it.
+  await writeFile(join(root, "ordinary.asar"), "ordinary bytes");
+
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const read = await readJavaScriptArtifactFiles(reader, snapshot);
+    expect(read.files.map(({ path }) => path)).toEqual(["main.js"]);
+    expect(read.containers).toEqual([]);
+  } finally {
+    await reader.close();
+  }
+
+  const analyzed = await analyzeJavaScriptApplication({
+    input_path: root,
+    format: "directory",
+  });
+  if (!analyzed.ok) throw analyzed.error;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    analyzed.value.normalized_result,
+  );
+  expect(result.statistics.nested_asar_containers).toBe(0);
+  expect(result.integrity_contradictions).toEqual([]);
+});
+
 it("retains semantic resource limits alongside recorded integrity contradictions", async () => {
   const { archive } = await createStrippedAsarAddon([
     { path: "app.js", contents: primitiveCandidateExpansionSource() },

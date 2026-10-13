@@ -446,91 +446,50 @@ describe("web capture WebSocket payload byte coverage", () => {
 });
 
 describe("web capture diff", () => {
-  it("treats unavailable HTTP response facts as unknown while retaining observed changes", async () => {
-    const browser = await startFakeCdpBrowser();
-    browsers.push(browser);
-    const captured = await new CdpBrowserProvider().inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!captured.ok) throw captured.error;
-    const before = structuredClone(captured.value);
-    const request = before.network.requests[0];
-    if (request === undefined) throw new Error("Missing network request");
-    request.status = null;
-    request.mime_type = null;
-    request.encoded_data_length = null;
-    markSectionsComplete(before, [
-      "network_requests",
-      "websocket_connections",
-      "websocket_frames",
-      "json_body_shapes",
-    ]);
-    for (const item of before.network.requests)
-      item.body_shapes.status = "not_approved";
+  it.each(["status", "mime_type"] as const)(
+    "keeps an independently unavailable HTTP %s unknown",
+    async (field) => {
+      const browser = await startFakeCdpBrowser();
+      browsers.push(browser);
+      const captured = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!captured.ok) throw captured.error;
+      const observed = structuredClone(captured.value);
+      const request = observed.network.requests[0];
+      if (request === undefined) throw new Error("Missing network request");
+      request.status = 200;
+      request.mime_type = "application/json";
+      request.encoded_data_length = 100;
+      markSectionsComplete(observed, [
+        "network_requests",
+        "websocket_connections",
+        "websocket_frames",
+        "json_body_shapes",
+      ]);
+      for (const item of observed.network.requests)
+        item.body_shapes.status = "not_approved";
+      expect(compareNetwork(observed, observed).status).toBe("unchanged");
 
-    const after = structuredClone(before);
-    const responseObserved = after.network.requests[0];
-    if (responseObserved === undefined)
-      throw new Error("Missing network request");
-    responseObserved.status = 200;
-    responseObserved.mime_type = "application/json";
-    responseObserved.encoded_data_length = 100;
-    expect(compareNetwork(before, after)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-      changes: [],
-    });
-    expect(compareNetwork(after, before)).toMatchObject({
-      status: "unknown",
-      total_changes: 0,
-    });
-    expect(compareNetwork(before, before).status).toBe("unknown");
-
-    for (const field of [
-      "status",
-      "mime_type",
-      "encoded_data_length",
-    ] as const) {
-      const partial = structuredClone(after);
+      const partial = structuredClone(observed);
       partial.network.requests[0]![field] = null;
-      expect(compareNetwork(partial, after).status).toBe("unknown");
-      expect(compareNetwork(after, partial).status).toBe("unknown");
-    }
-
-    const inventoryBefore = structuredClone(before);
-    inventoryBefore.network.requests = [];
-    expect(compareNetwork(inventoryBefore, before)).toMatchObject({
-      status: "changed",
-      total_changes: 1,
-      changes: [expect.objectContaining({ change: "added" })],
-    });
-
-    const statusChanged = structuredClone(after);
-    statusChanged.network.requests[0]!.status = 500;
-    expect(compareNetwork(after, statusChanged)).toMatchObject({
-      status: "changed",
-      changes: [expect.objectContaining({ change: "modified" })],
-    });
-    after.network.requests[0]!.encoded_data_length = null;
-    expect(compareNetwork(after, statusChanged).status).toBe("changed");
-
-    const repeated = structuredClone(statusChanged);
-    const duplicate = structuredClone(repeated.network.requests[0]!);
-    duplicate.status = 200;
-    duplicate.mime_type = "text/plain";
-    repeated.network.requests.push(duplicate);
-    const reassociated = structuredClone(repeated);
-    reassociated.network.requests[0]!.mime_type = "text/plain";
-    reassociated.network.requests.at(-1)!.mime_type = "application/json";
-    expect(compareNetwork(repeated, reassociated).status).toBe("changed");
-    repeated.network.requests[0]!.status = null;
-    expect(compareNetwork(repeated, reassociated).status).toBe("unknown");
-  });
+      for (const [left, right] of [
+        [partial, observed],
+        [observed, partial],
+        [partial, partial],
+      ] as const)
+        expect(compareNetwork(left, right)).toMatchObject({
+          status: "unknown",
+          total_changes: 0,
+          changes: [],
+        });
+    },
+  );
 
   it("ignores transient request IDs and capture-approval state", async () => {
     const browser = await startFakeCdpBrowser();

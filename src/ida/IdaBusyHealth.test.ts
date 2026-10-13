@@ -18,6 +18,7 @@ const scripted = (answers: readonly JsonValue[]) => {
     connect: async () => [],
     serverInfo: () => null,
     close: async () => undefined,
+    detach: () => undefined,
     call: async () => {
       reads.push(reads.length);
       const answer = answers[Math.min(reads.length - 1, answers.length - 1)];

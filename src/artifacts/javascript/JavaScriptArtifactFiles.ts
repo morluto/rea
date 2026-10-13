@@ -37,6 +37,7 @@ interface ExpectedFile {
 
 interface ExpectedContainer {
   readonly hash_status: ArtifactOccurrence["hash_status"];
+  readonly format: ArtifactOccurrence["artifact_format"];
   readonly inventory: JavaScriptArtifactContainer | null;
 }
 
@@ -219,6 +220,9 @@ const visitReader = async (
             "integrity",
             `Nested ASAR was not integrity-verified: ${path}`,
           );
+        // Inventory expands an ASAR-named file only when its bytes are an
+        // ASAR. One it recorded as ordinary bytes has no members to read.
+        if (container.format !== "asar") continue;
         const inventory = container.inventory;
         if (inventory === null)
           throw new ArtifactReaderFailure(
@@ -395,6 +399,7 @@ const expectedInventory = (
       if (isNestedAsar)
         containers.set(occurrence.logical_path, {
           hash_status: occurrence.hash_status,
+          format: occurrence.artifact_format,
           inventory: null,
         });
       continue;
@@ -412,6 +417,7 @@ const expectedInventory = (
     if (isNestedAsar)
       containers.set(occurrence.logical_path, {
         hash_status: occurrence.hash_status,
+        format: occurrence.artifact_format,
         inventory: {
           path: occurrence.logical_path,
           sha256: node.sha256,

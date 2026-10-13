@@ -12,7 +12,7 @@ import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type { AnalysisProviderCandidate } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
-import { ABORTED, waitForAbortable } from "./AbortablePromise.js";
+import { ABORTED, waitForAbortable } from "../../process/AbortablePromise.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
 export interface AnalysisProviderCandidateEvaluation {

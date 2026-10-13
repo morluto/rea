@@ -32,87 +32,114 @@ export const registerUtilityCommands = (
   registerCapabilityCommands(cli, logger, analysis);
   registerNativeCommands(cli, logger, runProviderAnalysis);
   registerNativeCallCommands(cli, logger, runProviderAnalysis);
-  for (const [command, operation] of [
-    [CLI_COMMANDS.observeNativeUi, "observe_native_ui"],
-    [CLI_COMMANDS.captureNativeUiScenario, "capture_native_ui_scenario"],
-  ] as const) {
-    cli.command(command, {
-      description:
-        "Observe or run a scenario in one exact native application window",
-      args: z.object({
-        path: z.string().describe("Local native executable or app path"),
-      }),
-      options: z.object({
-        pid: z.number().int().positive().describe("Existing application PID"),
-        windowId: z
-          .number()
-          .int()
-          .positive()
-          .describe("Exact selected application window ID"),
-        steps: z
-          .string()
-          .optional()
-          .describe("JSON array of declarative AX actions or waits"),
-        screenshot: z
-          .boolean()
-          .default(true)
-          .describe("Capture only the selected window"),
-        accessibility: z
-          .boolean()
-          .default(true)
-          .describe("Read the selected window accessibility tree"),
-        maxNodes: z
-          .number()
-          .int()
-          .positive()
-          .safe()
-          .default(500)
-          .describe("Maximum accessibility nodes per capture"),
-      }),
-      run: ({ args, options }) =>
-        logCliCommand(logger, command, async () => {
-          const parameters = {
-            pid: options.pid,
-            window_id: options.windowId,
-            screenshot: options.screenshot,
-            accessibility: options.accessibility,
-            max_nodes: options.maxNodes,
-          };
-          if (operation === "capture_native_ui_scenario") {
-            const decoded =
-              options.steps === undefined
-                ? { ok: true as const, value: undefined }
-                : safeParseJson(options.steps);
-            if (!decoded.ok)
-              return invalidNativeUiScenarioInput(operation, [
-                { path: ["steps"], reason: "invalid_format", expected: "JSON" },
-              ]);
-            const parsed = nativeUiScenarioInputSchema.safeParse({
-              ...parameters,
-              steps: decoded.value,
-            });
-            if (!parsed.success)
-              return invalidNativeUiScenarioInput(
-                operation,
-                projectInputIssues(parsed.error.issues, {
-                  ...parameters,
-                  ...(options.steps === undefined
-                    ? {}
-                    : { steps: decoded.value }),
-                }),
-              );
-            return runProviderAnalysis(
-              args.path,
-              operation,
-              parsed.data,
-              logger,
-            );
-          }
-          return runProviderAnalysis(args.path, operation, parameters, logger);
-        }),
-    });
-  }
+  registerNativeUiCommands(cli, logger, runProviderAnalysis);
   registerReferenceSourceCommand(cli, logger, environment);
+};
+
+const nativeUiScopeOptions = {
+  pid: z.number().int().positive().describe("Existing application PID"),
+  windowId: z
+    .number()
+    .int()
+    .positive()
+    .describe("Exact selected application window ID"),
+  screenshot: z
+    .boolean()
+    .default(true)
+    .describe("Capture only the selected window"),
+  accessibility: z
+    .boolean()
+    .default(true)
+    .describe("Read the selected window accessibility tree"),
+  maxNodes: z
+    .number()
+    .int()
+    .positive()
+    .safe()
+    .default(500)
+    .describe("Maximum accessibility nodes per capture"),
+};
+
+const nativeUiScope = (options: {
+  readonly pid: number;
+  readonly windowId: number;
+  readonly screenshot: boolean;
+  readonly accessibility: boolean;
+  readonly maxNodes: number;
+}) => ({
+  pid: options.pid,
+  window_id: options.windowId,
+  screenshot: options.screenshot,
+  accessibility: options.accessibility,
+  max_nodes: options.maxNodes,
+});
+
+/**
+ * Passive observation and active scenarios have different input contracts.
+ * Only the scenario command accepts steps, so passive observation rejects
+ * them as an unknown flag instead of silently dropping them.
+ */
+const registerNativeUiCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  runProviderAnalysis: DirectAnalysis["runProviderAnalysis"],
+): void => {
+  const pathArgument = z.object({
+    path: z.string().describe("Local native executable or app path"),
+  });
+  cli.command(CLI_COMMANDS.observeNativeUi, {
+    description:
+      "Observe one already-running native application window by PID and window ID",
+    args: pathArgument,
+    options: z.object(nativeUiScopeOptions),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.observeNativeUi, () =>
+        runProviderAnalysis(
+          args.path,
+          "observe_native_ui",
+          nativeUiScope(options),
+          logger,
+        ),
+      ),
+  });
+  const operation = "capture_native_ui_scenario";
+  cli.command(CLI_COMMANDS.captureNativeUiScenario, {
+    description:
+      "Run declarative AX actions or waits in one exact native application window",
+    args: pathArgument,
+    options: z.object({
+      ...nativeUiScopeOptions,
+      steps: z
+        .string()
+        .optional()
+        .describe("JSON array of declarative AX actions or waits"),
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.captureNativeUiScenario, async () => {
+        const parameters = nativeUiScope(options);
+        const decoded =
+          options.steps === undefined
+            ? { ok: true as const, value: undefined }
+            : safeParseJson(options.steps);
+        if (!decoded.ok)
+          return invalidNativeUiScenarioInput(operation, [
+            { path: ["steps"], reason: "invalid_format", expected: "JSON" },
+          ]);
+        const parsed = nativeUiScenarioInputSchema.safeParse({
+          ...parameters,
+          steps: decoded.value,
+        });
+        if (!parsed.success)
+          return invalidNativeUiScenarioInput(
+            operation,
+            projectInputIssues(parsed.error.issues, {
+              ...parameters,
+              ...(options.steps === undefined ? {} : { steps: decoded.value }),
+            }),
+          );
+        return runProviderAnalysis(args.path, operation, parsed.data, logger);
+      }),
+  });
 };
 
 const invalidNativeUiScenarioInput = (

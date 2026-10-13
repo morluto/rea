@@ -38,42 +38,52 @@ export const providerSchema = z.strictObject({
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectSchema = z.strictObject({
+const subjectFormatSchema = z.enum([
+  "hopper",
+  "analysis-database",
+  "mach-o",
+  "elf",
+  "pe",
+  "dos-mz",
+  "dos-com",
+  "raw-binary",
+  "zip",
+  "ipa",
+  "apk",
+  "msix",
+  "appx",
+  "hap",
+  "hsp",
+  "app-pack",
+  "asar",
+  "dmg",
+  "pkg",
+  "plist",
+  "javascript",
+  "source-map",
+  "directory",
+  "file",
+  "unknown",
+  "mach-o-universal",
+  "javascript-bundle",
+  "entitlements",
+]);
+const subjectBaseSchema = z.strictObject({
   name: z.string().min(1),
   digest: z.strictObject({ sha256: digestSchema }),
-  format: z.enum([
-    "hopper",
-    "analysis-database",
-    "mach-o",
-    "elf",
-    "pe",
-    "dos-mz",
-    "dos-com",
-    "raw-binary",
-    "zip",
-    "ipa",
-    "apk",
-    "msix",
-    "appx",
-    "hap",
-    "hsp",
-    "app-pack",
-    "asar",
-    "dmg",
-    "pkg",
-    "plist",
-    "javascript",
-    "source-map",
-    "directory",
-    "file",
-    "unknown",
-    "mach-o-universal",
-    "javascript-bundle",
-    "entitlements",
-  ]),
-  architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
   local_path: nulFreeStringSchema,
 });
+// The format owns the architecture claim, including nested Evidence subjects.
+const subjectSchema = z.discriminatedUnion("format", [
+  subjectBaseSchema.extend({
+    format: subjectFormatSchema.exclude(["raw-binary"]),
+    architecture: z.enum(BINARY_ARCHITECTURES).exclude(["6502"]).nullable(),
+  }),
+  subjectBaseSchema.extend({
+    format: z.literal("raw-binary"),
+    architecture: z.enum(BINARY_ARCHITECTURES).nullable(),
+  }),
+]);
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
@@ -186,7 +196,7 @@ const immutableResultSchema = z
   });
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
-/** Minimal immutable local artifact identity accepted by Evidence. */
+/** Candidate local artifact identity validated by the Evidence subject schema. */
 export interface EvidenceSubjectTarget {
   readonly path: string;
   readonly sha256: string;

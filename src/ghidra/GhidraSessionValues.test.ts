@@ -52,6 +52,49 @@ describe("Ghidra DOS import commitment", () => {
   });
 });
 
+describe("Ghidra PDB observations", () => {
+  const pdb = {
+    file: "C:\\build\\fixture.pdb",
+    guid: "01234567-89AB-CDEF-0123-456789ABCDEF",
+    age: "a",
+    signature: null,
+    version: "RSDS",
+    loaded: false,
+  };
+  it("retains the referenced identity and observed load state", () => {
+    const parsed = parseGhidraSessionInfo({ ...session(), pdb }, expected);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.pdb).toEqual(pdb);
+  });
+  it("preserves missing attributes as unknown", () => {
+    const unknown = Object.fromEntries(
+      Object.keys(pdb).map((key) => [key, null]),
+    );
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), pdb: unknown },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.pdb).toEqual(unknown);
+  });
+  it.each([
+    { ...pdb, loaded: "false" },
+    { ...pdb, age: 1 },
+    {
+      guid: pdb.guid,
+      age: pdb.age,
+      signature: null,
+      version: "RSDS",
+      loaded: false,
+    },
+    { ...pdb, matched: true },
+  ])("rejects malformed PDB reports", (report) => {
+    expect(
+      parseGhidraSessionInfo({ ...session(), pdb: report }, expected).ok,
+    ).toBe(false);
+  });
+});
+
 describe("Ghidra MIPS soft-float storage report", () => {
   const valid = {
     policy: "o32-soft-float-prototype-v1",

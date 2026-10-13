@@ -34,6 +34,9 @@ export function* projectElectronSemanticCallPaths(
         properties: {
           path_id: pathId,
           entry: path.entry,
+          ...(path.entry_path === undefined
+            ? {}
+            : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           terminal: path.terminal,
           step_kind: step.kind,
@@ -62,6 +65,9 @@ export function* projectElectronSemanticCallPaths(
         properties: {
           path_id: pathId,
           entry: path.entry,
+          ...(path.entry_path === undefined
+            ? {}
+            : { entry_path: [...path.entry_path] }),
           channel: path.channel,
           basis: "lexical-wrapper-substitution",
         },

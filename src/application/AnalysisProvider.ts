@@ -50,6 +50,13 @@ export interface AnalysisExecution {
   readonly limitations: readonly string[];
   /** Provider-owned completeness assessment for caller/callee observations. */
   readonly relationshipCoverage?: RelationshipCoverage;
+  /**
+   * Whether the provider capped an `xrefs` read: true when it reported a
+   * truncation, false when it explicitly reported none. Absent when it reports
+   * nothing, which is not a completeness claim. Never part of Evidence or tool
+   * output.
+   */
+  readonly referencesTruncated?: boolean;
   readonly locations: readonly EvidenceLocation[];
   readonly subject: EvidenceSubjectTarget | null;
 }
@@ -59,6 +66,7 @@ interface CreateAnalysisExecutionOptions {
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
+  readonly referencesTruncated?: boolean;
   readonly locations?: readonly EvidenceLocation[];
   readonly subject?: EvidenceSubjectTarget;
 }
@@ -103,6 +111,9 @@ export function createAnalysisExecution(
             options.relationshipCoverage,
           ),
         }),
+    ...(options.referencesTruncated === undefined
+      ? {}
+      : { referencesTruncated: options.referencesTruncated }),
     locations: [...(options.locations ?? [])],
     subject: options.subject ?? null,
   };

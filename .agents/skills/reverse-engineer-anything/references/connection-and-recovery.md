@@ -73,7 +73,7 @@ rea setup --client codex --dry-run --json
 Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
 `cursor`, `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`,
 `copilot_cli`, `commandcode`, `qwen_code`, `vscode`, `trae`, `grok_build`, `omp`, `pi`,
-`hermes`, `qoder`, `zcode`, `dsh`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
+`hermes`, `qoder`, `droid`, `zcode`, `dsh`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
 For unsupported clients, use version-pinned manual stdio registration or CLI.
 

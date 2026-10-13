@@ -60,6 +60,78 @@ public class ReaJadxMetadataRegression {
     return apk;
   }
 
+  private static void verifyDirectInvokes(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path sources, Path output) throws Exception {
+    SmaliOptions options = new SmaliOptions();
+    options.apiLevel = 28;
+    options.jobs = 1;
+    options.outputDexFile = output.resolve("direct-invokes.dex").toString();
+    require(Smali.assemble(options, List.of(
+        sources.resolve("Caller.smali").toString(), sources.resolve("Target.smali").toString())),
+        "Direct-invoke fixture assembly failed");
+    Path apk = output.resolve("direct-invokes.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+      zip.putNextEntry(new ZipEntry("classes.dex"));
+      Files.copy(Path.of(options.outputDexFile), zip);
+      zip.closeEntry();
+    }
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    JsonObject refs = call(handle, constructor.newInstance(holder), "get_xrefs_to_method",
+        methodArguments("fixture.Target", "mark"));
+    checkDirectInvokes(refs, "classes.dex");
+
+    SmaliOptions targetOptions = new SmaliOptions();
+    targetOptions.apiLevel = 28;
+    targetOptions.jobs = 1;
+    targetOptions.outputDexFile = output.resolve("direct-target.dex").toString();
+    SmaliOptions callerOptions = new SmaliOptions();
+    callerOptions.apiLevel = 28;
+    callerOptions.jobs = 1;
+    callerOptions.outputDexFile = output.resolve("direct-caller.dex").toString();
+    require(Smali.assemble(targetOptions, List.of(sources.resolve("Target.smali").toString())),
+        "Target DEX assembly failed");
+    require(Smali.assemble(callerOptions, List.of(sources.resolve("Caller.smali").toString())),
+        "Caller DEX assembly failed");
+    Path splitApk = output.resolve("direct-invokes-multidex.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(splitApk))) {
+      zip.putNextEntry(new ZipEntry("classes.dex"));
+      Files.copy(Path.of(targetOptions.outputDexFile), zip);
+      zip.closeEntry();
+      zip.putNextEntry(new ZipEntry("classes2.dex"));
+      Files.copy(Path.of(callerOptions.outputDexFile), zip);
+      zip.closeEntry();
+    }
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(splitApk.toString(), config, continuation));
+    JsonObject crossDex = call(handle, constructor.newInstance(holder), "get_xrefs_to_method",
+        methodArguments("fixture.Target", "mark"));
+    checkDirectInvokes(crossDex, "classes2.dex");
+    System.out.println("DIRECT_INVOKE_REGRESSION_PASS nodes=1 offsets=0,3 cross_dex=true");
+  }
+
+  private static void checkDirectInvokes(JsonObject refs, String dexEntry) {
+    require(refs.get("total").getAsInt() == 1, "JADX using-node count changed");
+    JsonArray sites = refs.getAsJsonArray("items").get(0).getAsJsonObject()
+        .getAsJsonArray("direct_invokes");
+    require(sites.size() == 2, "Raw DEX invoke count differs from the fixture: " + sites);
+    for (int i = 0; i < sites.size(); i++) {
+      JsonObject site = sites.get(i).getAsJsonObject();
+      require(site.get("dex_entry").getAsString().equals(dexEntry), "Wrong DEX entry");
+      require(site.get("source_raw_method_id").getAsString().equals("fixture.Caller.twice()V"),
+          "Wrong raw source method");
+      require(site.get("dex_code_unit_offset").getAsInt() == i * 3, "Wrong DEX offset");
+      require(site.get("opcode").getAsString().equals("INVOKE_STATIC"), "Wrong opcode");
+    }
+    require(sites.get(0).getAsJsonObject().get("dex_method_index").getAsInt()
+        == sites.get(1).getAsJsonObject().get("dex_method_index").getAsInt(),
+        "Two invokes did not reference the same DEX method ID");
+  }
+
   private static JsonObject methodArguments(String className, String methodName) {
     JsonObject value = arguments(className);
     value.addProperty("method_name", methodName);
@@ -152,13 +224,20 @@ public class ReaJadxMetadataRegression {
       JsonObject componentArgs = arguments("androidx.activity.ComponentActivity");
       JsonObject componentSummary = call(handle, bridge, "get_class_summary", componentArgs);
       List<String> signatures = new ArrayList<>();
+      List<String> descriptors = new ArrayList<>();
       for (JsonElement entry : componentSummary.getAsJsonArray("methods")) {
         JsonObject method = entry.getAsJsonObject();
-        if (method.get("name").getAsString().equals("setContentView"))
+        if (method.get("name").getAsString().equals("setContentView")) {
           signatures.add(method.get("signature").getAsString());
+          descriptors.add(method.get("dex_descriptor").getAsString());
+        }
       }
       require(signatures.size() == 3, "Fixture must contain three setContentView overloads");
+      require(descriptors.equals(List.of("(I)V", "(Landroid/view/View;)V",
+          "(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V")),
+          "Frozen DEX prototypes did not identify the three overloads: " + descriptors);
       String[] declarations = { "setContentView(int ", "setContentView(View ", "setContentView(View view, ViewGroup.LayoutParams " };
+      List<Integer> referenceCounts = new ArrayList<>();
       for (int index = 0; index < signatures.size(); index++) {
         JsonObject methodArgs = arguments("androidx.activity.ComponentActivity");
         methodArgs.addProperty("method_name", "setContentView");
@@ -169,12 +248,35 @@ public class ReaJadxMetadataRegression {
             "Overload envelope mismatch");
         require(first.get("mode").getAsString().equals("java"), "Fixture did not produce Java");
         require(first.get("body").getAsString().contains(declarations[index]), "Wrong overload: " + signatures.get(index));
+        JsonObject references = call(handle, bridge, "get_xrefs_to_method", methodArgs);
+        require(references.get("overload_index").getAsInt() == index,
+            "Reference result did not preserve selected overload index");
+        require(references.get("reported_signature").getAsString().equals(signatures.get(index)),
+            "Reference result did not preserve selected overload signature");
+        if (index == 0) {
+          JsonArray invokes = references.getAsJsonArray("items").get(0).getAsJsonObject()
+              .getAsJsonArray("direct_invokes");
+          require(invokes.size() == 1, "Selected overload must have one raw direct invoke");
+          JsonObject invoke = invokes.get(0).getAsJsonObject();
+          require(invoke.get("source_raw_method_id").getAsString()
+              .equals("androidx.activity.ComponentActivity.onCreate(Landroid/os/Bundle;)V"),
+              "Wrong source method for overloaded target");
+          require(invoke.get("dex_code_unit_offset").getAsInt() == 37
+              && invoke.get("opcode").getAsString().equals("INVOKE_VIRTUAL"),
+              "Wrong direct invoke for selected overloaded target");
+        }
+        referenceCounts.add(references.get("count").getAsInt());
       }
+      require(referenceCounts.equals(List.of(1, 0, 0)),
+          "Incoming references were not isolated to the selected overload: " + referenceCounts);
       require(componentSummary.equals(call(handle, bridge, "get_class_summary", componentArgs)),
           "Frozen summary changed after code generation");
       require(apiSummary.equals(call(handle, bridge, "get_class_summary", apiArgs)), "Unrelated frozen summary changed");
-      System.out.println("METADATA_REGRESSION_PASS classes=" + states.size() + " overloads=" + signatures.size());
+      System.out.println("METADATA_REGRESSION_PASS classes=" + states.size() + " overloads=" + signatures.size()
+          + " reference_counts=" + referenceCounts);
       verifyInitializers(holder, config, constructor, handle, initializerFixture(args[1], args[2]));
+      verifyDirectInvokes(holder, config, constructor, handle,
+          Path.of(args[3]), Path.of(args[2]));
     } finally {
       BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
           (scope, continuation) -> holder.unload(continuation));

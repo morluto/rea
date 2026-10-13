@@ -320,6 +320,63 @@ describe("web bundle API classification parity", () => {
       "users",
     ]);
   });
+});
+
+describe("web bundle configuration and navigation parity", () => {
+  it("keeps configuration setting reads out of endpoints in both analyzers", () => {
+    const source = `
+      import vscodeDefault from "vscode";
+      vscodeDefault.workspace.getConfiguration("git").get("default-setting");
+      vscode.workspace.getConfiguration("git").get("autofetch");
+      workspace.getConfiguration("git").get("enabled", true);
+      const config = vscode.workspace.getConfiguration("git");
+      config.get("autofetchPeriod", 180);
+      config.get("/v1/settings");
+      let c = Mt.workspace.getConfiguration("git", uri), l = c.get("timeline.date");
+      let changed = vscode.workspace.getConfiguration("git");
+      changed = api;
+      changed.get("reassigned");
+      const maybe = flag ? vscode.workspace.getConfiguration("git") : api;
+      maybe.get("conditional");
+      {
+        const config = api;
+        config.get("shadowed");
+      }
+      api.get("users");
+      const client = getConfiguration("/api/v1");
+      client.get("accounts");
+      http.getConfiguration(baseUrl).get("orders");
+      {
+        const workspace = { getConfiguration: () => api };
+        workspace.getConfiguration("/api").get("local-users");
+      }
+      {
+        const vscode = { workspace: { getConfiguration: () => api } };
+        vscode.workspace.getConfiguration("/api").get("local-orders");
+      }
+    `;
+    const expected = [
+      "/v1/settings",
+      "accounts",
+      "conditional",
+      "local-orders",
+      "local-users",
+      "orders",
+      "reassigned",
+      "shadowed",
+      "users",
+    ];
+    expect(
+      analyzeCapturedWebBundle(inspection(source))
+        .observations.endpoints.map(({ value }) => value)
+        .sort(),
+    ).toEqual(expected);
+    expect(
+      analyzeJavaScriptStaticSource(source)
+        .endpoints.map(({ value }) => value)
+        .sort(),
+    ).toEqual(expected);
+  });
 
   it("recognizes loadURL endpoints like static analysis", () => {
     const result = analyzeCapturedWebBundle(

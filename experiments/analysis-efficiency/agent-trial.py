@@ -94,6 +94,9 @@ def main():
     if undeclared:
         raise ValueError('Declare inherited provider settings explicitly in --providers: '
                          + ', '.join(undeclared) + '. Values are not logged.')
+    source_auth_home = (Path(os.environ['CODEX_HOME']) if 'CODEX_HOME' in os.environ
+                        else Path.home() / '.codex')
+    source_auth = source_auth_home / 'auth.json'
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     runtime_files, runtime_digest = runtime_fingerprint(repository)
     (args.output / 'runtime-files.json').write_text(json.dumps(runtime_files))
@@ -103,7 +106,6 @@ def main():
     workspace = profile / 'workspace'
     for directory in [trial_codex_home, account, workspace]:
         directory.mkdir(mode=0o700)
-    source_auth = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'auth.json'
     auth = trial_codex_home / 'auth.json'
     started = time.monotonic()
     timeout = False

@@ -13,7 +13,10 @@ import type {
   AnalysisOperation,
   CapabilityDescriptor,
 } from "../AnalysisProvider.js";
-import { isSnapshotCacheable } from "./AnalysisSnapshotCache.js";
+import {
+  isSnapshotCacheable,
+  requiresNativeSourceAdmissionBeforeReplay,
+} from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
 
 interface ActiveExecutionBinding {
@@ -35,6 +38,7 @@ interface PrepareSessionExecutionInput {
   readonly active: ActiveExecutionBinding | undefined;
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly nativeSourceAdmitted: boolean;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
     route: SessionProviderRoute,
@@ -55,6 +59,7 @@ export const prepareSessionExecution = (
     active,
     operation,
     parameters,
+    nativeSourceAdmitted,
     unboundOperationError,
     lookupSnapshot,
   } = input;
@@ -79,9 +84,12 @@ export const prepareSessionExecution = (
   const cacheable =
     profile !== undefined &&
     isSnapshotCacheable(operation, capability, parameters);
-  const cached = cacheable
-    ? lookupSnapshot(active.target, profile, operation, parameters)
-    : undefined;
+  const cached =
+    cacheable &&
+    (!requiresNativeSourceAdmissionBeforeReplay(capability.provider.id) ||
+      nativeSourceAdmitted)
+      ? lookupSnapshot(active.target, profile, operation, parameters)
+      : undefined;
   return ok({ active, capability, profile, cacheable, cached });
 };
 

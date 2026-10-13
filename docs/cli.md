@@ -174,7 +174,9 @@ rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/pat
 rea analyze /absolute/path/to/program --provider ghidra --snapshot /absolute/path/to/analysis/program.json
 ```
 
-An exact CLI cache hit is read before starting a provider process.
+An exact CLI cache hit is normally read before starting a provider process.
+On Windows, Ghidra first admits the selected source through its native snapshot
+owner, so replay can start that provider.
 In MCP, `open_binary` accepts `snapshot_path` to import a snapshot atomically
 for its matching target; an MCP provider may still start before returning a
 cached result. `close_binary` accepts `snapshot_path` and optional

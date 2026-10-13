@@ -107,7 +107,7 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_signature",
-    "Inspect the active artifact's code-signing identity, hashes, authorities, requirements, entitlements, hardened-runtime state, and exact command provenance.",
+    "Inspect the active Mach-O executable's code-signing identity, hashes, authorities, requirements, entitlements, hardened-runtime state, and exact command provenance.",
     z.object({}),
   ),
   native(

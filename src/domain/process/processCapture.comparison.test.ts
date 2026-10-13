@@ -192,3 +192,75 @@ it("keeps filesystem comparison unknown without coverage and reports observed ch
     }),
   ).toMatchObject({ filesystem: "changed", status: "changed" });
 });
+
+it.each([
+  [500, "interaction", 6],
+  [4, "process", 4],
+] as const)(
+  "orders an interaction difference by its dispatch time (process sample at %i ms)",
+  (processTime, dimension, at) => {
+    const capture = (side: "left" | "right") => {
+      const base = emptyCapture();
+      const journal = [
+        { collection: "filesystem_checkpoints" as const, index: 0 },
+        ...(processTime < 6
+          ? [{ collection: "process_samples" as const, index: 0 }]
+          : []),
+        { collection: "interaction_events" as const, index: 0 },
+        ...(processTime >= 6
+          ? [{ collection: "process_samples" as const, index: 0 }]
+          : []),
+        { collection: "lifecycle" as const, index: 0 },
+        { collection: "lifecycle" as const, index: 1 },
+        { collection: "filesystem_checkpoints" as const, index: 1 },
+      ].map((entry, capture_order) => ({ ...entry, capture_order }));
+      return {
+        ...base,
+        manifest: {
+          ...base.manifest,
+          completed_at: "2026-01-01T00:00:01.000Z",
+        },
+        settlement: { ...base.settlement, elapsed_ms: 1000 },
+        filesystem_checkpoints: base.filesystem_checkpoints.map(
+          (checkpoint, index) => ({
+            ...checkpoint,
+            at_ms: index === 0 ? 0 : 1000,
+          }),
+        ),
+        interaction_events: [
+          {
+            sequence: 0,
+            scheduled_at_ms: 5,
+            dispatched_at_ms: 6,
+            type: "input" as const,
+            data: "hello",
+            outcome:
+              side === "left" ? ("dispatched" as const) : ("failed" as const),
+          },
+        ],
+        process_samples: [
+          {
+            at_ms: processTime,
+            pid: 2,
+            parent_pid: 1,
+            command: side === "left" ? "worker-a" : "worker-b",
+            process_group_id: 1,
+            session_id: 1,
+          },
+        ],
+        event_journal: journal,
+      };
+    };
+    const comparison = compareFullyObserved(capture("left"), capture("right"));
+    expect(comparison).toMatchObject({
+      interaction: "changed",
+      process: "changed",
+      first_divergence: {
+        status: "found",
+        dimension,
+        left_at_ms: at,
+        right_at_ms: at,
+      },
+    });
+  },
+);

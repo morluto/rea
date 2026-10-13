@@ -165,17 +165,25 @@ type DivergenceDimension = Exclude<
   { readonly status: "none" | "unknown" }
 >["dimension"];
 
-const eventTime = (value: unknown): number | null => {
-  if (
-    typeof value === "object" &&
-    value !== null &&
-    "at_ms" in value &&
-    typeof value.at_ms === "number" &&
-    Number.isSafeInteger(value.at_ms) &&
-    value.at_ms >= 0
-  )
-    return value.at_ms;
-  return null;
+// Interactions record when their outcome was observed as the dispatch time;
+// every other timed observation uses at_ms.
+const EVENT_TIME_FIELD: Readonly<Record<DivergenceDimension, string>> = {
+  terminal: "at_ms",
+  interaction: "dispatched_at_ms",
+  exit: "at_ms",
+  filesystem: "at_ms",
+  process: "at_ms",
+};
+
+const eventTime = (
+  dimension: DivergenceDimension,
+  value: unknown,
+): number | null => {
+  if (typeof value !== "object" || value === null) return null;
+  const time: unknown = Reflect.get(value, EVENT_TIME_FIELD[dimension]);
+  return typeof time === "number" && Number.isSafeInteger(time) && time >= 0
+    ? time
+    : null;
 };
 
 const firstCollectionDivergence = (
@@ -195,8 +203,8 @@ const firstCollectionDivergence = (
       status: "found",
       dimension,
       index,
-      left_at_ms: eventTime(leftValue),
-      right_at_ms: eventTime(rightValue),
+      left_at_ms: eventTime(dimension, leftValue),
+      right_at_ms: eventTime(dimension, rightValue),
       left: jsonValueSchema.parse(leftValue),
       right: jsonValueSchema.parse(rightValue),
     };

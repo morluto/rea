@@ -9,6 +9,7 @@ import {
 } from "./ProviderProcess.js";
 import {
   cleanupOwnedProcessGroup,
+  type OwnedProcessGroup,
   type ProcessCleanupFailure,
 } from "./ProcessOwnership.js";
 import {
@@ -33,6 +34,17 @@ export class OwnedCommandFailure extends Error {
     this.cleanupResult = options?.cleanupResult;
   }
 }
+
+/** Report recorded launch identities; these labels do not authorize signaling. */
+export const ownedCommandResources = (
+  ownership: OwnedProcessGroup,
+  directory?: string,
+): readonly string[] => [
+  ownership.runId,
+  ...(directory === undefined ? [] : [directory]),
+  `pid:${ownership.leaderPid}`,
+  `process-group:${ownership.processGroupId}`,
+];
 
 /** Execute a single owned process with independent cleanup and bounded diagnostic retention. */
 export const runOwnedCommand = async (
@@ -208,12 +220,7 @@ const collectOwnedCommand = async (
           ? {}
           : { cleanupResult: stopped.cleanupResult }),
       },
-      [
-        spawn.runId,
-        ...(spawn.cwd === undefined ? [] : [spawn.cwd]),
-        `pid:${launched.ownership.leaderPid}`,
-        `process-group:${launched.ownership.processGroupId}`,
-      ],
+      ownedCommandResources(launched.ownership, spawn.cwd),
       supervisor,
     );
   if (failure !== undefined)

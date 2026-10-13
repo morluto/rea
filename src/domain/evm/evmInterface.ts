@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { localPathStringSchema } from "../localPath.js";
+import { solidityMetadataSchema } from "./solidityMetadata.js";
 
 const byteOffset = z.number().int().nonnegative();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
@@ -34,6 +35,7 @@ export const evmInterfaceSchema = z
       kind: z.literal("unknown"),
       deployment_authenticity: z.literal("unknown"),
       hardfork: z.literal("unknown"),
+      metadata: solidityMetadataSchema.nullable().default(null),
     }),
     evidence_kind: z.literal("inferred"),
     functions: z.array(
@@ -61,6 +63,23 @@ export const evmInterfaceSchema = z
         path: ["bytecode"],
         message:
           "Selected byte count does not match the bytecode hex representation.",
+      });
+    const metadata = value.bytecode.metadata;
+    if (
+      metadata !== null &&
+      metadata.status !== "unavailable" &&
+      (metadata.bytecode_offset === null ||
+        metadata.cbor_bytes === null ||
+        metadata.bytecode_offset + metadata.cbor_bytes + 2 !==
+          value.bytecode.bytes ||
+        metadata.cbor_bytes !==
+          Number.parseInt(value.bytecode.hex.slice(-4), 16))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["bytecode", "metadata"],
+        message:
+          "Metadata range must match the terminal length suffix in selected bytecode.",
       });
     for (const [index, fn] of value.functions.entries())
       if (fn.bytecode_offset >= value.bytecode.bytes)

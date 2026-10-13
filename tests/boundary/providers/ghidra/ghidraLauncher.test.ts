@@ -1,4 +1,11 @@
-import { access, chmod, readFile, stat } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { join, posix, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -479,6 +486,66 @@ describe("Ghidra Windows launcher", () => {
       }),
     ).toThrow(/metacharacters/u);
   });
+});
+
+describe("Ghidra Windows launcher runtime", () => {
+  it.skipIf(process.platform !== "win32").each([
+    {
+      properties:
+        "application.version=12.1.4\napplication.release.name=PUBLIC\n",
+      release: "ghidra_12.1.4_PUBLIC",
+    },
+    { properties: undefined, release: "renamed-install" },
+    { properties: "application.version=12.1.4\n", release: "renamed-install" },
+  ])(
+    "prepares the release directory through the Windows runtime ($release)",
+    async ({ properties, release }) => {
+      const parent = await createTestTempDirectory("rea-launch-config-");
+      const installRoot = join(parent, "renamed-install");
+      if (properties !== undefined) {
+        await mkdir(join(installRoot, "Ghidra"), { recursive: true });
+        await writeFile(
+          join(installRoot, "Ghidra", "application.properties"),
+          properties,
+        );
+      }
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const spawnProcess = vi.fn(async () => {
+        throw new Error("fixture stops before process creation");
+      });
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        platform: "win32",
+        analyzeHeadlessPath: join(
+          installRoot,
+          "support",
+          "analyzeHeadless.bat",
+        ),
+        javaHome: "C:\\Java\\jdk-21",
+        bridgeScriptPath: join(parent, "ReaGhidraBridge.java"),
+        spawnProcess,
+      });
+      const launched = await launcher.launch({
+        runtimeRoot: runtime.path,
+        transport: "unix-socket",
+        endpointPath: join(runtime.path, "bridge.sock"),
+        token: "fixture-token",
+        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+        targetPath: join(parent, "fixture.exe"),
+        targetSha256: "b".repeat(64),
+        providerVersion: "12.1.4",
+        profileDigest: "a".repeat(64),
+      });
+      expect(launched.ok).toBe(false);
+      expect(spawnProcess).toHaveBeenCalledOnce();
+      expect(
+        (
+          await stat(join(runtime.path, "config", "ghidra", release))
+        ).isDirectory(),
+      ).toBe(true);
+    },
+  );
 
   it.skipIf(process.platform !== "win32")(
     "keeps authority in a private descriptor and isolates Ghidra state through the batch launcher",

@@ -123,6 +123,8 @@ export const hopperLoaderArgsForTarget = (
   if (target.kind === "database") return ok([]);
   if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
+  if (target.format === "raw-binary")
+    return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
   if (isElfMetadataArchitecture(architecture))
     return err(
@@ -155,7 +157,6 @@ export const hopperLoaderArgsForTarget = (
       return ok(["-l", "WinPE", flag]);
     case "dos-mz":
     case "dos-com":
-    case "raw-binary":
       return err(
         new ProviderAdapterError("hopper", "resolve_analysis_profile"),
       );

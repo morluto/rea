@@ -216,8 +216,9 @@ export const createCliResultOutput = (
           : filtered === undefined
             ? { ok: true, meta }
             : { ok: true, data: filtered, meta }
-        : filtered === undefined ||
-            filtered === null ||
+        : // A selected null is a value; only a selection with no JSON value
+          // falls back to the empty document.
+          filtered === undefined ||
             typeof filtered === "function" ||
             typeof filtered === "symbol"
           ? {}

@@ -67,6 +67,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #closed = false;
   #failure: string | undefined;
   #timer: NodeJS.Timeout | undefined;
+  #unreferenced = false;
   #cleanup: Promise<ProcessCleanupResult> | undefined;
   readonly #memoryLimitBytes: number | undefined;
   #memoryLimitReached = false;
@@ -222,6 +223,18 @@ export class WindowsOwnedProcess extends EventEmitter {
     return this.#cleanup;
   }
 
+  /** Release event-loop references so unsettled jobs do not prevent host exit. */
+  unref(): void {
+    this.#unreferenced = true;
+    this.#timer?.unref();
+  }
+
+  /** Restore event-loop references when retrying process lifecycle observation. */
+  ref(): void {
+    this.#unreferenced = false;
+    this.#timer?.ref();
+  }
+
   async #stop(): Promise<ProcessCleanupResult> {
     if (this.#closed) return { cleaned: true, signaled: false };
     let timer: NodeJS.Timeout | undefined;
@@ -255,6 +268,7 @@ export class WindowsOwnedProcess extends EventEmitter {
   #schedule(): void {
     if (this.#closed || this.#timer !== undefined) return;
     this.#timer = setTimeout(() => this.#poll(), 25);
+    if (this.#unreferenced) this.#timer.unref();
   }
 
   #poll(): void {

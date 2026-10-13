@@ -2,6 +2,14 @@ import { expect, it } from "vitest";
 import { evmInterfaceSchema } from "./evmInterface.js";
 import { evmInterfaceFixture } from "../../../tests/fixtures/evm/interface.js";
 
+it("accepts historical metadata omission as an unknown facet without changing the source", () => {
+  const value = evmInterfaceFixture();
+  const { metadata: _metadata, ...oldBytecode } = value.bytecode;
+  const old = { ...value, bytecode: oldBytecode };
+  expect(evmInterfaceSchema.parse(old).bytecode.metadata).toBeNull();
+  expect(old.bytecode).not.toHaveProperty("metadata");
+});
+
 it.each(["byte-count", "body-offset", "selector", "authenticity"])(
   "rejects false interface evidence: %s",
   (problem) => {

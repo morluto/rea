@@ -32,7 +32,10 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { runOwnedCommand } from "../../process/OwnedCommand.js";
+import {
+  ownedCommandResources,
+  runOwnedCommand,
+} from "../../process/OwnedCommand.js";
 import type {
   ProviderProcessSupervisor,
   OwnedProviderProcessSpawnOptions,
@@ -48,6 +51,7 @@ import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
 } from "./PwntoolsRelease.js";
+import { pwntoolsInputBytes } from "./PwntoolsInputLimit.js";
 
 const HOST_REQUIREMENT =
   "The initial real-verified pwntools artifact profile supports Linux x64 only.";
@@ -242,11 +246,23 @@ export class PwntoolsDecoder<
           undefined,
           context,
         );
+      const inputLimit = pwntoolsInputBytes(this.environment);
+      if (!inputLimit.configured)
+        throw pwntoolsUnavailable(
+          inputLimit.error,
+          selectedPath,
+          undefined,
+          undefined,
+          {
+            ...context,
+            configurationKey: "REA_PWNTOOLS_MAX_INPUT_BYTES",
+          },
+        );
       phase = "artifact-read";
       selectedPath = input.path;
       const snapshot = await readStableArtifact(
         input.path,
-        PWNTOOLS_LIMITS.inputBytes,
+        inputLimit.bytes,
         options?.signal,
         undefined,
         this.#resources,
@@ -562,20 +578,16 @@ export class PwntoolsDecoder<
     const pending = this.#pendingCleanup;
     if (pending?.process === undefined) return undefined;
     const stopped = await pending.process.stop();
+    const ownership = pending.process.launch.ownership;
     if (stopped.status === "incomplete")
       return new ProviderCleanupError(
         this.identity.id,
-        [
-          pending.process.launch.ownership?.runId ?? "owned-decoder",
-          ...(pending.root === undefined ? [] : [pending.root.path]),
-          // The retained group may still be live; name it as OwnedCommand does.
-          ...(pending.process.launch.ownership === undefined
-            ? []
-            : [
-                `pid:${pending.process.launch.ownership.leaderPid}`,
-                `process-group:${pending.process.launch.ownership.processGroupId}`,
-              ]),
-        ],
+        ownership === undefined
+          ? [
+              "owned-decoder",
+              ...(pending.root === undefined ? [] : [pending.root.path]),
+            ]
+          : ownedCommandResources(ownership, pending.root?.path),
         {
           reason: stopped.reason,
           captured_output: {

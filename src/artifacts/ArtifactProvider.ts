@@ -40,6 +40,7 @@ import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { artifactCapabilities } from "./ArtifactProviderMetadata.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../application/InvestigationProviders.js";
 import { createEvidence } from "../domain/evidence.js";
+import { freezeJsonSnapshot } from "../domain/immutableJson.js";
 import { createArtifactInspection } from "../domain/artifactInspection.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
@@ -341,7 +342,11 @@ class ArtifactClient implements AnalysisClient {
       total: 1,
       message: "inventory substep started",
     });
-    const inventory = await this.inventory(inventoryParameters, options);
+    // The freshly parsed inventory is exclusively owned here. Sealing it lets
+    // the nested Evidence share it instead of cloning and re-digesting it.
+    const inventory = freezeJsonSnapshot(
+      await this.inventory(inventoryParameters, options),
+    );
     const subject = subjectFor(
       this.target.sourcePath ?? this.target.path,
       inventory.manifest,
@@ -355,7 +360,10 @@ class ArtifactClient implements AnalysisClient {
       // The nested inventory already names every occurrence's logical path.
       locations: [],
     });
-    const result = createArtifactInspection(inventoryEvidence);
+    // The returned execution and its Evidence then reuse this owned report.
+    const result = freezeJsonSnapshot(
+      createArtifactInspection(inventoryEvidence),
+    );
     await options?.progress?.report({
       phase: "inspect_artifact.inventory",
       completed: 1,

@@ -39,6 +39,44 @@ describe("raw-binary entry addresses", () => {
 });
 
 describe("raw-binary admission", () => {
+  it("admits byte-aligned 6502 images up to the 16-bit address boundary", () => {
+    for (const [entryPoint, fileBytes] of [
+      ["0x8001", 8],
+      ["0xffff", 1],
+      ["0x0", 65536],
+    ] as const) {
+      const result = admitRawBinary({
+        architecture: "6502",
+        entryPoint,
+        fileBytes,
+      });
+      if (!result.ok) throw new Error(result.error.reason);
+      expect(result.value).toEqual({
+        architecture: "6502",
+        entryPoint,
+        entryPointSource: entryPoint,
+      });
+    }
+  });
+  it.each([
+    ["0x10000", 1],
+    ["0xffff", 2],
+    ["0x0", 65537],
+  ])(
+    "rejects a 6502 mapping at %s with %i bytes that exceeds 16 bits",
+    (entryPoint, fileBytes) => {
+      const result = admitRawBinary({
+        architecture: "6502",
+        entryPoint,
+        fileBytes,
+      });
+      if (result.ok) throw new Error("expected 16-bit overflow rejection");
+      expect(result.error).toEqual({
+        reason: `raw-binary mapping from ${entryPoint} must fit in the 6502 address width`,
+        constraint: "load_selection_rejected",
+      });
+    },
+  );
   it("admits a little-endian ARM image mapped at the caller entry", () => {
     expect(
       admitRawBinary({

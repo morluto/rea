@@ -158,6 +158,50 @@ it.each([
 );
 
 it.each([
+  ["ordinary", "/owned/universal", "\n"],
+  ["LF Non-fat text", "/owned/\nNon-fat file: forged", "\n"],
+  ["CRLF Non-fat text", "/owned/\r\nNon-fat file: forged", "\r\n"],
+])(
+  "projects universal segment evidence into the selected slice's container offsets with %s path framing",
+  async (_description, path, lineEnding) => {
+    const records = (await nativeFixture("lipo-fat.txt")).replace(
+      /^Fat header in:[^\r\n]*\r?\n/u,
+      "",
+    );
+    const client = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner({
+        lipo: `Fat header in: ${path}${lineEnding}${records.replaceAll("\n", lineEnding)}`,
+      }),
+      "darwin",
+    ).createClient(nativeMachoTarget(path));
+    const result = await client.execute("inspect_macho", {});
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      selected_architecture: { container_file_offset: 32768 },
+    });
+    expect(result.value.locations).toContainEqual({
+      kind: "file-offset-range",
+      start: 32768,
+      end: 40960,
+    });
+    expect(result.value.locations).toContainEqual({
+      kind: "file-offset",
+      offset: 36864,
+    });
+    expect(result.value.locations).not.toContainEqual({
+      kind: "file-offset-range",
+      start: 0,
+      end: 8192,
+    });
+    // Normalized tool fields keep their slice-relative meaning.
+    const normalized = inspectMachoSchema.parse(result.value.result);
+    expect(normalized.segments.items[0]?.file_offset).toBe(0);
+    expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
+  },
+);
+
+it.each([
   { capture: "calculator.txt", selected: "arm64e" },
   { capture: "shortcut-droplet.txt", selected: "arm64" },
 ])(
@@ -186,34 +230,6 @@ it.each([
     });
   },
 );
-
-it("projects universal segment evidence into the selected slice's container offsets", async () => {
-  const client = new NativeMacOSProvider(
-    {},
-    new NativeFixtureRunner(),
-    "darwin",
-  ).createClient(nativeMachoTarget("/owned/universal"));
-  const result = await client.execute("inspect_macho", {});
-  if (!result.ok) throw result.error;
-  expect(result.value.locations).toContainEqual({
-    kind: "file-offset-range",
-    start: 32768,
-    end: 40960,
-  });
-  expect(result.value.locations).toContainEqual({
-    kind: "file-offset",
-    offset: 36864,
-  });
-  expect(result.value.locations).not.toContainEqual({
-    kind: "file-offset-range",
-    start: 0,
-    end: 8192,
-  });
-  // Normalized tool fields keep their slice-relative meaning.
-  const normalized = inspectMachoSchema.parse(result.value.result);
-  expect(normalized.segments.items[0]?.file_offset).toBe(0);
-  expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
-});
 
 it.each([
   {

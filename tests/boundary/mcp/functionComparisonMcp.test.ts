@@ -1,6 +1,14 @@
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { compareFunctions } from "../../../src/domain/functionComparison.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -271,3 +279,130 @@ describe("function comparison MCP integration", () => {
     }
   });
 });
+
+it.each([
+  { status: "changed", expected: "fail" },
+  { status: "unknown", expected: "unknown" },
+  { status: "unchanged", expected: "pass" },
+] as const)(
+  "checks the aggregate status of imported $status function comparisons",
+  async ({ status, expected }) => {
+    const left = FUNCTION_COMPARISON_EXAMPLE.left;
+    const right =
+      status === "changed"
+        ? FUNCTION_COMPARISON_EXAMPLE.right
+        : createEvidence(
+            {
+              path: "/fixture/function-right",
+              sha256: "3".repeat(64),
+              format: "mach-o",
+            },
+            status === "unknown"
+              ? { ...left.provider, id: "other-provider" }
+              : left.provider,
+            {
+              operation: left.operation,
+              parameters: left.parameters,
+              result: left.normalized_result,
+              confidence: left.confidence,
+              authority: left.authority,
+              relationshipCoverage: { status: "complete" },
+            },
+          );
+    const result = compareFunctions(left, right);
+    expect(result.status).toBe(status);
+    const provider = {
+      id: "rea-function-comparison",
+      name: "REA function comparison",
+      version: "1",
+    };
+    const observation = {
+      operation: "compare_functions",
+      predicateType: "rea.function-comparison",
+      parameters: {
+        left_evidence_id: left.evidence_id,
+        right_evidence_id: right.evidence_id,
+      },
+      confidence: "derived" as const,
+      authority: "analyst-inference" as const,
+      evidenceLinks: [left.evidence_id, right.evidence_id],
+    };
+    const consistent = createEvidence(undefined, provider, {
+      ...observation,
+      result: jsonValueSchema.parse(result),
+    });
+    const inconsistent =
+      status === "unchanged"
+        ? null
+        : createEvidence(undefined, provider, {
+            ...observation,
+            result: jsonValueSchema.parse({ ...result, status: "unchanged" }),
+          });
+    const directory = await createTestTempDirectory("rea-function-status-");
+    const path = join(directory, "bundle.json");
+    await writeFile(
+      path,
+      JSON.stringify(
+        createEvidenceBundle([
+          left,
+          right,
+          consistent,
+          ...(inconsistent === null ? [] : [inconsistent]),
+        ]),
+      ),
+    );
+    const session = createTestBinarySession(() => {
+      throw new Error("Imported comparison must not launch a provider");
+    });
+    const harness = await createApplicationMcpHarness({ session });
+    onTestFinished(harness.close);
+    const imported = await harness.client.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path },
+    });
+    expect(imported.isError).not.toBe(true);
+    const verification = (evidence_id: string) =>
+      harness.client.callTool({
+        name: "verify_reconstruction",
+        arguments: {
+          specification: {
+            name: "Function aggregate",
+            claims: [
+              {
+                kind: "structural-function",
+                claim_id: "overall",
+                title: "Function agrees",
+                comparison_evidence_id: evidence_id,
+                dimension: "overall",
+              },
+            ],
+          },
+        },
+      });
+    if (inconsistent !== null) {
+      const rejected = await verification(inconsistent.evidence_id);
+      expect(parseMcpToolError(rejected).error).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              reason: "invalid_value",
+              message: expect.stringContaining(
+                "Function comparison status contradicts its dimensions or function match",
+              ),
+            },
+          ],
+        },
+      });
+      expect(harness.session.evidenceById(inconsistent.evidence_id)).toEqual(
+        inconsistent,
+      );
+    }
+    const verified = await verification(consistent.evidence_id);
+    expect(verified.isError).not.toBe(true);
+    expect(
+      parseEvidence(verified.structuredContent).normalized_result,
+    ).toMatchObject({ status: expected });
+    await harness.client.ping();
+  },
+);

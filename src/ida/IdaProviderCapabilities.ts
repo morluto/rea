@@ -24,8 +24,22 @@ export const IDA_OPERATIONS = Object.freeze([
   "read_function_instructions",
   "xrefs",
   "analyze_function",
+  "resolve_containing_procedure",
+  "list_documents",
 ] as const satisfies readonly Exclude<AnalysisOperation, "health">[]);
 export type IdaOperation = (typeof IDA_OPERATIONS)[number];
+
+/** Operations only the modern headless profile implements. */
+const HEADLESS_ONLY_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
+  "resolve_containing_procedure",
+  "list_documents",
+]);
+
+/** Whether the configured profile admits an operation. */
+export const idaProfileAdmits = (
+  operation: IdaOperation,
+  mode: "attached" | "headless",
+): boolean => mode === "headless" || !HEADLESS_ONLY_OPERATIONS.has(operation);
 
 /** Shared limitations of observations from an externally mutable analysis database. */
 export const IDA_LIMITATIONS = Object.freeze([
@@ -58,34 +72,37 @@ export const idaCapabilities = (
   stdio: boolean,
   native = false,
 ): readonly CapabilityDescriptor[] =>
-  IDA_OPERATIONS.map((operation) => ({
-    provider: IDA_PROVIDER_IDENTITY,
-    operation,
-    ...((mode === "headless" || native) && operation === "procedure_callers"
-      ? ({
-          available: false,
-          reason: native
-            ? "The native upstream profile reports code references without proving direct call edges."
-            : "The modern upstream profile reports code references without proving direct call edges.",
-        } as const)
-      : ({ available: true, reason: null } as const)),
-    cachePolicy: "live",
-    effects: {
-      mutatesArtifact: false,
-      launchesProcess: stdio || mode === "headless",
-      mayShowUi:
-        mode === "attached" &&
-        (native
-          ? operation === "procedure_pseudo_code" ||
-            operation === "analyze_function"
-          : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
-      mayAccessNetwork: true,
-      mayWriteFilesystem: stdio || mode === "headless",
-      changesPermissions: false,
-      requiresRoot: false,
-    },
-    limitations:
-      native && (operation === "list_strings" || operation === "search_strings")
-        ? [...IDA_LIMITATIONS, IDA_NATIVE_STRING_LIMITATION]
-        : IDA_LIMITATIONS,
-  }));
+  IDA_OPERATIONS.filter((operation) => idaProfileAdmits(operation, mode)).map(
+    (operation) => ({
+      provider: IDA_PROVIDER_IDENTITY,
+      operation,
+      ...((mode === "headless" || native) && operation === "procedure_callers"
+        ? ({
+            available: false,
+            reason: native
+              ? "The native upstream profile reports code references without proving direct call edges."
+              : "The modern upstream profile reports code references without proving direct call edges.",
+          } as const)
+        : ({ available: true, reason: null } as const)),
+      cachePolicy: "live",
+      effects: {
+        mutatesArtifact: false,
+        launchesProcess: stdio || mode === "headless",
+        mayShowUi:
+          mode === "attached" &&
+          (native
+            ? operation === "procedure_pseudo_code" ||
+              operation === "analyze_function"
+            : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
+        mayAccessNetwork: true,
+        mayWriteFilesystem: stdio || mode === "headless",
+        changesPermissions: false,
+        requiresRoot: false,
+      },
+      limitations:
+        native &&
+        (operation === "list_strings" || operation === "search_strings")
+          ? [...IDA_LIMITATIONS, IDA_NATIVE_STRING_LIMITATION]
+          : IDA_LIMITATIONS,
+    }),
+  );

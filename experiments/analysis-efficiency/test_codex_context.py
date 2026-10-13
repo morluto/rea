@@ -71,7 +71,9 @@ class ContextCaptureTests(unittest.TestCase):
                 self.assertNotIn(marker, text)
             self.assertIn('caller-selected evidence and paths', text)
             self.assertIn('original-response', text)
-            self.assertEqual((output / 'codex-tool-context.jsonl').stat().st_mode & 0o777, 0o600)
+            # Windows mode bits do not describe access control; this is a POSIX assertion.
+            if os.name == 'posix':
+                self.assertEqual((output / 'codex-tool-context.jsonl').stat().st_mode & 0o777, 0o600)
 
     def test_missing_rollouts_are_unknown_and_malformed_lines_remain_partial(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -124,6 +126,7 @@ class ContextCaptureTests(unittest.TestCase):
                     patch.object(agent.subprocess, 'check_output', return_value='v24.18.0\n'), \
                     patch.object(agent.subprocess, 'Popen', return_value=child), \
                     patch.object(agent, 'capture_tool_context', side_effect=OSError('fixture capture failure')), \
+                    patch.object(agent.Path, 'home', side_effect=AssertionError('Explicit CODEX_HOME must not resolve the default home')), \
                     patch('builtins.print'):
                 with self.assertRaisesRegex(OSError, 'fixture capture failure'):
                     agent.main()

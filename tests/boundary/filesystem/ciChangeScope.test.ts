@@ -118,14 +118,21 @@ it("reuses only scheduled qualification and preserves every explicit full reques
   ).toBe("fast");
 });
 
-it("keeps every translated root README and authored guide on the documentation lane", async () => {
+it("keeps every translated README and authored guide on the documentation lane", async () => {
   const { directory, base } = await fixture();
   const readmes = (await readdir(new URL("../../../", import.meta.url))).filter(
     (name) => /^README(?:_.*)?\.md$/u.test(name),
   );
+  const translated = (
+    await readdir(new URL("../../../docs/readme/", import.meta.url))
+  )
+    .filter((name) => /^README_.*\.md$/u.test(name))
+    .map((name) => `docs/readme/${name}`);
   expect(readmes).toContain("README.md");
+  expect(translated.length).toBeGreaterThan(0);
   const head = await change(directory, [
     ...readmes,
+    ...translated,
     "docs/guide.md",
     "AGENTS.md",
     "CONTRIBUTING.md",
@@ -198,7 +205,7 @@ it("emits an observational owner proposal without changing ordinary or full port
 it("does not charge a documentation PR for unrelated implementation updates on main", async () => {
   const { directory, base } = await fixture();
   await git(directory, ["switch", "-c", "docs/change"]);
-  const head = await change(directory, ["README_zh-TW.md"]);
+  const head = await change(directory, ["docs/readme/README_zh-TW.md"]);
   await git(directory, ["switch", "main"]);
   const advancedBase = await change(directory, ["src/anotherProvider.ts"]);
   expect(advancedBase).not.toBe(base);
@@ -240,7 +247,7 @@ it("retains complete checks when implementation is renamed into documentation", 
 
 it("keeps main pushes scoped when a successful ancestor baseline is available", async () => {
   const { directory, base } = await fixture();
-  const head = await change(directory, ["README_ja.md"]);
+  const head = await change(directory, ["docs/readme/README_ja.md"]);
   expect(await classify(directory, base, head, "push")).toMatchObject({
     tier: "fast",
     code: false,
@@ -450,6 +457,10 @@ it.each([
     },
   ],
   [
+    "scripts/verify-solidity-metadata.mjs",
+    { code: true, evm: true, browser: false, package: false },
+  ],
+  [
     "src/browser/execution/evaluate.ts",
     {
       code: true,
@@ -470,7 +481,10 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
-  ["README_ja.md", { code: false, docs: true, website: true, package: false }],
+  [
+    "docs/readme/README_ja.md",
+    { code: false, docs: true, website: true, package: false },
+  ],
   [
     ".github/workflows/website-pages.yml",
     { code: false, website: true, package: false },
@@ -514,6 +528,10 @@ it.each([
   [
     "src/windows/Example.ts",
     { code: true, runtime: true, package: true, apple: false, evm: false },
+  ],
+  [
+    "src/domain/javascript/javascriptRuntimeStaticCandidates.ts",
+    { code: true, runtime: true, package: true, javascript_recovery: true },
   ],
   ["install.sh", { code: true, runtime: true, package: true, evm: false }],
   [
@@ -920,7 +938,7 @@ it.each(["workflow_dispatch", "schedule"])(
 it("honors ci:full for successive PR revisions", async () => {
   const { directory, base } = await fixture();
   const first = await change(directory, ["README.md"]);
-  const second = await change(directory, ["README_ja.md"]);
+  const second = await change(directory, ["docs/readme/README_ja.md"]);
   for (const head of [first, second]) {
     expect(
       await classify(directory, base, head, "pull_request", true),

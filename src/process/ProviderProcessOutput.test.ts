@@ -121,3 +121,40 @@ it("reports a reached process memory limit only when the handle observed one", (
     supervisor.dispose();
   }
 });
+
+it("unreferences process and stream handles when stop reports incomplete cleanup", async () => {
+  const unrefProcess = vi.fn();
+  const unrefStdin = vi.fn();
+  const unrefStdout = vi.fn();
+  const unrefStderr = vi.fn();
+  const producer = Object.assign(new EventEmitter(), {
+    stdout: Object.assign(new PassThrough(), { unref: unrefStdout }),
+    stdin: Object.assign(new PassThrough(), { unref: unrefStdin }),
+    stderr: Object.assign(new PassThrough(), { unref: unrefStderr }),
+    exitCode: null,
+    signalCode: null,
+    kill: () => false,
+    unref: unrefProcess,
+  });
+  const supervisor = new ProviderProcessSupervisor({
+    process: producer,
+    ownsProcessLifetime: true,
+    cleanup: async () => ({
+      cleaned: false,
+      reason: "process table could not be inspected: spawn EPERM",
+    }),
+  });
+  try {
+    const result = await supervisor.stop();
+    expect(result).toMatchObject({
+      status: "incomplete",
+      reason: "process table could not be inspected: spawn EPERM",
+    });
+    expect(unrefProcess).toHaveBeenCalledTimes(1);
+    expect(unrefStdin).toHaveBeenCalledTimes(1);
+    expect(unrefStdout).toHaveBeenCalledTimes(1);
+    expect(unrefStderr).toHaveBeenCalledTimes(1);
+  } finally {
+    supervisor.dispose();
+  }
+});

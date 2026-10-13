@@ -8,6 +8,9 @@ import {
 
 const MAX_METADATA_BYTES = 8 * 1024 * 1024;
 const MAX_BUILD_IDS = 64;
+// Range bookkeeping and separate positional reads need a budget independent
+// of payload bytes: tiny/overlapping declarations can otherwise fan out I/O.
+const MAX_NOTE_RANGES = 1024;
 
 export interface ElfBuildIds {
   readonly candidates: readonly string[];
@@ -21,9 +24,10 @@ export const readElfBuildIds = async (
   signal: AbortSignal | undefined,
 ): Promise<ElfBuildIds> => {
   const candidates = new Set<string>();
+  const failures: ElfParseFailure[] = [];
   const failure = (reason: string): ElfBuildIds => ({
     candidates: [...candidates],
-    failures: [{ reason }],
+    failures: [...failures, { reason }],
   });
   let examined = 0;
   const read = async (offset: number, size: number): Promise<Buffer | null> => {
@@ -59,7 +63,7 @@ export const readElfBuildIds = async (
   if (parsed.failure !== undefined) return failure(parsed.failure.reason);
   const h = parsed.header;
   const ranges = new Map<string, { offset: number; size: number }>();
-  for (const table of [
+  tables: for (const table of [
     {
       offset: h.e_phoff,
       width: h.e_phentsize,
@@ -105,7 +109,17 @@ export const readElfBuildIds = async (
         size > totalBytes - offset
       )
         return failure("ELF note range is not file-backed");
-      ranges.set(`${offset}:${size}`, { offset, size });
+      if (size === 0) continue;
+      const key = `${offset}:${size}`;
+      if (ranges.has(key)) continue;
+      if (ranges.size === MAX_NOTE_RANGES) {
+        failures.push({
+          reason:
+            "ELF notes exceed the 1024-range note-range inventory/read budget",
+        });
+        break tables;
+      }
+      ranges.set(key, { offset, size });
     }
   }
   const align4 = (value: number): number => Math.ceil(value / 4) * 4;
@@ -154,5 +168,5 @@ export const readElfBuildIds = async (
     }
   }
   signal?.throwIfAborted();
-  return { candidates: [...candidates], failures: [] };
+  return { candidates: [...candidates], failures };
 };

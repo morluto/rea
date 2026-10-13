@@ -6,6 +6,34 @@ import { z } from "zod";
 
 import { toolContract } from "./toolContracts.js";
 import { toolOutputSchemaWithMetadata } from "./toolSchemaMetadata.js";
+import { createEvidence } from "../domain/evidence.js";
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "advertises the raw-only 6502 Evidence subject constraint in %s",
+  (target) => {
+    const valid = createEvidence(
+      {
+        path: "/fixture/image.bin",
+        sha256: "a".repeat(64),
+        format: "raw-binary",
+        architecture: "6502",
+      },
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "address_name", parameters: {}, result: "entry" },
+    );
+    const advertised = toolOutputSchemaWithMetadata(
+      toolContract("address_name"),
+    )["~standard"].jsonSchema.output({ target });
+    const validate = new AjvJsonSchemaValidator().getValidator(advertised);
+    expect(validate(valid).valid).toBe(true);
+    expect(
+      validate({
+        ...valid,
+        subject: { ...valid.subject, format: "pe" },
+      }).valid,
+    ).toBe(false);
+  },
+);
 
 it("keeps dialect-specific validators distinct after JSON schema serialization", () => {
   const contract = {

@@ -11,6 +11,7 @@ import {
   referenceProjection,
   sorted,
   stringAndNameProjection,
+  swiftLiteralSitesConflict,
 } from "./functionComparisonNormalization.js";
 import type {
   DimensionName,
@@ -51,7 +52,67 @@ export const compareDimensions = (
     compareReferences(left, right, context),
     compareStringsAndNames(left, right, context),
     compareCfg(left, right, context),
-  ];
+  ].map((result) => {
+    const limitations = [
+      ...facetLimitations(left, result.dimension).map(
+        (reason) => `Left: ${reason}`,
+      ),
+      ...facetLimitations(right, result.dimension).map(
+        (reason) => `Right: ${reason}`,
+      ),
+    ];
+    return limitations.length === 0
+      ? result
+      : unresolvedDimension({
+          dimension: result.dimension,
+          links: context.links,
+          leftCount: null,
+          rightCount: null,
+          limitations: [...result.limitations, ...limitations],
+        });
+  });
+};
+
+/** An empty undeclared facet is not evidence of observed absence. */
+const facetLimitations = (
+  snapshot: FunctionSnapshot,
+  dimension: DimensionName,
+): string[] => {
+  const { dossier } = snapshot;
+  const fields = {
+    identity: [],
+    pseudocode: [["pseudocode", dossier.pseudocode.length]],
+    assembly: [["assembly", dossier.assembly.length]],
+    comments: [["comments", dossier.comments.length]],
+    calls: [
+      ["callers", dossier.callers.length],
+      ["callees", dossier.callees.length],
+    ],
+    references: [
+      [
+        "references",
+        dossier.incoming_references.length + dossier.outgoing_references.length,
+      ],
+    ],
+    strings_names: [
+      [
+        "strings_names",
+        dossier.referenced_strings.length + dossier.referenced_names.length,
+      ],
+    ],
+    cfg: [["cfg", dossier.basic_blocks.length]],
+  } satisfies Record<
+    DimensionName,
+    [keyof NonNullable<typeof dossier.facet_availability>, number][]
+  >;
+  return fields[dimension].flatMap(([field, count]) => {
+    const availability = dossier.facet_availability?.[field];
+    if (availability?.available === false)
+      return [`${field}: ${availability.reason}`];
+    return availability === undefined && count === 0
+      ? [`${field}: Provider did not declare coverage for this empty facet.`]
+      : [];
+  });
 };
 
 const compareText = (
@@ -139,8 +200,12 @@ const compareStringsAndNames = (
   right: FunctionSnapshot,
   context: ComparisonContext,
 ): FunctionDimension => {
-  const leftValues = stringAndNameProjection(left);
-  const rightValues = stringAndNameProjection(right);
+  const complete =
+    swiftLiteralCoverage(left) === swiftLiteralCoverage(right) &&
+    swiftLiteralCoverage(left) !== "partial";
+  // Facts both dossiers record decide a change before Swift literal coverage can.
+  const leftValues = stringAndNameProjection(left, complete);
+  const rightValues = stringAndNameProjection(right, complete);
   if (leftValues === null || rightValues === null)
     return unresolvedDimension({
       dimension: "strings_names",
@@ -151,8 +216,39 @@ const compareStringsAndNames = (
         "Reference source locations could not be normalized to function offsets.",
       ],
     });
-  return compareValues("strings_names", leftValues, rightValues, context);
+  const compared = compareValues(
+    "strings_names",
+    leftValues,
+    rightValues,
+    context,
+  );
+  if (complete || compared.status === "changed") return compared;
+  // A retained literal differs only when the opposite dossier establishes its absence.
+  if (swiftLiteralSitesConflict(left, right)) {
+    const leftAll = stringAndNameProjection(left);
+    const rightAll = stringAndNameProjection(right);
+    if (leftAll !== null && rightAll !== null)
+      return compareValues("strings_names", leftAll, rightAll, context);
+  }
+  return unresolvedDimension({
+    dimension: "strings_names",
+    links: context.links,
+    leftCount: null,
+    rightCount: null,
+    limitations: [
+      "Swift String literal coverage differs or is partial; referenced strings and names match, and complete coverage does not establish a differing literal.",
+    ],
+  });
 };
+
+const swiftLiteralCoverage = (
+  snapshot: FunctionSnapshot,
+): "absent" | "complete" | "partial" =>
+  (snapshot.dossier.swift_string_literal_omissions ?? []).length > 0
+    ? "partial"
+    : snapshot.dossier.swift_string_literals === undefined
+      ? "absent"
+      : "complete";
 
 const compareReferences = (
   left: FunctionSnapshot,

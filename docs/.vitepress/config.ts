@@ -6,6 +6,7 @@ export default defineConfig({
     "Reverse engineer binaries, applications, and runtime behavior with one CLI and MCP server.",
   lang: "en-US",
   base: "/rea/",
+  srcExclude: ["readme/**"],
   themeConfig: {
     nav: [
       { text: "Get started", link: "/installation" },

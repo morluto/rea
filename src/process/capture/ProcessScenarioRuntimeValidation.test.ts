@@ -17,6 +17,28 @@ import {
   resolveProcessScenarioRuntimePaths,
 } from "./ProcessScenarioRuntimeValidation.js";
 import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+
+it.skipIf(process.platform === "win32")(
+  "resolves a literal backslash in a POSIX executable basename through PATH",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-posix-basename-");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    const command = "selected\\node";
+    const selected = join(bin, command);
+    await symlink(process.execPath, selected);
+    await expect(resolveExecutable(command, root, bin)).resolves.toBe(selected);
+    const resolved = await resolveProcessScenarioRuntimePaths(
+      parseProcessScenario({
+        executable: command,
+        working_directory: root,
+        environment: { PATH: bin },
+      }),
+    );
+    expect(resolved.executable).toBe(selected);
+  },
+);
 
 it("preserves the caller-selected executable symlink for process invocation", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-process-executable-alias-"));

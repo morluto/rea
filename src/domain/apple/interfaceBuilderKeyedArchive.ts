@@ -55,6 +55,7 @@ export const parseInterfaceBuilderRecords = (
   readonly objectCount: number;
   readonly omittedObjects: number;
   readonly omittedConnections: number;
+  readonly unresolvedConnections: number;
   readonly omittedHierarchyReferences: number;
 } => {
   const root = record(value);
@@ -135,6 +136,7 @@ export const parseInterfaceBuilderRecords = (
     objectCount: objectEntries.length,
     omittedObjects: Math.max(0, objectEntries.length - 20_000),
     omittedConnections,
+    unresolvedConnections: 0,
     omittedHierarchyReferences: 0,
   };
 };
@@ -320,6 +322,7 @@ const parseKeyedArchive = (
   const connections: InterfaceBuilderConnection[] = [];
   let objectCount = 0;
   let omittedConnections = 0;
+  let unresolvedConnections = 0;
   for (const [index, raw] of objectTable.entries()) {
     if (index === 0) continue;
     const resolved = record(resolve(raw));
@@ -371,7 +374,13 @@ const parseKeyedArchive = (
             controlAction ? fields.to : fields.from,
             controlAction ? fields.target : fields.owner,
           );
-      if (source === null) continue;
+      if (source === null) {
+        // A recognized connector that cannot name its owner is an unresolved
+        // connection, not an absent one, and cannot be represented as a
+        // connection because connection identity requires a source.
+        unresolvedConnections += 1;
+        continue;
+      }
       const kind = controlAction ? "action" : classifyConnection(className);
       const parsedConnection = connection.parse({
         id: `archive:${objectId}`,
@@ -426,6 +435,7 @@ const parseKeyedArchive = (
     objectCount,
     omittedObjects: Math.max(0, objectCount - 20_000),
     omittedConnections,
+    unresolvedConnections,
     omittedHierarchyReferences: hierarchy.omittedReferences,
   };
 };

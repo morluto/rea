@@ -18,7 +18,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import {
+  createJadxWorkspaceRoot,
+  type JadxWorkspaceRoot,
+} from "./JadxWorkspaceRoot.js";
 import {
   snapshotAndroidEngine,
   snapshotAndroidTarget,
@@ -152,7 +155,7 @@ const hashAndroidSource = async (
 
 interface PendingCleanup {
   session: JadxSession | undefined;
-  root: PrivateRuntimeRoot | undefined;
+  root: JadxWorkspaceRoot | undefined;
   readonly previousError: AnalysisError | undefined;
 }
 
@@ -211,7 +214,7 @@ const cleanup = async (
 
 interface RetainedSession {
   readonly key: string;
-  readonly root: PrivateRuntimeRoot;
+  readonly root: JadxWorkspaceRoot;
   readonly session: JadxSession;
   readonly snapshot: string;
   readonly jarHash: string;
@@ -325,7 +328,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       options?.signal === undefined
         ? timeout
         : AbortSignal.any([options.signal, timeout]);
-    let root: PrivateRuntimeRoot | undefined;
+    let root: JadxWorkspaceRoot | undefined;
     let session: JadxSession | undefined;
     try {
       if (target.format !== "apk")
@@ -389,20 +392,24 @@ export class JadxProvider implements AndroidAnalysisPort {
           request.operation,
           signal,
         );
-        root = await PrivateRuntimeRoot.create({ prefix: "rea-android-" });
+        root = await createJadxWorkspaceRoot();
+        const workspaceSignal =
+          root.failureSignal === undefined
+            ? signal
+            : AbortSignal.any([signal, root.failureSignal]);
         const engine = await snapshotAndroidEngine(
           configuration.jar,
           jarHash,
           root.path,
           request.operation,
-          signal,
+          workspaceSignal,
         );
         const snapshot = await snapshotAndroidTarget(
           target.path,
           target.sha256,
           root.path,
           request.operation,
-          signal,
+          workspaceSignal,
         );
         const bridge = join(root.path, "ReaJadxBridge.java");
         await copyFile(BRIDGE_SOURCE, bridge);
@@ -410,7 +417,7 @@ export class JadxProvider implements AndroidAnalysisPort {
         const copiedBridgeHash = await hashAndroidSource(
           bridge,
           request.operation,
-          signal,
+          workspaceSignal,
         );
         if (copiedBridgeHash !== bridgeHash)
           throw androidSourceChanged(
@@ -418,7 +425,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             BRIDGE_SOURCE,
             undefined,
           );
-        signal.throwIfAborted();
+        workspaceSignal.throwIfAborted();
         session = new JadxSession(
           {
             command: configuration.java,
@@ -430,7 +437,7 @@ export class JadxProvider implements AndroidAnalysisPort {
             ],
             cwd: root.path,
             hostEnvironment: this.environment,
-            signal,
+            signal: workspaceSignal,
           },
           this.launcher,
         );
@@ -445,6 +452,10 @@ export class JadxProvider implements AndroidAnalysisPort {
       }
       root = retained.root;
       session = retained.session;
+      const activeSignal =
+        root.failureSignal === undefined
+          ? signal
+          : AbortSignal.any([signal, root.failureSignal]);
       const { snapshot } = retained;
       const outcome = ok(
         await session.execute({
@@ -453,10 +464,10 @@ export class JadxProvider implements AndroidAnalysisPort {
           snapshot,
           jarHash: retained.jarHash,
           bridgeHash: retained.bridgeHash,
-          signal,
+          signal: activeSignal,
         }),
       );
-      signal.throwIfAborted();
+      activeSignal.throwIfAborted();
       this.#retained = retained;
       return outcome;
     } catch (cause) {

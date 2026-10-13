@@ -561,3 +561,35 @@ describe("CLI result output surface", () => {
     });
   }, 60_000);
 });
+
+describe("streamed CLI filtered selections", () => {
+  it.each([
+    ["raw_result", "json", "null\n"],
+    ["raw_result", "jsonl", "null\n"],
+    ["nested.value", "json", '{"nested":{"value":null}}\n'],
+    ["missing", "json", "{}\n"],
+    ["count", "json", "0\n"],
+    ["enabled", "json", "false\n"],
+  ] as const)(
+    "keeps the selected value of --filter-output %s in %s",
+    async (filter, format, expected) => {
+      const chunks: Buffer[] = [];
+      const destination = new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          chunks.push(chunk);
+          callback();
+        },
+      });
+      const output = createCliResultOutput(
+        ["--format", format, "--filter-output", filter],
+        destination,
+      );
+      if (output === undefined) throw new Error("Missing JSON output surface");
+      await output.write(
+        { raw_result: null, nested: { value: null }, count: 0, enabled: false },
+        { command: "fixture", duration: "1ms", format },
+      );
+      expect(Buffer.concat(chunks).toString("utf8")).toBe(expected);
+    },
+  );
+});

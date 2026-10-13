@@ -11,6 +11,7 @@ import { compareBundles } from "../domain/bundleComparison.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   readEvidenceBundle,
+  readImmutableEvidenceBundle,
   writeEvidenceBundle,
 } from "./EvidenceBundleFiles.js";
 
@@ -33,7 +34,8 @@ export const exportEvidenceBundleCommand = async (
   outputPath: string,
   overwrite: boolean,
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const loaded = await readEvidenceBundle(sourcePath);
+  // The sealed snapshot lets the writer reuse this authentication.
+  const loaded = await readImmutableEvidenceBundle(sourcePath);
   if (!loaded.ok) return loaded;
   const resources = new ArtifactResourceScope();
   const written = await writeEvidenceBundle(
@@ -69,9 +71,11 @@ export const compareEvidenceBundlesCommand = async (input: {
   readonly leftPath: string;
   readonly rightPath: string;
 }): Promise<Result<JsonValue, AnalysisError>> => {
+  // Sealed snapshots let comparison and its bundle digests reuse this
+  // authentication instead of re-validating every record twice more.
   const [left, right] = await Promise.all([
-    readEvidenceBundle(input.leftPath),
-    readEvidenceBundle(input.rightPath),
+    readImmutableEvidenceBundle(input.leftPath),
+    readImmutableEvidenceBundle(input.rightPath),
   ]);
   if (!left.ok) return left;
   if (!right.ok) return right;

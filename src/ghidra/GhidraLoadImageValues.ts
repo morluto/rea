@@ -361,7 +361,10 @@ export const attestGhidraRawBinaryLoadImage = (
     });
   };
   const source = observations.source_files[0];
-  const mapping = observations.mappings[0];
+  const fileMappings = observations.mappings.filter(
+    (item) => item.source_file_index !== null,
+  );
+  const mapping = fileMappings[0];
   check("executable_format", "Raw Binary", observations.executable_format);
   check("language_id", language.languageId, observations.language_id);
   check(
@@ -371,11 +374,34 @@ export const attestGhidraRawBinaryLoadImage = (
   );
   // BinaryLoader's block base is independent of the Program image base.
   check("image_base", "0x0", observations.image_base);
+  check(
+    "default_address_space",
+    language.defaultAddressSpace,
+    observations.default_address_space,
+  );
   check("source_file_count", 1, observations.source_files.length);
   check("source_file_size", snapshot.bytes, source?.size ?? null);
   check("original_file_sha256", target.sha256, source?.original_sha256 ?? null);
   check("modified_file_sha256", target.sha256, source?.modified_sha256 ?? null);
-  check("mapping_count", 1, observations.mappings.length);
+  // Language-defined uninitialized zero page/stack blocks are observations, not file bytes.
+  check("mapping_count", 1, fileMappings.length);
+  check(
+    "initialized_unbacked_mappings",
+    0,
+    observations.mappings.filter(
+      (item) => item.initialized && item.source_file_index === null,
+    ).length,
+  );
+  check("mapping.source_file_index", 0, mapping?.source_file_index ?? null);
+  // Matching bytes alone do not establish the admitted default-space load.
+  check("mapping.initialized", true, mapping?.initialized ?? null);
+  check("mapping.loaded", true, mapping?.loaded ?? null);
+  check("mapping.overlay", false, mapping?.overlay ?? null);
+  check(
+    "mapping.address_space",
+    observations.default_address_space,
+    mapping?.address_space ?? null,
+  );
   check(
     "mapping.file_offset",
     0,
@@ -427,8 +453,9 @@ export const attestGhidraRawBinaryLoadImage = (
       checks,
       limitations: [
         "Raw binary is a headerless interpretation explicitly selected by the caller, not format identification from file bytes.",
-        "Verification covers complete original/modified source identity, mapped file bytes, the caller-supplied entry, and the bound little-endian Ghidra language. File offset 0 is mapped at the entry address.",
+        "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound little-endian Ghidra language. File offset 0 is mapped at the entry address.",
         "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
+        "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
         "Reset vectors, memory-mapped I/O, big-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
         "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
       ],

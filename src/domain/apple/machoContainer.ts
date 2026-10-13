@@ -63,6 +63,11 @@ export const readFatContainerHeader = (
   const magic = view.getUint32(0, false);
   if (![FAT_MAGIC, FAT_MAGIC_64, FAT_CIGAM, FAT_CIGAM_64].includes(magic))
     return { state: "not-fat" };
+  if (!Number.isSafeInteger(fileSize) || fileSize < bytes.byteLength)
+    return {
+      state: "malformed",
+      reason: "FAT file size is invalid or contradicts retained bytes",
+    };
   if (bytes.byteLength < 8) {
     return fileSize < 8
       ? { state: "malformed", reason: "FAT header is truncated" }

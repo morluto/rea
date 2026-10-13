@@ -79,6 +79,8 @@ const nativeRows = (
     unresolved_calls: dossier.unresolved_calls,
     referenced_strings: dossier.referenced_strings,
     referenced_names: dossier.referenced_names,
+    swift_string_literals: dossier.swift_string_literals,
+    swift_string_literal_omissions: dossier.swift_string_literal_omissions,
     value_flow_operations: flow?.operations,
     value_flow_def_use: flow?.def_use,
     value_flow_effects: flow?.effects,
@@ -108,6 +110,22 @@ export const projectNativeFunctionView = (
       ]),
     );
   const common = parentFields(parent, dossier, artifact);
+  const availabilityKeys: Readonly<Record<string, string>> = {
+    incoming_references: "references",
+    outgoing_references: "references",
+    referenced_strings: "strings_names",
+    referenced_names: "strings_names",
+    basic_blocks: "cfg",
+  };
+  const availabilityKey = availabilityKeys[view.facet] ?? view.facet;
+  const availability =
+    dossier.facet_availability?.[
+      availabilityKey as keyof NonNullable<
+        FunctionDossier["facet_availability"]
+      >
+    ];
+  if (availability?.available === false)
+    common.unknowns = uniqueSorted([...common.unknowns, availability.reason]);
   const singleton = (item: unknown): UnsignedAnalysisView => ({
     kind: "native",
     view,
@@ -115,6 +133,7 @@ export const projectNativeFunctionView = (
     coverage: completeWithinViewCoverage(1, 1),
     ...common,
   });
+  if (availability?.available === false) return ok(singleton(availability));
   const flow = dossier.native_value_flow;
   if (
     view.facet === "procedure" ||
@@ -163,7 +182,8 @@ export const projectNativeFunctionView = (
       singleton({
         available: false,
         // Only value-flow facets inherit the value-flow failure reason; an
-        // older dossier simply has no unresolved_calls record.
+        // older dossier simply has no unresolved_calls record, and a target
+        // whose provider does not decode Swift literals has no such record.
         reason:
           view.facet.startsWith("value_flow_") && flow?.available === false
             ? flow.reason

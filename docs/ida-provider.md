@@ -4,6 +4,15 @@ REA adapts an existing IDA MCP server into its native analysis tools. Existing I
 
 Choose one lifecycle mode in an upstream MCP JSON registration. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
 
+## Supported upstream versions
+
+Each mode accepts one upstream tool profile, checked against `tools/list` before any analysis runs. Upstream's `main` branch has since moved to 2.0.0, which renamed the GUI tools and dropped `idb_close`, so it serves neither profile. Installing from that branch fails at startup with the missing tool names in the error diagnostics.
+
+| Mode     | Upstream profile    | Known working                                          |
+| -------- | ------------------- | ------------------------------------------------------ |
+| attached | legacy GUI tools    | 1.4.0                                                  |
+| headless | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close` |
+
 ## Analyze an already-open GUI target
 
 The attached profile supports upstream **1.4.0 legacy tools**, including `get_metadata`, `list_functions`, and `decompile_function`. Copy the upstream registration's `command`, `args`, and optional `env` into a JSON file. An existing `mcpServers` object with an `ida-pro-mcp` entry is also accepted. For example:
@@ -88,6 +97,8 @@ REA copies the admitted binary into a private temporary directory, checks its di
 
 One REA session owns one database. Stdio registrations default `IDA_MCP_MAX_WORKERS` to `1`; the explicit upstream `--max-workers 1` also bounds a supervisor. Database size and engine memory depend on the target and upstream; REA does not impose an engine memory limit. The original binary is never executed or overwritten. Optional `workspaceRoot` selects an existing absolute temporary-directory parent on the REA host. Ensure it has space for the input copy and IDA working files.
 
+When a completed `idb_open` response reports success or is otherwise ambiguous, but no active owned private worker can be verified, REA retains the private workspace even if `idb_list` appears empty. A later close can retry verification if the original owned worker becomes discoverable. A completed explicit `idb_open` rejection retains the existing no-worker cleanup path. This is a local admission/ownership safeguard and **does not** provide a process-termination receipt or change the legacy reaped-worker protocol.
+
 Headless cleanup uses the upstream database lifecycle. Abruptly terminating REA, its proxy, or the supervisor does not establish worker release. Prefer `close_binary` for MCP sessions; after an interrupted process, inspect upstream session inventory and retained workspace diagnostics before removing working files. This adapter does not claim Windows Job Object containment for the upstream detached workers.
 
 ## Connect an agent once
@@ -125,6 +136,8 @@ For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <cl
 ## Coverage and evidence
 
 All profiles support procedure/string inventory and literal or regex search, procedure resolution, pseudocode, assembly, raw function instructions, resolved callees, incoming address references, and a function dossier. Inventories and modern pseudocode/assembly follow upstream pagination. Upstream limits on modern xrefs and callees are retained as explicit truncation limitations. In the modern headless profile, targets that are not proven x86-only use processor-neutral `callgraph` edges instead of the x86 instruction checks in upstream `callees` (mrexodia/ida-pro-mcp#549). REA requests depth zero: the pinned upstream emits the root's outgoing edges without scanning child functions, then REA batches function-name lookup for those addresses. The graph covers recognized function destinations only; imports and other non-function targets remain unknown. A server without `callgraph` returns an empty relationship list with an explicit coverage limitation. Graph and path workflows retain those limitations alongside observed edges. A failed or inconsistent graph reply remains an error. A transport-level truncated preview is rejected rather than reported as complete evidence; the error preserves upstream retrieval guidance.
+
+The modern headless profile also supports `resolve_containing_procedure` and `list_documents`. An address resolves through upstream `lookup_funcs` to the canonical entry of the function that contains it; the body stays unavailable like other IDA identities. When no function contains it, REA reads the database-scoped minimal `survey_binary` and reports `not_in_procedure` for an address inside one of its segments (ends are exclusive) and `outside_segments` otherwise. A missing, truncated or inconsistent survey fails the read instead of guessing a reason. `list_documents` returns the single admitted program path, so `inspect_address_context` and `trace_feature` need no explicit document. `trace_feature` marks a trace truncated, with a residual unknown for that address, when upstream caps the references it returned. The legacy and native profiles do not declare these operations.
 
 The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern and native profiles do not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
 

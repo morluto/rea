@@ -839,3 +839,27 @@ it("requires compatible contracts and enforces capture age through a clock seam"
     }),
   );
 });
+
+it("requires interaction dispatch times to follow their sequence", () => {
+  const capture = emptyCapture();
+  const interaction = (sequence: number, dispatched: number) => ({
+    sequence,
+    scheduled_at_ms: 0,
+    dispatched_at_ms: dispatched,
+    type: "input" as const,
+    data: "x",
+    outcome: "dispatched" as const,
+  });
+  const issues = (dispatched: readonly number[]) =>
+    processCaptureIssues({
+      ...capture,
+      interaction_events: dispatched.map((at, index) => interaction(index, at)),
+    }).filter(({ message }) => message.includes("dispatch timestamps"));
+  expect(issues([5, 5, 10])).toEqual([]);
+  expect(issues([10, 5])).toEqual([
+    {
+      path: "interaction_events",
+      message: expect.stringContaining("dispatch timestamps must be ordered"),
+    },
+  ]);
+});

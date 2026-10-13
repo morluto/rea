@@ -135,7 +135,7 @@ it("ignores unavailable members of a nested ASAR but refuses them as active entr
   const source = join(root, "bundle");
   await mkdir(source);
   const archive = join(source, "app.asar");
-  await createPackageWithOptions(contents, archive, { unpack: "**/*.node" });
+  await createPackageWithOptions(contents, archive, { unpack: "*.node" });
   await rm(join(`${archive}.unpacked`, "native", "addon.node"));
 
   const nestedOutput = join(root, "nested-output");

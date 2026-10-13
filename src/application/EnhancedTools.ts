@@ -163,6 +163,8 @@ export class EnhancedTools {
         return traceLiteralFeature(
           (name, arguments_, operationSignal) =>
             this.#call(name, arguments_, operationSignal),
+          (name, arguments_, operationSignal) =>
+            this.#observe(name, arguments_, operationSignal),
           call.input,
           signal,
         );

@@ -203,10 +203,18 @@ const managedMethodSchema = z.object({
   body: managedMethodBodySchema,
 });
 
+// Declaring types are namespace-qualified like TypeDef `full_name`, nested
+// types keep bare names, and a generic instantiation names its generic type.
+// Evidence recorded before declaring types were named reads them as null.
+const declaringTypeNameSchema = z.string().nullable().default(null);
+
 const managedMemberReferenceSchema = z.object({
   token: tokenSchema,
   row_offset: offsetSchema,
   parent_token: tokenSchema.nullable(),
+  parent_name: declaringTypeNameSchema.describe(
+    "Name of a TypeDef, TypeRef, or generic-instantiation TypeSpec parent; null for other parents or when unknown",
+  ),
   name: z.string(),
   signature: managedSignatureSchema,
 });
@@ -281,7 +289,13 @@ const managedCallEdgeSchema = z.object({
   opcode: z.string(),
   target_token: tokenSchema,
   target_kind: z.enum(["method-def", "member-ref", "method-spec", "unknown"]),
-  target_name: z.string().nullable(),
+  target_name: z
+    .string()
+    .nullable()
+    .describe("Method name; a method-spec target reports its generic method"),
+  target_declaring_type: declaringTypeNameSchema.describe(
+    "Declaring type of the called method; null when unknown",
+  ),
 });
 
 const managedFieldAccessSchema = z.object({
@@ -290,6 +304,9 @@ const managedFieldAccessSchema = z.object({
   opcode: z.string(),
   field_token: tokenSchema,
   field_name: z.string().nullable(),
+  field_declaring_type: declaringTypeNameSchema.describe(
+    "Declaring type of the accessed field; null when unknown",
+  ),
 });
 
 const managedParseIssueSchema = z.object({

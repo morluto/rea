@@ -224,10 +224,13 @@ context. PSP/stack/device state remains unmodeled. See [DOS guide](https://githu
 
 For other headerless images (embedded firmware without ELF/Mach-O/PE/MZ
 headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
-`arm`, or `arm64`), and `entry_point` (`0x` hex). File offset 0 is mapped at
+`arm`, `arm64`, or `6502`), and `entry_point` (`0x` hex). File offset 0 is mapped at
 that address. Hopper and IDA refuse this interpretation; Ghidra uses
 `BinaryLoader` with a little-endian generic language. Big-endian, Thumb-only,
-and Cortex-M variants are unsupported. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
+and Cortex-M variants are unsupported. `6502` selects NMOS 6502; the entry and
+complete file mapping must fit within `0x0000..0xffff`. 65C02, 65816, cartridge
+containers, bank switching, and mapper semantics are unsupported. Windows
+Ghidra P0 admits raw images only for `6502`. See [raw binary guide](https://github.com/morluto/rea/blob/main/docs/raw-binary.md).
 
 ### Function annotations in Ghidra
 

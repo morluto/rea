@@ -12,6 +12,7 @@ import type { GhidraOperation } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProviderClient.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
+import type { GhidraSessionInfo } from "../../../src/ghidra/GhidraSessionValues.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
@@ -26,12 +27,19 @@ const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 export const connectGhidraMcp = async (
   name: string,
   execute?: ReturnType<GhidraProviderClientFactory>["callTool"],
+  observations: {
+    readonly targetPath?: string;
+    readonly pdb?: GhidraSessionInfo["pdb"];
+  } = {},
 ) => {
   const calls: GhidraOperation[] = [];
   const factory: GhidraProviderClientFactory = (options) => ({
     start: () =>
       Promise.resolve(
-        ok(sessionInfo(options.profileDigest, options.targetSha256)),
+        ok({
+          ...sessionInfo(options.profileDigest, options.targetSha256),
+          ...(observations.pdb === undefined ? {} : { pdb: observations.pdb }),
+        }),
       ),
     callTool: (operation, input, options) => {
       calls.push(operation);
@@ -68,7 +76,7 @@ export const connectGhidraMcp = async (
     await mcp.connect(clientTransport);
     const opened = await mcp.callTool({
       name: "open_binary",
-      arguments: { path: process.execPath },
+      arguments: { path: observations.targetPath ?? process.execPath },
     });
     if (opened.isError === true)
       throw new Error(
@@ -263,6 +271,8 @@ const resultFor = (
 const functionObservationOperations: ReadonlySet<GhidraOperation> = new Set([
   "analyze_function",
   "procedure_assembly",
+  "procedure_callees",
+  "procedure_callers",
   "procedure_info",
   "procedure_pseudo_code",
   "read_function_instructions",

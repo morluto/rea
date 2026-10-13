@@ -682,7 +682,9 @@ use `--second-procedure rea_fixture_subtract --second-marker='- 13'`.
 The lane invokes the production CLI dispatcher and connects the pinned MCP
 client SDK to the production REA server. It verifies function Evidence and
 CLI/MCP parity, inventory/search, pseudocode, instructions, xrefs, malformed
-input, original-input preservation, and lifecycle cleanup. For headless
+input, original-input preservation, and lifecycle cleanup. The headless
+profile also checks containing procedures, the admitted program as the
+document, address context, and feature tracing. For headless
 analysis it confirms that the owned database IDs disappear from upstream
 discovery and private workspaces are removed. For attached analysis it confirms
 the existing GUI target remains reachable with the same input identity.
@@ -731,6 +733,16 @@ annotations must preserve the live function dossier; CLI and MCP must report the
 truncation constraint, while leading-zero coordinates still resolve correctly.
 It has the same Ghidra/JDK prerequisites as the MZ lane. Neither lane claims DOS
 runtime or PC-98 device execution.
+
+`npm run verify:ghidra:6502` uses `ca65` and `ld65` to build the source-owned
+NMOS 6502 fixture from `tests/conformance/ghidra/6502.s` and `6502.cfg`. Set
+`REA_CA65` and `REA_LD65` for non-PATH installations (tested with cc65 `V2.19`).
+With an installed Ghidra 12.1.4 and full JDK, it verifies real CLI/stdio MCP
+mapping parity, exact source bytes, functions, a direct call reference,
+decompilation, 16-bit overflow rejection without replacing the active session,
+and runtime cleanup. Windows additionally requires the matching native addon;
+its verifier lineage remains explicitly unavailable outside the provider's
+retained Job Object, as in the other Windows lanes.
 
 `npm run verify:ghidra:raw` uses a generated ARM little-endian headerless image
 through the compiled CLI and stdio MCP server. With the same Ghidra/JDK

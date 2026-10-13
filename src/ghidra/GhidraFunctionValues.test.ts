@@ -23,6 +23,8 @@ import {
 const observationOperations: ReadonlySet<GhidraFunctionOperation> = new Set([
   "analyze_function",
   "procedure_assembly",
+  "procedure_callees",
+  "procedure_callers",
   "procedure_info",
   "procedure_pseudo_code",
   "read_function_instructions",
@@ -93,6 +95,31 @@ describe("Ghidra function-analysis result values", () => {
     });
   });
 
+  it.each(["procedure_callees", "procedure_callers"] as const)(
+    "requires the function-observation envelope to carry terminal-call limitations for %s",
+    (operation) => {
+      // A bare address list is the pre-fix bridge shape; without the envelope
+      // a truncated function body reports no warning, so it must be rejected.
+      expect(parseGhidraFunctionResult(operation, ["0x2000"])).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisOutputError" },
+      });
+      const limitation =
+        "Ghidra Listing reports a terminal call at 0x401000 to 0x402000 abort; fallthrough is excluded by Ghidra's flow model.";
+      expect(
+        parseGhidraFunctionResult(operation, {
+          value: ["0x2000"],
+          limitations: [limitation],
+        }),
+      ).toEqual({
+        ok: true,
+        value: { value: ["0x2000"], limitations: [limitation] },
+      });
+    },
+  );
+});
+
+describe("Ghidra reference and value-flow completeness", () => {
   it.each(["reference_kinds_available", "unresolved_calls"])(
     "rejects omitted %s instead of inventing complete reference observations",
     (field) => {
@@ -192,6 +219,51 @@ describe("Ghidra function-analysis result values", () => {
       ok: false,
       error: { _tag: "AnalysisOutputError" },
     });
+  });
+});
+
+describe("Ghidra Swift String literals", () => {
+  it("keeps a small Swift literal without storage apart from a large literal's bytes", () => {
+    const dossier = ghidraFunctionDossier();
+    if (
+      typeof dossier !== "object" ||
+      dossier === null ||
+      Array.isArray(dossier)
+    )
+      throw new TypeError("Ghidra dossier fixture is invalid");
+    const literals = [
+      {
+        source_address: "0x401004",
+        value: "The user name ",
+        representation: "small",
+        address: null,
+        registers: ["x0", "x1"],
+        words: ["0x7265737520656854", "0xee0020656d616e20"],
+      },
+      {
+        source_address: "0x401006",
+        value: "",
+        representation: "small",
+        address: null,
+        registers: ["x0", "x1"],
+        words: ["0x0", "0xe000000000000000"],
+      },
+      {
+        source_address: "0x401008",
+        value: " cannot be written into a sudoers rule safely.",
+        representation: "large",
+        address: "0x402270",
+        registers: ["x0", "x1"],
+        words: ["0xd00000000000002e", "0x8000000000402250"],
+      },
+    ];
+    expect(
+      parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        swift_string_literals: literals,
+        swift_string_literal_omissions: [],
+      }),
+    ).toMatchObject({ ok: true, value: { swift_string_literals: literals } });
   });
 });
 
@@ -423,6 +495,34 @@ describe("Ghidra function-analysis malformed results", () => {
   );
 });
 
+const malformedSwiftStringLiterals = (
+  dossier: Record<string, JsonValue>,
+): Array<[string, GhidraFunctionOperation, JsonValue]> =>
+  (
+    [
+      ["non-canonical Swift literal address", "large", "402240"],
+      ["small Swift literal with storage", "small", "0x402270"],
+      ["large Swift literal without storage", "large", null],
+    ] as const
+  ).map(([name, representation, address]) => [
+    name,
+    "analyze_function",
+    {
+      ...dossier,
+      swift_string_literal_omissions: [],
+      swift_string_literals: [
+        {
+          source_address: "0x401004",
+          value: "The power setting could not be changed.",
+          representation,
+          address,
+          registers: ["x0", "x1"],
+          words: ["0xd000000000000027", "0x8000000000402220"],
+        },
+      ],
+    },
+  ]);
+
 const malformedOutputs = (): Array<
   [string, GhidraFunctionOperation, JsonValue]
 > => {
@@ -437,6 +537,11 @@ const malformedOutputs = (): Array<
     throw new TypeError("Ghidra native API fixture is invalid");
   return [
     ["non-canonical address", "procedure_callers", ["401000"]],
+    [
+      "Swift literals without their omission record",
+      "analyze_function",
+      { ...dossier, swift_string_literals: [] },
+    ],
     [
       "missing classification",
       "procedure_info",
@@ -466,6 +571,26 @@ const malformedOutputs = (): Array<
       Object.fromEntries(
         Object.entries(dossier).filter(([key]) => key !== "native_api"),
       ),
+    ],
+    ...malformedSwiftStringLiterals(dossier),
+    [
+      "non-canonical Swift literal omission address",
+      "analyze_function",
+      {
+        ...dossier,
+        swift_string_literals: [],
+        swift_string_literal_omissions: [
+          {
+            source_address: "0x401004",
+            representation: "large",
+            address: "402240",
+            byte_length: 39,
+            reason: "capacity",
+            registers: ["x0", "x1"],
+            words: ["0xd000000000000027", "0x8000000000402220"],
+          },
+        ],
+      },
     ],
     [
       "non-canonical native API target",

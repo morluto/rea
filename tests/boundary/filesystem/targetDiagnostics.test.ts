@@ -4,9 +4,35 @@ import { describe, expect, it } from "vitest";
 import { systemDoctorHost } from "../../../src/application/Doctor.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("executable format refusal diagnostics", () => {
+  it.each([
+    [0x01a6, "0x01a6"],
+    [0x0000, "0x0000"],
+    [0xffff, "0xffff"],
+  ] as const)(
+    "retains unsupported PE machine %i in the refusal",
+    async (machine, expectedMachine) => {
+      const directory = await createTestTempDirectory("rea-target-pe-machine-");
+      const path = join(directory, "unsupported.exe");
+      const bytes = pe(0x014c);
+      bytes.writeUInt16LE(machine, 0x44);
+      await writeFile(path, bytes);
+
+      const result = await parseBinaryTarget(path);
+      if (result.ok) throw new Error("unsupported PE target was admitted");
+      const reason = `unsupported PE architecture (COFF machine ${expectedMachine})`;
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "target_unavailable",
+        category: "unsupported_target",
+        message: `Cannot open artifact: ${reason}.`,
+        details: { reason, constraint: "file_format_rejected" },
+      });
+    },
+  );
+
   it.each(["NE", "LE", "LX"] as const)(
     "reports unsupported %s executables without path advice",
     async (signature) => {

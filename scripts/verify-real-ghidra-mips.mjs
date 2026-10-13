@@ -12,6 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import {
   inspectMipsReadelf,
+  inspectLegacyMipsReadelf,
   assertMipsLoadedImage,
   assertMipsProbe,
   assertMipsGlobal,
@@ -122,6 +123,157 @@ async function verifySoftFloat(call, symbols, byteOrder) {
 const reports = [];
 let primaryFailure;
 try {
+  if (!psp) {
+    // Recordless legacy admission: ABI field 0, no ABI flags record, pinned
+    // 32-bit language. Independent GNU readelf checks the header interpretation.
+    for (const byteOrder of ["little", "big"]) {
+      const fixture = await buildMipsFixture(workspace, byteOrder, "hard", {
+        legacy: true,
+      });
+      const legacy = await inspectLegacyMipsReadelf(fixture.path, byteOrder);
+      const resolved = await parseBinaryTarget(fixture.path);
+      if (!resolved.ok) throw resolved.error;
+      assert.equal(resolved.value.mips.flags, 0x50000001);
+      assert.equal(resolved.value.mips.abiFlags, null);
+      assert.deepEqual(
+        resolved.value.mips.limitations ?? [],
+        legacy.limitations,
+        "REA legacy ABI-record absence interpretation disagrees with GNU readelf",
+      );
+      assert.equal(resolved.value.sha256, fixture.sha256);
+      const snapshotPath = join(workspace, `${byteOrder}-legacy.snapshot.json`);
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [entrypoint, "mcp"],
+        env,
+        stderr: "pipe",
+      });
+      const client = new Client({
+        name: "rea-real-mips-legacy-proof",
+        version: "1",
+      });
+      let stderr = "";
+      transport.stderr?.on("data", (chunk) => {
+        stderr = (stderr + chunk.toString()).slice(-65536);
+      });
+      const call = async (name, args = {}) => {
+        const reply = await client.callTool(
+          { name, arguments: args },
+          undefined,
+          { timeout: 180000 },
+        );
+        return requireMcpOperationResult(reply, name);
+      };
+      try {
+        await client.connect(transport);
+        const selected = await call("open_binary", {
+          path: fixture.path,
+          provider_id: "ghidra",
+        });
+        assert.equal(selected.architecture, "mips");
+        assert.equal(selected.sha256, fixture.sha256);
+        const image = await call("inspect_native_load_image");
+        assertMipsLoadedImage(image.observations, byteOrder, fixture.sha256);
+        // The pinned import language is the checked one, not an auto-selection.
+        assert.equal(
+          image.observations.language_id,
+          `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
+        );
+        const procedures = await call("list_procedures");
+        const entry = procedures.find((p) => p.value === "rea_mips_entry");
+        assert.ok(entry, "Entry function missing from legacy inventory");
+        assert.equal(
+          BigInt(entry.address),
+          BigInt(legacy.symbols.rea_mips_entry),
+        );
+        const probe = await call("inspect_native_instruction", {
+          address: legacy.symbols.rea_mips_probe,
+        });
+        const probeBranch = await call("inspect_native_instruction", {
+          address: `0x${(BigInt(legacy.symbols.rea_mips_probe) + 4n).toString(16)}`,
+        });
+        assertMipsProbe(
+          probe,
+          probeBranch,
+          byteOrder,
+          legacy.symbols.rea_mips_probe,
+        );
+        const dossier = functionDossierSchema.parse(
+          await call("analyze_function", { procedure: entry.address }),
+        );
+        assert.ok(dossier.pseudocode.trim().length > 0);
+        const saved = await call("close_binary", {
+          snapshot_path: snapshotPath,
+        });
+        assert.ok(saved.evidence_records > 0);
+        const snapshot = parseAnalysisSnapshot(
+          JSON.parse(await readFile(snapshotPath, "utf8")),
+        );
+        assert.equal(snapshot.target.architecture, "mips");
+        const parameters = snapshot.binding.analysis_profile.parameters;
+        assert.equal(
+          parameters.language_id,
+          `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
+        );
+        assert.equal(parameters.language_selection, "provider-pinned-v1");
+        assert.equal(
+          parameters.mips_support_lane,
+          "elf32-exec-arch32-legacy-pinned-v1",
+        );
+        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption-v1");
+        assert.ok(
+          snapshot.evidence_bundle.records.some((record) =>
+            parseEvidence(record).limitations.some((item) =>
+              item.includes("analysis assumption"),
+            ),
+          ),
+          "Legacy o32 assumption limitation missing from retained Evidence",
+        );
+        assert.ok(
+          snapshot.evidence_bundle.records.some((record) =>
+            parseEvidence(record).limitations.some((item) =>
+              item.includes("Floating-point ABI semantics are unverified"),
+            ),
+          ),
+          "Legacy floating-point uncertainty missing from retained Evidence",
+        );
+        await call("open_binary", {
+          path: fixture.path,
+          provider_id: "ghidra",
+          snapshot_path: snapshotPath,
+        });
+        assert.deepEqual(await call("list_procedures"), procedures);
+        await call("close_binary");
+      } catch (cause) {
+        throw new Error(
+          `MIPS legacy ${byteOrder} verification failed; MCP stderr: ${stderr}`,
+          { cause },
+        );
+      } finally {
+        try {
+          await client.close();
+        } finally {
+          await transport.close();
+        }
+      }
+      reports.push({
+        ...fixture,
+        independent_reader: legacy,
+        variant: "recordless-legacy-pinned",
+        effective_language: `MIPS:${
+          byteOrder === "little" ? "LE" : "BE"
+        }:32:default`,
+        procedures: "verified-through-snapshot",
+        checks: [
+          "recordless header admitted with inferred o32 assumption",
+          "pinned 32-bit language checked after import",
+          "legacy limitations retained in Evidence",
+          "snapshot round-trip and profile parameters",
+        ],
+        status: "passed",
+      });
+    }
+  }
   for (const [byteOrder, floatAbi] of psp
     ? [["little", "hard"]]
     : [

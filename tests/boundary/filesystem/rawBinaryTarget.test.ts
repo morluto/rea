@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -7,6 +13,37 @@ import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 describe("raw-binary admission", () => {
+  it("preserves the requested raw path for Windows reparse admission", async () => {
+    const directory = await createTestTempDirectory("rea-raw-linked-");
+    const actual = join(directory, "actual");
+    const linked = join(directory, "linked");
+    await mkdir(actual);
+    const bytes = Buffer.from("a90160", "hex");
+    await writeFile(join(actual, "fixture.bin"), bytes);
+    await symlink(
+      actual,
+      linked,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const requested = join(linked, "fixture.bin");
+    const canonical = await realpath(requested);
+    const target = await parseBinaryTarget("linked/fixture.bin", {
+      cwd: directory,
+      formatHint: "raw-binary",
+      architecture: "6502",
+      entryPoint: "0x8000",
+    });
+    expect(target).toMatchObject({
+      ok: true,
+      value: {
+        path: canonical,
+        sourcePath: process.platform === "win32" ? requested : canonical,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        format: "raw-binary",
+        architecture: "6502",
+      },
+    });
+  });
   it("requires explicit architecture and entry even with a misleading suffix", async () => {
     const directory = await createTestTempDirectory("rea-raw-target-");
     const path = join(directory, "fixture.js");

@@ -52,8 +52,10 @@ try {
     "bridge/ghidra/ReaGhidraBridge.java",
     "native/windows/build/manifest.json",
     "native/windows/build/rea-windows-x64.node",
+    "dist/android/JadxWorkspaceRoot.js",
     "dist/main.js",
     "dist/cli.js",
+    "scripts/rea-android-workspace-guardian.mjs",
     "scripts/rea.mjs",
   ])
     if (!packagedPaths.has(required))
@@ -108,6 +110,7 @@ try {
     HOME: home,
     USERPROFILE: home,
     APPDATA: join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: join(home, "AppData", "Local"),
     CLAUDE_CONFIG_DIR: home,
     CODEX_HOME: join(home, ".codex"),
     XDG_CONFIG_HOME: join(home, ".config"),

@@ -472,10 +472,9 @@ process.stdout.write(JSON.stringify({executable:basename(process.execPath),abiVe
         signal: AbortSignal.timeout(15_000),
       });
       assert.equal(String(ready).trim(), "ready");
-      await assert.rejects(
-        retryRuntime.close(),
-        /owned cleanup object|Delete owned object/u,
-      );
+      // The reader denies delete sharing. Cleanup must retain ownership when
+      // its handle-relative open receives ERROR_SHARING_VIOLATION (32).
+      await assert.rejects(retryRuntime.close(), { win32Code: 32 });
       assert.equal(
         windowsPrivateRuntime(retryRuntime.observation.path),
         retryRuntime,

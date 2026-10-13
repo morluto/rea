@@ -25,6 +25,7 @@ export class FakeSetupHost implements SetupHost {
     return skillDestinations(this.homeDirectory, clientIds);
   }
   readonly registrationCommand: readonly string[];
+  registrationCommandBlocker?: string;
   nodeVersion = "24.18.0";
   version: string | undefined = "14.5";
   distribution: LinuxDistribution | undefined;

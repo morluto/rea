@@ -30,6 +30,7 @@ import {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { InspectEvmInterfaceInput } from "../domain/evm/evmInterface.js";
 import { evmInterfaceSchema } from "../domain/evm/evmInterface.js";
+import { solidityMetadataSchema } from "../domain/evm/solidityMetadata.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -67,6 +68,7 @@ const replySchema = z.discriminatedUnion("ok", [
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.number().int().nonnegative(),
       hex: z.string().regex(/^(?:[a-f0-9]{2})*$/),
+      metadata: solidityMetadataSchema.optional(),
     }),
     raw: evmoleInterfaceReplySchema,
   }),
@@ -331,6 +333,7 @@ export class EvmoleInterfaceProvider implements EvmInterfacePort {
         "Recovered selectors, argument strings and mutability are upstream inferences, not verified ABI signatures or names. Empty results do not prove the absence of callable dispatch.",
         "Bytecode kind, hardfork and deployed-contract authenticity are unknown. This inspection performs no target runtime execution, chain/RPC lookup or network request.",
         "Original carrier and decoded bytecode SHA-256 are distinct identities; SHA-256 is not the Ethereum Keccak code hash.",
+        "Terminal CBOR metadata is an independently decoded candidate, not proof of Solidity origin, source identity or deployment. Nested or unsupported values retain explicit unavailable interpretation and original byte ranges.",
         "The owned worker has a 256 MiB JavaScript heap, 3 GiB virtual address-space limit and 30-second deadline. Virtual address space is distinct from resident memory; limits fail without partial success.",
       ];
       const validated = evmInterfaceSchema.safeParse({

@@ -7,6 +7,7 @@ import {
   aotFixtureImage,
   engineFixtureImage,
   REFERENCE_HASH,
+  appendElfRanges,
 } from "../../src/flutter/FlutterBuild.fixture.js";
 import {
   createFlutterApk,
@@ -157,5 +158,90 @@ cliTest(
         .filter((section) => section.name.endsWith("Data"))
         .map((section) => section.kind),
     ).toEqual([4, 4]);
+  },
+);
+
+cliTest(
+  "CLI and MCP qualify conflicting load mappings and bounded ELF notes",
+  async ({ cli }) => {
+    const note = Buffer.from(
+      "040000000800000003000000474e55000123456789abcdef",
+      "hex",
+    );
+    const engine = engineFixtureImage({
+      notes: Buffer.concat([note, Buffer.alloc(2000)]),
+    });
+    const denseEngine = appendElfRanges(
+      engine,
+      "program",
+      Array.from({ length: 2000 }, (_, index) => ({
+        type: 4,
+        offset: 0x400 + note.length + index,
+        size: 1,
+      })),
+    );
+    const { call } = await connectLocalToolsMcp();
+    for (const conflict of [false, true]) {
+      const image = appendElfRanges(aotFixtureImage(), "program", [
+        {
+          type: 1,
+          address: 0x2010,
+          offset: conflict ? 0x1010 : 0x2010,
+          size: 4,
+        },
+      ]);
+      const path = await createFlutterApk(`load-${String(conflict)}.apk`, [
+        { path: "lib/x86_64/libapp.so", bytes: image },
+        {
+          path: "lib/x86_64/libflutter.so",
+          bytes: conflict ? denseEngine : engine,
+        },
+      ]);
+      for (const name of [
+        "inspect_dart_aot",
+        "identify_flutter_build",
+      ] as const) {
+        const result = await cli.run({
+          arguments: [name.replaceAll("_", "-"), path, "--json"],
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = toolContract(name).outputSchema.parse(result.json);
+        const response = await call(name, { path });
+        expect(response.isError, JSON.stringify(response)).not.toBe(true);
+        const mcp = parseEvidence(response.structuredContent);
+        expect(mcp.normalized_result).toEqual(evidence.normalized_result);
+        expect(mcp.evidence_id).toBe(evidence.evidence_id);
+        expect(mcp.subject).toEqual(evidence.subject);
+        expect(mcp.limitations).toEqual(evidence.limitations);
+        expect(evidence.normalized_result.coverage).toBe(
+          conflict ? "partial" : "complete",
+        );
+        if (name === "inspect_dart_aot") {
+          const facts = flutterResultSchemas[name].parse(
+            evidence.normalized_result,
+          );
+          expect(facts.libapp.sections).toHaveLength(conflict ? 3 : 4);
+          expect(facts.string_pool.coverage).toBe(
+            conflict ? "partial" : "complete",
+          );
+          if (conflict) {
+            expect(facts.string_pool.package_uris).toEqual([]);
+            expect(evidence.limitations.join("\n")).toContain(
+              "conflicting PT_LOAD",
+            );
+          }
+        } else {
+          const facts = flutterResultSchemas[name].parse(
+            evidence.normalized_result,
+          );
+          expect(facts.abis[0]?.libflutter).toMatchObject({
+            build_id: conflict ? null : "0123456789abcdef",
+            build_id_candidates: ["0123456789abcdef"],
+          });
+          if (conflict)
+            expect(evidence.limitations.join("\n")).toContain("note-range");
+        }
+      }
+    }
   },
 );

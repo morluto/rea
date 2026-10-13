@@ -29,6 +29,35 @@ const itWithLinuxCaptureCapability =
   process.platform === "linux" ? itWithCaptureCapability : it.skip;
 
 itWithCaptureCapability(
+  "captures a POSIX PATH executable with a literal backslash in its basename",
+  async () => {
+    const root = await createTestTempDirectory("rea-process-backslash-name-");
+    const bin = join(root, "bin");
+    await mkdir(bin);
+    const command = "selected\\node";
+    const selected = join(bin, command);
+    await symlink(process.execPath, selected);
+    const scenario = parseProcessScenario({
+      executable: command,
+      working_directory: root,
+      environment: { PATH: bin },
+      arguments: ["-e", 'process.stdout.write("selected executable")'],
+      settle_ms: 100,
+    });
+    const result = await captureProcessScenario(scenario);
+    if (!result.ok) throw result.error;
+    expect(result.value.frames.map(({ data }) => data).join("")).toBe(
+      "selected executable",
+    );
+    expect(result.value.exit).toMatchObject({ code: 0, reason: "exited" });
+    expect(result.value.cleanup).toMatchObject({
+      owned_process_group: "verified",
+      temporary_root: "removed",
+    });
+  },
+);
+
+itWithCaptureCapability(
   "preserves numeric reports and original normalized PTY text in Evidence",
   async () => {
     const root = await createTestTempDirectory("rea-process-numeric-report-");

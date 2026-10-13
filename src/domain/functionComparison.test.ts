@@ -44,6 +44,16 @@ const dossier = (
     referenced_names: [],
     native_api: null,
     native_value_flow: null,
+    facet_availability: {
+      pseudocode: { available: true },
+      assembly: { available: true },
+      comments: { available: true },
+      callers: { available: true },
+      callees: { available: true },
+      references: { available: true },
+      strings_names: { available: true },
+      cfg: { available: true },
+    },
     basic_blocks: [
       {
         start: base,
@@ -118,34 +128,116 @@ const observe = (
     },
   );
 
-describe("function comparison normalized identity", () => {
-  it("keeps differing generated names ambiguous and stable names mismatched", () => {
-    const named = (base: "0x1000" | "0x2000", name: string) =>
-      functionDossierSchema.parse({
-        ...dossier("return 0;", base),
-        procedure: {
-          ...procedure(base, name),
-          signature: "int helper(void)",
-          locals: [],
-        },
-      });
-    const generated = compareFunctions(
-      observe("1", named("0x1000", "sub_1000")),
-      observe("2", named("0x2000", "sub_2000")),
-    );
-    expect(generated.function_match.status).toBe("ambiguous");
-    expect(generated.status).toBe("unknown");
-    expect(
-      generated.dimensions.find(({ dimension }) => dimension === "identity"),
-    ).toMatchObject({ status: "unknown" });
+const rejectsMalformedFacetAvailability = (): void => {
+  expect(
+    functionDossierSchema.safeParse({
+      ...dossier("return 0;", "0x1000"),
+      facet_availability: { cfg: { available: false, reason: "" } },
+    }).success,
+  ).toBe(false);
+  expect(
+    functionDossierSchema.safeParse({
+      ...dossier("return 0;", "0x1000"),
+      facet_availability: { cfg: undefined },
+    }).success,
+  ).toBe(false);
+};
 
-    const stable = compareFunctions(
-      observe("3", named("0x1000", "firstFunction")),
-      observe("4", named("0x2000", "secondFunction")),
+const keepsGeneratedNamesAmbiguous = (): void => {
+  const named = (base: "0x1000" | "0x2000", name: string) =>
+    functionDossierSchema.parse({
+      ...dossier("return 0;", base),
+      procedure: {
+        ...procedure(base, name),
+        signature: "int helper(void)",
+        locals: [],
+      },
+    });
+  const generated = compareFunctions(
+    observe("1", named("0x1000", "sub_1000")),
+    observe("2", named("0x2000", "sub_2000")),
+  );
+  expect(generated.function_match.status).toBe("ambiguous");
+  expect(generated.status).toBe("unknown");
+  expect(
+    generated.dimensions.find(({ dimension }) => dimension === "identity"),
+  ).toMatchObject({ status: "unknown" });
+
+  const stable = compareFunctions(
+    observe("3", named("0x1000", "firstFunction")),
+    observe("4", named("0x2000", "secondFunction")),
+  );
+  expect(stable.function_match.status).toBe("mismatched");
+  expect(stable.status).toBe("changed");
+};
+
+describe("function comparison normalized identity", () => {
+  it("retains unresolved call details alongside missing facet coverage", () => {
+    const value: Record<string, unknown> = {
+      ...dossier("return 0;", "0x1000"),
+      unresolved_calls: [{ address: "0x1010", reason: "Unknown indirect target" }],
+    };
+    delete value.facet_availability;
+    const legacy = observe("a", functionDossierSchema.parse(value), "ida");
+    const calls = compareFunctions(legacy, legacy).dimensions.find(
+      ({ dimension }) => dimension === "calls",
     );
-    expect(stable.function_match.status).toBe("mismatched");
-    expect(stable.status).toBe("changed");
+    expect(calls).toMatchObject({
+      status: "unknown",
+      limitations: expect.arrayContaining([
+        "Left: Unresolved call at 0x1010: Unknown indirect target",
+        "Left: callers: Provider did not declare coverage for this empty facet.",
+      ]),
+    });
   });
+  it("keeps empty legacy facets without coverage declarations unknown", () => {
+    const value: Record<string, unknown> = {
+      ...dossier("return 0;", "0x1000"),
+      basic_blocks: [],
+    };
+    delete value.facet_availability;
+    const legacy = observe("a", functionDossierSchema.parse(value), "ida");
+    const result = compareFunctions(legacy, legacy);
+    for (const dimension of [
+      "comments",
+      "references",
+      "strings_names",
+      "cfg",
+      "calls",
+    ]) {
+      expect(
+        result.dimensions.find((item) => item.dimension === dimension),
+      ).toMatchObject({ status: "unknown" });
+    }
+  });
+  it("keeps unavailable facets unknown even when one side supplies values", () => {
+    const left = observe(
+      "a",
+      functionDossierSchema.parse({
+        ...dossier("return 0;", "0x1000"),
+        facet_availability: {
+          comments: { available: false, reason: "Not collected" },
+        },
+        comments: [
+          { address: "0x1000", kind: "comment", text: "partial record" },
+        ],
+      }),
+    );
+    const right = observe("b", dossier("return 0;", "0x2000"));
+    expect(
+      compareFunctions(left, right).dimensions.find(
+        ({ dimension }) => dimension === "comments",
+      ),
+    ).toMatchObject({ status: "unknown", left_count: null, right_count: null });
+  });
+  it(
+    "rejects malformed facet availability instead of treating it as absence",
+    rejectsMalformedFacetAvailability,
+  );
+  it(
+    "keeps differing generated names ambiguous and stable names mismatched",
+    keepsGeneratedNamesAmbiguous,
+  );
 
   it.each(["sub_deallocate", "sub_deadbeef_handler", "fcn.dispatch"])(
     "recognizes the explicit symbol %s without a generated-name prefix false positive",
@@ -716,6 +808,236 @@ describe("function comparison identity and malformed CFG", () => {
   });
 });
 
+const withLiterals = (base: "0x1000" | "0x2000", values: readonly string[]) =>
+  functionDossierSchema.parse({
+    ...dossier("return 0;", base),
+    swift_string_literals: values.map((value) => ({
+      source_address: base,
+      value,
+      representation: "small" as const,
+      address: null,
+      registers: ["x0", "x1"] as const,
+      words: ["0x0", "0xe"] as const,
+    })),
+  });
+const stringsDimension = (
+  leftDigit: string,
+  left: ReturnType<typeof withLiterals> | ReturnType<typeof dossier>,
+  rightDigit: string,
+  right: ReturnType<typeof withLiterals> | ReturnType<typeof dossier>,
+) =>
+  compareFunctions(
+    observe(leftDigit, left),
+    observe(rightDigit, right),
+  ).dimensions.find(({ dimension }) => dimension === "strings_names");
+
+describe("function comparison Swift string literals", () => {
+  it("treats differing decoded literals as a strings and names change", () => {
+    expect(
+      stringsDimension(
+        "1",
+        withLiterals("0x1000", ["SleepDisabled"]),
+        "2",
+        withLiterals("0x2000", ["Holding awake"]),
+      ),
+    ).toMatchObject({ status: "changed" });
+  });
+
+  it("matches the same decoded literal after the function is relocated", () => {
+    expect(
+      stringsDimension(
+        "3",
+        withLiterals("0x1000", ["SleepDisabled"]),
+        "4",
+        withLiterals("0x2000", ["SleepDisabled"]),
+      ),
+    ).toMatchObject({ status: "unchanged" });
+  });
+
+  it("keeps strings and names unknown when only one dossier recorded Swift literals", () => {
+    expect(
+      stringsDimension(
+        "5",
+        withLiterals("0x1000", []),
+        "6",
+        dossier("return 0;", "0x2000"),
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      limitations: [
+        "Swift String literal coverage differs or is partial; referenced strings and names match, and complete coverage does not establish a differing literal.",
+      ],
+    });
+  });
+
+  it("reports a referenced name change even when Swift literal coverage differs", () => {
+    const named = functionDossierSchema.parse({
+      ...dossier("return 0;", "0x2000"),
+      referenced_names: [
+        { address: "0x3000", value: "helper", source_address: "0x2000" },
+      ],
+    });
+    expect(
+      stringsDimension("7", withLiterals("0x1000", []), "8", named),
+    ).toMatchObject({ status: "changed" });
+  });
+});
+
+describe("function comparison partial Swift literal coverage", () => {
+  it("does not equate a partial literal record with a complete one", () => {
+    const partial = functionDossierSchema.parse({
+      ...withLiterals("0x2000", ["SleepDisabled"]),
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x2000",
+          representation: "large",
+          address: "0x3000",
+          byte_length: 64,
+          reason: "capacity",
+          registers: ["x0", "x1"],
+          words: ["0xd000000000000040", "0x8000000000002fe0"],
+        },
+      ],
+    });
+    expect(
+      stringsDimension(
+        "9",
+        withLiterals("0x1000", ["SleepDisabled"]),
+        "a",
+        partial,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it("reports a literal that a complete dossier shows absent at a site the partial one decoded", () => {
+    const partial = functionDossierSchema.parse({
+      ...withLiterals("0x2000", ["SleepDisabled"]),
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x2004",
+          representation: "small",
+          address: null,
+          byte_length: 4,
+          reason: "capacity",
+          registers: ["x0", "x1"],
+          words: ["0x732f4220", "0xe400000000000000"],
+        },
+      ],
+    });
+    expect(
+      stringsDimension("d", withLiterals("0x1000", []), "e", partial),
+    ).toMatchObject({ status: "changed" });
+  });
+
+  it("does not interpret an unexamined path as a missing literal at a retained site", () => {
+    const partial = functionDossierSchema.parse({
+      ...withLiterals("0x2000", ["A"]),
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x2004",
+          representation: "small",
+          address: null,
+          byte_length: 0,
+          reason: "capacity",
+          registers: ["x0", "x1"],
+          words: ["0x0", "0xe000000000000000"],
+        },
+      ],
+    });
+    const complete = withLiterals("0x1000", ["A", "B"]);
+    expect(stringsDimension("1", complete, "2", partial)).toMatchObject({
+      status: "unknown",
+    });
+    expect(stringsDimension("3", partial, "4", complete)).toMatchObject({
+      status: "unknown",
+    });
+    expect(
+      stringsDimension("5", withLiterals("0x1000", []), "6", partial),
+    ).toMatchObject({ status: "changed" });
+  });
+
+  it("treats an omission record without decoded literals as partial coverage", () => {
+    const omissionOnly = functionDossierSchema.parse({
+      ...dossier("return 0;", "0x2000"),
+      swift_string_literal_omissions: [
+        {
+          source_address: "0x2004",
+          representation: "small",
+          address: null,
+          byte_length: 4,
+          reason: "capacity",
+          registers: ["x0", "x1"],
+          words: ["0x732f4220", "0xe400000000000000"],
+        },
+      ],
+    });
+    expect(
+      stringsDimension("f", dossier("return 0;", "0x1000"), "0", omissionOnly),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it("keeps different retained representations unknown when both dossiers are partial", () => {
+    const omission = {
+      source_address: "0x1004",
+      representation: "small",
+      address: null,
+      byte_length: 4,
+      reason: "capacity",
+      registers: ["x0", "x1"],
+      words: ["0x732f4220", "0xe400000000000000"],
+    } as const;
+    const small = functionDossierSchema.parse({
+      ...withLiterals("0x1000", ["SleepDisabled"]),
+      swift_string_literal_omissions: [omission],
+    });
+    const large = functionDossierSchema.parse({
+      ...dossier("return 0;", "0x2000"),
+      swift_string_literals: [
+        {
+          source_address: "0x2000",
+          value: "SleepDisabled",
+          representation: "large",
+          address: "0x3000",
+          registers: ["x0", "x1"],
+          words: ["0xd00000000000000d", "0x8000000000002fe0"],
+        },
+      ],
+      swift_string_literal_omissions: [
+        { ...omission, source_address: "0x2004" },
+      ],
+    });
+    expect(stringsDimension("1", small, "2", large)).toMatchObject({
+      status: "unknown",
+    });
+  });
+
+  it("keeps different retained literals unknown when both dossiers are partial", () => {
+    const partial = (base: "0x1000" | "0x2000", value: string) =>
+      functionDossierSchema.parse({
+        ...withLiterals(base, [value]),
+        swift_string_literal_omissions: [
+          {
+            source_address: base === "0x1000" ? "0x1004" : "0x2004",
+            representation: "large",
+            address: "0x3000",
+            byte_length: 64,
+            reason: "capacity",
+            registers: ["x0", "x1"],
+            words: ["0xd000000000000040", "0x8000000000002fe0"],
+          },
+        ],
+      });
+    expect(
+      stringsDimension(
+        "b",
+        partial("0x1000", "SleepDisabled"),
+        "c",
+        partial("0x2000", "Holding awake"),
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+});
+
 const expectInlineComparisonEvidence = (
   result: ReturnType<typeof compareFunctions>,
 ): void => {
@@ -769,3 +1091,51 @@ const expectFunctionDimensionAlgebra = (
     }).success,
   ).toBe(false);
 };
+
+it.each([
+  { match: "mismatched", changedDimensions: false, expected: "changed" },
+  { match: "ambiguous", changedDimensions: false, expected: "unknown" },
+  { match: "ambiguous", changedDimensions: true, expected: "unknown" },
+] as const)(
+  "validates $match match precedence with changed dimensions=$changedDimensions",
+  ({ match, changedDimensions, expected }) => {
+    const result = compareFunctions(
+      FUNCTION_COMPARISON_EXAMPLE.left,
+      changedDimensions
+        ? FUNCTION_COMPARISON_EXAMPLE.right
+        : FUNCTION_COMPARISON_EXAMPLE.left,
+    );
+    const candidate = {
+      ...result,
+      function_match: {
+        status: match,
+        method: "explicit",
+        left_name: "main",
+        right_name: "other",
+      },
+    };
+    expect(
+      functionComparisonResultSchema.safeParse({
+        ...candidate,
+        status: expected,
+      }).success,
+    ).toBe(true);
+    for (const status of ["unchanged", "changed", "unknown"] as const) {
+      if (status === expected) continue;
+      const parsed = functionComparisonResultSchema.safeParse({
+        ...candidate,
+        status,
+      });
+      expect(parsed.success).toBe(false);
+      if (!parsed.success)
+        expect(parsed.error.issues).toMatchObject([
+          {
+            path: ["status"],
+            code: "custom",
+            message:
+              "Function comparison status contradicts its dimensions or function match.",
+          },
+        ]);
+    }
+  },
+);

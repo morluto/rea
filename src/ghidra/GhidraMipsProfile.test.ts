@@ -10,10 +10,17 @@ import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import {
+  ghidraMipsProfileParameters,
+  ghidraPinnedMipsLanguage,
+} from "./GhidraMipsProfile.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
-import { ghidraProfileLanguageOverride } from "./GhidraAnalysisProfile.js";
+import {
+  ghidraPinnedLanguage,
+  ghidraProfileLanguageOverride,
+} from "./GhidraAnalysisProfile.js";
 
 // Fake installation inspection tests admission/profile contracts, not Ghidra.
 const host: GhidraInstallationHost = {
@@ -161,6 +168,126 @@ describe("bounded Ghidra MIPS admission", () => {
   });
 });
 
+describe("recordless legacy MIPS32 admission", () => {
+  it("keeps recordless relocatable objects off the inferred-o32 lane", async () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    const object = target({
+      flags: 0x50000001,
+      abiFlags: null,
+      type: 1,
+    });
+    expect(ghidra.inspectTargetSupport(object)).toMatchObject({
+      status: "unsupported",
+    });
+    const resolved = await ghidra.resolveAnalysisProfile(object);
+    expect(resolved.ok).toBe(false);
+  });
+
+  it.each([
+    [{ flags: 0x50000001 }, "EF_MIPS_ARCH_32"],
+    [{ flags: 0x70000001 }, "EF_MIPS_ARCH_32R2"],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
+    "admits a recordless legacy header (%s) with a pinned 32-bit language",
+    async (change) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      const little = target({ ...change, abiFlags: null });
+      const big = target({ ...change, abiFlags: null, byteOrder: "big" });
+      expect(ghidra.inspectTargetSupport(little).status).toBe("supported");
+      expect(ghidra.inspectTargetSupport(big).status).toBe("supported");
+      const resolved = await ghidra.resolveAnalysisProfile(little);
+      if (!resolved.ok) throw resolved.error;
+      expect(resolved.value.profile?.parameters).toMatchObject({
+        mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+        mips_abi_basis: "inferred-o32-assumption-v1",
+        language_id: "MIPS:LE:32:default",
+        compiler_spec_id: "default",
+        language_selection: "provider-pinned-v1",
+      });
+      const resolvedBig = await ghidra.resolveAnalysisProfile(big);
+      if (!resolvedBig.ok) throw resolvedBig.error;
+      expect(resolvedBig.value.profile?.parameters).toMatchObject({
+        language_id: "MIPS:BE:32:default",
+      });
+    },
+  );
+
+  it("requires an inspected absence; a merely unobserved record stays refused", () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    const withRecord = target({ flags: 0x50000001 }) as BinaryTarget & {
+      mips: MipsElfMetadata;
+    };
+    const { abiFlags: _record, ...unobservedMips } = withRecord.mips;
+    void _record;
+    expect(
+      ghidra.inspectTargetSupport({
+        ...withRecord,
+        mips: unobservedMips,
+      } as BinaryTarget),
+    ).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringContaining("recordless legacy header"),
+    });
+  });
+
+  it.each([
+    [{ flags: 0x50000021 }, "n32"],
+    [{ flags: 0x50000041 }, "EF_MIPS_ABI_ON32"],
+    [{ flags: 0x50000101 }, "EF_MIPS_32BITMODE"],
+    [{ flags: 0x70000101 }, "EF_MIPS_32BITMODE"],
+    [
+      { flags: 0x50001001 },
+      "EF_MIPS_ARCH_32R2 for headers that declare an ABI",
+    ],
+    [{ flags: 0x50000201 }, "EF_MIPS_FP64"],
+    [{ flags: 0x50000401 }, "EF_MIPS_NAN2008"],
+    [{ flags: 0x60000001 }, "32R2"],
+    [
+      {
+        flags: 0x50000001,
+        limitations: [
+          "MIPS section header table at file offset 96 extends beyond the captured file: examined 2 of 5 complete headers. ABI declarations in unavailable headers remain unknown.",
+        ],
+      },
+      "complete ABI-record inspection",
+    ],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
+    "keeps refusing unverified recordless variants %j",
+    (change, reason) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      expect(
+        ghidra.inspectTargetSupport(target({ ...change, abiFlags: null })),
+      ).toMatchObject({
+        status: "unsupported",
+        reason: expect.stringContaining(reason),
+      });
+    },
+  );
+
+  it("a caller-selected language wins over the provider pin", () => {
+    const parameters = ghidraMipsProfileParameters(
+      target({ flags: 0x50000001, abiFlags: null }),
+      { languageId: "MIPS:LE:32:default", compilerSpecId: "default" },
+    );
+    expect(parameters.language_selection).toBeUndefined();
+    expect(parameters.language_id).toBeUndefined();
+    expect(parameters).toMatchObject({
+      mips_support_lane: "elf32-exec-arch32-legacy-pinned-v1",
+    });
+  });
+
+  it("reads the pinned import language back only from pinned profiles", () => {
+    const pinned = ghidraMipsProfileParameters(
+      target({ flags: 0x50000001, abiFlags: null }),
+    );
+    expect(ghidraPinnedMipsLanguage(pinned)).toEqual({
+      languageId: "MIPS:LE:32:default",
+      compilerSpecId: "default",
+    });
+    const standard = ghidraMipsProfileParameters(target());
+    expect(ghidraPinnedMipsLanguage(standard)).toBeUndefined();
+  });
+});
+
 const report: GhidraMipsSoftFloatReport = {
   policy: "o32-soft-float-prototype-v1",
   functions: 5,
@@ -217,6 +344,56 @@ const session = async (
     client: ghidra.createClient(value, resolved.value.profile),
   };
 };
+
+describe("legacy profile bindings", () => {
+  it("refuses a legacy endian pin committed for a different target", async () => {
+    const { counts, client } = await session(
+      target({ flags: 0x50000001, abiFlags: null, byteOrder: "big" }),
+      undefined,
+      target({ flags: 0x50000001, abiFlags: null, byteOrder: "little" }),
+    );
+    expect((await client.execute("health", {})).ok).toBe(false);
+    expect(counts.starts).toBe(0);
+  });
+  it.each([0x50000201, 0x50000401, 0x54000001, 0x50910001])(
+    "refuses unsupported same-endian legacy flags %i before startup",
+    async (flags) => {
+      const value = target({ flags, abiFlags: null });
+      expect(ghidraPinnedLanguage(value)).toBeUndefined();
+      const { counts, client } = await session(
+        value,
+        undefined,
+        target({ flags: 0x50000001, abiFlags: null }),
+      );
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect(counts.starts).toBe(0);
+    },
+  );
+  const unpinnedTargets: BinaryTarget[] = [
+    target(),
+    {
+      path: "/fixture.elf",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "elf",
+      architecture: "x86_64",
+      availableArchitectures: ["x86_64"],
+    },
+  ];
+  it.each(unpinnedTargets)(
+    "refuses a pinned profile for an unpinned target $architecture",
+    async (value) => {
+      expect(ghidraPinnedLanguage(value)).toBeUndefined();
+      const { counts, client } = await session(
+        value,
+        undefined,
+        target({ flags: 0x50000001, abiFlags: null }),
+      );
+      expect((await client.execute("health", {})).ok).toBe(false);
+      expect(counts.starts).toBe(0);
+    },
+  );
+});
 
 describe("MIPS16 shared-image profile", () => {
   const shared = (change: Partial<MipsElfMetadata> = {}) =>

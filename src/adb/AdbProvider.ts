@@ -1623,17 +1623,15 @@ export class AdbProvider {
       { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
       signal,
     );
-    let deviceExists: boolean;
-    if (existsProbe.ok) deviceExists = true;
-    else if (existsProbe.error instanceof AnalysisProtocolError)
-      deviceExists = false;
-    else if (existsProbe.error instanceof AnalysisTimeoutError)
+    // `test -e` exits nonzero with no adb diagnosis when the path is absent.
+    // Any other probe failure leaves existence unknown, so it is reported as
+    // is rather than read as an existing path or followed by a push.
+    if (
+      !existsProbe.ok &&
+      !(existsProbe.error instanceof AnalysisProtocolError)
+    )
       return existsProbe;
-    else if (existsProbe.error instanceof AnalysisCancelledError)
-      return existsProbe;
-    else if (existsProbe.error instanceof AnalysisResourceConstraintError)
-      return existsProbe;
-    else deviceExists = true; // authorization/refusal states surface on push instead
+    const deviceExists = existsProbe.ok;
     if (deviceExists && !input.overwrite)
       return err(
         new AnalysisOutputError(

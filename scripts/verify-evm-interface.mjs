@@ -225,6 +225,26 @@ try {
       for (const mode of ["cli", "mcp"]) {
         const report = await inspect(mode, path, encoding);
         assert.equal(report.bytecode.hex, hex);
+        assert.equal(report.bytecode.metadata.status, "decoded");
+        assert.deepEqual(report.bytecode.metadata.compiler_version, {
+          representation: "release-bytes",
+          value: "0.8.30",
+        });
+        assert.equal(
+          report.bytecode.metadata.bytecode_offset +
+            report.bytecode.metadata.cbor_bytes +
+            2,
+          Buffer.from(hex, "hex").length,
+        );
+        assert.ok(
+          report.bytecode.metadata.entries.some(
+            ({ key, value }) =>
+              key.kind === "text" &&
+              key.value === "solc" &&
+              value.kind === "bytes" &&
+              value.value === "00081e",
+          ),
+        );
         assert.deepEqual(
           report.functions
             .filter(({ dispatch }) => dispatch === "abi")

@@ -72,9 +72,13 @@ debugger context is `observed`.
 
 Initial Linux x64 limits: 32 MiB input, 64 MiB decoder reply, 1 MiB diagnostics per
 stage, 30 seconds owned wall deadline per stage, 3 GiB address-space soft ceiling
-and 30 seconds CPU soft ceiling. Tighter inherited soft/hard limits are retained;
-hard limits are not raised. Complete oversized results fail explicitly. These
-process limits do not constitute a sandbox for caller-supplied engine code.
+and 30 seconds CPU soft ceiling. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the input
+bound alone, up to 1 GiB, and returns `provider_unavailable` when it is not a
+decimal integer in range; the reply, diagnostic and deadline bounds stay fixed, so a
+large core that outruns them still fails explicitly instead of partially. Tighter
+inherited soft/hard limits are retained; hard limits are not raised. Complete
+oversized results fail explicitly. These process limits do not constitute a sandbox
+for caller-supplied engine code.
 
 Resource exit statuses need matching private failure-branch markers. Unmarked
 launcher failures retain their actual status/output and unknown resource cause.

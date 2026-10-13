@@ -12,12 +12,13 @@ import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+  NATIVE_FAILURE_DIAGNOSTIC_BYTES,
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { err, ok } from "../../../../src/domain/result.js";
-import { parseLipoArchitectures } from "../../../../src/native/parsers/lipo.js";
+import { parseLipoOutput } from "../../../../src/native/parsers/lipo.js";
 import { parseCodeSignature } from "../../../../src/native/parsers/codesign.js";
 import { prepareProcessOwnershipInspection } from "../../../../src/process/ProcessOwnershipObservation.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -381,6 +382,36 @@ describe("native command failure capture and limits", () => {
     });
   });
 
+  it("bounds both failure streams at a UTF-8 boundary while keeping their totals", async () => {
+    const runner = new XcrunCommandRunner({}, () =>
+      Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
+    );
+    // "é" is two bytes and straddles the excerpt boundary, so it is dropped whole.
+    const stdout = `${"x".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES - 1)}é${"y".repeat(1024)}`;
+    const stderr = "z".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES + 1024);
+    // Build the output in the child: one Linux argument is limited to 128 KiB.
+    const result = await runner.run(
+      "file",
+      [
+        "-e",
+        `const stdout = "x".repeat(${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES - 1)}) + "\u00e9" + "y".repeat(1024); const stderr = "z".repeat(${String(NATIVE_FAILURE_DIAGNOSTIC_BYTES + 1024)}); process.stdout.write(stdout, () => process.stderr.write(stderr, () => process.exit(3)));`,
+      ],
+      {},
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.reason).toBe("nonzero-exit");
+    expect(result.error.capture).toMatchObject({
+      stdout: "x".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES - 1),
+      stderr: "z".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES),
+      stdoutBytes: Buffer.byteLength(stdout),
+      stderrBytes: Buffer.byteLength(stderr),
+      exitCode: 3,
+      truncated: true,
+    });
+  });
+
   it("rejects output beyond the complete native-command budget", async () => {
     const runner = new XcrunCommandRunner({}, () =>
       Promise.resolve(ok({ path: process.execPath, sha256: "a".repeat(64) })),
@@ -404,6 +435,13 @@ describe("native command failure capture and limits", () => {
       (result.error.capture?.stdoutBytes ?? 0) +
         (result.error.capture?.stderrBytes ?? 0),
     ).toBeLessThanOrEqual(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES);
+    // The failure carries an excerpt, not the whole retained output budget.
+    expect(result.error.capture?.stdout.length).toBe(
+      NATIVE_FAILURE_DIAGNOSTIC_BYTES,
+    );
+    expect(result.error.capture?.stdoutBytes).toBeGreaterThan(
+      NATIVE_FAILURE_DIAGNOSTIC_BYTES,
+    );
   });
 });
 
@@ -834,6 +872,43 @@ describe("native signature entitlements", () => {
   });
 });
 
+/** Fail every codesign call nonzero after writing more than one excerpt. */
+class VerboseCodeSignFailureRunner extends FixtureRunner {
+  override async run(tool: string, arguments_: readonly string[]) {
+    const result = await super.run(tool, arguments_);
+    if (!result.ok || tool !== "codesign") return result;
+    const stderr = "e".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES * 2);
+    return ok({
+      ...result.value,
+      stderr,
+      stderrBytes: Buffer.byteLength(stderr),
+      exitCode: 1,
+    });
+  }
+}
+
+describe("native signature failure diagnostics", () => {
+  it("bounds accepted nonzero codesign output once it becomes a failure", async () => {
+    directory = await createTestTempDirectory("rea-signature-failure-");
+    const executable = join(directory, "fixture");
+    await writeFile(executable, "fixture");
+    const client = new NativeMacOSProvider(
+      {},
+      new VerboseCodeSignFailureRunner(),
+      "darwin",
+    ).createClient(await nativeMachoTargetForFile(executable));
+
+    const signature = await client.execute("inspect_signature", {});
+
+    if (signature.ok) throw new Error("A failed codesign run must fail");
+    expect(signature.error.capturedOutput).toMatchObject({
+      stderr: "e".repeat(NATIVE_FAILURE_DIAGNOSTIC_BYTES),
+      stderr_bytes: NATIVE_FAILURE_DIAGNOSTIC_BYTES * 2,
+      truncated: true,
+    });
+  });
+});
+
 describe("native dispatch metadata error results", () => {
   it("preserves tagged cancellation and integrity failures", async () => {
     directory = await createTestTempDirectory("rea-dispatch-errors-");
@@ -960,15 +1035,17 @@ describe("native macOS provider failures and parsing", () => {
   });
 
   it("parses thin and universal lipo fixtures", async () => {
-    expect(
-      parseLipoArchitectures(await fixture("lipo-thin.txt")),
-    ).toMatchObject([{ name: "arm64" }]);
-    expect(parseLipoArchitectures(await fixture("lipo-fat.txt"))).toMatchObject(
-      [
+    expect(parseLipoOutput(await fixture("lipo-thin.txt"))).toMatchObject({
+      format: "thin",
+      architectures: [{ name: "arm64" }],
+    });
+    expect(parseLipoOutput(await fixture("lipo-fat.txt"))).toMatchObject({
+      format: "fat",
+      architectures: [
         { name: "x86_64", file_offset: 16384, size: 4096 },
         { name: "arm64", file_offset: 32768, size: 8192 },
       ],
-    );
+    });
   });
 
   it("rejects trailing text in lipo numeric fields instead of truncating", () => {
@@ -980,7 +1057,7 @@ describe("native macOS provider failures and parsing", () => {
       "    size 0x10",
       "    align 2^14 (16384)",
     ].join("\n");
-    expect(parseLipoArchitectures(output)).toMatchObject([
+    expect(parseLipoOutput(output).architectures).toMatchObject([
       { name: "arm64", file_offset: null, size: null, alignment: 16384 },
     ]);
   });
@@ -993,10 +1070,11 @@ describe("native macOS provider failures and parsing", () => {
       "    align 2^14 (16384)",
     ].join("\n");
     expect(
-      parseLipoArchitectures(output.replace("(16384)", "(8192)"))[0]?.alignment,
+      parseLipoOutput(output.replace("(16384)", "(8192)")).architectures[0]
+        ?.alignment,
     ).toBeNull();
     expect(
-      parseLipoArchitectures(output.replace("2^14 (16384)", "2^14"))[0]
+      parseLipoOutput(output.replace("2^14 (16384)", "2^14")).architectures[0]
         ?.alignment,
     ).toBe(16384);
   });
@@ -1019,6 +1097,38 @@ describe("native macOS provider failures and parsing", () => {
       ).hardened_runtime,
     ).toBe(false);
   });
+});
+
+describe("native signature inspection target scope", () => {
+  // This provider's inspect_signature path is scoped to Mach-O targets; on
+  // another container a codesign verdict cannot see a format-level signature
+  // such as a xar pkg signature.
+  it.each([
+    {
+      path: "/fixture.pkg",
+      sha256: "0".repeat(64),
+      kind: "archive" as const,
+      format: "pkg" as const,
+    },
+    {
+      ...machoTarget("/fixture.elf"),
+      format: "elf" as const,
+    },
+  ])(
+    "refuses inspect_signature on a $format target without running codesign",
+    async (target) => {
+      const runner = new CountingRunner();
+      const result = await new NativeMacOSProvider({}, runner, "darwin")
+        .createClient(target)
+        .execute("inspect_signature", {});
+      if (result.ok) throw new Error("Expected a non-Mach-O refusal");
+      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "capability_unavailable",
+      });
+      expect(runner.calls).toBe(0);
+    },
+  );
 });
 
 class FailingRunner implements NativeCommandRunner {

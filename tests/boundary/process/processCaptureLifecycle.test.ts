@@ -196,9 +196,9 @@ itWithCaptureCapability(
         result.value.frames.map(({ at_ms }) => at_ms),
         "capture-relative frame times stay ordered and nonnegative",
       ).toEqual(
-        [...result.value.frames.map(({ at_ms }) => at_ms)].sort(
-          (left, right) => left - right,
-        ),
+        result.value.frames
+          .map(({ at_ms }) => at_ms)
+          .sort((left, right) => left - right),
       );
       expect(result.value.frames.every(({ at_ms }) => at_ms >= 0)).toBe(true);
       expect(result.value.exit.reason).toBe("exited");

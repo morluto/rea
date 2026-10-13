@@ -14,10 +14,7 @@ import {
   selectMachoArchitectureName,
 } from "./MachoArchitectureSelection.js";
 import { parseDyldSymbols } from "./parsers/dyldInfo.js";
-import {
-  parseLipoArchitectures,
-  type LipoArchitecture,
-} from "./parsers/lipo.js";
+import { parseLipoOutput, type LipoArchitecture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import { parseOtoolLoadCommands } from "./parsers/otool.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
@@ -74,7 +71,10 @@ export const inspectNativeMacho = async (
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
   if (lipo === undefined) throw new TypeError("Missing lipo capture");
-  const architectures = parseLipoArchitectures(lipo.stdout);
+  const { format, architectures } = parseLipoOutput(
+    lipo.stdout,
+    context.target.path,
+  );
   const selection = selectArchitecture(context.target, architectures);
   if (selection.status === "absent")
     return err(
@@ -145,7 +145,7 @@ export const inspectNativeMacho = async (
   const containerOffset =
     selectedArchitectureName === null
       ? undefined
-      : /^Non-fat file:/mu.test(lipo.stdout)
+      : format === "thin"
         ? 0
         : (architectures.find(({ name }) => name === selectedArchitectureName)
             ?.file_offset ?? undefined);
@@ -185,7 +185,7 @@ const normalizeMacho = (
   toInvocation: (capture: NativeCommandCapture) => NativeCommandInvocation,
   additionalLimitations: readonly string[],
   load: ReturnType<typeof parseOtoolLoadCommands>,
-  architectures: ReturnType<typeof parseLipoArchitectures>,
+  architectures: readonly LipoArchitecture[],
   artifactPath: string,
   selectedArchitecture: {
     readonly name: string | null;

@@ -2,7 +2,7 @@ REA npm dependency inventory
 Prepared from the root package-lock.json; refresh this inventory when locked dependencies change.
 License identifiers are upstream lockfile declarations, not a legal assessment.
 Runtime includes transitive and optional platform packages; development includes build, test and website tooling.
-Locked package entries: 586; runtime: 174.
+Locked package entries: 587; runtime: 175.
 Full runtime copyright/license/NOTICE texts: npm-runtime-notices.txt.
 
 @algolia/abtesting@1.25.0 | development | MIT
@@ -1430,6 +1430,11 @@ canonicalize@3.0.0 | runtime | Apache-2.0
   Package: https://www.npmjs.com/package/canonicalize/v/3.0.0
   Archive: https://registry.npmjs.org/canonicalize/-/canonicalize-3.0.0.tgz
   Integrity: sha512-yYLfHyDMIXRyRqsKBRLX023riFLpXY2YOfdtqKXZRZy9qsfOJ9U+4F9YZL7MEzL5+ziN2x2nlBvY/Voi3EBljA==
+cborg@6.1.3 | runtime | Apache-2.0
+  Lockfile path: node_modules/cborg
+  Package: https://www.npmjs.com/package/cborg/v/6.1.3
+  Archive: https://registry.npmjs.org/cborg/-/cborg-6.1.3.tgz
+  Integrity: sha512-Kb/wD/AFuVcqvVjR+HYNOjNiuhVJ2C+RWxQE2Yqq2WVlVkRjdvVLkkM6QsL3NMsBRh+rgNc+aXmcraA+X0HObQ==
 ccount@2.0.1 | development | MIT
   Lockfile path: node_modules/ccount
   Package: https://www.npmjs.com/package/ccount/v/2.0.1

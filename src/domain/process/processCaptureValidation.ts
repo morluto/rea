@@ -17,12 +17,10 @@ type RequireInvariant = (
   message: string,
 ) => void;
 
-const orderedTimestamps = (
-  values: readonly { readonly at_ms: number }[],
-): boolean =>
+const orderedTimestamps = (values: readonly number[]): boolean =>
   values.every((value, index) => {
     const previous = values[index - 1];
-    return previous === undefined || value.at_ms >= previous.at_ms;
+    return previous === undefined || value >= previous;
   });
 
 const validateCommitments = (
@@ -66,7 +64,14 @@ const validateOrdering = (
     ["rendered_frames", capture.rendered_frames],
     ["process_samples", capture.process_samples],
   ] as const)
-    require(orderedTimestamps(values), name, "timestamps must be ordered");
+    require(orderedTimestamps(
+      values.map(({ at_ms }) => at_ms),
+    ), name, "timestamps must be ordered");
+  // Interactions are dispatched in sequence, so their recorded dispatch
+  // times cannot decrease; comparison ranks a changed interaction by it.
+  require(orderedTimestamps(
+    capture.interaction_events.map(({ dispatched_at_ms }) => dispatched_at_ms),
+  ), "interaction_events", "dispatch timestamps must be ordered");
 };
 
 const validateEventJournal = (
@@ -242,7 +247,7 @@ const validateLifecycle = (
   require(capture.filesystem_checkpoints.map(({ name }) => name).join(",") ===
     "before,after_settlement", "filesystem_checkpoints", "capture must include initial and final filesystem snapshots");
   require(orderedTimestamps(
-    capture.filesystem_checkpoints,
+    capture.filesystem_checkpoints.map(({ at_ms }) => at_ms),
   ), "filesystem_checkpoints", "filesystem snapshot times must be ordered");
   require(!capture.filesystem_checkpoints.some(({ truncated }) => truncated) ||
     capture.truncated, "truncated", "filesystem snapshot truncation must propagate to the capture");

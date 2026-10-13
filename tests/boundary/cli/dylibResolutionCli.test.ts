@@ -180,14 +180,17 @@ describe("trace-dylib-resolution CLI", () => {
       // A root below a symlinked directory that points outside the bundle.
       const outside = await createTestTempDirectory("rea-dylib-outside-");
       await writeFiles(outside, { Tool: machoImage({}) });
-      await symlink(outside, join(app, "Contents/Linked"));
+      await symlink(outside, join(app, "Contents/Linked"), "dir");
       for (const [root, reason, message] of [
         ["../outside", "invalid_format", "Use a normalized path"],
         ["Contents/Info.plist", "invalid_value", "is not a Mach-O image"],
         [
           "Contents/Linked/Tool",
           "invalid_value",
-          "resolves outside the analyzed root",
+          // Windows link text is outside the POSIX dyld path representation.
+          process.platform === "win32"
+            ? "is not a regular file in the analyzed root"
+            : "resolves outside the analyzed root",
         ],
       ] as const) {
         await expectRootInputError(cli, { app, root, reason, message });
@@ -378,7 +381,8 @@ cliTest(
   },
 );
 
-describe.skipIf(process.getuid?.() === 0)(
+// This permission fixture requires POSIX mode bits and a non-root caller.
+describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "trace-dylib-resolution permissions",
   () => {
     cliTest(
@@ -510,6 +514,8 @@ cliTest(
           app,
           "--root",
           "Contents/MacOS/App",
+          "--architecture",
+          "arm64e",
           "--json",
         ],
         environment: ENVIRONMENT,
@@ -518,9 +524,7 @@ cliTest(
       const trace = dylibResolutionResultSchema.parse(
         parseEvidence(result.json).normalized_result,
       );
-      expect(
-        trace.roots.filter(({ architecture }) => architecture === "arm64e"),
-      ).toHaveLength(2);
+      expect(trace.roots).toHaveLength(2);
       const environments = trace.findings
         .filter(({ kind }) => kind === "dyld-environment-present")
         .map(({ explanation }) =>

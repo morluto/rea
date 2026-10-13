@@ -1,9 +1,5 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
-import {
-  parse as parseYaml,
-  parseDocument as parseYamlDocument,
-  stringify as stringifyYaml,
-} from "yaml";
+import { stringify as stringifyYaml } from "yaml";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -12,6 +8,10 @@ import {
   editDshDocument,
   dshClientRegistrationEntry,
 } from "./DshCordisPatch.js";
+import {
+  editHermesConfigurationYaml,
+  parseHermesConfigurationYaml,
+} from "./HermesConfigurationYaml.js";
 import {
   applyEdits,
   findNodeAtLocation,
@@ -118,7 +118,10 @@ const parseDocument = (
   if (isEmptyClientConfigurationText(text)) return {};
   // Hermes stores MCP servers in `mcp_servers` inside a YAML document.
   if (format === "hermes")
-    return requireObject(parseYaml(text), "The configuration root");
+    return requireObject(
+      parseHermesConfigurationYaml(text),
+      "The configuration root",
+    );
   // ZCode loads nonempty native files with strict JSON.parse.
   if (format === "zcode")
     return requireObject(JSON.parse(text), "The configuration root");
@@ -1419,12 +1422,11 @@ const serializeHermesConfiguration = (
     typeof servers === "object" && servers !== null
       ? (servers as Record<string, unknown>)[PRODUCT_IDENTITY.mcpServerKey]
       : undefined;
-  const yamlDocument = parseYamlDocument(originalText);
-  if (entry === undefined)
-    yamlDocument.deleteIn([serversKey, PRODUCT_IDENTITY.mcpServerKey]);
-  else yamlDocument.setIn([serversKey, PRODUCT_IDENTITY.mcpServerKey], entry);
-  // Editing REA must not reflow unrelated user prompts or other YAML scalars.
-  return yamlDocument.toString({ lineWidth: 0 });
+  return editHermesConfigurationYaml(
+    originalText,
+    [serversKey, PRODUCT_IDENTITY.mcpServerKey],
+    entry,
+  );
 };
 
 /** Build the stdio entry shape expected by one client's configuration dialect. */

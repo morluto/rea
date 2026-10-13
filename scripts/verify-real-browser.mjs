@@ -9,7 +9,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
-import { waitForBrowserDevtoolsPort } from "../dist/browser/BrowserProcessStartup.js";
+import {
+  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
+  waitForBrowserDevtoolsPort,
+} from "../dist/browser/BrowserProcessStartup.js";
 import { createBrowserScenarioProvider } from "../dist/composition/browserScenario.js";
 import {
   inspectWebPageInputSchema,
@@ -47,7 +50,6 @@ import { artifactCliEvidence, artifactMcpResult } from "./lib/artifact-e2e.mjs";
 import { verifyScenarioEnvironment } from "./lib/browser-scenario-environment-e2e.mjs";
 import { verifyScenarioStorage } from "./lib/browser-scenario-storage-e2e.mjs";
 
-const REAL_BROWSER_STARTUP_TIMEOUT_MS = 60_000;
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
 const SCENARIO_URL_SECRET_VALUE = "rea-browser-url-verifier-secret";
 process.env.REA_BROWSER_VERIFIER_SECRET = SCENARIO_SECRET_VALUE;
@@ -92,7 +94,7 @@ try {
     executable,
     activePortPath: join(profile, "DevToolsActivePort"),
     stderr: () => stderr,
-    timeoutMs: REAL_BROWSER_STARTUP_TIMEOUT_MS,
+    timeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   });
   const endpoint = `http://127.0.0.1:${String(port)}`;
   const provider = new CdpBrowserProvider();

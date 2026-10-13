@@ -1,3 +1,5 @@
+import { ChildProcess } from "node:child_process";
+import { Socket } from "node:net";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   Client,
@@ -11,6 +13,7 @@ import { z } from "zod";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
@@ -22,6 +25,12 @@ export interface IdaMcpConnection {
   readResource?(uri: string): Promise<JsonValue>;
   serverInfo(): JsonValue;
   close(): Promise<void>;
+  /**
+   * Keep a connection retained after failed cleanup from holding the host
+   * process open. A long-lived MCP server can still retry through it; a
+   * one-shot CLI exits, and the upstream proxy observes end of input.
+   */
+  detach(): void;
 }
 
 const toolResultSchema = z.object({
@@ -134,8 +143,30 @@ export const createIdaMcpConnection = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): IdaMcpConnection => {
   const client = new Client({ name: "rea-ida-provider", version: "1" });
+  let stderr = Buffer.alloc(0);
+  let stderrBytes = 0;
   const transportFailure = (cause: unknown): never => {
-    throw redactIdaTransportFailure(cause, config);
+    const failure = redactIdaTransportFailure(cause, config);
+    if (stderrBytes === 0) throw failure;
+    let start = 0;
+    // The byte tail may start inside a UTF-8 code point. Retain whole units.
+    if (stderrBytes > stderr.length)
+      while (start < stderr.length && (stderr[start]! & 0xc0) === 0x80) start++;
+    const diagnostic = redactIdaTransportFailure(
+      new Error(stderr.subarray(start).toString("utf8")),
+      config,
+    ).message;
+    throw new ProviderAdapterError("ida", "transport", {
+      cause: failure,
+      diagnostics: { reason: failure.message },
+      capturedOutput: {
+        stdout: "",
+        stderr: diagnostic,
+        truncated: stderrBytes > stderr.length - start,
+        stdout_bytes: 0,
+        stderr_bytes: stderrBytes,
+      },
+    });
   };
   const transport =
     "command" in config
@@ -161,9 +192,15 @@ export const createIdaMcpConnection = (
       : new StreamableHTTPClientTransport(new URL(config.url), {
           requestInit: { headers: config.headers, redirect: "error" },
         });
-  // Drain proxy diagnostics without persisting ambient environment or transport credentials.
+  // Keep a bounded diagnostic tail for genuine failures; never persist ambient variables.
   if (transport instanceof StdioClientTransport)
-    transport.stderr?.on("data", () => undefined);
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderrBytes += chunk.length;
+      const combined = Buffer.concat([stderr, chunk]);
+      stderr = Buffer.from(
+        combined.subarray(Math.max(0, combined.length - 16_384)),
+      );
+    });
   return {
     async connect() {
       await client
@@ -205,5 +242,14 @@ export const createIdaMcpConnection = (
     },
     serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
     close: () => client.close().catch(transportFailure),
+    detach() {
+      if (!(transport instanceof StdioClientTransport)) return;
+      // The SDK exposes only the child's pid, not the handles it holds.
+      const child: unknown = Reflect.get(transport, "_process");
+      if (!(child instanceof ChildProcess)) return;
+      child.unref();
+      for (const stream of [child.stdin, child.stdout, child.stderr])
+        if (stream instanceof Socket) stream.unref();
+    },
   };
 };

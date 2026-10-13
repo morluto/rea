@@ -292,6 +292,30 @@ describe("managed artifact inventory", () => {
     ]);
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
   });
+
+  // dotnet/runtime corhdr.h: 32BITREQUIRED and 32BITPREFERRED form one
+  // two-bit field, so neither bit can be read on its own.
+  it.each([
+    ["neither bit", 0x0000_0001, "anycpu", false],
+    ["32BITREQUIRED alone", 0x0000_0003, "x86", true],
+    ["both bits", 0x0002_0003, "anycpu-prefer-32", false],
+    ["the reserved 32BITPREFERRED alone", 0x0002_0001, "anycpu", false],
+  ] as const)(
+    "reads %s as one 32-bit requirement",
+    (_label, cliFlags, architecture, requires32Bit) => {
+      const bytes = buildManagedPeFixture({ cliFlags });
+      const target = managedPeFixtureTarget(bytes);
+
+      expect(
+        inspectManagedArtifactBytes(bytes, target).classification
+          .managed_architecture,
+      ).toBe(architecture);
+      expect(
+        inspectManagedNativeBoundariesBytes(bytes, target).cli_native
+          ?.requires_32bit,
+      ).toBe(requires32Bit);
+    },
+  );
 });
 
 describe("managed artifact coded indexes", () => {
@@ -520,6 +544,63 @@ describe("managed fixture data layout", () => {
       data_sha256: createHash("sha256").update(resource).digest("hex"),
     });
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
+  });
+});
+
+describe("managed implementation classification", () => {
+  it("classifies crossgen2 ReadyToRun output without ILONLY as modern .NET", () => {
+    // crossgen2 writes IL_LIBRARY | STRONGNAMESIGNED and clears ILONLY.
+    const bytes = buildManagedPeFixture({ readyToRun: true, cliFlags: 0xc });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.classification).toMatchObject({
+      runtime_family: "modern-dotnet",
+      implementation: "cil-and-ready-to-run",
+    });
+    expect(result.classification.evidence).toContainEqual(
+      expect.objectContaining({ code: "ready-to-run-signature-observed" }),
+    );
+    expect(result.classification.evidence).not.toContainEqual(
+      expect.objectContaining({ code: "cli-il-only-clear" }),
+    );
+  });
+
+  it("preserves ReadyToRun runtime identity after metadata capacity is exhausted", () => {
+    const bytes = buildManagedPeFixture({
+      readyToRun: true,
+      cliFlags: 0xc,
+      references: ["x".repeat(12 * 1024 * 1024)],
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.classification).toMatchObject({
+      status: "managed",
+      runtime_family: "modern-dotnet",
+    });
+    expect(result.coverage.issues).toContainEqual(
+      expect.objectContaining({ code: "resource-limit" }),
+    );
+  });
+
+  it("keeps a clear ILONLY flag without ReadyToRun as mixed CLR/native", () => {
+    const bytes = buildManagedPeFixture({ cliFlags: 0 });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.classification).toMatchObject({
+      runtime_family: "mixed-clr-native",
+      implementation: "cpp-cli-mixed",
+    });
+    expect(result.classification.evidence).toContainEqual(
+      expect.objectContaining({ code: "cli-il-only-clear" }),
+    );
   });
 });
 

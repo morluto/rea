@@ -113,7 +113,7 @@ translated fragments.
 
 ## Language coverage and initial translations
 
-`languages.json` lists the same editions as the root README, with native names,
+`languages.json` lists the same editions as the English root README and the translations in `docs/readme/`, with native names,
 standard language tags and text direction. English keeps its existing routes;
 other editions use a language prefix such as `/ja/` or `/pt-BR/`. Arabic and
 Persian use right-to-left page layouts; code and numeric demos remain left to

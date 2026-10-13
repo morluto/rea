@@ -661,3 +661,52 @@ it("does not replay pre-envelope call graphs under the revised workflow profile"
     }).success,
   ).toBe(false);
 });
+
+describe("executions that report truncated references", () => {
+  const record = (referencesTruncated: boolean | undefined) => {
+    const cache = new AnalysisSnapshotCache();
+    const parameters = { address: "0x1000", document: "fixture" };
+    cache.record({
+      target: ANALYSIS_SNAPSHOT_TARGET,
+      profile: ANALYSIS_SNAPSHOT_PROFILE,
+      operation: "xrefs",
+      parameters,
+      execution: createAnalysisExecution(
+        ["0x2000"],
+        ANALYSIS_SNAPSHOT_PROVIDER,
+        {
+          subject: ANALYSIS_SNAPSHOT_TARGET,
+          analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+          ...(referencesTruncated === undefined ? {} : { referencesTruncated }),
+        },
+      ),
+    });
+    return cache.lookup(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROFILE,
+      "xrefs",
+      parameters,
+    );
+  };
+
+  it("are not replayed, because a replay would lose the truncation", () => {
+    expect(record(true)).toBeUndefined();
+  });
+
+  it("do not stop an execution that is complete or silent from being replayed", () => {
+    expect(record(false)?.result).toEqual(["0x2000"]);
+    expect(record(undefined)?.result).toEqual(["0x2000"]);
+  });
+});
+
+it("revises the trace_feature workflow profile so earlier results are not replayed", () => {
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+
+  expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
+    workflowAnalysisProfile(profile),
+  );
+  expect(
+    workflowAnalysisProfile(profile, "trace_call_path"),
+    "other workflows keep their profile",
+  ).toEqual(workflowAnalysisProfile(profile));
+});

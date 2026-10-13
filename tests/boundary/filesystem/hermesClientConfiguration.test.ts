@@ -237,6 +237,38 @@ mcp_servers:
     expect(await readFile(client.configPath, "utf8")).toBe(original);
   });
 
+  it("keeps unrelated numbers as written, including Discord IDs", async () => {
+    const { home, client } = await hermesClient();
+    // Hermes reads these exactly: two IDs one apart, an octal mode, a float.
+    const original = `discord:
+  free_response_channels:
+    - 1187654321098765432
+  channel_prompts:
+    1187654321098765433: Build questions.
+    1187654321098765434: Release questions.
+  mode: 0600
+  min_score: 0.0000001
+mcp_servers:
+  other:
+    command: other-server
+`;
+    await writeFile(client.configPath, original);
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    const text = await readFile(client.configPath, "utf8");
+    expect(text.startsWith(original)).toBe(true);
+    expect(parseYaml(text, { intAsBigInt: true })).toMatchObject({
+      mcp_servers: {
+        rea: { command: command[0], args: command.slice(1), enabled: true },
+      },
+    });
+    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+      "removed",
+    );
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+  });
+
   it("creates config.yaml when Hermes has no configuration yet", async () => {
     const { client } = await hermesClient();
     expect(

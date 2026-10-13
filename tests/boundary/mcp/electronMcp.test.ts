@@ -471,3 +471,49 @@ it("exposes the target-free static JavaScript application workflow", async () =>
 const evidenceFor = (value: unknown) => {
   return parseEvidence(value);
 };
+
+it("reports every unresolved Electron path without starting a provider", async () => {
+  const root = await createTestTempDirectory("rea-electron-invalid-paths-");
+  const capture = vi.fn();
+  const session = createTestBinarySession(() => {
+    throw new Error("must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      electronActiveObservation: {
+        capture,
+        identity: () => ({ id: "test", name: "test", version: "1" }),
+      },
+    },
+  );
+  const client = new Client({ name: "electron-path-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, session);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const fields = ["executable_path", "application_path", "application_root"];
+  const result = await client.callTool({
+    name: "capture_electron_scenario",
+    arguments: {
+      ...Object.fromEntries(fields.map((field) => [field, join(root, field)])),
+      actions: [],
+    },
+  });
+  expect(result.isError).toBe(true);
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: fields.map((field) => ({
+          path: [field],
+          reason: "invalid_value",
+          message: expect.stringContaining("ENOENT"),
+        })),
+      },
+    },
+  });
+  expect(capture).not.toHaveBeenCalled();
+  await client.ping();
+});

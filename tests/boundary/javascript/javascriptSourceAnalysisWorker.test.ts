@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
@@ -148,6 +154,121 @@ it("preserves a failed owned cleanup retry when the next caller cancels before a
     releaseAllowed = true;
     await worker.close();
     await next.close();
+  }
+});
+
+it("ends worker stdin and unreferences process handles when cleanup reports inspection uncertainty", async () => {
+  let stdinEnded = false;
+  let unreferenced = false;
+  let permitCleanup = false;
+  let childStdin: typeof process.stdin | undefined;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 128, timeoutMs: 30_000 },
+    async (request) => {
+      const launched = await spawnOwnedProviderProcess(request);
+      const originalUnref = launched.process.unref;
+      launched.process.unref = () => {
+        unreferenced = true;
+        originalUnref?.call(launched.process);
+      };
+      childStdin = launched.process.stdin as unknown as typeof process.stdin;
+      launched.process.stdin?.once("finish", () => {
+        stdinEnded = true;
+      });
+      return {
+        ...launched,
+        cleanup: async () =>
+          permitCleanup
+            ? launched.cleanup === undefined
+              ? cleanupOwnedProcessGroup(launched.ownership)
+              : launched.cleanup()
+            : {
+                cleaned: false,
+                reason: "process table could not be inspected: spawn EPERM",
+              },
+      };
+    },
+  );
+  try {
+    const file = source("app.mjs", "export const observed = 7;");
+    const result = await worker.analyze(file, 100);
+    if (!result.ok) throw result.error.error;
+    const closing = worker.close();
+    await expect(closing).rejects.toBeInstanceOf(ProviderCleanupError);
+    await expect(closing).rejects.toMatchObject({
+      cause: {
+        message: "process table could not be inspected: spawn EPERM",
+      },
+    });
+    expect(childStdin?.writableEnded || stdinEnded).toBe(true);
+    expect(unreferenced).toBe(true);
+    const errorListeners = childStdin?.listenerCount("error");
+    for (let retry = 0; retry < 3; retry++)
+      await expect(worker.close()).rejects.toBeInstanceOf(ProviderCleanupError);
+    expect(childStdin?.listenerCount("error")).toBeLessThanOrEqual(
+      errorListeners ?? 0,
+    );
+    permitCleanup = true;
+    await worker.close();
+  } finally {
+    permitCleanup = true;
+    await worker.close().catch(() => {});
+  }
+});
+
+it("lets a separate host exit while its live worker cleanup remains incomplete", async () => {
+  const root = await createTestTempDirectory("rea-worker-incomplete-host-");
+  const ownershipPath = join(root, "ownership.json");
+  const workerUrl = new URL(
+    "../../../dist/javascript/analysis/JavaScriptAnalysisWorker.js",
+    import.meta.url,
+  ).href;
+  const launcherUrl = new URL(
+    "../../../dist/process/ProviderProcess.js",
+    import.meta.url,
+  ).href;
+  const script = `
+import { writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { JavaScriptAnalysisWorker } from ${JSON.stringify(workerUrl)};
+import { spawnOwnedProviderProcess } from ${JSON.stringify(launcherUrl)};
+const worker = new JavaScriptAnalysisWorker({ heapMb: 128, timeoutMs: 10000 }, async request => {
+  const entry = pathToFileURL(request.arguments.at(-1)).href;
+  const launched = await spawnOwnedProviderProcess({ ...request, arguments: [
+    ...request.arguments.slice(0, -1), "--input-type=module", "-e",
+    "const interval = setInterval(() => {}, 1000); setTimeout(() => clearInterval(interval), 60000); await import(" + JSON.stringify(entry) + ");"
+  ] });
+  // The launcher is deliberately orphaned when this host exits; cleanup still
+  // requires its run token and executable identity, rather than its old parent.
+  const { expectedParentPid, ...ownership } = launched.ownership;
+  await writeFile(${JSON.stringify(ownershipPath)}, JSON.stringify(ownership));
+  return { ...launched, cleanup: async () => ({ cleaned: false, reason: "fixture inspection unavailable" }) };
+});
+const analyzed = await worker.analyze(${JSON.stringify(source("app.mjs", "export const value = 1;"))}, 100);
+if (!analyzed.ok) throw analyzed.error.error;
+try { await worker.close(); throw new Error("cleanup unexpectedly completed"); }
+catch (error) {
+  if (error.cleanupIncomplete !== true) throw error;
+  process.stdout.write(JSON.stringify({ code: "cleanup_incomplete", reason: error.cause.message }) + "\\n");
+}
+`;
+  try {
+    const result = await promisify(execFile)(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { timeout: 10_000 },
+    );
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "cleanup_incomplete",
+      reason: "fixture inspection unavailable",
+    });
+  } finally {
+    const ownership = JSON.parse(
+      await readFile(ownershipPath, "utf8"),
+    ) as OwnedProcessGroup;
+    expect(await cleanupOwnedProcessGroup(ownership)).toMatchObject({
+      cleaned: true,
+    });
   }
 });
 

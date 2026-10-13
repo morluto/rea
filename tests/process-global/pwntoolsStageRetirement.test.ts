@@ -18,7 +18,10 @@ import {
   PWNTOOLS_MEMORY_FAILURE_EXIT,
   PWNTOOLS_PROVIDER_IDENTITY,
 } from "../../src/native/pwntools/PwntoolsRelease.js";
-import { cleanupOwnedProcessGroup } from "../../src/process/ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  type OwnedProcessGroup,
+} from "../../src/process/ProcessOwnership.js";
 import { prepareProcessOwnershipInspection } from "../../src/process/ProcessOwnershipObservation.js";
 import { spawnOwnedProviderProcess } from "../../src/process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../../src/process/PrivateRuntimeRoot.js";
@@ -232,12 +235,13 @@ it.runIf(supportedHost).each([
     const { path, root, environment, basic } = await fixture();
     let launches = 0;
     let cleanupAllowed = false;
+    let retainedOwnership: OwnedProcessGroup | undefined;
     const read = vi.spyOn(artifacts, "readStableArtifact");
     const provider = new PwntoolsRecordedCrashProvider(
       environment,
       async (spawn) => {
         if (stage === "debugger" && ++launches === 1) return basic(spawn);
-        return changingWorker(
+        const launched = await changingWorker(
           spawn,
           join(spawn.cwd ?? "", "resource.failure"),
           {
@@ -247,6 +251,8 @@ it.runIf(supportedHost).each([
           },
           () => cleanupAllowed,
         );
+        retainedOwnership = launched.ownership;
+        return launched;
       },
       async () => root,
     );
@@ -261,14 +267,14 @@ it.runIf(supportedHost).each([
     if (result.ok) throw new Error("Expected unresolved process ownership");
     const projected = projectAnalysisError(result.error);
     expect(projected.code).toBe("cleanup_incomplete");
-    expect(projected).toMatchObject({
-      details: {
-        resources: expect.arrayContaining([
-          expect.stringMatching(/^pid:\d+$/u),
-          expect.stringMatching(/^process-group:\d+$/u),
-        ]),
-      },
-    });
+    if (retainedOwnership === undefined)
+      throw new Error("Expected retained process ownership");
+    expect(projected.details?.resources).toEqual([
+      retainedOwnership.runId,
+      root.path,
+      `pid:${retainedOwnership.leaderPid}`,
+      `process-group:${retainedOwnership.processGroupId}`,
+    ]);
     if (stage === "debugger")
       expect(projected).toMatchObject({
         details: {

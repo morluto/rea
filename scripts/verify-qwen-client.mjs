@@ -8,7 +8,7 @@ import {
   realpath,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { exec } from "./lib/verify-package-core.mjs";
@@ -18,10 +18,6 @@ import {
   toolContract,
 } from "../dist/contracts/toolContracts.js";
 
-assert(
-  process.platform !== "win32",
-  "The Qwen real-client verifier currently requires a POSIX host; native Windows is unverified.",
-);
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
 const lab = await mkdtemp(join(tmpdir(), "rea-qwen-client-"));
@@ -32,6 +28,13 @@ assert(
   "Usage: node scripts/verify-qwen-client.mjs [chat|call]",
 );
 const command = process.env.REA_VERIFY_QWEN_COMMAND ?? "qwen";
+// npm exposes only qwen.cmd on Windows. Resolve a selected JavaScript entry
+// before the verifier switches to its disposable workspace.
+const entryPoint = /\.(c|m)?js$/iu.test(command) ? resolve(command) : undefined;
+const launch = (args) =>
+  entryPoint === undefined
+    ? [command, args]
+    : [process.execPath, [entryPoint, ...args]];
 const verifier = createVerifierRun();
 const profile = join(lab, "selected profile");
 const account = join(lab, "account");
@@ -54,14 +57,18 @@ const baseEnvironment = {
 let clientVersion;
 try {
   clientVersion = (
-    await exec(command, ["--version"], {
+    await exec(...launch(["--version"]), {
       env: baseEnvironment,
       timeout: 30_000,
     })
   ).stdout.trim();
 } catch (cause) {
+  const windowsHint =
+    process.platform === "win32"
+      ? " On Windows, select node_modules/@qwen-code/qwen-code/cli-entry.js."
+      : "";
   throw new Error(
-    `Qwen client preflight failed for ${command}; install Qwen Code or set REA_VERIFY_QWEN_COMMAND. ${String(cause)}`,
+    `Qwen client preflight failed for ${command}; install Qwen Code or set REA_VERIFY_QWEN_COMMAND.${windowsHint} ${String(cause)}`,
   );
 }
 const original = JSON.stringify(
@@ -93,8 +100,8 @@ for (const step of [
     assert(
       result.plannedActions.every(
         (a) =>
-          a.target.startsWith(profile + "/") ||
-          a.target.startsWith(sharedSkills + "/"),
+          a.target.startsWith(profile + sep) ||
+          a.target.startsWith(sharedSkills + sep),
       ),
     );
   await writeFile(
@@ -163,7 +170,14 @@ const fixture = await createOpenAiModelFixture({
     skillSeen ||= JSON.stringify(body.messages ?? []).includes(
       "reverse-engineer-anything",
     );
-    selectedSkillLoaded ||= JSON.stringify(body.messages ?? []).includes(
+    const messageText = (body.messages ?? [])
+      .map((message) =>
+        typeof message.content === "string"
+          ? message.content
+          : (message.content ?? []).map((part) => part.text ?? "").join("\n"),
+      )
+      .join("\n");
+    selectedSkillLoaded ||= messageText.includes(
       join(sharedSkills, "reverse-engineer-anything"),
     );
     const toolText = JSON.stringify(
@@ -243,9 +257,7 @@ const fixture = await createOpenAiModelFixture({
     const invoke = tools.find((t) => t.name === "tool_call");
     const skill = tools.find((t) => t.name === "skill");
     const shell = tools.find((t) => t.name === "run_shell_command");
-    const persisted = toolText.match(
-      /Full output saved to: ([^\\"\n]+)(?:\\n|\n)/u,
-    );
+    const persisted = messageText.match(/Full output saved to: ([^\r\n]+)/u);
     const call = (name, args) => ({
       role: "assistant",
       content: null,
@@ -268,13 +280,14 @@ const fixture = await createOpenAiModelFixture({
       artifactPath = persisted[1];
       assert(
         (await realpath(artifactPath)).startsWith(
-          (await realpath(runtime)) + "/",
+          (await realpath(runtime)) + sep,
         ),
       );
       const script = `const fs=require('node:fs');const e=JSON.parse(fs.readFileSync(${JSON.stringify(artifactPath)},'utf8'));console.log(JSON.stringify({REA_CLIENT_FIXTURE:JSON.stringify(e.normalized_result).includes('REA_CLIENT_FIXTURE'),evidence_id:e.evidence_id,graph_nodes:e.normalized_result.graph.nodes.length}));`;
-      const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+      // Keep paths and JSON quotes out of shell syntax on Windows and POSIX.
+      const encodedScript = Buffer.from(script).toString("base64");
       message = call(shell.name, {
-        command: `node -e ${quote(script)}`,
+        command: `node -e "eval(Buffer.from('${encodedScript}','base64').toString('utf8'))"`,
         description:
           "Read the complete saved REA Evidence and verify the fixture facts.",
       });
@@ -329,7 +342,7 @@ const args = [
 let response;
 let failure;
 try {
-  response = await exec(command, args, {
+  response = await exec(...launch(args), {
     env,
     cwd: workspace,
     timeout: 120_000,

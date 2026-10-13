@@ -267,11 +267,6 @@ const inspectLeaf = (
   consumeRecords(budget, Array.isArray(rawNames) ? rawNames.length : 0);
   consumeRecords(budget, Array.isArray(rawContents) ? rawContents.length : 0);
   options.check?.();
-  if (options.profile === "browser-collection" && !Array.isArray(rawNames))
-    throw new SourceMapFormatFailure(
-      "format",
-      "Source-map leaf requires a names array.",
-    );
   if (
     options.profile === "browser-collection" &&
     !hasValidSourceMapContents(

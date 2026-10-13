@@ -7,6 +7,7 @@ import type {
   ManagedMemberInspection,
   ManagedParseIssue,
 } from "../domain/managed/managedArtifact.js";
+import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 import type {
   ManagedMetadataLayout,
   MetadataTableLayout,
@@ -49,20 +50,22 @@ export interface TypeRange {
   readonly methodEnd: number;
 }
 
-export interface MethodCore {
+/**
+ * Name and declaring type of a field, method, member reference, or method
+ * specification, keyed by its token so edges resolve any target uniformly.
+ */
+export interface MemberCore {
   readonly token: string;
   readonly name: string;
   readonly declaringType: string | null;
-}
-
-export interface FieldCore {
-  readonly token: string;
-  readonly name: string;
-}
-
-export interface MemberRefCore {
-  readonly token: string;
-  readonly name: string;
+  /** Fields and methods by table; member references by decoded signature. */
+  readonly kind: ManagedSignature["kind"];
+  /**
+   * Generic arity from the owner's decoded signature (see
+   * `signatureGenericArity`); absent when no owner decoded it, as for a
+   * MethodDef outside the type selection.
+   */
+  readonly genericArity?: number | null;
 }
 
 export interface ParsedInstruction {
@@ -88,7 +91,7 @@ const rowRange = (
   return { first: start, last: end - 1, count: end - start };
 };
 
-const fullName = (namespace: string, name: string): string =>
+export const fullName = (namespace: string, name: string): string =>
   namespace.length === 0 ? name : `${namespace}.${name}`;
 
 const readTypeRange = (
@@ -242,7 +245,7 @@ export const parseTypes = (
   return { types: items, issues };
 };
 
-const readCompressed = (
+export const readCompressed = (
   bytes: Buffer,
   offset: number,
 ): { readonly value: number; readonly next: number } => {
@@ -341,13 +344,38 @@ interface MethodSignatureHeader {
   readonly next: number;
 }
 
+// MethodDefSig and MethodRefSig headers (ECMA-335 II.23.2.1-2) without
+// HASTHIS and EXPLICITTHIS: DEFAULT, VARARG, or GENERIC, which implies DEFAULT.
+const MEMBER_METHOD_HEADERS = new Set([0x00, 0x05, 0x10]);
+
+// FNPTR also carries the unmanaged C, STDCALL, THISCALL, FASTCALL, and
+// UNMANAGED conventions that compilers emit for unmanaged function pointers.
+const FUNCTION_POINTER_CONVENTIONS = new Set([0, 1, 2, 3, 4, 5, 9]);
+
+/**
+ * Read a method signature's calling convention and counts. A header that is
+ * not a method signature in its context (a MethodDef or MemberRef row, or an
+ * FNPTR type), sets the reserved bit, or sets EXPLICITTHIS without HASTHIS is
+ * malformed, so no caller consumes its counts. FIELD, LOCAL_SIG, PROPERTY,
+ * and GENERICINST headers are never method signatures.
+ */
 const readMethodSignatureHeader = (
   blob: Buffer,
   offset: number,
+  context: "member" | "function-pointer",
 ): MethodSignatureHeader => {
   const first = blob[offset];
   if (first === undefined)
     return malformedSignature("truncated method signature", offset);
+  const allowed =
+    context === "member"
+      ? MEMBER_METHOD_HEADERS.has(first & 0x9f)
+      : (first & 0x80) === 0 && FUNCTION_POINTER_CONVENTIONS.has(first & 0x0f);
+  if (!allowed || ((first & 0x40) !== 0 && (first & 0x20) === 0))
+    return malformedSignature(
+      `calling convention 0x${first.toString(16)} does not head a ${context} method signature`,
+      offset,
+    );
   let next = offset + 1;
   let genericParameterCount: number | null = null;
   if ((first & 0x10) !== 0) {
@@ -365,12 +393,6 @@ const readMethodSignatureHeader = (
 };
 
 const MAX_ARRAY_RANK = 32;
-
-// FNPTR carries a method signature: managed DEFAULT/VARARG, or the unmanaged
-// C, STDCALL, THISCALL, FASTCALL, and UNMANAGED conventions that compilers
-// emit for unmanaged function pointers. FIELD, LOCAL_SIG, PROPERTY, and
-// GENERICINST headers are not method signatures.
-const FUNCTION_POINTER_CONVENTIONS = new Set([0, 1, 2, 3, 4, 5, 9]);
 
 const arrayShape = (
   blob: Buffer,
@@ -449,10 +471,40 @@ const POSITION_ELEMENTS: ReadonlyMap<number, readonly SignaturePosition[]> =
     [0x10, ["return", "parameter", "field"]],
   ]);
 
+/** Decode a type operand once; spec callers also validate its metadata coordinate. */
+const readTypeOperand = (
+  blob: Buffer,
+  offset: number,
+  layout?: ManagedMetadataLayout,
+  tables: readonly number[] = [2, 1, 27],
+): ReturnType<typeof readCompressed> => {
+  const token = readCompressed(blob, offset);
+  if (layout !== undefined) {
+    const reason =
+      token.value === 0
+        ? "type operand is null"
+        : metadataCodedTokenInvalidReason(
+            token.value,
+            2,
+            tables,
+            layout.rowCounts,
+          );
+    if (reason !== null)
+      throw managedFailure(
+        "invalid-row",
+        "signature",
+        `TypeDefOrRefOrSpec operand 0x${token.value.toString(16)} is invalid: ${reason}`,
+        offset,
+      );
+  }
+  return token;
+};
+
 const readTypeSignature = (
   blob: Buffer,
   offset: number,
   base: SignaturePosition,
+  layout?: ManagedMetadataLayout,
 ): { readonly value: string; readonly next: number } => {
   const stack: TypeContinuation[] = [];
   let cursor = offset;
@@ -479,7 +531,7 @@ const readTypeSignature = (
       stack.push({ kind: "suffix", suffix });
       cursor += 1;
     } else if (kind === 0x1f || kind === 0x20) {
-      const token = readCompressed(blob, cursor + 1);
+      const token = readTypeOperand(blob, cursor + 1, layout);
       const modifier = `${kind === 0x1f ? "modreq" : "modopt"}:${String(token.value)}`;
       // A modifier frame on top was pushed by the directly preceding byte;
       // keep an adjacent run together and in source order.
@@ -488,7 +540,7 @@ const readTypeSignature = (
       else stack.push({ kind: "modifiers", modifiers: [modifier] });
       cursor = token.next;
     } else if (kind === 0x11 || kind === 0x12) {
-      const token = readCompressed(blob, cursor + 1);
+      const token = readTypeOperand(blob, cursor + 1, layout);
       value = `${kind === 0x11 ? "valuetype" : "class"}:${String(token.value)}`;
       cursor = token.next;
     } else if (kind === 0x1e || kind === 0x13) {
@@ -508,7 +560,7 @@ const readTypeSignature = (
           "generic instantiation does not name a class or value type",
           cursor + 1,
         );
-      const token = readCompressed(blob, cursor + 2);
+      const token = readTypeOperand(blob, cursor + 2, layout, [2, 1]);
       const argumentCount = readCompressed(blob, token.next);
       if (argumentCount.value === 0)
         return malformedSignature(
@@ -525,16 +577,11 @@ const readTypeSignature = (
       });
       cursor = argumentCount.next;
     } else if (kind === 0x1b) {
-      const header = readMethodSignatureHeader(blob, cursor + 1);
-      if (
-        !FUNCTION_POINTER_CONVENTIONS.has(header.first & 0x0f) ||
-        (header.first & 0x80) !== 0 ||
-        ((header.first & 0x40) !== 0 && (header.first & 0x20) === 0)
-      )
-        return malformedSignature(
-          `function pointer calling convention 0x${header.first.toString(16)} does not head a method signature`,
-          cursor + 1,
-        );
+      const header = readMethodSignatureHeader(
+        blob,
+        cursor + 1,
+        "function-pointer",
+      );
       const convention = callingConvention(header.first);
       const head =
         header.genericParameterCount === null
@@ -602,22 +649,81 @@ const callingConvention = (value: number): string => {
   return flags.length === 0 ? name : `${name} ${flags.join(" ")}`;
 };
 
-export const signature = (
+/**
+ * Decode a whole TypeSpec blob, or a MethodSpec instantiation (GENERICINST,
+ * argument count, Types), with the member-signature grammar and return the
+ * rendered types. A malformed or unsupported blob throws invalid-blob or
+ * unsupported-signature under the owning row, so coverage records it.
+ */
+export const specSignature = (
+  layout: ManagedMetadataLayout,
   blob: Buffer,
-  rawSha256?: string,
-): ManagedSignature => {
-  const raw = {
-    raw_length: blob.length,
-    raw_sha256: rawSha256 ?? sha256Bytes(blob),
-  };
+  owner: {
+    readonly form: "type" | "instantiation";
+    readonly scope: string;
+    readonly offset: number;
+  },
+): readonly string[] => {
+  const budget = managedDecodeBudget(layout);
+  // Rendering is transient, so charge it as member signatures are charged.
+  budget.admitTransient(blob.length * 256, owner.offset);
+  try {
+    let cursor = 0;
+    let count = 1;
+    if (owner.form === "instantiation") {
+      if (blob[0] !== 0x0a)
+        malformedSignature("MethodSpec instantiation is not GENERICINST", 0);
+      const header = readCompressed(blob, 1);
+      if (header.value === 0)
+        malformedSignature("MethodSpec instantiation has no type arguments", 1);
+      count = header.value;
+      cursor = header.next;
+    }
+    const types: string[] = [];
+    // Each Type consumes at least one byte, so a false count fails on truncation.
+    for (let index = 0; index < count; index += 1) {
+      const type = readTypeSignature(blob, cursor, "type", layout);
+      types.push(type.value);
+      cursor = type.next;
+    }
+    if (cursor !== blob.length)
+      malformedSignature("Trailing signature data", cursor);
+    return types;
+  } catch (cause: unknown) {
+    if (
+      !(cause instanceof ManagedReaderFailure) ||
+      (cause.issue.code !== "invalid-blob" &&
+        cause.issue.code !== "invalid-row" &&
+        cause.issue.code !== "unsupported-signature")
+    )
+      throw cause;
+    throw managedFailure(
+      cause.issue.code,
+      owner.scope,
+      cause.issue.detail,
+      owner.offset,
+    );
+  } finally {
+    budget.releaseTransient();
+  }
+};
+
+type DecodedSignature = Omit<ManagedSignature, "raw_length" | "raw_sha256">;
+
+/**
+ * Decode a field or member method signature. A malformed or unsupported blob
+ * decodes as kind `unknown` with its reason.
+ */
+const decodeSignature = (blob: Buffer): DecodedSignature => {
   try {
     if (blob.length === 0)
       throw managedFailure("invalid-blob", "signature", "empty signature", 0);
     const first = blob[0] ?? 0;
-    if ((first & 0x0f) === 6) {
+    // FieldSig (II.23.2.4) is exactly FIELD; a flagged FIELD header is not a
+    // method header either, so it is malformed below.
+    if (first === 0x06) {
       const fieldType = readTypeSignature(blob, 1, "field");
       return {
-        ...raw,
         kind: "field",
         parse_status: fieldType.next === blob.length ? "decoded" : "partial",
         calling_convention: callingConvention(first),
@@ -630,7 +736,7 @@ export const signature = (
           fieldType.next === blob.length ? null : "Trailing signature data",
       };
     }
-    const header = readMethodSignatureHeader(blob, 0);
+    const header = readMethodSignatureHeader(blob, 0, "member");
     const returnType = readTypeSignature(blob, header.next, "return");
     let offset = returnType.next;
     const parameters: string[] = [];
@@ -640,7 +746,6 @@ export const signature = (
       offset = parameter.next;
     }
     return {
-      ...raw,
       kind: "method",
       parse_status: offset === blob.length ? "decoded" : "partial",
       calling_convention: callingConvention(first),
@@ -659,7 +764,6 @@ export const signature = (
     )
       throw cause;
     return {
-      ...raw,
       kind: "unknown",
       parse_status:
         cause.issue.code === "unsupported-signature"
@@ -675,3 +779,41 @@ export const signature = (
     };
   }
 };
+
+/**
+ * Generic parameter count of a method signature that decodes completely, 0
+ * when it is not generic, or null when the blob is not a decodable method
+ * signature. The rendered decode is transient.
+ */
+export const methodGenericArity = (
+  layout: ManagedMetadataLayout,
+  blob: Buffer,
+): number | null => {
+  const budget = managedDecodeBudget(layout);
+  budget.admitTransient(blob.length * 256, layout.blob.offset);
+  try {
+    return signatureGenericArity(decodeSignature(blob));
+  } finally {
+    budget.releaseTransient();
+  }
+};
+
+/**
+ * Generic parameter count of a completely decoded method signature, 0 when it
+ * is not generic, or null for any other signature.
+ */
+export const signatureGenericArity = (
+  decoded: DecodedSignature,
+): number | null =>
+  decoded.kind === "method" && decoded.parse_status === "decoded"
+    ? (decoded.generic_parameter_count ?? 0)
+    : null;
+
+export const signature = (
+  blob: Buffer,
+  rawSha256?: string,
+): ManagedSignature => ({
+  raw_length: blob.length,
+  raw_sha256: rawSha256 ?? sha256Bytes(blob),
+  ...decodeSignature(blob),
+});

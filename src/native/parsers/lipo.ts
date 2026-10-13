@@ -16,8 +16,26 @@ const architectureSchema = z.object({
 
 export type LipoArchitecture = z.infer<typeof architectureSchema>;
 
-/** Parse `lipo -detailed_info` into deterministic slice metadata. */
-export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
+interface LipoOutput {
+  readonly format: "thin" | "fat";
+  readonly architectures: LipoArchitecture[];
+}
+
+/** Parse `lipo -detailed_info` framing and deterministic slice metadata. */
+export const parseLipoOutput = (
+  output: string,
+  operandPath?: string,
+): LipoOutput => {
+  // The echoed FAT operand is one value, even when its pathname contains lines.
+  if (operandPath !== undefined) {
+    const header = `Fat header in: ${operandPath}`;
+    if (output.startsWith(header)) {
+      if (output.startsWith("\r\n", header.length))
+        output = output.slice(header.length + 2);
+      else if (output.startsWith("\n", header.length))
+        output = output.slice(header.length + 1);
+    }
+  }
   // lipo echoes a thin file's pathname verbatim, including embedded newlines.
   // Match its final architecture field before splitting records into lines.
   const thinArchitecture =
@@ -25,20 +43,23 @@ export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
       output,
     )?.[1];
   if (thinArchitecture !== undefined)
-    return [
-      architectureSchema.parse({
-        name: thinArchitecture,
-        cpu_type: null,
-        cpu_subtype: null,
-        cpu_type_code: null,
-        cpu_subtype_code: null,
-        cpu_subtype_base: null,
-        capabilities: null,
-        file_offset: null,
-        size: null,
-        alignment: null,
-      }),
-    ];
+    return {
+      format: "thin",
+      architectures: [
+        architectureSchema.parse({
+          name: thinArchitecture,
+          cpu_type: null,
+          cpu_subtype: null,
+          cpu_type_code: null,
+          cpu_subtype_code: null,
+          cpu_subtype_base: null,
+          capabilities: null,
+          file_offset: null,
+          size: null,
+          alignment: null,
+        }),
+      ],
+    };
   const architectures: LipoArchitecture[] = [];
   let current: Record<string, string> | undefined;
   const flush = (): void => {
@@ -90,7 +111,7 @@ export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
   flush();
   if (architectures.length === 0)
     throw new TypeError("lipo output contained no architectures");
-  return architectures;
+  return { format: "fat", architectures };
 };
 
 const integer = (value: string | undefined): number | null => {

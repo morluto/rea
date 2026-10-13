@@ -9,7 +9,7 @@ export type CliOutputArgumentValidation =
   | {
       readonly ok: false;
       readonly format: StructuredOutputFormat;
-      readonly code: "UNSUPPORTED_OUTPUT_COMBINATION";
+      readonly code: "UNSUPPORTED_OUTPUT_COMBINATION" | "INVALID_OUTPUT_FILTER";
       readonly message: string;
     };
 
@@ -89,13 +89,39 @@ export const parseCliOutputArguments = (
   return parsed(false);
 };
 
-/** Reject text-window controls that would corrupt a structured document. */
+/** Reject slices that cannot advance within Incur's comma-delimited paths. */
+const hasUnclosedFilterSlice = (expression: string): boolean => {
+  let depth = 0;
+  let unclosed = false;
+  for (const character of expression) {
+    if (character === "[") {
+      depth += 1;
+      unclosed = true;
+    } else if (character === "]") {
+      depth -= 1;
+      // Incur consumes everything through the next closing bracket, including
+      // nested opening brackets. Do not impose a different filter grammar.
+      unclosed = false;
+    } else if (character === "," && depth === 0 && unclosed) return true;
+  }
+  return unclosed;
+};
+
+/** Reject output controls that cannot safely produce a complete result. */
 export const validateCliOutputArguments = (
   arguments_: readonly string[],
 ): CliOutputArgumentValidation => {
-  const { format, parseError, tokenWindow } =
+  const { filterOutput, format, parseError, tokenWindow } =
     parseCliOutputArguments(arguments_);
   if (parseError) return { ok: true };
+  if (filterOutput !== undefined && hasUnclosedFilterSlice(filterOutput))
+    return {
+      ok: false,
+      format: format === "yaml" || format === "jsonl" ? format : "json",
+      code: "INVALID_OUTPUT_FILTER",
+      message:
+        "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+    };
   if (
     tokenWindow &&
     (format === "json" || format === "jsonl" || format === "yaml")

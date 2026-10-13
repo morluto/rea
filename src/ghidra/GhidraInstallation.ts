@@ -72,6 +72,15 @@ const NATIVE_ARCHITECTURES: readonly {
 /** Bound installation discovery reads; larger headers remain unknown. */
 const EXECUTABLE_HEADER_PROBE_BYTES = 4096;
 
+/**
+ * Bound the Java version probe so a chatty or hostile JVM cannot force an
+ * unbounded in-memory capture. Well-behaved JVMs print a few kilobytes for
+ * `-XshowSettings:properties`; the same 1 MiB budget used for other Java
+ * listings leaves ample headroom. A probe that exceeds the budget yields no
+ * observation and is reported through the existing failed-probe path.
+ */
+const JAVA_PROBE_MAX_OUTPUT_BYTES = 1024 * 1024;
+
 /** Compatibility of one present native decompiler with the inspected host. */
 type NativeDecompilerCompatibility =
   | {
@@ -763,7 +772,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
         encoding: "utf8",
         env: environment,
         timeout: 5_000,
-        maxBuffer: Number.POSITIVE_INFINITY,
+        maxBuffer: JAVA_PROBE_MAX_OUTPUT_BYTES,
         windowsHide: true,
       },
     );

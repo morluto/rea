@@ -36,6 +36,7 @@ const replySchema = z.discriminatedUnion("ok", [
     reason: z.enum([
       "format",
       "selection",
+      "column-selection",
       "unsupported",
       "unavailable",
       "output-limit",
@@ -48,6 +49,14 @@ const replySchema = z.discriminatedUnion("ok", [
 export type SqliteWorkerLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
 >["launcher"];
+
+// Each input rejection names the caller argument that requires correction.
+const rejectedArgument = {
+  format: "path",
+  unsupported: "path",
+  selection: "table",
+  "column-selection": "columns",
+} as const;
 
 const rejectedReply = (
   reply: z.output<typeof replySchema> & { ok: false },
@@ -83,7 +92,7 @@ const rejectedReply = (
     );
   return new AnalysisInputError(operation, { capturedOutput }, [
     {
-      path: [reply.reason === "selection" ? "table" : "path"],
+      path: [rejectedArgument[reply.reason]],
       reason: "invalid_format",
       message: reply.message,
     },

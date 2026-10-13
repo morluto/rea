@@ -142,6 +142,21 @@ caches deterministic builds and static checks across Git worktrees. After a pack
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
 
+### Windows source checkouts
+
+The published npm package includes the Windows x64 native addon and its
+manifest. A source checkout does not: `native/windows/build/` is ignored by
+Git, and neither `npm ci` nor `npm run build:cached` (or `npm run build`)
+produces `rea-windows-x64.node` or `manifest.json` in that directory.
+Windows workflows and tests that require native controls need these artifacts;
+without them, those controls are unavailable even after a successful runtime build.
+
+Follow the [Windows native build guide](native/windows/README.md#build) before
+running those workflows from source. The artifact build requires Linux,
+MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
+for the build and artifact-verification commands and the separate real Windows
+verification prerequisites. Keep the generated addon and manifest uncommitted.
+
 ## Documentation website
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
@@ -186,6 +201,10 @@ coverage. `npm run check:pr` is an optional full local gate for broad changes or
 CI diagnosis. Packaging/setup/distribution changes additionally require
 `npm run verify:package` and `npm pack --dry-run`; provider changes require the
 matching real-provider lane. State which host/provider workflows ran.
+
+For CI/test correctness, drift, or performance investigations, use the
+[`rea-ci-tests-audit` contributor skill](.agents/skills/rea-ci-tests-audit/SKILL.md).
+It guides reproduction and comparable measurements before changing checks.
 
 `check:pr` reuses build and static-check outputs while executing the test suite
 fresh, including the fast Python producer checks. `docs:check` also runs the

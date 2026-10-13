@@ -18,13 +18,25 @@ pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
 result that its client offloads, and Pi exercises default codemode execution.
 Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
 Receipts retain client versions, result digests, host coverage and owned-process
-cleanup. These POSIX lanes use a deterministic loopback model, so they do not
-prove live model-provider or native Windows compatibility. Qwen, Pi and Hermes
+cleanup. These lanes use a deterministic loopback model and do not prove live
+model-provider compatibility. Pi and Hermes remain POSIX-only. Qwen, Pi and Hermes
 bind both `HOME` and `USERPROFILE` to the disposable account. Qwen and Pi discover
 the shared personal skill through their default search paths without an explicit
 skill setting; Hermes discovers it through the selected `HERMES_HOME`.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
+
+The Qwen lane also supports native Windows (verified with Qwen Code 0.25.1 and
+Node 24.19.0 for both `chat` and `call`). With Node 24.18.0, the same `call`
+journey reached full Evidence readback but the client aborted during exit with
+`UV_HANDLE_CLOSING`; that run remains a failure, not a compatibility claim.
+Select the npm install's
+`node_modules/@qwen-code/qwen-code/cli-entry.js` with `REA_VERIFY_QWEN_COMMAND`,
+because `execFile` cannot launch the `qwen.cmd` shim directly. A selected `.js`,
+`.mjs` or `.cjs` entry point runs under the verifier's Node. Windows path checks
+use native separators; persisted output is read through Qwen's real shell tool
+with a shell-independent encoded Node payload. Windows receipts report process
+lineage as unavailable when the verifier has no retained native Job Object lease.
 
 `verify:gemini-client` requires an installed Gemini CLI (verified with
 `@google/gemini-cli@0.63.0` on POSIX and native Windows); select it with

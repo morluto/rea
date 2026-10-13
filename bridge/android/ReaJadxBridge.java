@@ -3,8 +3,14 @@ import com.google.gson.*;
 import io.modelcontextprotocol.kotlin.sdk.server.*;
 import io.modelcontextprotocol.kotlin.sdk.types.*;
 import jadx.api.*;
+import jadx.api.plugins.input.data.ICodeReader;
+import jadx.api.plugins.input.data.IMethodRef;
+import jadx.api.plugins.input.insns.InsnIndexType;
+import jadx.api.plugins.input.insns.Opcode;
+import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.nodes.*;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Collectors;
@@ -79,11 +85,17 @@ class ReaJadxBridge {
           ordered.sort(Comparator.comparing(MethodNode::getAlias));
           List<MethodSnapshot> methods = ordered.stream().map(method -> {
             String name = method.getAlias();
+            String shortId = method.getMethodInfo().getShortId();
+            String rawName = method.getMethodInfo().getName();
+            if (!shortId.startsWith(rawName + "("))
+              throw new IllegalStateException("JADX method ID has no raw-name prefix: " + shortId);
+            String descriptor = shortId.substring(rawName.length());
             String signature = name + "(" + method.getArgTypes().stream()
                 .map(Object::toString).collect(Collectors.joining(", "))
                 + "): " + method.getReturnType().toString();
-            return new MethodSnapshot(name, method.getMethodInfo().getShortId(), Map.of(
+            return new MethodSnapshot(name, shortId, Map.of(
                 "name", name, "signature", signature,
+                "dex_descriptor", descriptor,
                 "is_constructor", method.isConstructor(), "def_pos", 0));
           }).toList();
           List<Map<String, Object>> fields = node.getFields().stream()
@@ -140,6 +152,57 @@ class ReaJadxBridge {
         "smali", true, List.of("static_initializer_disassembly"));
   }
 
+  // The local transport admits 8 MiB frames. Reserve 1 KiB for the fixed
+  // JSON-RPC/CallToolResult envelope and generated numeric request id, and
+  // account for JSON text being escaped again inside TextContent.
+  private static final int MAX_XREF_TEXT_BYTES = 8 * 1024 * 1024 - 1024;
+  private static int escapedJsonBytes(Object value) {
+    return JSON.toJson(JSON.toJson(value)).getBytes(StandardCharsets.UTF_8).length;
+  }
+  private static final class InvokeBudget {
+    long remaining;
+    InvokeBudget(long remaining) { this.remaining = Math.max(0, remaining); }
+    boolean admit(Map<String, Object> site) {
+      // Check a conservative two-layer escape bound before serialization.
+      long bound = 256;
+      for (Object value : site.values())
+        if (value instanceof String text) bound += 12L * text.length();
+      if (bound > remaining) return false;
+      long bytes = escapedJsonBytes(site) - 2L + 1L;
+      if (bytes > remaining) return false;
+      remaining -= bytes;
+      return true;
+    }
+  }
+  private record DirectInvokes(List<Map<String, Object>> sites, boolean exhaustive) {}
+
+  /** Raw DEX invokes within one JADX using method; offsets are code units from its code start. */
+  private static DirectInvokes directInvokes(JavaMethod source, MethodInfo target, InvokeBudget budget) {
+    MethodNode node = source.getMethodNode();
+    ICodeReader code = node.getCodeReader();
+    if (code == null) return null;
+    List<Map<String, Object>> sites = new ArrayList<>();
+    boolean[] exhaustive = {true};
+    code.visitInstructions(insn -> {
+      insn.decode();
+      if (insn.getIndexType() != InsnIndexType.METHOD_REF) return;
+      Opcode opcode = insn.getOpcode();
+      if (!opcode.name().startsWith("INVOKE_")) return;
+      IMethodRef ref = insn.getIndexAsMethod();
+      ref.load();
+      if (!MethodInfo.fromRef(node.root(), ref).getRawFullId().equals(target.getRawFullId())) return;
+      Map<String, Object> site = Map.of(
+          "dex_entry", node.getInputFileName(),
+          "source_raw_method_id", node.getMethodInfo().getRawFullId(),
+          "dex_code_unit_offset", insn.getOffset(),
+          "dex_method_index", insn.getIndex(),
+          "opcode", opcode.name());
+      if (budget.admit(site)) sites.add(site);
+      else exhaustive[0] = false;
+    });
+    return new DirectInvokes(sites, exhaustive[0]);
+  }
+
   private CallToolResult handle(String name, JsonObject args) {
     if (name.equals("rea_jvm_status")) return json(Map.of(
         "engine_reported_version", BuildInfo.VERSION,
@@ -173,17 +236,52 @@ class ReaJadxBridge {
     }
     List<JavaNode> uses;
     String target = string(args, "class_name");
+    MethodSnapshot selectedMethod = null;
+    int overloadIndex = 0;
     if (name.equals("get_xrefs_to_class")) uses = cls.node().getUseIn();
     else {
       List<MethodSnapshot> overloads = methods(cls, args);
-      if (overloads.size() != 1) throw new InputFailure("method_name", "Method references require a unique overload");
-      target += "." + overloads.get(0).name();
-      uses = method(cls, overloads.get(0)).getUseIn();
+      if (overloads.size() != 1 && !args.containsKey("overload_index"))
+        throw new InputFailure("overload_index", "Select one of " + overloads.size() + " method overloads");
+      overloadIndex = integer(args, "overload_index", 0);
+      if (overloadIndex >= overloads.size())
+        throw new InputFailure("overload_index", "overload_index out of range: " + overloadIndex);
+      selectedMethod = overloads.get(overloadIndex);
+      target += "." + selectedMethod.name();
+      uses = method(cls, selectedMethod).getUseIn();
     }
     // REA consumes all references without materializing source line information.
-    List<Map<String, Object>> items = uses.stream().map(node -> current.describeUsage(node, false)).toList();
-    return json(Map.of("target", target, "total", uses.size(), "count", items.size(),
-        "resolve_line", false, "items", items));
+    MethodInfo targetInfo = selectedMethod == null ? null : method(cls, selectedMethod).getMethodNode().getMethodInfo();
+    List<Map<String, Object>> items = uses.stream().map(node -> {
+      Map<String, Object> item = new LinkedHashMap<>(current.describeUsage(node, false));
+      if (targetInfo != null && node instanceof JavaMethod) {
+        item.put("direct_invokes", List.of());
+        item.put("direct_invokes_exhaustive", false);
+      }
+      return item;
+    }).toList();
+    Map<String, Object> result = new LinkedHashMap<>(Map.of("target", target,
+        "total", uses.size(), "count", items.size(), "resolve_line", false, "items", items));
+    if (selectedMethod != null) {
+      result.put("overload_index", overloadIndex);
+      result.put("reported_signature", selectedMethod.summary().get("signature"));
+    }
+    if (targetInfo != null) {
+      InvokeBudget budget = new InvokeBudget(MAX_XREF_TEXT_BYTES - escapedJsonBytes(result));
+      for (int index = 0; index < uses.size(); index++) {
+        if (!(uses.get(index) instanceof JavaMethod source)) continue;
+        DirectInvokes invokes = directInvokes(source, targetInfo, budget);
+        Map<String, Object> item = items.get(index);
+        if (invokes == null) {
+          item.remove("direct_invokes");
+          item.remove("direct_invokes_exhaustive");
+        } else {
+          item.put("direct_invokes", invokes.sites());
+          item.put("direct_invokes_exhaustive", invokes.exhaustive());
+        }
+      }
+    }
+    return json(result);
   }
 
   public static void main(String[] args) throws Exception {
@@ -217,7 +315,7 @@ class ReaJadxBridge {
       List<String> fields = switch (name) {
         case "list_classes" -> List.of("offset", "limit");
         case "get_method_body" -> List.of("class_name", "method_name", "overload_index");
-        case "get_xrefs_to_method" -> List.of("class_name", "method_name");
+        case "get_xrefs_to_method" -> List.of("class_name", "method_name", "overload_index");
         default -> List.of("class_name");
       };
       Map<String, kotlinx.serialization.json.JsonElement> properties = new LinkedHashMap<>();
@@ -226,7 +324,7 @@ class ReaJadxBridge {
         case "list_classes" -> "Indexed pages of all top-level class names, with offset and limit.";
         case "get_class_summary" -> "Parsed member metadata for one exact class name; no source generation.";
         case "get_method_body" -> "Source for an exact class and stable same-name overload index; static initializers use smali to preserve folded field initialization.";
-        default -> "Complete static references to an exact class or unique method; source lines are unresolved.";
+        default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
       };
       Tool narrowed = new Tool(name, new ToolSchema(null, new JsonObject(properties),
           tool.getInputSchema().getRequired(), null), description, null, null, null, null, null, null);

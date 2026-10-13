@@ -289,4 +289,25 @@ describe("safe CDP response metadata referrer policy", () => {
     expect(captured.response.policies.referrer_policy).toBe(expected);
     expect(captured.response.policies.coop).toBe("same-origin");
   });
+
+  it.each<[string | number | undefined, number | null]>([
+    ["100", 100],
+    [" 0 ", 0],
+    [100, 100],
+    ["-5", null],
+    ["+12", null],
+    ["0x10", null],
+    ["1e3", null],
+    ["9007199254740991", 9007199254740991],
+    ["9007199254740992", null],
+    [undefined, null],
+  ])("declares Content-Length %j only for decimal digits", (raw, expected) => {
+    const captured = safeResponseMetadata(
+      "request-length",
+      `${origin}/api`,
+      { headers: raw === undefined ? {} : { "Content-Length": raw } },
+      new Set([origin]),
+    );
+    expect(captured.response.content_length).toBe(expected);
+  });
 });

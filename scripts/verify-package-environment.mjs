@@ -76,6 +76,7 @@ export async function verifyPackageEnvironment({
     HOME: home,
     USERPROFILE: home,
     APPDATA: join(home, "AppData", "Roaming"),
+    LOCALAPPDATA: join(home, "AppData", "Local"),
     CLAUDE_CONFIG_DIR: home,
     CODEX_HOME: codexDir,
     COPILOT_HOME: join(home, ".copilot"),

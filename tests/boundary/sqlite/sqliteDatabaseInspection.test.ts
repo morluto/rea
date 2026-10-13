@@ -130,6 +130,71 @@ it("accounts for JSON escape expansion of a stored declaration in the reply limi
   ]);
 });
 
+it("attributes triggers declared with another ASCII case to the stored table name", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE Users(id INTEGER PRIMARY KEY, email TEXT);
+    CREATE INDEX users_email ON users(email);
+    CREATE TRIGGER audit_insert AFTER INSERT ON users BEGIN SELECT 1; END;
+    CREATE TRIGGER audit_delete AFTER DELETE ON USERS BEGIN SELECT 1; END;
+    CREATE VIEW recent AS SELECT 1;
+    CREATE TRIGGER recent_insert INSTEAD OF INSERT ON Recent BEGIN SELECT 1; END;
+  `);
+  const selected = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "Users",
+  });
+  expect(selected.schema).toMatchObject({
+    scope: "selected_table",
+    completeness: "complete",
+    tables: [{ name: "Users" }],
+    indexes: [{ name: "users_email", table: "Users" }],
+    views: [],
+  });
+  expect(
+    selected.schema.triggers.map(({ name, table }) => ({ name, table })),
+  ).toEqual([
+    { name: "audit_insert", table: "Users" },
+    { name: "audit_delete", table: "Users" },
+  ]);
+  const inventory = inspectSqliteDatabaseSnapshot(path, { path });
+  expect(inventory.schema.triggers).toEqual([
+    { name: "audit_insert", table: "Users" },
+    { name: "audit_delete", table: "Users" },
+    { name: "recent_insert", table: "recent" },
+  ]);
+});
+
+it.each([
+  {
+    selection: "a differently cased table",
+    schema: "CREATE TABLE Users(id INTEGER PRIMARY KEY)",
+    trigger: "AFTER INSERT ON Users",
+    table: "users",
+  },
+  {
+    selection: "an exact view",
+    schema: "CREATE VIEW Recent AS SELECT 1 AS id",
+    trigger: "INSTEAD OF INSERT ON recent",
+    table: "Recent",
+  },
+])(
+  "refuses $selection before expanding declarations under another spelling",
+  async ({ schema, trigger, table }) => {
+    const path = await createDatabase(`
+      ${schema};
+      CREATE TRIGGER expanded ${trigger} BEGIN /*${"\u0001".repeat(3 * 1024 * 1024)}*/ SELECT 1; END;
+    `);
+    expect(() =>
+      inspectSqliteDatabaseSnapshot(path, { path, table }),
+    ).toThrowError(
+      expect.objectContaining({
+        reason: "selection",
+        message: `Selected ordinary table does not exist with that exact name: ${table}`,
+      }),
+    );
+  },
+);
+
 it.each(["UTF-8", "UTF-16le", "UTF-16be"])(
   "preserves exact %s schema text when decoding native bytes",
   async (encoding) => {

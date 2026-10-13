@@ -1,4 +1,5 @@
 import { Cli } from "incur";
+import { resolve } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import type { BrowserScenarioCapturePort } from "../../src/application/BrowserScenarioCapturePort.js";
@@ -32,7 +33,7 @@ vi.mock("../../src/composition/browserScenario.js", () => ({
 }));
 
 const scenario = browserScenarioSchema.parse({
-  browser: { mode: "launch", executable_path: "/fixture/chromium" },
+  browser: { mode: "launch", executable_path: resolve("/fixture/chromium") },
   start_url: { url: "https://app.example.test/" },
   actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
   storage: {},
@@ -110,6 +111,22 @@ class RetrySession implements BrowserScenarioSessionPort {
     return error instanceof Error ? error.message : "fixture failure";
   }
 }
+
+it("waits for a slow but successful browser close before removing its profile", async () => {
+  const stages: string[] = [];
+  const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
+    closeBrowser: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_250));
+      stages.push("browser-closed");
+    },
+    removeProfile: async () => {
+      stages.push("profile-removed");
+    },
+  });
+
+  await cleanup.close();
+  expect(stages).toEqual(["browser-closed", "profile-removed"]);
+});
 
 const serveScenario = async () => {
   const cli = Cli.create("browser-cleanup-test", { sync: false });

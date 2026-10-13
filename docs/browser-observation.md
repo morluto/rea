@@ -80,6 +80,27 @@ google-chrome \
 
 REA does not launch, own, or terminate this browser. Use a dedicated profile and stop it yourself when the investigation is complete. Do not expose the debugging port on a non-loopback interface.
 
+Other Chromium-family browsers, such as Chromium or Brave, work the same way
+with the same two flags. On macOS, run the executable inside the application
+bundle, for example
+`"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"` or
+`"/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"`. Fedora installs
+Chromium as `chromium-browser`.
+
+REA needs the browser's HTTP discovery endpoint on a loopback port. A browser
+driven over `--remote-debugging-pipe` or a private channel, for example by an
+automation SDK, exposes no such endpoint, so `list_browser_targets` has nothing
+to attach to. Connection failures report `endpoint_unreachable`; a reachable
+HTTP service that returns a non-200 or non-JSON discovery response reports
+`invalid_endpoint_response`.
+Reproduce that flow in a Chromium-family browser started with
+`--remote-debugging-port`.
+
+In a minimal Linux container, headed Chromium under Xvfb can keep running while
+its DevTools port never opens. Install the GLES, EGL, and Mesa DRI libraries
+(on Fedora: `libglvnd-gles`, `mesa-libEGL`, and `mesa-dri-drivers`), then
+restart the browser.
+
 On Linux, a reachable but locked desktop keyring can stall Chrome before its
 first navigation. For a dedicated investigation profile, add
 `--password-store=basic` to bypass that keyring. Empty or placeholder frame URLs
@@ -207,7 +228,7 @@ commands fail closed. A correlated reply's session ID must match the command's
 selected session. An optional method is unavailable only when the browser
 rejects it as unknown; other command rejections retain their reported failure.
 
-Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
+Network and console coverage starts only after REA attaches and enables the relevant CDP domains. `prior_activity_available` is always `false`; absence from these arrays is not evidence that an event never occurred. Scripts are different: scripts the page parsed before REA attached are still reported under `scripts`. A page that loaded before attach can therefore list its scripts while `network.requests` lacks the requests that fetched them. If CDP reuses a request ID without supplying redirect metadata, REA retains the predecessor observation and marks network coverage incomplete.
 
 Source maps are not fetched by inspection. Bundle analysis fetches them only when `fetch_source_maps` is selected, with exact-origin redirect checks and no credentials, cookies, or referrer. Each fetch operation has a 30-second deadline and a 64 MiB aggregate streamed-response budget across redirects. A deadline or byte-limit failure remains explicitly unavailable and makes bundle completeness partial. Source-map decoding also bounds raw resolved identities to 64 MiB and aggregate inline evidence to 32 MiB. Failed maps preserve their failure context when it fits; if another context cannot fit, collection stops with the full requested count, the returned processed count, and an explicit unknown-results limitation. Retained mappings and original sources are returned inline. See [source-location limits](web-source-location.md) for the structural decoder bounds. Original source artifacts with `.ts`, `.tsx`, `.mts`, or `.cts` suffixes carry `text/typescript`; other source names retain `text/javascript`.
 

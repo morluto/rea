@@ -153,6 +153,13 @@ const collectMembersAt = (
       state.unknown += 1;
       continue;
     }
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand &&
+      name === "__proto__"
+    )
+      continue;
     const segments = [...prefix, name];
     const path = segments.join(".");
     state.members.push(path);

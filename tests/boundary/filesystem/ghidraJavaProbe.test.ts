@@ -87,3 +87,43 @@ it.each([
     );
   },
 );
+
+it("bounds the Java version probe and reports an over-budget probe as a failed Java check", async () => {
+  const root = await createTestTempDirectory("rea-java-probe-bound-");
+  const configuredHome = join(root, "selected-jdk");
+  const installDir = join(root, "ghidra");
+  await mkdir(join(installDir, "Ghidra"), { recursive: true });
+  await writeFile(
+    join(installDir, "Ghidra", "application.properties"),
+    `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=17\n`,
+  );
+  // A chatty or hostile JVM that overruns the capture budget: spawnSync reports
+  // ENOBUFS, which the probe already treats as a failed observation.
+  mockSpawnSync.mockReturnValue({
+    stdout: "",
+    stderr: "java.version = 21.0.11\n",
+    status: null,
+    error: Object.assign(new Error("spawnSync /java ENOBUFS"), {
+      code: "ENOBUFS",
+    }),
+  });
+
+  const inspection = inspectGhidraInstallation({
+    environment: {},
+    installDir,
+    javaHome: configuredHome,
+  });
+
+  const [, , options] = mockSpawnSync.mock.calls[0] as [
+    string,
+    readonly string[],
+    { readonly maxBuffer?: number },
+  ];
+  expect(options.maxBuffer).toBe(1024 * 1024);
+  expect(inspection.javaVersion).toBeNull();
+  expect(inspection.javaHome).toBe(configuredHome);
+  expect(inspection.checks.find(({ name }) => name === "java")).toMatchObject({
+    status: "failed",
+    code: "runtime_missing",
+  });
+});

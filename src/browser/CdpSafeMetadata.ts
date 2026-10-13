@@ -1,10 +1,6 @@
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
-import {
-  numberValue,
-  cdpStringValue,
-  type UnknownRecord,
-} from "./CdpCaptureValues.js";
+import { cdpStringValue, type UnknownRecord } from "./CdpCaptureValues.js";
 
 type ResponseMetadata = WebPageInspection["metadata"]["responses"][number];
 type LinkMetadata = ResponseMetadata["links"][number];
@@ -43,7 +39,7 @@ export const safeResponseMetadata = (
       request_id: requestId,
       url,
       mime_type: boundedHeader(cdpStringValue(response.mimeType)),
-      content_length: nonnegativeInteger(headers.get("content-length")),
+      content_length: contentLength(headers.get("content-length")),
       content_encoding: boundedHeader(headers.get("content-encoding")),
       csp,
       links,
@@ -343,9 +339,12 @@ const policyToken = (value: string | undefined): string | null => {
   return /^[a-z][a-z0-9_.\x2d]*$/u.test(token) ? token : null;
 };
 
-const nonnegativeInteger = (value: string | undefined): number | null => {
-  const number = numberValue(value === undefined ? undefined : Number(value));
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
+// RFC 9110 section 8.6: Content-Length = 1*DIGIT. Other spellings declare no length.
+const contentLength = (value: string | undefined): number | null => {
+  const token = (value ?? "").trim();
+  if (!/^[0-9]+$/u.test(token)) return null;
+  const length = Number(token);
+  return Number.isSafeInteger(length) ? length : null;
 };
 
 const boundedHeader = (value: string | undefined): string | null =>

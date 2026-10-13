@@ -75,8 +75,10 @@ export const readGhidraLanguageCatalog = async (
       if (!entry.endsWith(".ldefs")) continue;
       const bytes = await readFile(join(directory, entry));
       if (bytes.length > MAX_LDEFS_BYTES) continue;
+      // XML 1.0 section 4.3.3: a leading UTF-8 BOM is an encoding signature,
+      // not document content; TextDecoder consumes it, Buffer#toString does not.
       definitions.push(
-        ...parseGhidraLanguageDefinitions(bytes.toString("utf8")),
+        ...parseGhidraLanguageDefinitions(new TextDecoder().decode(bytes)),
       );
     }
   }

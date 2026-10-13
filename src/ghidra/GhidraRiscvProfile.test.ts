@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -92,7 +92,14 @@ const target = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget => ({
 
 let installDir = "";
 beforeAll(async () => {
-  installDir = await mkdtemp(join(tmpdir(), "rea-ghidra-riscv-languages-"));
+  const root =
+    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
+  await mkdir(root, { recursive: true });
+  installDir = await mkdtemp(join(root, "rea-ghidra-riscv-languages-"));
+  // The simulated Linux host needs a POSIX absolute path. A current-drive root
+  // path also reaches this real fixture on Windows without changing admission.
+  if (process.platform === "win32")
+    installDir = `/${relative(parse(installDir).root, installDir).replaceAll("\\", "/")}`;
   const languages = join(installDir, "Ghidra/Processors/RISCV/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "riscv.ldefs"), RISCV_LDEFS);

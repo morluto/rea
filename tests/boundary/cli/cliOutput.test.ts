@@ -58,6 +58,95 @@ describe("CLI output argument boundary", () => {
   });
 });
 
+describe("unclosed CLI output filter slices", () => {
+  it.each([
+    "providers[",
+    "providers[0,1].name[",
+    "name,providers[",
+    "][,]",
+    "providers],name[0,1]",
+  ])("rejects %s before the filter parser runs", (filter) => {
+    expect(
+      validateCliOutputArguments([
+        "providers",
+        "--json",
+        "--filter-output",
+        filter,
+      ]),
+    ).toMatchObject({ ok: false, code: "INVALID_OUTPUT_FILTER" });
+  });
+
+  it("preserves effective-filter and earlier flag-error precedence", () => {
+    for (const arguments_ of [
+      [
+        "--filter-output",
+        "providers[",
+        "--filter-output",
+        "capabilities[0,1].provider.id,open",
+      ],
+      ["--filter-output", "capabilities[-1,].provider.id"],
+      ["--filter-output", "capabilities[[0,1]"],
+      ["--format", "invalid", "--filter-output", "providers["],
+      ["--token-limit", "invalid", "--filter-output", "providers["],
+    ])
+      expect(validateCliOutputArguments(arguments_)).toEqual({ ok: true });
+  });
+
+  workspaceCliTest(
+    "fails promptly across output formats without invoking the command",
+    async ({ cli }) => {
+      for (const format of ["json", "jsonl", "yaml", "toon", "md"]) {
+        const result = await cli.run({
+          arguments: [
+            "analyze",
+            "/absent/target",
+            "--format",
+            format,
+            "--filter-output",
+            "result[0,1].name[",
+          ],
+          timeoutMs: 3000,
+        });
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout).toContain("INVALID_OUTPUT_FILTER");
+        expect(result.stdout).toContain("closing ]");
+        expect(result.stderr).toBe("");
+      }
+      const splitPath = await cli.run({
+        arguments: ["providers", "--json", "--filter-output", "][,]"],
+        timeoutMs: 3000,
+      });
+      expect(splitPath.exitCode).toBe(1);
+      expect(splitPath.json).toMatchObject({
+        ok: false,
+        error: { code: "INVALID_OUTPUT_FILTER" },
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  workspaceCliTest(
+    "retains closed slices and multiple filter paths",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: [
+          "providers",
+          "--json",
+          "--filter-output",
+          "capabilities[0,1].provider.id,open",
+        ],
+        timeoutMs: 3000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toEqual({
+        capabilities: [{ provider: { id: expect.any(String) } }],
+        open: false,
+      });
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
 describe("CLI output valued-flag parsing", () => {
   workspaceCliTest(
     "preserves complete JSON errors when native builtin flags follow unusual arguments",

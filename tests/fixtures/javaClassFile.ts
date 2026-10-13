@@ -1,5 +1,8 @@
 /** Build a valid minimal JVM class file, optionally with an unused UTF-8 constant. */
-export const javaClassFile = (extraUtf8Bytes = 0): Buffer => {
+export const javaClassFile = (
+  extraUtf8Bytes = 0,
+  fatCpuLookalike = false,
+): Buffer => {
   const utf8 = (value: string): Buffer => {
     const bytes = Buffer.from(value, "utf8");
     const entry = Buffer.alloc(3 + bytes.length);
@@ -13,6 +16,7 @@ export const javaClassFile = (extraUtf8Bytes = 0): Buffer => {
     utf8("Hello"),
     Buffer.from([7, 0, 4]),
     utf8("java/lang/Object"),
+    ...(fatCpuLookalike ? [utf8("x"), Buffer.from([3, 0, 0, 0, 7])] : []),
     ...(extraUtf8Bytes === 0 ? [] : [utf8("x".repeat(extraUtf8Bytes))]),
   ];
   const headerAndPool = Buffer.alloc(10);

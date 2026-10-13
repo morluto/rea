@@ -18,7 +18,10 @@ import {
 } from "./ManagedMetadataHeaps.js";
 import { managedTableRowCounts } from "./ManagedMetadataInventory.js";
 import type { ManagedMetadataInventory } from "./ManagedMetadataInventory.js";
-import type { ManagedPeLayout } from "./ManagedPeReader.js";
+import {
+  managedCli32BitRequirement,
+  type ManagedPeLayout,
+} from "./ManagedPeReader.js";
 import { readManagedValue } from "./ManagedReaderFailure.js";
 
 type ModuleRef = ManagedNativeBoundaryInspection["module_refs"][number];
@@ -380,7 +383,7 @@ export const cliNative = (
   if (pe.cli === null) return null;
   return {
     il_only: (pe.cli.flags & 0x0000_0001) !== 0,
-    requires_32bit: (pe.cli.flags & 0x0000_0002) !== 0,
+    requires_32bit: managedCli32BitRequirement(pe.cli.flags) === "required",
     strong_name_signed: (pe.cli.flags & 0x0000_0008) !== 0,
     native_entry_point: (pe.cli.flags & 0x0000_0010) !== 0,
     ready_to_run_signature: pe.cli.readyToRunSignature,

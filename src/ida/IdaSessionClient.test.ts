@@ -9,6 +9,7 @@ import {
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { functionDossierSchema } from "../domain/hopperValues.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 const roots: string[] = [];
@@ -16,9 +17,22 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
+/** A failed close whose diagnostic names exactly these unverified sessions. */
+const reportsSessions = (...sessions: readonly object[]) => ({
+  error: {
+    diagnostics: { upstream_sessions: { state: "unverified", sessions } },
+  },
+});
+const LIVE_PEER = {
+  session_id: "unrelated-live-peer",
+  backend: "worker",
+  owned: false,
+} as const;
+
 const fixture = async (
   mode: "attached" | "headless" = "attached",
   timeoutMs = 1000,
+  protocol?: "native",
 ) => {
   const { root, target } = await createIdaTarget();
   roots.push(root);
@@ -29,6 +43,7 @@ const fixture = async (
       args: [],
       env: {},
       mode,
+      ...(protocol === undefined ? {} : { protocol }),
       timeoutMs,
       workspaceRoot: root,
     },
@@ -515,7 +530,7 @@ describe("headless IDA transient busy health", () => {
   });
 
   it.each([
-    ["free-form text", "token=abc123 /private/home/user secret"],
+    ["free-form text", "token=abc123 /private<home> secret"],
     ["an over-long name", "x".repeat(200)],
   ])(
     "reports %s from the worker as unknown instead of echoing it",
@@ -697,6 +712,74 @@ describe("headless IDA non-busy health payloads", () => {
   });
 });
 
+describe("IDA compatibility profile mismatch", () => {
+  it("reports the native profile for an incompatible catalog", async () => {
+    const { producer, client } = await fixture("attached", 1000, "native");
+    producer.tools = [];
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected incompatible native catalog");
+    expect(projectAnalysisError(result.error).details).toMatchObject({
+      diagnostics: {
+        mode: "attached",
+        expected_profile: "native",
+        missing_tools: expect.arrayContaining(["decompile"]),
+      },
+    });
+    expect(producer.calls).toEqual([]);
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("names every missing tool so the caller can identify the upstream profile", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.tools = [
+      "idb_open",
+      "idb_list",
+      "server_health",
+      "list_funcs",
+      "lookup_funcs",
+      "find_regex",
+      "decompile",
+      "disasm",
+      "callees",
+      "xrefs_to",
+    ];
+    const result = await client.execute("health", {});
+    expect(result.ok, "an incomplete profile cannot serve analysis").toBe(
+      false,
+    );
+    if (result.ok) return;
+    const projected = projectAnalysisError(result.error);
+    expect(
+      projected.details,
+      "the absent tool and the expected profile are both reported",
+    ).toMatchObject({
+      provider_id: "ida",
+      diagnostics: {
+        mode: "headless",
+        expected_profile: "database-supervisor",
+        missing_tools: ["idb_close"],
+      },
+    });
+  });
+
+  it("reports the legacy profile when an attached producer serves modern tools", async () => {
+    const { producer, client } = await fixture("attached");
+    producer.tools = ["server_health", "lookup_funcs", "decompile", "disasm"];
+    const result = await client.execute("health", {});
+    expect(result.ok, "an incomplete profile cannot serve analysis").toBe(
+      false,
+    );
+    if (result.ok) return;
+    expect(
+      projectAnalysisError(result.error).details,
+      "attached mode names the legacy profile it expected",
+    ).toMatchObject({
+      diagnostics: { mode: "attached", expected_profile: "legacy-1.4" },
+    });
+  });
+});
+
 describe("headless IDA lifecycle boundaries", () => {
   it("never closes an unowned worker even when open echoes the requested private identity", async () => {
     const { producer, client } = await fixture("headless");
@@ -792,10 +875,19 @@ describe("headless IDA session ownership and cleanup", () => {
   it("retains the private workspace and reports cleanup failure when worker release is unverified", async () => {
     const { producer, client, root } = await fixture("headless");
     await client.execute("health", {});
+    const sessionId = producer.database;
     producer.failClose = true;
     const result = await client.close();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result).toMatchObject(
+      reportsSessions({
+        session_id: sessionId,
+        backend: "worker",
+        owned: true,
+        input_path: producer.inputPath,
+      }),
+    );
     expect(
       (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
     ).toBe(true);
@@ -843,10 +935,20 @@ describe("headless IDA reaped worker cleanup", () => {
     const result = await client.close();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+    // The released session must not be named as the remaining worker.
+    expect(result).toMatchObject(reportsSessions(LIVE_PEER));
     expect(producer.closes).toBe(0);
     expect(
       (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
     ).toBe(true);
+
+    // A retry whose inventory is unavailable keeps the observed blocker.
+    producer.beforeCall = async (name) => {
+      if (name === "idb_list") throw new Error("inventory unavailable");
+    };
+    const retried = await client.close();
+    expect(retried.ok).toBe(false);
+    expect(retried).toMatchObject(reportsSessions(LIVE_PEER));
   });
 
   it("retries independent inventory verification after an absent-session response", async () => {
@@ -899,6 +1001,306 @@ describe("headless IDA reaped worker cleanup", () => {
   });
 });
 
+/** A rejected open response, with helpers for separately inventoried workers. */
+const rejectedOpenFixture = async () => {
+  const { producer, client } = await fixture("headless");
+  producer.overrideCall = (name) =>
+    name === "idb_open" ? { error: "open did not complete" } : undefined;
+  expect((await client.execute("health", {})).ok).toBe(false);
+  const open = producer.calls.find(({ name }) => name === "idb_open")?.args;
+  const entry = (session_id: string, owned: boolean) => ({
+    session_id,
+    input_path: String(open?.input_path),
+    owned,
+    backend: "worker",
+    is_active: true,
+  });
+  return {
+    producer,
+    client,
+    requested: String(open?.preferred_session_id),
+    entry,
+  };
+};
+
+describe("headless IDA cleanup diagnostics", () => {
+  it("does not name a worker whose close was confirmed when inventory then fails", async () => {
+    const { producer, client } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    producer.beforeCall = async (name) => {
+      if (name === "idb_list") throw new Error("inventory unavailable");
+    };
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    expect(producer.calls.map(({ name }) => name)).toContain("idb_close");
+    expect(result).toMatchObject(reportsSessions());
+  });
+
+  it("retains peers and confirmed ownership from successful startup when close fails", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) => {
+      if (name === "idb_list")
+        return {
+          sessions: [
+            {
+              session_id: String(producer.database),
+              input_path: producer.inputPath,
+              owned: true,
+              backend: "worker",
+              is_active: true,
+            },
+            {
+              session_id: "startup-peer",
+              input_path: producer.inputPath,
+              owned: false,
+              backend: "worker",
+              is_active: false,
+            },
+          ],
+        };
+      if (name === "idb_close") return { error: "close rejected" };
+      return undefined;
+    };
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const result = await client.close();
+    expect(result).toMatchObject(
+      reportsSessions(
+        {
+          session_id: producer.database,
+          backend: "worker",
+          owned: true,
+          input_path: producer.inputPath,
+        },
+        {
+          session_id: "startup-peer",
+          backend: "worker",
+          owned: false,
+          input_path: producer.inputPath,
+          is_active: false,
+        },
+      ),
+    );
+  });
+
+  it("preserves an observed conflicting input binding after close", async () => {
+    const { producer, client } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const requested = String(producer.database);
+    producer.overrideCall = (name) =>
+      name === "idb_list"
+        ? {
+            sessions: [
+              {
+                session_id: requested,
+                input_path: "/different/input",
+                owned: false,
+                backend: "worker",
+                is_active: true,
+              },
+            ],
+          }
+        : undefined;
+    const result = await client.close();
+    expect(result).toMatchObject(
+      reportsSessions({
+        session_id: requested,
+        backend: "worker",
+        owned: false,
+        input_path: "/different/input",
+      }),
+    );
+  });
+
+  it("keeps peers seen beside the requested worker when its close fails", async () => {
+    const { producer, client, requested, entry } = await rejectedOpenFixture();
+    producer.overrideCall = (name) => {
+      if (name === "idb_list")
+        return {
+          sessions: [
+            entry(requested, true),
+            entry("unrelated-live-peer", false),
+          ],
+        };
+      if (name === "idb_close") return { error: "close rejected" };
+      return undefined;
+    };
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject(
+      reportsSessions(
+        { session_id: requested, backend: "worker", owned: true },
+        LIVE_PEER,
+      ),
+    );
+  });
+});
+
+describe("headless IDA cleanup diagnostics for observed peers", () => {
+  it("drops the requested worker from blockers once its close is confirmed", async () => {
+    const { producer, client, requested, entry } = await rejectedOpenFixture();
+    let inventories = 0;
+    producer.beforeCall = async (name) => {
+      if (name === "idb_list" && ++inventories > 1)
+        throw new Error("inventory unavailable");
+    };
+    producer.overrideCall = (name) => {
+      if (name === "idb_list")
+        return {
+          sessions: [
+            entry(requested, true),
+            entry("unrelated-live-peer", false),
+          ],
+        };
+      if (name === "idb_close")
+        return {
+          success: true,
+          session_id: requested,
+          saved: false,
+          owned: true,
+          backend: "worker",
+        };
+      return undefined;
+    };
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject(reportsSessions(LIVE_PEER));
+  });
+
+  it("reports a blocking GUI session by its backend", async () => {
+    const { producer, client } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const sessionId = producer.database;
+    producer.overrideCall = (name) => {
+      if (name === "idb_close")
+        return { error: `Session not found: ${sessionId}` };
+      if (name === "idb_list")
+        return {
+          sessions: [
+            {
+              session_id: "",
+              input_path: producer.inputPath,
+              owned: false,
+              backend: "gui",
+              is_active: true,
+            },
+          ],
+        };
+      return undefined;
+    };
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    expect(result).toMatchObject(
+      reportsSessions({ session_id: "", backend: "gui", owned: false }),
+    );
+  });
+});
+
+/** A completed open response is not proof that its private Worker was ever released. */
+describe("headless IDA unresolved successful-open ownership", () => {
+  it.each(["matching", "foreign-input", "malformed"] as const)(
+    "retains the private input after %s success with incomplete initial discovery",
+    async (kind) => {
+      const { producer, client, root } = await fixture("headless");
+      let hidden = true;
+      let ownedId: string | undefined;
+      let privateInput: string | undefined;
+      producer.beforeCall = async (name, args) => {
+        if (name !== "idb_open") return;
+        ownedId = z.string().parse(args.preferred_session_id);
+        privateInput = z.string().parse(args.input_path);
+        producer.database = ownedId;
+        producer.inputPath = privateInput;
+      };
+      producer.overrideCall = (name) => {
+        if (name === "idb_open") {
+          const originalId = z.string().parse(ownedId);
+          const originalInput = z.string().parse(privateInput);
+          if (kind === "foreign-input")
+            return {
+              success: true,
+              session: {
+                session_id: "foreign-session",
+                input_path: "/foreign/input",
+              },
+            };
+          if (kind === "malformed")
+            return { success: true, session: { session_id: originalId } };
+          return {
+            success: true,
+            session: { session_id: originalId, input_path: originalInput },
+          };
+        }
+        if (name === "idb_list" && hidden) return { sessions: [] };
+        return undefined;
+      };
+
+      expect((await client.execute("health", {})).ok).toBe(false);
+      const incomplete = await client.close();
+      expect(incomplete.ok).toBe(false);
+      if (!incomplete.ok) expect(incomplete.error.cleanupIncomplete).toBe(true);
+      expect(producer.closes).toBe(0);
+      expect(producer.database).toBe(ownedId);
+      expect(
+        (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+      ).toBe(true);
+      expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(
+        false,
+      );
+
+      // A later positive private ownership record permits ordinary save=false
+      // cleanup, without ever adopting the foreign open-response identity.
+      hidden = false;
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual(
+        [{ name: "idb_close", args: { database: ownedId, save: false } }],
+      );
+      expect(producer.closes).toBe(1);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    },
+  );
+
+  it("preserves cleanup after a completed, explicit idb_open rejection", async () => {
+    const { producer, client, root } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "Input was rejected before creating a session" }
+        : undefined;
+
+    expect((await client.execute("health", {})).ok).toBe(false);
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
+    expect(producer.closes).toBe(1);
+    expect(await readdir(root)).toEqual(["target.elf"]);
+  });
+
+  it("retains cleanup when a rejected open leaves the requested ID on another input", async () => {
+    const { producer, client, requested } = await rejectedOpenFixture();
+    producer.overrideCall = (name) =>
+      name === "idb_list"
+        ? {
+            sessions: [
+              {
+                session_id: requested,
+                input_path: "/different/input",
+                owned: false,
+                backend: "worker",
+                is_active: true,
+              },
+            ],
+          }
+        : undefined;
+
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
+    expect(producer.closes).toBe(0);
+  });
+});
+
 describe("headless IDA cleanup verification", () => {
   it("retries failed worker release through the retained connection before removing its workspace", async () => {
     const { producer, client, root } = await fixture("headless");
@@ -943,23 +1345,6 @@ describe("headless IDA cleanup verification", () => {
     ).toHaveLength(1);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
-  it("never closes an unrelated database when startup returns a different input identity", async () => {
-    const { producer, client, root } = await fixture("headless");
-    producer.overrideCall = (name) =>
-      name === "idb_open"
-        ? {
-            success: true,
-            session: {
-              session_id: "user-database",
-              input_path: "/unrelated/input",
-            },
-          }
-        : undefined;
-    expect((await client.execute("health", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(true);
-    expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
   it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
     const { producer, client, root } = await fixture("headless");
     producer.beforeCall = async (name, args) => {
@@ -982,4 +1367,163 @@ describe("headless IDA cleanup verification", () => {
     ).toMatch(/^rea-/u);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
+});
+
+it("retains a conflicting requested session ID during pre-close recovery", async () => {
+  const { producer, client, root } = await fixture("headless");
+  producer.overrideCall = (name) =>
+    name === "idb_list"
+      ? {
+          sessions: [
+            {
+              session_id: String(producer.database),
+              input_path: "/conflicting/input",
+              owned: true,
+              backend: "worker",
+              is_active: false,
+            },
+          ],
+        }
+      : undefined;
+  expect((await client.execute("health", {})).ok).toBe(false);
+  const requested = String(producer.database);
+  const result = await client.close();
+  expect(result).toMatchObject(
+    reportsSessions({
+      session_id: requested,
+      input_path: "/conflicting/input",
+      owned: true,
+      backend: "worker",
+      is_active: false,
+    }),
+  );
+  expect(producer.calls.some(({ name }) => name === "idb_close")).toBe(false);
+  expect(
+    (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
+  ).toBe(true);
+});
+
+it.each(["unavailable", "malformed"] as const)(
+  "does not invent a worker after explicit rejection and %s inventory",
+  async (kind) => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "rejected before worker creation" }
+        : name === "idb_list" && kind === "malformed"
+          ? {}
+          : undefined;
+    expect((await client.execute("health", {})).ok).toBe(false);
+    producer.beforeCall = async (name) => {
+      if (name === "idb_list" && kind === "unavailable")
+        throw new Error("inventory unavailable");
+    };
+    const result = await client.close();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected retained cleanup");
+    expect(result.error).not.toHaveProperty("diagnostics.upstream_sessions");
+  },
+);
+
+it.each(["idb_close", "idb_list", "connection_close"])(
+  "preserves transport stderr through cleanup at %s",
+  async (stage) => {
+    const { producer, client } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const failure = new ProviderAdapterError("ida", "transport", {
+      diagnostics: {
+        reason: "upstream transport closed",
+      },
+      capturedOutput: {
+        stdout: "",
+        stderr: "IDA shutdown diagnostic",
+        truncated: false,
+      },
+    });
+    const originalClose = producer.close.bind(producer);
+    producer.beforeCall = async (name) => {
+      if (name === stage) throw failure;
+    };
+    if (stage === "connection_close")
+      producer.close = async () => {
+        throw failure;
+      };
+    try {
+      const result = await client.close();
+      if (result.ok) throw new Error("expected cleanup failure");
+      expect(result.error.capturedOutput?.stderr).toBe(
+        "IDA shutdown diagnostic",
+      );
+      expect(result.error.diagnostics).toMatchObject({
+        failure_reason: "upstream transport closed",
+      });
+      expect(result.error.cleanupIncomplete).toBe(true);
+    } finally {
+      delete producer.beforeCall;
+      producer.close = originalClose;
+      await client.close();
+    }
+  },
+);
+
+it("binds retained transport diagnostics to the requested operation and recovery", async () => {
+  const { producer, client } = await fixture("attached");
+  await client.execute("health", {});
+  producer.beforeCall = async (name) => {
+    if (name === "list_functions")
+      throw new ProviderAdapterError("ida", "transport", {
+        diagnostics: { reason: "upstream closed" },
+        capturedOutput: {
+          stdout: "",
+          stderr: "IDA diagnostic",
+          truncated: false,
+        },
+      });
+  };
+  const result = await client.execute("list_procedures", {});
+  if (result.ok) throw new Error("expected upstream failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      operation: "list_procedures",
+      diagnostics: {
+        reason: "upstream closed",
+        recovery: expect.stringContaining("docs/ida-provider.md"),
+      },
+      captured_output: { stderr: "IDA diagnostic" },
+    },
+  });
+  await client.close();
+});
+
+it("retains transport diagnostics on a cancellation regardless of stderr", async () => {
+  const { producer, client } = await fixture("attached");
+  await client.execute("health", {});
+  const controller = new AbortController();
+  producer.beforeCall = async (name) => {
+    if (name === "list_functions") {
+      controller.abort();
+      throw new ProviderAdapterError("ida", "transport", {
+        diagnostics: { reason: "upstream closed after cancellation" },
+        capturedOutput: {
+          stdout: "",
+          stderr: "shutdown diagnostic",
+          truncated: false,
+        },
+      });
+    }
+  };
+  const result = await client.execute(
+    "list_procedures",
+    {},
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("expected cancellation");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "cancelled",
+    details: {
+      diagnostics: { reason: "upstream closed after cancellation" },
+      captured_output: { stderr: "shutdown diagnostic" },
+    },
+  });
+  await client.close();
 });

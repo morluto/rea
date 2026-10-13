@@ -207,7 +207,6 @@ export const traceNativeInvestigationGraph = (
   while (queue.length > 0) {
     const current = queue.shift();
     if (current === undefined) break;
-    reachedDepth = Math.max(reachedDepth, current.depth);
     const adjacent = adjacency.get(current.id) ?? [];
 
     for (const edge of adjacent) {
@@ -227,19 +226,24 @@ export const traceNativeInvestigationGraph = (
         reason ??= "max_depth_reached";
         continue;
       }
-      selectedEdges.set(edge.id, edge);
-      if (alreadyVisited) continue;
-      if (visited.size >= limits.max_nodes) {
+      // Check destination capacity before retaining its edge. Otherwise the node
+      // bound leaves a resolved edge pointing outside the returned trace.
+      if (!alreadyVisited && visited.size >= limits.max_nodes) {
         truncated = true;
         reason = "max_nodes_reached";
         break;
       }
+      selectedEdges.set(edge.id, edge);
+      if (alreadyVisited) continue;
       if (!nodeById.has(nextId)) {
         truncated = true;
         reason ??= "edge_target_missing_from_graph";
         continue;
       }
       visited.add(nextId);
+      // A retained node has already been reached even if a later sibling
+      // exhausts a budget before this node is dequeued for expansion.
+      reachedDepth = Math.max(reachedDepth, current.depth + 1);
       queue.push({ id: nextId, depth: current.depth + 1 });
     }
     if (reason === "max_edges_reached" || reason === "max_nodes_reached") break;

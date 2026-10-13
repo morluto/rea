@@ -1,3 +1,7 @@
+import {
+  descriptorFailurePath,
+  expectRetainedDescriptor,
+} from "../../fixtures/descriptorCloseFailure.js";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -15,27 +19,22 @@ const cleanup = vi.hoisted(() => ({
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
-  return {
-    ...filesystem,
-    open: async (...args: Parameters<typeof filesystem.open>) => {
-      const handle = await filesystem.open(...args);
-      if (args[0] === cleanup.path) {
-        cleanup.handles.push(handle);
-        const close = handle.close.bind(handle);
-        handle.close = async () => {
-          if (cleanup.denied && handle.fd >= 0)
-            throw new Error("Descriptor close deliberately denied");
-          await close();
-        };
-      }
-      return handle;
-    },
-  };
+  const { withDescriptorCloseFailure } =
+    await import("../../fixtures/descriptorCloseFailure.js");
+  return withDescriptorCloseFailure(filesystem, cleanup);
 });
 
 it
   .runIf(process.platform === "linux")
-  .each(["capture", "tool", "limiter", "kernel"])(
+  .each([
+    "capture",
+    "tool",
+    "limiter",
+    "kernel",
+    "field-tool",
+    "field-limiter",
+    "field-kernel",
+  ])(
   "retains failed %s descriptors and retries them before further acquisition and shutdown",
   async (member) => {
     const directory = await createTestTempDirectory("rea-signal-descriptor-");
@@ -67,14 +66,16 @@ it
       },
       () => PrivateRuntimeRoot.create({ parent: directory }),
     );
-    cleanup.path =
-      member === "capture"
-        ? path
-        : member === "tool"
-          ? command
-          : member === "limiter"
-            ? limiter
-            : "/proc/self/limits";
+    const discovery = member.startsWith("field-");
+    const resource = discovery ? member.slice(6) : member;
+    const operation = discovery
+      ? "inspect_signal_decoders"
+      : "decode_signal_recording";
+    cleanup.path = descriptorFailurePath(resource, {
+      capture: path,
+      tool: command,
+      limiter,
+    });
     cleanup.denied = true;
     cleanup.handles = [];
     onTestFinished(async () => {
@@ -84,22 +85,20 @@ it
       cleanup.path = "";
     });
     const service = new SignalRecordingService(provider);
-    const first = await service.decode({ path, decoders: "uart" });
-    expect(first).toMatchObject({
-      ok: false,
-      error: { cleanupIncomplete: true, cleanupResources: [cleanup.path] },
-    });
-    expect(cleanup.handles).toHaveLength(1);
-    expect(cleanup.handles[0]?.fd).toBeGreaterThanOrEqual(0);
+    const first = discovery
+      ? await service.inspectDecoders({ query: "uart" })
+      : await service.decode({ path, decoders: "uart" });
+    expectRetainedDescriptor(first, cleanup, operation);
     const launchCount = launches;
     expect(await service.decode({ path, decoders: "uart" })).toMatchObject({
       ok: false,
-      error: { cleanupIncomplete: true },
+      error: { cleanupIncomplete: true, operation },
     });
     expect(cleanup.handles).toHaveLength(1);
     expect(launches).toBe(launchCount);
     await expect(provider.close()).rejects.toMatchObject({
       cleanupIncomplete: true,
+      operation,
     });
     cleanup.denied = false;
     await provider.close();

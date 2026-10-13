@@ -12,6 +12,7 @@ export class SqliteInspectionFailure extends Error {
     readonly reason:
       | "format"
       | "selection"
+      | "column-selection"
       | "unsupported"
       | "unavailable"
       | "output-limit"

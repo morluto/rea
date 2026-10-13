@@ -25,7 +25,12 @@ export type ClientConfigurationResult =
     }
   | {
       readonly status: "failed";
-      readonly reason: "path" | "backup" | "write" | "readback";
+      readonly reason:
+        | "path"
+        | "target_changed"
+        | "backup"
+        | "write"
+        | "readback";
     }
   | {
       readonly status: "failed";
@@ -55,6 +60,8 @@ export interface SetupHost {
   readonly homeDirectory: string;
   skillDestinations(clientIds: readonly string[]): readonly SkillDestination[];
   readonly registrationCommand: readonly string[];
+  /** Why no client may be registered with `registrationCommand` from this host. */
+  readonly registrationCommandBlocker?: string;
   readonly nodeVersion: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;

@@ -6,6 +6,7 @@ import {
   buildElf64Image,
   buildStrippedElf64Image,
   snapshotSection,
+  appendElfRanges,
 } from "./FlutterBuild.fixture.js";
 
 const readElfSymbol = async (bytes: Buffer, name: string) => {
@@ -143,6 +144,96 @@ describe("readElfSymbol", () => {
 });
 
 describe("ELF symbol-table ownership", () => {
+  it.each([
+    { address: 0x400, offset: 0x700, size: 52 },
+    { address: 0x410, offset: 0x710, size: 4 },
+    { address: 0x3f0, offset: 0x6f0, size: 20 },
+  ])(
+    "rejects conflicting interpretations of any symbol byte: %j",
+    async (range) => {
+      const image = appendElfRanges(imageWithSections(), "program", [
+        { type: 1, ...range },
+      ]);
+      const names = ["_kDartVmSnapshotData", "_kDartIsolateSnapshotData"];
+      const result = await readElfSymbols(image, names);
+      expect(result.symbols).toEqual([
+        { name: names[1], offset: 0x800, size: 52 },
+      ]);
+      expect(result.failures).toContainEqual({
+        reason: expect.stringContaining("conflicting PT_LOAD"),
+      });
+      const phoff = Number(image.readBigUInt64LE(0x20));
+      const first = Buffer.from(image.subarray(phoff, phoff + 56));
+      image.copy(image, phoff, phoff + 56, phoff + 112);
+      first.copy(image, phoff + 56);
+      expect(await readElfSymbols(image, names)).toEqual(result);
+    },
+  );
+
+  it("accepts equivalent overlaps and excludes adjacent unrelated mappings", async () => {
+    const image = appendElfRanges(imageWithSections(), "program", [
+      { type: 1, address: 0x410, offset: 0x410, size: 4 },
+      { type: 1, address: 0x400 + 52, offset: 0x700, size: 4 },
+    ]);
+    expect(await readElfSymbols(image, ["_kDartVmSnapshotData"])).toEqual({
+      symbols: [{ name: "_kDartVmSnapshotData", offset: 0x400, size: 52 }],
+      failures: [],
+    });
+  });
+
+  it("does not publish an earlier definition when another definition has unresolved mapping", async () => {
+    const image = imageWithSections();
+    const shoff = Number(image.readBigUInt64LE(0x28));
+    const symbols = Number(image.readBigUInt64LE(shoff + 64 + 0x18));
+    image.writeUInt32LE(image.readUInt32LE(symbols), symbols + 24);
+    const conflict = appendElfRanges(image, "program", [
+      { type: 1, address: 0x810, offset: 0x710, size: 4 },
+    ]);
+    const result = await readElfSymbols(conflict, ["_kDartVmSnapshotData"]);
+    expect(result.symbols).toEqual([]);
+    expect(result.failures).toEqual([
+      {
+        reason: "Symbol _kDartVmSnapshotData has conflicting PT_LOAD mappings",
+      },
+    ]);
+  });
+
+  it("handles zero-width symbols at a unique segment end without choosing a conflicting shared endpoint", async () => {
+    const image = imageWithSections();
+    const shoff = Number(image.readBigUInt64LE(0x28));
+    const symbols = Number(image.readBigUInt64LE(shoff + 64 + 0x18));
+    const at = Number(image.readBigUInt64LE(64 + 0x20));
+    image.writeBigUInt64LE(BigInt(at), symbols + 8);
+    image.writeBigUInt64LE(0n, symbols + 16);
+    expect(
+      (await readElfSymbols(image, ["_kDartVmSnapshotData"])).symbols,
+    ).toEqual([{ name: "_kDartVmSnapshotData", offset: at, size: 0 }]);
+    const ambiguous = appendElfRanges(image, "program", [
+      { type: 1, address: at, offset: 0x700, size: 4 },
+    ]);
+    expect(
+      (await readElfSymbols(ambiguous, ["_kDartVmSnapshotData"])).symbols,
+    ).toEqual([]);
+  });
+
+  it.each(["hash", "symbols", "strings"] as const)(
+    "rejects partially conflicting dynamic %s mappings",
+    async (table) => {
+      const image = strippedImageWithSections();
+      const dynamic = Number(image.readBigUInt64LE(64 + 56 + 8));
+      const tagIndex = table === "hash" ? 4 : table === "symbols" ? 0 : 1;
+      const at = Number(image.readBigUInt64LE(dynamic + tagIndex * 16 + 8));
+      const conflict = appendElfRanges(image, "program", [
+        { type: 1, address: at + 1, offset: 0x700, size: 1 },
+      ]);
+      const result = await readElfSymbols(conflict, ["_kDartVmSnapshotData"]);
+      expect(result.symbols).toEqual([]);
+      expect(result.failures).toContainEqual({
+        reason: expect.stringContaining("conflicting PT_LOAD"),
+      });
+    },
+  );
+
   it.each([false, true])(
     "keeps a symbol terminator inside dynstr (stripped: %s)",
     async (stripped) => {

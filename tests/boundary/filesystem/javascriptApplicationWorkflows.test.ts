@@ -444,73 +444,97 @@ describe("JavaScript application workflow error diagnostics", () => {
   });
 });
 
+const RUNTIME_PATH_CASES = [
+  {
+    name: "case-sensitive POSIX input root",
+    root: null,
+    path: "/applications/Example.app/Contents/Resources/app/renderer.js",
+    status: "unknown",
+    basis: "none",
+  },
+  {
+    name: "case-sensitive POSIX mapping root",
+    root: "/runtime/App",
+    path: "/runtime/app/renderer.js",
+    status: "unknown",
+    basis: "none",
+  },
+  {
+    name: "matching POSIX mapping root",
+    root: "/runtime/App",
+    path: "/runtime/App/renderer.js",
+    status: "matched",
+    basis: "operator-file-mapping",
+  },
+  {
+    name: "case-insensitive Windows mapping root",
+    root: String.raw`C:\runtime\App`,
+    path: String.raw`c:\runtime\app\renderer.js`,
+    status: "matched",
+    basis: "operator-file-mapping",
+  },
+] as const;
+
 describe("JavaScript runtime reconciliation local paths", () => {
-  it.each([
-    {
-      name: "case-sensitive POSIX input root",
-      root: null,
-      path: "/applications/Example.app/Contents/Resources/app/renderer.js",
-      status: "unknown",
-    },
-    {
-      name: "case-sensitive POSIX mapping root",
-      root: "/runtime/App",
-      path: "/runtime/app/renderer.js",
-      status: "unknown",
-    },
-    {
-      name: "matching POSIX mapping root",
-      root: "/runtime/App",
-      path: "/runtime/App/renderer.js",
-      status: "matched",
-    },
-    {
-      name: "case-insensitive Windows mapping root",
-      root: String.raw`C:\runtime\App`,
-      path: String.raw`c:\runtime\app\renderer.js`,
-      status: "matched",
-    },
-  ])("uses $name on every host", ({ root, path, status }) => {
-    const base = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE;
-    const original = base.runtime_observations[0]!;
-    const inspection = electronPageInspectionSchema.parse(
-      original.normalized_result,
-    );
-    const runtime = createEvidence(undefined, original.provider, {
-      predicateType: original.predicate_type,
-      operation: original.operation,
-      parameters: { ...original.parameters, include_script_sources: false },
-      result: {
-        ...inspection,
-        scripts: {
-          ...inspection.scripts,
-          items: inspection.scripts.items.map((script) => ({
-            ...script,
-            file_path: path,
-            source: { included: false, reason: "not-requested" },
-          })),
+  it.each(RUNTIME_PATH_CASES)(
+    "uses $name on every host",
+    ({ root, path, status, basis }) => {
+      const base = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE;
+      const original = base.runtime_observations[0]!;
+      const inspection = electronPageInspectionSchema.parse(
+        original.normalized_result,
+      );
+      // Keep target and script coordinates consistent so an unrelated target
+      // cannot activate the static layer after its script mapping was rejected.
+      const runtime = createEvidence(undefined, original.provider, {
+        predicateType: original.predicate_type,
+        operation: original.operation,
+        parameters: { ...original.parameters, include_script_sources: false },
+        result: {
+          ...inspection,
+          target: { ...inspection.target, file_path: path },
+          scripts: {
+            ...inspection.scripts,
+            items: inspection.scripts.items.map((script) => ({
+              ...script,
+              file_path: path,
+              source: { included: false, reason: "not-requested" },
+            })),
+          },
         },
-      },
-      confidence: original.confidence,
-      authority: original.authority,
-    });
-    const reconciled = reconcileJavaScriptRuntimeEvidence({
-      static_layers: base.static_layers.map((layer) => ({
-        ...layer,
-        runtime_mappings: root === null ? [] : [{ kind: "file-root", root }],
-      })),
-      runtime_observations: [runtime],
-    });
-    if (!reconciled.ok) throw reconciled.error;
-    const result = javascriptRuntimeReconciliationResultSchema.parse(
-      reconciled.value.normalized_result,
-    );
-    expect(
-      result.reconciliations.find(
-        ({ entity_kind }) => entity_kind === "script",
-      ),
-    ).toMatchObject({ status });
-  });
+        confidence: original.confidence,
+        authority: original.authority,
+      });
+      const reconciled = reconcileJavaScriptRuntimeEvidence({
+        static_layers: base.static_layers.map((layer) => ({
+          ...layer,
+          runtime_mappings: root === null ? [] : [{ kind: "file-root", root }],
+        })),
+        runtime_observations: [runtime],
+      });
+      if (!reconciled.ok) throw reconciled.error;
+      const result = javascriptRuntimeReconciliationResultSchema.parse(
+        reconciled.value.normalized_result,
+      );
+      expect(
+        result.reconciliations.find(
+          ({ entity_kind }) => entity_kind === "script",
+        ),
+      ).toMatchObject({ status, basis });
+      expect(
+        result.static_load_states.find(
+          ({ kind }) => kind === "javascript-asset",
+        ),
+      ).toMatchObject(
+        status === "matched"
+          ? { status: "loaded", reason: "runtime-script-correspondence" }
+          : { status: "unknown", reason: "layer-outside-runtime-scope" },
+      );
+      expect(result.static_layers[0]?.runtime_mappings).toEqual(
+        root === null ? [] : [{ kind: "file-root", root, artifact_prefix: "" }],
+      );
+    },
+  );
 
   it("resolves relative file mapping roots before deriving result Evidence", () => {
     const absoluteRoot = resolve(process.cwd(), "runtime-cache-fixture");

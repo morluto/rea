@@ -141,6 +141,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     ).toBe("node_modules/fi%xture/actual.cjs");
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(graph.coverage.status).toBe("complete");
+    const requireFileUrl = graph.edges.find(
+      ({ properties }) =>
+        properties.module_link_kind === "require" &&
+        properties.specifier === "file:///src/uri-dep.cjs",
+    );
+    expect(requireFileUrl?.evidence.limitations.length).toBeGreaterThan(0);
     const imports = graph.edges.filter(
       ({ properties }) => properties.module_link_kind === "require",
     );

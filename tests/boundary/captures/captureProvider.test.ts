@@ -11,6 +11,9 @@ import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
+import { Cli } from "incur";
+import { registerCaptureCommands } from "../../../src/cli/captureCommands.js";
+import { silentLogger } from "../../../src/logger.js";
 
 // A command-boundary simulator: real process ownership/filesystem, not real TShark coverage.
 const fixture = async (mode = "ok", failCleanup = false) => {
@@ -621,6 +624,37 @@ it("retains completed discovery on late cancellation and cleanup failure", async
           cleanupIncomplete: true,
         });
     }
+    f.allowCleanup();
+    await f.service.close();
+  }
+});
+
+it("preserves discovery resource ownership through CLI shutdown retries", async () => {
+  const f = await fixture("cleanup", true);
+  const cli = Cli.create("discovery-cleanup", { sync: false });
+  registerCaptureCommands(cli, silentLogger, {}, f.service);
+  let stdout = "";
+  try {
+    await cli.serve(
+      ["inspect-packet-fields", "--query", "usb", "--format", "json"],
+      {
+        stdout: (text) => {
+          stdout += text;
+        },
+        exit: () => {},
+      },
+    );
+    expect(JSON.parse(stdout)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: {
+        diagnostics: {
+          cleanup_error: {
+            details: { operation: "inspect_packet_fields" },
+          },
+        },
+      },
+    });
+  } finally {
     f.allowCleanup();
     await f.service.close();
   }

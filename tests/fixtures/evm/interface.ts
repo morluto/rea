@@ -18,6 +18,7 @@ export const evmInterfaceFixture = (
     kind: "unknown",
     deployment_authenticity: "unknown",
     hardfork: "unknown",
+    metadata: null,
   },
   evidence_kind: "inferred",
   functions: [],

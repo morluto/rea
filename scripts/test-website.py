@@ -261,7 +261,9 @@ class WebsiteTranslationChecks(unittest.TestCase):
             inventory = [item for item in languages(ROOT) if item["code"] in {"en", "zh-CN", "ar"}]
             (root / "website/locales/languages.json").write_text(json.dumps(inventory))
             for item in inventory:
-                (root / item["readme"]).write_text("# REA\n")
+                destination = root / item["readme"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text("# REA\n")
             WEBSITE.sync_pages(root)
             extract_catalogs(root)
             yield root

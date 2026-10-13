@@ -83,6 +83,61 @@ const graph = nativeInvestigationGraphSchema.parse({
 });
 
 describe("native investigation graph traces", () => {
+  it.each(["forward", "backward"] as const)(
+    "keeps both endpoints of retained edges within the %s node budget",
+    (direction) => {
+      const trace = traceNativeInvestigationGraph(graph, {
+        start: direction === "forward" ? "a" : "c",
+        direction,
+        limits: { max_nodes: 1 },
+      });
+      expect(trace.nodes).toHaveLength(1);
+      expect(trace.edges).toEqual([]);
+      expect(trace).toMatchObject({
+        truncated: true,
+        reason: "max_nodes_reached",
+        reached_depth: 0,
+      });
+    },
+  );
+
+  it.each([{ max_nodes: 2 }, { max_edges: 1 }])(
+    "reports retained node depth when a sibling hits the budget %j",
+    (limits) => {
+      const branching = {
+        ...graph,
+        edges: graph.edges
+          .filter((edge) => edge.resolution !== "unresolved")
+          .map((edge) => ({ ...edge, from: "a" })),
+      };
+      const trace = traceNativeInvestigationGraph(branching, {
+        start: "a",
+        limits,
+      });
+      expect(trace.nodes.map(({ id }) => id)).toEqual(["a", "b"]);
+      expect(trace.edges.map(({ id }) => id)).toEqual(["1"]);
+      expect(trace.reached_depth).toBe(1);
+      expect(trace.truncated).toBe(true);
+    },
+  );
+
+  it("retains cycle edges to admitted nodes when the node budget is full", () => {
+    const cycle = {
+      ...graph,
+      nodes: graph.nodes.slice(0, 2),
+      edges: [
+        graph.edges[0],
+        { ...graph.edges[0], id: "back", from: "b", to: "a" },
+      ],
+    };
+    const trace = traceNativeInvestigationGraph(
+      nativeInvestigationGraphSchema.parse(cycle),
+      { start: "a", limits: { max_nodes: 2 } },
+    );
+    expect(trace.edges.map(({ id }) => id)).toEqual(["1", "back"]);
+    expect(trace).toMatchObject({ reached_depth: 1, truncated: false });
+  });
+
   it("retains observed and inferred route edges plus unresolved dispatch", () => {
     const trace = traceNativeInvestigationGraph(graph, { start: "a" });
     expect(trace.nodes.map(({ id }) => id)).toEqual(["a", "b", "c"]);

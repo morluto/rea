@@ -11,7 +11,10 @@ import {
 } from "./javascriptApplicationGraph.fixture.js";
 import { findApplicationFeatureSeeds } from "./javascriptFeatureSeed.js";
 import { traceApplicationFeature } from "./javascriptFeatureTrace.js";
-import type { ApplicationFeatureSeed } from "./javascriptFeatureTraceSchemas.js";
+import {
+  applicationFeatureSeedSchema,
+  type ApplicationFeatureSeed,
+} from "./javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 import type { JsonValue } from "../jsonValue.js";
 
@@ -268,6 +271,32 @@ describe("feature seed selection controls", () => {
 });
 
 describe("public feature trace from contextBridge source members", () => {
+  it.each(["openProject", "missingProject"])(
+    "normalizes optional seed defaults before deriving trace identity for %s",
+    (value) => {
+      const input = {
+        sourceEvidenceId,
+        graph: contextBridgeGraph(),
+        nativeEvidence: [],
+        direction: "both" as const,
+      };
+      const omitted = traceApplicationFeature({
+        ...input,
+        seed: { kind: "api", value },
+      });
+      const explicit = traceApplicationFeature({
+        ...input,
+        seed: {
+          kind: "api",
+          value,
+          match: null,
+          case_sensitive: false,
+        },
+      });
+      expect(omitted).toEqual(explicit);
+    },
+  );
+
   it("traces one exact member seed through the public feature workflow", () => {
     const mode = {
       value: "openProject",
@@ -381,12 +410,13 @@ const sourceEvidenceId = `ev_${"b".repeat(64)}`;
 const seed = (
   kind: ApplicationFeatureSeed["kind"],
   value = "openProject",
-): ApplicationFeatureSeed => ({
-  kind,
-  value,
-  match: "exact",
-  case_sensitive: true,
-});
+): ApplicationFeatureSeed =>
+  applicationFeatureSeedSchema.parse({
+    kind,
+    value,
+    match: "exact",
+    case_sensitive: true,
+  });
 
 const memberNode = (
   kind: ApplicationNode["kind"],

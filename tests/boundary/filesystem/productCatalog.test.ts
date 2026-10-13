@@ -37,6 +37,53 @@ import {
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const temporaryRoots: string[] = [];
 
+const README_FACT_FIXTURE_PATHS = [
+  "README.md",
+  "docs/readme/README_zh.md",
+  "docs/readme/README_ja.md",
+  "docs/readme/README_ko.md",
+  "docs/readme/README_ar.md",
+  "website/locales/languages.json",
+  "docs/installation.md",
+  "AGENTS.md",
+  ".github/pull_request_template.md",
+] as const;
+
+const README_LINK_DRIFT_MUTATIONS = [
+  [
+    "(../installation.md#supported-agents)",
+    "(../installation.md#missing-agents)",
+  ],
+  [
+    "https://rea.tools/zh-CN/guides/native/",
+    "https://rea.tools/zh-CN/missing/",
+  ],
+  [
+    "https://rea.tools/zh-CN/guides/native/",
+    "https://rea.tools/zh-TW/guides/native/",
+  ],
+  [
+    "https://rea.tools/zh-CN/guides/native/",
+    "https://rea.tools/zh-CN/guides/native/?other=1",
+  ],
+  [
+    'src="../assets/rea-hopper-analysis.png"',
+    'src="../assets/missing-hopper.png"',
+  ],
+  ['href="https://discord.gg/GkcryMnJDM"', 'href="https://discord.gg/missing"'],
+] as const;
+
+const seedReadmeFactFixture = async (directory: string) => {
+  for (const path of README_FACT_FIXTURE_PATHS) {
+    const destination = join(directory, path);
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(join(root, path), destination);
+  }
+  await mkdir(join(directory, "skills/reverse-engineer-anything"), {
+    recursive: true,
+  });
+};
+
 afterEach(async () => {
   await Promise.all(
     temporaryRoots
@@ -176,49 +223,14 @@ describe("canonical product catalog drift", () => {
   it("keeps translated readmes linked to canonical setup and tool details", async () => {
     const directory = await createTestTempDirectory("rea-readme-facts-");
     temporaryRoots.push(directory);
-    const paths = [
-      "README.md",
-      "README_zh.md",
-      "README_ja.md",
-      "README_ko.md",
-      "README_ar.md",
-      "website/locales/languages.json",
-      "docs/installation.md",
-      "AGENTS.md",
-      ".github/pull_request_template.md",
-    ];
-    for (const path of paths) {
-      const destination = join(directory, path);
-      await mkdir(dirname(destination), { recursive: true });
-      await copyFile(join(root, path), destination);
-    }
-    await mkdir(join(directory, "skills/reverse-engineer-anything"), {
-      recursive: true,
-    });
-    const translatedPath = join(directory, "README_zh.md");
+    await seedReadmeFactFixture(directory);
+    const translatedPath = join(directory, "docs/readme/README_zh.md");
     const translated = await readFile(translatedPath, "utf8");
     const catalog = await createProductCatalog(root);
     await expect(documentationFactIssues(directory, catalog)).resolves.toEqual(
       [],
     );
-    for (const [original, changed] of [
-      [
-        "(docs/installation.md#supported-agents)",
-        "(docs/installation.md#missing-agents)",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-CN/missing/",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-TW/guides/native/",
-      ],
-      [
-        "https://rea.tools/zh-CN/guides/native/",
-        "https://rea.tools/zh-CN/guides/native/?other=1",
-      ],
-    ] as const) {
+    for (const [original, changed] of README_LINK_DRIFT_MUTATIONS) {
       expect(translated).toContain(original);
       await writeFile(
         translatedPath,
@@ -228,11 +240,10 @@ describe("canonical product catalog drift", () => {
       await expect(
         documentationFactIssues(directory, catalog),
       ).resolves.toEqual([
-        "README_zh.md: documentation links differ from README.md",
+        "docs/readme/README_zh.md: documentation links differ from README.md",
       ]);
     }
   });
-
   it("fails check mode without rewriting a stale generated artifact", async () => {
     const directory = await createTestTempDirectory("rea-generated-check-");
     temporaryRoots.push(directory);

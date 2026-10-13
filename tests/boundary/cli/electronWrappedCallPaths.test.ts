@@ -23,7 +23,7 @@ const analyze = async (cli: TestCli, extra = "") => {
   const output = await cli.run({
     arguments: ["analyze-javascript-application", root, "--json"],
   });
-  expect(output.exitCode).toBe(0);
+  expect(output.exitCode, output.stderr).toBe(0);
   const { normalized_result: result } = z
     .object({
       normalized_result: javascriptApplicationAnalysisResultSchema,
@@ -119,6 +119,190 @@ cliTest(
             ?.observations.some((o) => o.label === "ipc-event.sender.copy"),
       ),
     ).toBe(true);
+  },
+);
+
+cliTest(
+  "traces a nested contextBridge member through a unique IPC channel",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-nested-bridge-");
+    await writeFixtureFiles(root, {
+      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        contextBridge.exposeInMainWorld("api", {
+          nested: { write: (value) => ipcRenderer.invoke("nested:write", value) }
+        });`,
+      "main.js": `const { ipcMain, clipboard } = require("electron");
+        ipcMain.handle("nested:write", (event, value) => clipboard.writeText(value));`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode, output.stderr).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    const { graph } = application;
+    const paths = graph.nodes
+      .flatMap((node) => node.observations)
+      .filter(
+        (observation) =>
+          observation.properties.entry === "api.nested.write" &&
+          observation.properties.entry_kind === "bridge-member",
+      );
+    expect(
+      paths.some(
+        (observation) => observation.properties.step_kind === "exposure",
+      ),
+    ).toBe(true);
+    expect(
+      paths.some(
+        (observation) => observation.properties.step_kind === "terminal",
+      ),
+    ).toBe(true);
+    const joins = graph.edges.filter(
+      (edge) =>
+        edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+    );
+    expect(joins.map((edge) => edge.properties.channel)).toEqual([
+      "nested:write",
+    ]);
+
+    const traceInput = join(root, "trace-nested-input.json");
+    await writeFile(
+      traceInput,
+      JSON.stringify({
+        application: output.json,
+        seed: { kind: "api", value: "api.nested.write", match: "exact" },
+        direction: "outgoing",
+      }),
+    );
+    const traced = await cli.run({
+      arguments: ["trace-application-feature", traceInput, "--json"],
+    });
+    expect(traced.exitCode).toBe(0);
+    const { normalized_result: trace } = z
+      .object({ normalized_result: applicationFeatureTraceResultSchema })
+      .parse(traced.json);
+    expect(trace.seed_matches).toHaveLength(1);
+    expect(trace.paths.some((path) => path.contains_inference)).toBe(true);
+  },
+);
+
+cliTest(
+  "preserves exact bridge member segments through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-bridge-segments-");
+    await writeFixtureFiles(root, {
+      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        const write = () => ipcRenderer.send("write");
+        contextBridge.exposeInMainWorld("desktop", {
+          "nested.write": write,
+          nested: { write },
+          __proto__: { inherited: write },
+          ["__proto__"]: { own: write },
+        });`,
+      "main.js": `const { ipcMain } = require("electron");
+        ipcMain.on("write", (event) => event.sender.copy());`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    const observations = application.graph.nodes.flatMap((node) =>
+      node.observations.filter(
+        (observation) =>
+          observation.properties.entry_kind === "bridge-member" &&
+          observation.properties.step_kind === "exposure",
+      ),
+    );
+    const bridge = application.graph.nodes
+      .filter((node) => node.kind === "context-bridge-api")
+      .flatMap((node) => node.observations)
+      .find((observation) => observation.properties.api_key === "desktop");
+    expect(bridge?.properties.members).not.toContain("__proto__.inherited");
+    expect(bridge?.properties.members).toContain("__proto__.own");
+    const paths = observations.map(
+      (observation) => observation.properties.entry_path,
+    );
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        ["desktop", "nested.write"],
+        ["desktop", "nested", "write"],
+        ["desktop", "__proto__", "own"],
+      ]),
+    );
+    expect(paths).not.toContainEqual(["desktop", "__proto__", "inherited"]);
+    const handlerPaths = application.graph.nodes
+      .flatMap((node) => node.observations)
+      .filter(
+        (observation) => observation.properties.entry_kind === "ipc-handler",
+      );
+    expect(handlerPaths.length).toBeGreaterThan(0);
+    expect(
+      handlerPaths.every(
+        (observation) => !("entry_path" in observation.properties),
+      ),
+    ).toBe(true);
+  },
+);
+
+cliTest(
+  "retains a nested bridge path when its IPC handler has no external terminal",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-nested-return-");
+    await writeFixtureFiles(root, {
+      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        contextBridge.exposeInMainWorld("api", {
+          nested: { write: (value) => ipcRenderer.invoke("nested:write", value) }
+        });`,
+      "main.js": `const { ipcMain } = require("electron");
+        ipcMain.handle("nested:write", (event, value) => value);`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    const { graph } = application;
+    expect(
+      graph.nodes.some((node) =>
+        node.observations.some(
+          (observation) =>
+            observation.properties.entry === "api.nested.write" &&
+            observation.properties.step_kind === "exposure",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+      ),
+    ).toBe(false);
+
+    const traceInput = join(root, "trace-nested-input.json");
+    await writeFile(
+      traceInput,
+      JSON.stringify({
+        application: output.json,
+        seed: { kind: "api", value: "api.nested.write", match: "exact" },
+        direction: "outgoing",
+      }),
+    );
+    const traced = await cli.run({
+      arguments: ["trace-application-feature", traceInput, "--json"],
+    });
+    expect(traced.exitCode).toBe(0);
+    const { normalized_result: trace } = z
+      .object({ normalized_result: applicationFeatureTraceResultSchema })
+      .parse(traced.json);
+    expect(trace.seed_matches).toHaveLength(1);
+    expect(trace.graph?.nodes.length).toBeGreaterThan(1);
   },
 );
 
@@ -223,5 +407,91 @@ cliTest(
       (e) => e.evidence.extractor.operation === "join-electron-wrapper-paths",
     );
     expect(joins.map((e) => e.properties.channel)).toEqual(["test:cut"]);
+  },
+);
+
+cliTest(
+  "keeps shallow bridge members when a sibling exceeds the nesting limit",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-deep-bridge-");
+    let deepMember = '() => e.ipcRenderer.send("deep:run")';
+    for (let index = 0; index < 129; index += 1)
+      deepMember = `{ level${index}: ${deepMember} }`;
+    await writeFixtureFiles(root, {
+      "preload.js": `const e=require("electron");
+        e.contextBridge.exposeInMainWorld("desktop", {
+          deep: ${deepMember},
+          shallow: () => e.ipcRenderer.send("shallow:run")
+        });`,
+      "main.js": `const e=require("electron");
+        e.ipcMain.on("shallow:run", event => event.sender.copy());
+        e.ipcMain.on("deep:run", event => event.sender.copy());`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    const { graph } = application;
+    const joins = graph.edges.filter(
+      (edge) =>
+        edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+    );
+    expect(joins.map((edge) => edge.properties.channel)).toEqual([
+      "shallow:run",
+    ]);
+    expect(
+      graph.nodes
+        .flatMap((node) => node.observations)
+        .some(
+          (observation) =>
+            observation.properties.entry === "desktop.shallow" &&
+            observation.properties.step_kind === "exposure",
+        ),
+    ).toBe(true);
+  },
+);
+
+cliTest(
+  "preserves empty bridge member segments in nested paths",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-empty-bridge-key-",
+    );
+    await writeFixtureFiles(root, {
+      "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        contextBridge.exposeInMainWorld("desktop", {
+          "": { nested: { call: () => ipcRenderer.send("empty:key") } }
+        });`,
+      "main.js": `const { ipcMain } = require("electron");
+        ipcMain.on("empty:key", event => event.sender.copy());`,
+    });
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const { normalized_result: application } = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json);
+    const observations = application.graph.nodes.flatMap(
+      (node) => node.observations,
+    );
+    expect(
+      observations.some(
+        (observation) =>
+          observation.properties.entry === "desktop..nested.call" &&
+          observation.properties.step_kind === "exposure",
+      ),
+    ).toBe(true);
+    expect(
+      application.graph.edges
+        .filter(
+          (edge) =>
+            edge.evidence.extractor.operation === "join-electron-wrapper-paths",
+        )
+        .map((edge) => edge.properties.channel),
+    ).toEqual(["empty:key"]);
   },
 );

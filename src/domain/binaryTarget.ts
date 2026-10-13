@@ -278,8 +278,12 @@ export const parsePeRecord = (
     record.toString("binary", 0, 4) !== "PE\u0000\u0000"
   )
     return err("invalid or truncated PE header");
-  const machine = decodePeMachine(record.readUInt16LE(4));
-  if (machine === undefined) return err("unsupported PE architecture");
+  const machineType = record.readUInt16LE(4);
+  const machine = decodePeMachine(machineType);
+  if (machine === undefined)
+    return err(
+      `unsupported PE architecture (COFF machine 0x${machineType.toString(16).padStart(4, "0")})`,
+    );
   const { architecture } = machine;
   const optionalHeaderSize = record.readUInt16LE(20);
   if (optionalHeaderSize > 4096 || record.length < 24 + optionalHeaderSize)
@@ -347,7 +351,9 @@ const machArchitecture = (cpu: number): HeaderArchitecture | undefined => {
   return undefined;
 };
 
-const elfArchitecture = (machine: number): BinaryArchitecture | undefined => {
+const elfArchitecture = (
+  machine: number,
+): Exclude<BinaryArchitecture, "6502"> | undefined => {
   switch (machine) {
     case 3:
       return "x86";

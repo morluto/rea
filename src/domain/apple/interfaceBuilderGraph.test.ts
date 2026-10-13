@@ -510,6 +510,106 @@ describe("AppKit keyed archive connectors", () => {
   });
 });
 
+describe("keyed archive unresolved connectors", () => {
+  // A rooted UIKit archive whose only connector is UID 3, with UID 1 as the
+  // owner, UID 2 as the destination and UID 7 as the "view" label.
+  const rootedOutletArchive = (connection: Record<string, unknown>) => ({
+    $archiver: "NSKeyedArchiver",
+    $version: 100000,
+    $objects: [
+      "$null",
+      { $class: { CF$UID: 4 } },
+      { $class: { CF$UID: 5 } },
+      { $class: { CF$UID: 6 }, ...connection },
+      {
+        $classname: "UIViewController",
+        $classes: ["UIViewController", "UIResponder", "NSObject"],
+      },
+      { $classname: "UIView", $classes: ["UIView", "UIResponder", "NSObject"] },
+      {
+        $classname: "UIRuntimeOutletConnection",
+        $classes: [
+          "UIRuntimeOutletConnection",
+          "UIRuntimeConnection",
+          "NSObject",
+        ],
+      },
+      "view",
+      {
+        $class: { CF$UID: 11 },
+        "NS.objects": [{ CF$UID: 1 }, { CF$UID: 2 }, { CF$UID: 3 }],
+      },
+      { $class: { CF$UID: 11 }, "NS.objects": [{ CF$UID: 3 }] },
+      {
+        $class: { CF$UID: 11 },
+        "NS.objects": [{ CF$UID: 1 }, { CF$UID: 2 }],
+      },
+      { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
+    ],
+    $top: {
+      root: { CF$UID: 8 },
+      UINibConnectionsKey: { CF$UID: 9 },
+      UINibObjectsKey: { CF$UID: 10 },
+      UINibTopLevelObjectsKey: { CF$UID: 10 },
+    },
+  });
+
+  const project = (raw: unknown) =>
+    buildInterfaceBuilderAnalysis({
+      targetSha256: hash,
+      toolVersion: "test",
+      documents: [
+        {
+          relativePath: "Main.nib",
+          archiveSha256: hash,
+          documentKind: "nib",
+          raw,
+        },
+      ],
+      limits: interfaceBuilderLimitsSchema.parse({}),
+    });
+
+  it("covers a resolvable connector as a complete examined connection", () => {
+    const raw = rootedOutletArchive({
+      UISource: { CF$UID: 1 },
+      UIDestination: { CF$UID: 2 },
+      UILabel: { CF$UID: 7 },
+    });
+    expect(parseInterfaceBuilderRecords(raw).unresolvedConnections).toBe(0);
+    expect(project(raw).graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Main.nib",
+        status: "complete",
+        examined: 1,
+        omitted: 0,
+      }),
+    );
+  });
+
+  it("reports a recognized connector with no resolvable owner as unresolved", () => {
+    const raw = rootedOutletArchive({
+      UIDestination: { CF$UID: 2 },
+      UILabel: { CF$UID: 7 },
+    });
+    expect(parseInterfaceBuilderRecords(raw).unresolvedConnections).toBe(1);
+
+    const analysis = project(raw);
+    expect(analysis.graph.nodes.some(({ kind }) => kind === "outlet")).toBe(
+      false,
+    );
+    expect(analysis.graph.coverage).toContainEqual(
+      expect.objectContaining({
+        facet: "connections:Main.nib",
+        status: "partial",
+        reason: "connection_unresolved",
+        examined: 0,
+        omitted: 1,
+      }),
+    );
+    expect(analysis.graph.truncated).toBe(true);
+  });
+});
+
 it("names the archive once per evidence record", () => {
   const relativePath = "Views/Main.storyboardc/scene.nib/objects.nib";
   const result = buildInterfaceBuilderAnalysis({

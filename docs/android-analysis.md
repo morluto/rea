@@ -86,6 +86,7 @@ rea inspect-android-method /path/Example.apk example.MainActivity onCreate
 rea inspect-android-method /path/Example.apk example.MainActivity select --overload-index 1
 rea trace-android-references /path/Example.apk example.MainActivity
 rea trace-android-references /path/Example.apk example.MainActivity --method-name onCreate
+rea trace-android-references /path/Example.apk example.MainActivity --method-name select --overload-index 1
 ```
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
@@ -106,9 +107,10 @@ Every request includes `path`. Class/method operations use `class_name`,
 ```
 
 Use `inspect_android_class` to choose an overload. REA rejects an ambiguous
-method request rather than silently selecting the first match. The engine's
-method reference operation cannot select overloads, so REA reports that boundary
-as unsupported when multiple same-name methods exist.
+method request rather than silently selecting the first match. Method reference
+queries accept the same `overload_index`; the bridge resolves the selected
+method node and the result reports its index and displayed signature. These
+indices are tied to the current artifact and engine, not stable across builds.
 
 The engine's smali fallback also joins same-name overloads; REA rejects that
 fallback for an overloaded method instead of attributing all bodies to one
@@ -137,14 +139,28 @@ the same source byte limit and explicit truncation reporting.
   full reported display types, fields and inner class names. Synthetic members
   that code generation hides can appear in the inventory; it stays consistent
   after method decompilation within the retained session.
-  Exact DEX descriptors are unknown. Overload indices are tied to this artifact
-  and engine, not stable identities across different builds.
+  Exact DEX prototypes are reported from frozen JADX method metadata as
+  `dex_descriptor`, for example `(I)V`. Display names can be JADX aliases;
+  the descriptor alone is not a complete raw DEX method ID. Overload indices
+  are tied to this artifact and engine, not stable identities across builds.
 - Method inspection reports Java or smali, fallback markers and complete/partial
   returned text. Decompiled source is a derived representation. A complete text
   result does not establish complete semantics or a byte-identical reconstruction.
 - Reference results are incoming static relationships between provider nodes.
-  Source lines and DEX instruction offsets remain unknown. They are not observed
-  runtime calls.
+  `reference_unit=using_node` means `total` counts containing JADX nodes, not
+  individual invoke instructions; two calls from one method can appear as one
+  entry. `coverage=complete` covers this node inventory only. For a method
+  reference whose using node has raw code, `direct_invokes` lists matching DEX
+  invoke instructions with their DEX entry, raw source method ID, code-unit
+  offset, method index and opcode. An empty array means no direct invoke was
+  matched in that node; `null` means raw code was unavailable or the using node
+  was not a method. This list does not establish complete call-site coverage
+  outside JADX's using-node inventory or through reflection and dynamic loading.
+  A virtual or interface invoke also does not establish its runtime implementation.
+  Source lines and the containing node's own `dex_offset` remain unknown.
+  Method-reference results also carry the selected `dex_descriptor`;
+  class-reference results report `null`.
+  These relationships are not observed runtime calls.
 - Original requests, APK SHA-256, actual engine JAR SHA-256 and raw producer
   responses remain in Evidence. Source revision is populated only for bytes
   matching the audited release JAR.
@@ -210,9 +226,11 @@ REA never writes to the original APK or launches target code.
 
 On Windows, stdin writes preserve stream backpressure and run outside the Node
 event loop. Cancellation terminates the retained job, including descendants,
-before workspace cleanup. An abrupt CLI/server process termination closes the
-job and stops Java, but cannot run JavaScript workspace cleanup; temporary
-workspace files can remain after that forced exit.
+before workspace cleanup. On Windows, a detached REA helper owns the private
+workspace's native directory handle. An abrupt CLI/server owner termination
+closes the Java job and the helper's input pipe; the helper then removes the
+workspace by handle. The real Windows lane checks both effects. If the helper
+also dies or the host loses power before it finishes, private files can remain.
 
 If Java cannot start the bridge, REA reports the selected executable and retained
 startup diagnostics. Select a full JDK through `JAVA_HOME` or `PATH`, and use
@@ -275,12 +293,20 @@ The original APK and host Java configuration remain unchanged.
 
 The same lane runs on Windows x64 with the bundled native controls and a full
 JDK. It checks CLI/MCP results, real MCP cancellation and disconnect, and Java
-exit after abrupt CLI owner termination. Windows forced termination is checked
-separately from the POSIX CLI SIGTERM handler; it does not claim a structured
-cancellation result or workspace removal after the owner is forcibly killed.
+exit and workspace removal after abrupt CLI owner termination. Windows forced
+termination is checked separately from the POSIX CLI SIGTERM handler. A
+synthetic two-owner test confirms that one owner's exit does not remove the
+other owner's workspace. The lane does not claim a structured cancellation
+result or power-loss recovery.
 
 The download script verifies fixed SHA-256 values, reuses matching files and
 refuses to overwrite a different existing file. APK/JAR files live under ignored
 `_reference/` and are excluded from package contents. The lane exercises actual
 REA CLI and MCP results with the real engine, separately from synthetic protocol
 regressions. It needs no Gradle build, emulator, Android SDK or Ghidra.
+
+Direct invoke sites retain exact DEX code-unit offsets separately from each
+containing node's unknown `dex_offset`. `direct_invokes_exhaustive: false`
+means instruction rows were bounded by the local bridge frame budget; `null`
+means the producer did not establish instruction coverage. Using-node totals
+and coverage do not imply complete instruction evidence.

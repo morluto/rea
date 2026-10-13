@@ -14,6 +14,7 @@ export class BrowserStartupError extends Error {
   readonly failure: BrowserStartupFailure;
   readonly executable: string;
   readonly elapsedMs: number;
+  readonly startupTimeoutMs: number;
   readonly exitCode: number | null;
   readonly signalCode: NodeJS.Signals | null;
   readonly stderr: string;
@@ -23,6 +24,7 @@ export class BrowserStartupError extends Error {
       readonly failure: BrowserStartupFailure;
       readonly executable: string;
       readonly elapsedMs: number;
+      readonly startupTimeoutMs: number;
       readonly exitCode: number | null;
       readonly signalCode: NodeJS.Signals | null;
       readonly stderr: string;
@@ -33,11 +35,21 @@ export class BrowserStartupError extends Error {
     this.failure = diagnostics.failure;
     this.executable = diagnostics.executable;
     this.elapsedMs = diagnostics.elapsedMs;
+    this.startupTimeoutMs = diagnostics.startupTimeoutMs;
     this.exitCode = diagnostics.exitCode;
     this.signalCode = diagnostics.signalCode;
     this.stderr = diagnostics.stderr;
   }
 }
+
+/**
+ * Single owner of the wait for Chrome to publish its DevToolsActivePort.
+ *
+ * Callers that need a different budget pass `timeoutMs`; nobody else should
+ * restate this number, because a per-caller literal silently changes how long
+ * a cold Chrome launch is tolerated before the failure names its ceiling.
+ */
+export const BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS = 60_000;
 
 /** Owned child process and startup policy for Chrome CDP discovery. */
 export interface BrowserStartupOptions {
@@ -53,23 +65,23 @@ export interface BrowserStartupOptions {
 export const waitForBrowserDevtoolsPort = async (
   options: BrowserStartupOptions,
 ): Promise<number> => {
-  const timeoutMs = options.timeoutMs ?? 15_000;
+  const timeoutMs = options.timeoutMs ?? BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? 25;
   const startedAt = performance.now();
-  const terminal = childTermination(options, startedAt);
+  const terminal = childTermination(options, startedAt, timeoutMs);
   const deadline = startedAt + timeoutMs;
 
   while (true) {
     const terminalState = currentTerminalState(options.child);
     if (terminalState !== null)
-      throw startupError(options, startedAt, terminalState);
+      throw startupError(options, startedAt, timeoutMs, terminalState);
 
     const port = await readDevtoolsPort(options.activePortPath);
     if (port !== null) return port;
 
     const remainingMs = deadline - performance.now();
     if (remainingMs <= 0)
-      throw startupError(options, startedAt, { failure: "timeout" });
+      throw startupError(options, startedAt, timeoutMs, { failure: "timeout" });
 
     const outcome = await Promise.race([
       terminal,
@@ -88,11 +100,12 @@ type TerminalState =
 const childTermination = (
   options: BrowserStartupOptions,
   startedAt: number,
+  startupTimeoutMs: number,
 ): Promise<BrowserStartupError> =>
   new Promise((resolve) => {
     options.child.once("error", (cause: unknown) => {
       resolve(
-        startupError(options, startedAt, {
+        startupError(options, startedAt, startupTimeoutMs, {
           failure: "spawn-error",
           cause,
         }),
@@ -103,6 +116,7 @@ const childTermination = (
         startupError(
           options,
           startedAt,
+          startupTimeoutMs,
           options.child.signalCode === null
             ? { failure: "exited" }
             : { failure: "signalled" },
@@ -120,6 +134,7 @@ const currentTerminalState = (child: ChildProcess): TerminalState | null => {
 const startupError = (
   options: BrowserStartupOptions,
   startedAt: number,
+  startupTimeoutMs: number,
   state: TerminalState,
 ): BrowserStartupError =>
   new BrowserStartupError(
@@ -127,6 +142,7 @@ const startupError = (
       failure: state.failure,
       executable: options.executable,
       elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      startupTimeoutMs,
       exitCode: options.child.exitCode,
       signalCode: options.child.signalCode,
       stderr: options.stderr(),
@@ -156,9 +172,10 @@ const browserStartupMessage = (
   diagnostics: {
     readonly executable: string;
     readonly elapsedMs: number;
+    readonly startupTimeoutMs: number;
     readonly exitCode: number | null;
     readonly signalCode: NodeJS.Signals | null;
     readonly stderr: string;
   },
 ): string =>
-  `Chrome CDP startup ${failure}; executable=${diagnostics.executable}; elapsed_ms=${String(diagnostics.elapsedMs)}; exit_code=${diagnostics.exitCode === null ? "null" : String(diagnostics.exitCode)}; signal=${diagnostics.signalCode ?? "null"}; stderr=${diagnostics.stderr.length === 0 ? "<empty>" : diagnostics.stderr}`;
+  `Chrome CDP startup ${failure}; executable=${diagnostics.executable}; elapsed_ms=${String(diagnostics.elapsedMs)}; startup_timeout_ms=${String(diagnostics.startupTimeoutMs)}; exit_code=${diagnostics.exitCode === null ? "null" : String(diagnostics.exitCode)}; signal=${diagnostics.signalCode ?? "null"}; stderr=${diagnostics.stderr.length === 0 ? "<empty>" : diagnostics.stderr}`;

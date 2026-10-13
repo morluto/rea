@@ -66,6 +66,7 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "arm",
   "arm64",
   "mips",
+  "6502",
   "riscv",
 ]);
 
@@ -184,7 +185,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unsupported",
         code: "architecture_unsupported",
         reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, or MIPS target profile.",
+          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, or raw 6502 target profile.",
         diagnostics,
       };
     return {
@@ -304,11 +305,15 @@ const inspectWindowsP0TargetSupport = (
   target: BinaryTarget,
   diagnostics: Readonly<Record<string, JsonValue>>,
 ): ProviderTargetSupport => {
+  // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
+  if (target.format === "raw-binary" && target.architecture === "6502")
+    return { status: "supported", code: null, reason: null, diagnostics };
   if (target.format !== "pe")
     return {
       status: "unsupported",
       code: "target_format_unsupported",
-      reason: "Windows Ghidra P0 accepts PE targets only.",
+      reason:
+        "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 targets only.",
       diagnostics,
     };
   if (target.architecture !== "x86" && target.architecture !== "x86_64")

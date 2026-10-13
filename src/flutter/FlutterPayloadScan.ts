@@ -58,17 +58,16 @@ export class SnapshotHashScanner {
   private readonly candidates: string[] = [];
   private readonly candidateSet = new Set<string>();
   #buffer = new Uint8Array(0);
-  /** Absolute stream offset from which unprocessed bytes begin. */
-  #base = 0;
-  #absoluteScanFrom = 0;
 
   push(chunk: Uint8Array): void {
     const joined = new Uint8Array(this.#buffer.length + chunk.length);
     joined.set(this.#buffer, 0);
     joined.set(chunk, this.#buffer.length);
-    // Resume after the last fully processed hash so carried bytes are not
-    // counted twice across chunk boundaries.
-    let offset = Math.max(0, this.#absoluteScanFrom - this.#base);
+    // Carried bytes are an unprocessed pending magic or too short to hold a
+    // magic, so rescanning them never counts a record twice. Within a chunk
+    // the scan resumes after each magic, so a magic inside a previous
+    // record's span is found wherever the chunk boundaries fall.
+    let offset = 0;
     let pendingMagic: number | null = null;
     for (;;) {
       const magic = findBytes(joined, DART_SNAPSHOT_MAGIC, offset);
@@ -96,21 +95,14 @@ export class SnapshotHashScanner {
       // magic record whose field is not lowercase hex is not a source.
       if (isValidHash) this.#sources += 1;
       offset = magic + DART_SNAPSHOT_MAGIC.length;
-      this.#absoluteScanFrom =
-        this.#base + magic + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH;
     }
     // Keep a pending magic for the next chunk; otherwise keep only the
     // trailing bytes where a magic could still begin, so magic-free
     // streams never accumulate.
     const keepFrom =
       pendingMagic ??
-      Math.max(
-        this.#absoluteScanFrom - this.#base,
-        joined.length - (DART_SNAPSHOT_MAGIC.length - 1),
-      );
+      Math.max(0, joined.length - (DART_SNAPSHOT_MAGIC.length - 1));
     this.#buffer = joined.slice(keepFrom);
-    this.#base += keepFrom;
-    if (pendingMagic !== null) this.#absoluteScanFrom = this.#base;
   }
 
   result(): SnapshotHashScan {

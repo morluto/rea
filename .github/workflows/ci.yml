@@ -63,11 +63,11 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       test_selection: ${{ steps.plan.outputs.test_selection }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
       - name: Bind qualification to the caller revision
@@ -118,8 +118,8 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: test "${CHANGES_RESULT}" = "success"
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -138,7 +138,7 @@ jobs:
         run: npm run format:check
       - name: Upload complete static diagnostics
         if: always() && needs.changes.outputs.code == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: static-check-reports
           path: .cache/static-checks/
@@ -157,13 +157,13 @@ jobs:
       matrix:
         shard: [1/6, 2/6, 3/6, 4/6, 5/6, 6/6]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-test-runtime
           path: .
@@ -177,7 +177,7 @@ jobs:
         run: npm run test:run -- --reporter=default --reporter=blob --shard=${{ matrix.shard }}
         env:
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: vitest-report-${{ strategy.job-index }}
@@ -208,8 +208,8 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -231,13 +231,13 @@ jobs:
       - name: Download previous timing report
         if: steps.history.outputs.run-id != ''
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: test-timings
           run-id: ${{ steps.history.outputs.run-id }}
           github-token: ${{ github.token }}
           path: .cache/ci-test-history
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-test-runtime
           path: |
@@ -254,7 +254,7 @@ jobs:
       # test:prepare caches only portable JS, skill, and catalog outputs.
       # Native package jobs still run their build and prepack checks; Turbo
       # restores matching outputs or rebuilds when their inputs differ.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
           path: .turbo/cache/
@@ -280,16 +280,16 @@ jobs:
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
         run: test "${CHANGES_RESULT}" = "success"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: needs.changes.outputs.code == 'true' && success()
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         if: needs.changes.outputs.code == 'true' && success()
         with:
           node-version-file: .nvmrc
           cache: npm
       - if: needs.changes.outputs.code == 'true' && success()
         run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: needs.changes.outputs.code == 'true' && success()
         with:
           path: .vitest/blob
@@ -330,7 +330,7 @@ jobs:
           CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
           CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
         with:
           name: test-results
@@ -345,7 +345,7 @@ jobs:
           retention-days: 30
       - name: Publish successful timing history
         if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'full' && success() && needs.test-shard.result == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-timings
           path: .cache/ci-test-history/test-results.json
@@ -366,7 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Verify fixtures from a clean checkout
         run: npm run verify:fixtures
 
@@ -377,8 +377,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
       - name: Prepare cross compiler
@@ -395,12 +395,27 @@ jobs:
       - run: npm run build:windows-native
       - run: npm run verify:windows-native:artifact
       - run: node scripts/build-windows-native.mjs --inspection-fixture
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      # The process boundary observations are independent of the addon: they
+      # report the caller's and child's own token, environment and breakaway
+      # results from a separate executable. Cross-build it in the lane that
+      # already has MinGW so the Windows job can observe them too.
+      - name: Build Windows process boundary fixture
+        run: |
+          mkdir -p .cache/windows-process-boundary
+          x86_64-w64-mingw32-g++ -municode -std=c++17 -O2 -static -Wall -Wextra \
+            -o .cache/windows-process-boundary/process-boundary.exe \
+            tests/fixtures/windows/processBoundary.cc -ladvapi32
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-process-boundary-fixture
+          path: .cache/windows-process-boundary/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -423,8 +438,8 @@ jobs:
       NODE_OPTIONS: "--max-old-space-size=1024"
       UV_THREADPOOL_SIZE: "2"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -438,11 +453,11 @@ jobs:
           assert.equal(process.arch, process.env.EXPECTED_CI_ARCHITECTURE);
           console.log(JSON.stringify({ platform: process.platform, architecture: process.arch, node: process.version }));"
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-build-cache
           path: .turbo/cache/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -463,7 +478,7 @@ jobs:
         run: npm run verify:inspector
       - name: Retain the exact qualified release package
         if: needs.changes.outputs.tier == 'full' && matrix.platform == 'linux' && matrix.architecture == 'x64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: verified-release-package
           path: .cache/verified-package/
@@ -479,13 +494,13 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-build-cache
           path: .turbo/cache/
@@ -527,8 +542,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -539,7 +554,7 @@ jobs:
         run: |
           set -o pipefail
           npm run verify:readiness | tee readiness-summary.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: reconstruction-readiness
@@ -556,18 +571,18 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rea-build-cache
           path: .turbo/cache/
       - run: npm run build:cached
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-controls
           path: native/windows/build/
@@ -596,7 +611,9 @@ jobs:
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/windowsNpxRegistration.test.ts
+          tests/boundary/android/workspaceGuardianRetry.test.ts
           tests/acceptance/setup/homeDirectoryFallback.test.ts
+          tests/boundary/filesystem/javascriptApplicationWorkflows.test.ts
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
           tests/acceptance/webModuleCli.test.ts
@@ -621,8 +638,17 @@ jobs:
           src/application/Update.test.ts
           tests/process-global/updateMaintenance.test.ts
           tests/conformance/providers/ghidra/realGhidraWindowsWorkflow.test.ts
-      - run: npm run verify:windows-native
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-process-boundary-fixture
+          path: .cache/windows-process-boundary/
+      # Passing the fixture adds the breakaway, caller/child token, environment
+      # semantics and ancestor reparse observations, which the lane skips
+      # entirely when it is absent.
+      - run: >-
+          npm run verify:windows-native -- .
+          "${{ github.workspace }}\.cache\windows-process-boundary\process-boundary.exe"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-native-inspection-fixture
           path: .cache/windows-native-inspection-fixture/
@@ -641,7 +667,7 @@ jobs:
           tests/boundary/filesystem/directoryArtifactReaderOpen.test.ts
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.19.0
       - name: Verify native path boundaries on Node 22
@@ -651,7 +677,7 @@ jobs:
           tests/boundary/filesystem/javascriptPackagePrecedence.test.ts
           tests/boundary/filesystem/javascriptArtifactContentIdentity.test.ts
           tests/boundary/process/sourceMapUncHosts.test.ts
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: windows-capabilities
@@ -665,8 +691,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -674,7 +700,7 @@ jobs:
       - run: npm run docs:check
       - name: Generation leaves authored files unchanged
         run: git diff --exit-code
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: generated-docs
           path: |
@@ -781,8 +807,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
       - name: Require every selected lane to pass
@@ -793,7 +819,7 @@ jobs:
         run: node scripts/ci/required.mjs
       - name: Upload full qualification receipt artifact
         if: needs.changes.outputs.tier == 'full' && success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.gate.outputs.receipt_name }}
           path: ${{ steps.gate.outputs.receipt_path }}

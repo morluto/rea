@@ -61,6 +61,8 @@ export interface ProviderProcessHandle extends Pick<
   /** True once an enforced process memory limit reported an allocation failure. */
   readonly memoryLimitReached?: boolean;
   kill(signal?: NodeJS.Signals | number): boolean;
+  unref?(): void;
+  ref?(): void;
 }
 
 /** Process handle returned by a provider-specific launcher. */
@@ -371,13 +373,33 @@ export class ProviderProcessSupervisor {
     this.launch.process.off("error", this.#onError);
   }
 
+  /** Release event-loop references so incomplete cleanup does not prevent host exit. */
+  unref(): void {
+    const process = this.launch.process;
+    process.unref?.();
+    (process.stdin as { unref?: () => void } | null | undefined)?.unref?.();
+    (process.stdout as { unref?: () => void } | null | undefined)?.unref?.();
+    (process.stderr as { unref?: () => void } | null | undefined)?.unref?.();
+  }
+
+  /** Restore event-loop references when retrying supervised process cleanup. */
+  ref(): void {
+    const process = this.launch.process;
+    process.ref?.();
+    (process.stdin as { ref?: () => void } | null | undefined)?.ref?.();
+    (process.stdout as { ref?: () => void } | null | undefined)?.ref?.();
+    (process.stderr as { ref?: () => void } | null | undefined)?.ref?.();
+  }
+
   async #stop(
     options: ProviderProcessStopOptions,
   ): Promise<ProviderProcessStopResult> {
+    this.ref();
     let completed = false;
     try {
       const result = await this.#stopWithin(options);
       completed = result.status !== "incomplete";
+      if (!completed) this.unref();
       return result;
     } finally {
       if (completed) this.dispose();

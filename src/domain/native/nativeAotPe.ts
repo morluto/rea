@@ -384,11 +384,11 @@ class PeImage {
 
   constructor(bytes: Buffer) {
     this.#bytes = bytes;
-    if (bytes.length < 0x40 || bytes.toString("ascii", 0, 2) !== "MZ")
+    if (bytes.length < 0x40 || bytes.toString("latin1", 0, 2) !== "MZ")
       throw new Error("Not a PE image");
     const peOffset = this.#u32(0x3c);
     this.#range(peOffset, 24);
-    if (bytes.toString("ascii", peOffset, peOffset + 4) !== "PE\0\0")
+    if (bytes.toString("latin1", peOffset, peOffset + 4) !== "PE\0\0")
       throw new Error("Invalid PE signature");
     this.#machine = this.#u16(peOffset + 4);
     const count = this.#u16(peOffset + 6);

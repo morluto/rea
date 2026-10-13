@@ -149,7 +149,50 @@ export const semanticMutationInitializers = (
   const mutationPosition =
     directMutationPosition(mutation, parents) ??
     referenceInitializerPosition(mutation, parents);
-  if (mutationPosition === null) return binding;
+  return selectInitializers(binding, mutationPosition, parents);
+};
+
+/** Select a local alias at its read, before any later straight-line reassignment. */
+export const semanticReadInitializers = (
+  binding: JavaScriptSemanticBindingState,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): Pick<
+  JavaScriptSemanticBindingState,
+  "initializers" | "referenceInitializers"
+> => {
+  let position: StatementPosition | null = null;
+  let current = read;
+  for (
+    let parent = parents.get(current);
+    parent;
+    parent = parents.get(current)
+  ) {
+    if (t.isLoop(parent)) return binding;
+    if (t.isFunction(parent)) break;
+    if (position === null) {
+      if (t.isVariableDeclarator(parent)) {
+        const declaration = parents.get(parent);
+        if (t.isVariableDeclaration(declaration))
+          position = statementPosition(declaration, parents, parent);
+      } else if (t.isStatement(parent))
+        position = statementPosition(parent, parents);
+    }
+    current = parent;
+  }
+  return selectInitializers(binding, position, parents, true);
+};
+
+const selectInitializers = (
+  binding: JavaScriptSemanticBindingState,
+  position: StatementPosition | null,
+  parents: WeakMap<t.Node, t.Node>,
+  atRead = false,
+): Pick<
+  JavaScriptSemanticBindingState,
+  "initializers" | "referenceInitializers"
+> => {
+  if (position === null) return binding;
   const origins = [
     ...binding.initializers.map((initializer) => ({
       initializer,
@@ -169,12 +212,20 @@ export const semanticMutationInitializers = (
   ];
   if (
     origins.some(
-      ({ position }) =>
-        position === null || !positionPrecedes(position, mutationPosition),
+      ({ position: origin }) =>
+        origin === null ||
+        origin.body !== position.body ||
+        (!atRead && !positionPrecedes(origin, position)),
     )
   )
     return binding;
-  const latest = origins.reduce<StatementPosition | null>(
+  const preceding = atRead
+    ? origins.filter(
+        ({ position: origin }) =>
+          origin !== null && positionPrecedes(origin, position),
+      )
+    : origins;
+  const latest = preceding.reduce<StatementPosition | null>(
     (latest, { position }) =>
       position !== null &&
       (latest === null || positionPrecedes(latest, position))
@@ -183,7 +234,7 @@ export const semanticMutationInitializers = (
     null,
   );
   const retained = new Set(
-    origins
+    preceding
       .filter(
         ({ position }) =>
           position?.index === latest?.index &&

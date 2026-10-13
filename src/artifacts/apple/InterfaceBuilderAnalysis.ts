@@ -56,6 +56,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   const omittedArchives: Array<{ path: string; reason: string }> = [];
   let unreportedOmittedArchives = 0;
   const incompleteHierarchies = new Map<string, number>();
+  const unresolvedConnections = new Map<string, number>();
   const prototypeKeyOmissions = new Map<string, number | null>();
   let omitted = 0;
   let attempted = 0;
@@ -136,6 +137,8 @@ export const analyzeInterfaceBuilderBundle = async (input: {
             : { value: nib.raw, omittedPrototypeKeys: 0 };
         if (nib !== null && nib.omitted > 0)
           incompleteHierarchies.set(entry.path, nib.omitted);
+        if (nib !== null && nib.unresolvedConnections > 0)
+          unresolvedConnections.set(entry.path, nib.unresolvedConnections);
         if (omittedPrototypeKeys !== 0)
           prototypeKeyOmissions.set(entry.path, omittedPrototypeKeys);
         const documentHash = createHash("sha256").update(bytes).digest("hex");
@@ -170,6 +173,7 @@ export const analyzeInterfaceBuilderBundle = async (input: {
   });
   return finalizeHierarchyCoverage(result, {
     incompleteHierarchies,
+    unresolvedConnections,
     prototypeKeyOmissions,
     invalid,
     omittedArchives,
@@ -237,6 +241,7 @@ const finalizeHierarchyCoverage = (
   result: ReturnType<typeof buildInterfaceBuilderAnalysis>,
   counts: {
     incompleteHierarchies: ReadonlyMap<string, number>;
+    unresolvedConnections: ReadonlyMap<string, number>;
     prototypeKeyOmissions: ReadonlyMap<string, number | null>;
     invalid: readonly string[];
     omittedArchives: readonly { path: string; reason: string }[];
@@ -247,6 +252,7 @@ const finalizeHierarchyCoverage = (
 ) => {
   const {
     incompleteHierarchies,
+    unresolvedConnections,
     prototypeKeyOmissions,
     invalid,
     omittedArchives,
@@ -260,6 +266,13 @@ const finalizeHierarchyCoverage = (
     ...result,
     documents: result.documents.map((document) => ({
       ...document,
+      // The dictionary parser only sees connectors that were projected, so the
+      // omission recorded where an ownerless connector was dropped has to be
+      // added here for this producer to report the same document count as the
+      // keyed-archive producer for the same recognized connector.
+      connection_count:
+        document.connection_count +
+        (unresolvedConnections.get(document.relative_path) ?? 0),
       hierarchy_complete:
         document.hierarchy_complete &&
         !incompleteHierarchies.has(document.relative_path),
@@ -268,15 +281,32 @@ const finalizeHierarchyCoverage = (
       ...result.graph,
       coverage: [
         ...result.graph.coverage.map((facet) => {
-          const omitted = incompleteHierarchies.get(
+          const omittedHierarchy = incompleteHierarchies.get(
             facet.facet.replace(/^hierarchy:/u, ""),
           );
-          return facet.facet.startsWith("hierarchy:") && omitted !== undefined
+          if (
+            facet.facet.startsWith("hierarchy:") &&
+            omittedHierarchy !== undefined
+          )
+            return {
+              ...facet,
+              status: "partial" as const,
+              reason: "serialized_view_hierarchy_incomplete",
+              omitted: facet.omitted + omittedHierarchy,
+            };
+          const omittedConnection = unresolvedConnections.get(
+            facet.facet.replace(/^connections:/u, ""),
+          );
+          return facet.facet.startsWith("connections:") &&
+            omittedConnection !== undefined
             ? {
                 ...facet,
                 status: "partial" as const,
-                reason: "serialized_view_hierarchy_incomplete",
-                omitted: facet.omitted + omitted,
+                // A connection dropped by the limit is recoverable by raising
+                // it, so that cause keeps the reason the graph already named.
+                // Only a facet with no other cause reports the omission.
+                reason: facet.reason ?? "connection_unresolved",
+                omitted: facet.omitted + omittedConnection,
               }
             : facet;
         }),
@@ -306,7 +336,8 @@ const finalizeHierarchyCoverage = (
         result.graph.truncated ||
         counts.omitted > 0 ||
         archiveDecodePartial ||
-        incompleteHierarchies.size > 0,
+        incompleteHierarchies.size > 0 ||
+        unresolvedConnections.size > 0,
     },
     limitations: [
       ...result.limitations,
@@ -315,6 +346,11 @@ const finalizeHierarchyCoverage = (
         ? []
         : [
             "Some serialized hierarchy links could not be projected within the bounded hierarchy; their parentage remains unknown.",
+          ]),
+      ...(unresolvedConnections.size === 0
+        ? []
+        : [
+            "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
           ]),
       ...(invalid.length === 0
         ? []
@@ -496,6 +532,10 @@ const projectNibArchive = (
   );
   const connections: Record<string, JsonValue[]> = {};
   const hierarchy: NibHierarchyNode[] = [];
+  // A recognized connector whose owner reference cannot be resolved produces no
+  // connection entry, so the omission has to be counted here: the projected
+  // dictionary carries no trace of it for a downstream consumer to find.
+  let unresolvedConnections = 0;
   const reference = (value: JsonValue | undefined): number | null => {
     if (typeof value !== "object" || value === null || Array.isArray(value))
       return null;
@@ -512,7 +552,10 @@ const projectNibArchive = (
     const values = object.values;
     const connectionFields = interfaceBuilderConnectionFieldNames(className);
     const source = reference(values[connectionFields.source]);
-    if (source === null) continue;
+    if (source === null) {
+      unresolvedConnections += 1;
+      continue;
+    }
     const destination = reference(values[connectionFields.destination]);
     const label = referencedString(values[connectionFields.label]);
     const type = className.includes("Outlet")
@@ -608,6 +651,7 @@ const projectNibArchive = (
   );
   return {
     omitted: viewHierarchy.omitted + hierarchyOmitted + merged.omitted,
+    unresolvedConnections,
     raw: jsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,

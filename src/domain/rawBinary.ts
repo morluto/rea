@@ -13,6 +13,7 @@ export const BINARY_ARCHITECTURES = [
   "x86_64",
   "arm",
   "arm64",
+  "6502",
 ] as const satisfies readonly BinaryArchitecture[];
 
 /** Provider-neutral CPU family for a caller-supplied raw-binary load. */
@@ -58,7 +59,7 @@ export const validateRawBinaryLength = (
 
 /** Admitted headerless load identity used by target resolution and profiles. */
 export interface RawBinaryAdmission {
-  readonly architecture: HeaderArchitecture;
+  readonly architecture: HeaderArchitecture | "6502";
   readonly entryPoint: string;
   readonly entryPointSource: string;
 }
@@ -74,9 +75,11 @@ export interface RawBinaryAdmissionRejection {
 }
 
 const addressWidth = (architecture: BinaryArchitecture): bigint =>
-  architecture === "x86" || architecture === "arm"
-    ? 0xffffffffn
-    : 0xffffffffffffffffn;
+  architecture === "6502"
+    ? 0xffffn
+    : architecture === "x86" || architecture === "arm"
+      ? 0xffffffffn
+      : 0xffffffffffffffffn;
 
 /** Validate architecture, entry, and that the mapped image fits the CPU width. */
 export const admitRawBinary = (input: {
@@ -88,7 +91,7 @@ export const admitRawBinary = (input: {
   if (!architecture.success)
     return err({
       reason:
-        "raw-binary format requires architecture (x86, x86_64, arm, or arm64)",
+        "raw-binary format requires architecture (x86, x86_64, arm, arm64, or 6502)",
       constraint: "load_selection_rejected",
     });
   if (typeof input.entryPoint !== "string")

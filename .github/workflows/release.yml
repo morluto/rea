@@ -48,7 +48,7 @@ jobs:
             echo "frozen=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         if: steps.editorial.outputs.frozen != 'true'
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -70,13 +70,13 @@ jobs:
       sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Check out reviewed release merge
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -104,7 +104,7 @@ jobs:
           node scripts/release-notes.mjs publication --repository "$GH_REPO" \
             --source "$SOURCE_SHA" --pr "$RELEASE_PR"
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
@@ -191,14 +191,14 @@ jobs:
           fi
 
       - name: Check out release controller and Git history
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js for checkpoint validation
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -226,7 +226,7 @@ jobs:
           node scripts/release-notes.mjs publication --repository "$GH_REPO" \
             --source "$SOURCE_SHA"
 
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         id: release
         with:
           # A dedicated credential starts PR CI automatically; the built-in
@@ -255,7 +255,7 @@ jobs:
 
       - name: Check out release pull request
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
           fetch-depth: 0
@@ -263,7 +263,7 @@ jobs:
 
       - name: Set up Node.js for generated documentation
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -314,12 +314,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
@@ -328,7 +328,7 @@ jobs:
       - run: npm ci
 
       - name: Download the exact qualified package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: verified-release-package
           path: .cache/verified-package/
@@ -392,7 +392,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
           persist-credentials: false

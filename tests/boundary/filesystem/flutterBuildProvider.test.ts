@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { open, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
@@ -1122,11 +1123,16 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     if (result.ok) throw new Error("Duplicate libraries must be refused");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "invalid_request",
+      details: {
+        issues: [
+          {
+            message: expect.stringContaining(
+              `duplicate Flutter library members: ${path}:`,
+            ),
+          },
+        ],
+      },
     });
-    expect(JSON.stringify(projectAnalysisError(result.error))).toContain(
-      "duplicate Flutter library members",
-    );
-    expect(JSON.stringify(projectAnalysisError(result.error))).toContain(path);
     expect(extract).not.toHaveBeenCalled();
   },
 );
@@ -1168,6 +1174,69 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       details: { issues: [{ message: expect.stringContaining(path) }] },
     });
     expect(JSON.stringify(error)).not.toContain("input.apk");
+  },
+);
+
+const expectSelectionIssue = async (
+  provider: FlutterBuildProvider,
+  path: string,
+  message: string,
+): Promise<void> => {
+  for (const operation of [
+    "identify_flutter_build",
+    "inspect_dart_aot",
+  ] as const) {
+    const result = await provider.execute({ operation, input: { path } });
+    if (result.ok) throw new Error("A non-file APK selection must fail");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: `${message}: ${path}`,
+          },
+        ],
+      },
+    });
+  }
+};
+
+it("names a missing or non-file APK selection instead of blaming package bytes", async () => {
+  const root = await createTestTempDirectory("rea-flutter-selection-");
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  await expectSelectionIssue(
+    provider,
+    join(root, "absent.apk"),
+    "Selected APK does not exist",
+  );
+  await expectSelectionIssue(
+    provider,
+    root,
+    "Selected APK is not a regular file",
+  );
+});
+
+// Windows listens on named pipes rather than filesystem sockets.
+it.skipIf(process.platform === "win32")(
+  "names an unopenable Unix socket APK selection as a non-file",
+  async () => {
+    const root = await createTestTempDirectory("rea-flutter-socket-");
+    const socketPath = join(root, "s.sock");
+    const socket = createServer();
+    await new Promise<void>((resolve) => socket.listen(socketPath, resolve));
+    onTestFinished(
+      () => new Promise<void>((resolve) => socket.close(() => resolve())),
+    );
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    await expectSelectionIssue(
+      provider,
+      socketPath,
+      "Selected APK is not a regular file",
+    );
   },
 );
 

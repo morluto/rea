@@ -132,12 +132,12 @@ export const loadWindowsNativeAuthority = (
 };
 
 const assertWindowsX64Artifact = (bytes: Buffer): void => {
-  if (bytes.length < 64 || bytes.toString("ascii", 0, 2) !== "MZ")
+  if (bytes.length < 64 || bytes.toString("latin1", 0, 2) !== "MZ")
     throw new Error("Windows native artifact is not a PE image");
   const offset = bytes.readUInt32LE(0x3c);
   if (
     offset > bytes.length - 26 ||
-    bytes.toString("ascii", offset, offset + 4) !== "PE\0\0" ||
+    bytes.toString("latin1", offset, offset + 4) !== "PE\0\0" ||
     bytes.readUInt16LE(offset + 4) !== 0x8664 ||
     bytes.readUInt16LE(offset + 24) !== 0x20b
   )

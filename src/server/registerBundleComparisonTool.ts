@@ -1,7 +1,7 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { readEvidenceBundle } from "../application/EvidenceBundleFiles.js";
+import { readImmutableEvidenceBundle } from "../application/EvidenceBundleFiles.js";
 import { toolContract } from "../contracts/toolContracts.js";
 import { compareBundles } from "../domain/bundleComparison.js";
 import { createEvidence } from "../domain/evidence.js";
@@ -33,12 +33,12 @@ export const registerBundleComparisonTool = (
         context.mcpReq.signal,
         async () => {
           const [left, right] = await Promise.all([
-            readEvidenceBundle(
+            readImmutableEvidenceBundle(
               input.left_bundle_path,
               context.mcpReq.signal,
               resources,
             ),
-            readEvidenceBundle(
+            readImmutableEvidenceBundle(
               input.right_bundle_path,
               context.mcpReq.signal,
               resources,

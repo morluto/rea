@@ -16,14 +16,17 @@ import {
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
-const artifactManifestSchema = evidenceSchema.shape.subject
-  .unwrap()
-  .pick({
-    digest: true,
-    format: true,
-    architecture: true,
-  })
-  .strict();
+const [detectedSubjectSchema, rawSubjectSchema] =
+  evidenceSchema.shape.subject.unwrap().options;
+const manifestFields = {
+  digest: true,
+  format: true,
+  architecture: true,
+} as const;
+const artifactManifestSchema = z.discriminatedUnion("format", [
+  detectedSubjectSchema.pick(manifestFields),
+  rawSubjectSchema.pick(manifestFields),
+]);
 const providerManifestSchema = providerSchema;
 const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
 const scenarioManifestSchema = z.strictObject({
@@ -85,11 +88,11 @@ export const createEvidenceBundle = (
         subject === null
           ? []
           : [
-              {
+              artifactManifestSchema.parse({
                 digest: subject.digest,
                 format: subject.format,
                 architecture: subject.architecture,
-              },
+              }),
             ],
       ),
     ),

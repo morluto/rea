@@ -176,8 +176,14 @@ describe("plugin manifests", () => {
         version: packageJson.version,
         mcpServers: {
           rea: {
-            command: "npx",
-            args: ["-y", `${packageJson.name}@${packageJson.version}`, "mcp"],
+            command: "node",
+            args: [
+              path === ".claude-plugin/plugin.json"
+                ? "${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"
+                : "./scripts/plugin-mcp-launcher.mjs",
+              `${packageJson.name}@${packageJson.version}`,
+            ],
+            ...(path === ".codex-plugin/plugin.json" ? { cwd: "." } : {}),
           },
         },
       });
@@ -198,8 +204,8 @@ describe("plugin manifests", () => {
     expect(await readJson(".cursor-plugin/mcp.json")).toEqual({
       mcpServers: {
         rea: {
-          command: "npx",
-          args: ["-y", `${packageJson.name}@${packageJson.version}`, "mcp"],
+          command: "node",
+          args: ["${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs", `${packageJson.name}@${packageJson.version}`],
         },
       },
     });

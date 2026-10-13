@@ -173,7 +173,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
       ];
       phase = "workspace";
       root = await this.createRuntime();
-      this.#resources.retain(root, undefined, operation);
+      this.#resources.retain(root, undefined);
       const snapshotPath = join(root.path, "recording");
       const execute = async (args: readonly string[]) => {
         const output = await runOwnedCommand(
@@ -371,7 +371,7 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
         cause instanceof OwnedCommandFailure &&
         cause.cleanupOwner !== undefined
       )
-        this.#resources.retain(root, cause.cleanupOwner, operation);
+        this.#resources.retain(root, cause.cleanupOwner);
       result = err(
         this.#failure(
           cause,

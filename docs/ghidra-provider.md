@@ -41,6 +41,26 @@ does not prove text is absent. Both list and search Evidence carry this
 limitation. When an address is known, use `read_bytes` and `xrefs` to inspect
 bytes and references.
 
+## PE debug-symbol coverage
+
+The post-analysis handshake reports Ghidra's PDB Program Information attributes:
+the referenced file, GUID, hexadecimal age, legacy signature, version, and
+`PDB Loaded` state. Absent attributes remain null. PE Evidence carries a
+limitation when a PDB reference is present but Ghidra reports it as not loaded,
+or its load state is unknown. A bridge without this report leaves PDB coverage
+unknown. A reported loaded state is a Ghidra observation, not an independent
+PDB identity or complete symbol-coverage attestation, and retains an inline
+coverage caveat. Handshake PDB strings share a 4096 UTF-16-unit serialization
+budget (at most 24 KiB after JSON escaping); whole attributes that do not fit
+are omitted with an explicit resource limitation, rather than truncated.
+
+Original names and types may be missing even when auto-analysis completes.
+An empty name search does not establish that a function is absent; use
+`list_procedures` and address-based analysis to inspect recovered functions.
+REA imports a private executable copy and does not admit a caller-selected
+PDB companion. This reporting does not search symbol servers, copy a sibling
+PDB, or change analyzer settings.
+
 ## Loaded addresses and file offsets
 
 `rea analyze <path> --provider ghidra --json` and MCP `binary_overview` report
@@ -131,9 +151,10 @@ overview merely because its source artifact is unchanged.
 
 Function extents and instruction completeness refer to Ghidra's analyzed body.
 An inferred no-return call can terminate that body before subsequent bytes.
-Pseudocode, assembly, procedure info, instruction windows, and dossiers report
-observed terminal call sites in Evidence limitations, including resolved callee
-names, addresses, and FunctionManager flags when available. Instruction windows
+Pseudocode, assembly, procedure info, instruction windows, callee and caller
+reads, and dossiers report observed terminal call sites in Evidence limitations,
+including resolved callee names, addresses, and FunctionManager flags when
+available. Instruction windows
 and dossiers also retain these warnings in their result limitations. An
 unresolved callee or unestablished terminal-flow basis remains explicit. These
 observations qualify the analysis; they do not prove that a no-return flag is

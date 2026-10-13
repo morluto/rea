@@ -98,11 +98,17 @@ describe("IDA workspace ownership before input preparation", () => {
           expect(closed.error.cleanupResources).toEqual([
             expect.stringContaining(workspace ?? "missing workspace"),
           ]);
+          // No open was attempted, so there is no worker to report.
+          expect(closed.error).not.toHaveProperty(
+            "diagnostics.upstream_sessions",
+          );
         }
+        expect(producer.detaches).toBe(1);
       } finally {
         await chmod(root, 0o700);
       }
       expect((await client.close()).ok).toBe(true);
+      expect(producer.detaches).toBe(1);
       expect(await readdir(root)).toEqual(["target.elf"]);
     },
   );
