@@ -15,9 +15,7 @@ if (
   extra.length !== 0 ||
   !/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/u.test(version ?? "")
 ) {
-  process.stderr.write(
-    "REA plugin requires one exact package version.\n",
-  );
+  process.stderr.write("REA plugin requires one exact package version.\n");
   process.exitCode = 1;
 } else {
   await launch(`rea-agents@${version}`);
