@@ -71,7 +71,7 @@ it.skipIf(process.platform === "win32")(
       code: 7,
       signal: null,
       stdout: '{"jsonrpc":"2.0","id":1}\n',
-      stderr: '["-y","rea-agents@6.4.0-rc.1","mcp"]',
+      stderr: expect.stringMatching(/^\["-y","--prefix=.+","rea-agents@6\.4\.0-rc\.1","mcp"\]$/u),
     });
   },
 );
@@ -97,14 +97,16 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "isolates local package resolution and removes the owned runner directory",
   async () => {
-    const bin = await fakeRunner("process.stdout.write(process.cwd());");
+    const bin = await fakeRunner("process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));");
     const { child, closed } = start(bin);
     child.stdin.end();
     const result = await closed;
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain("rea-plugin-launcher-");
-    expect(result.stdout).not.toBe(process.cwd());
-    await expect(lstat(result.stdout)).rejects.toMatchObject({
+    const observed = JSON.parse(result.stdout) as { cwd: string; args: string[] };
+    expect(observed.cwd).toBe(process.cwd());
+    const prefix = observed.args[1]?.slice("--prefix=".length);
+    expect(prefix).toContain("rea-plugin-launcher-");
+    await expect(lstat(prefix!)).rejects.toMatchObject({
       code: "ENOENT",
     });
   },

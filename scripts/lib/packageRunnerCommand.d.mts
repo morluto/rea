@@ -3,4 +3,5 @@ export function packageRunnerCommand(
   runner: "npx" | "bunx",
   packageSpecifier: string,
   platform: NodeJS.Platform,
+  prefix?: string,
 ): readonly string[];

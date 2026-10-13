@@ -12,6 +12,8 @@
         "scripts/clean-build-output.mjs",
         "scripts/bundle-runtime.mjs",
         "scripts/generate-package-metadata.mjs",
+        "scripts/lib/packageRunnerCommand.mjs",
+        "scripts/lib/packageRunnerCommand.d.mts",
         "src/**/*.ts",
         "!src/**/*.test.ts",
         "!src/**/*.fixture.ts",

@@ -26,14 +26,9 @@ if (
 }
 
 async function launch(packageSpecifier) {
-  const [command, ...args] = packageRunnerCommand(
-    "npx",
-    packageSpecifier,
-    process.platform,
-  );
   // npm can satisfy the exact pin from a same-version local checkout. An
-  // empty owned cwd prevents a Git-installed plugin or caller project from
-  // shadowing the registry package with unbuilt/different local files.
+  // private prefix prevents a same-version local checkout from shadowing the
+  // registry package while preserving the caller's path base for REA requests.
   let workingDirectory;
   try {
     workingDirectory = await mkdtemp(join(tmpdir(), "rea-plugin-launcher-"));
@@ -44,8 +39,13 @@ async function launch(packageSpecifier) {
     process.exitCode = 1;
     return;
   }
+  const [command, ...args] = packageRunnerCommand(
+    "npx",
+    packageSpecifier,
+    process.platform,
+    workingDirectory,
+  );
   const child = spawn(command, args, {
-    cwd: workingDirectory,
     stdio: "inherit",
     shell: false,
   });
