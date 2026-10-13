@@ -215,6 +215,8 @@ export class AngrEditRunner {
           },
           (settled) => {
             const appliedEntry = settled.results[0];
+            if (appliedEntry === undefined || appliedEntry.status === "error")
+              return;
             delete rollback.commentUnknown;
             if (appliedEntry?.status === "ok")
               rollback.comment = appliedEntry.old ?? "";

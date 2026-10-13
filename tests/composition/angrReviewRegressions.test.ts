@@ -284,7 +284,7 @@ describe("annotation rollback under lost replies", () => {
       await client.close();
     }
   });
-  it("reports an unrestorable comment when its call never returned", async () => {
+  it("restores the comment when cancellation arrives after its reply", async () => {
     const { producer, client } = await open();
     try {
       const controller = new AbortController();
@@ -303,6 +303,51 @@ describe("annotation rollback under lost replies", () => {
           "previous value and whether it was applied are unknown",
         );
       }
+    } finally {
+      await client.close();
+    }
+  });
+  it("preserves unknown comment state after an explicit failed reply", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.comments.set("0x1000", "original");
+      producer.overrideCall = (name) => {
+        if (name !== "set_comments") return undefined;
+        return {
+          dry_run: false,
+          total: 1,
+          succeeded: 0,
+          unchanged: 0,
+          failed: 1,
+          skipped: 0,
+          results: [
+            {
+              index: 0,
+              kind: "function",
+              status: "error",
+              function_address: "0x1000",
+              function_name: "main",
+              target: "0x1000",
+              old: null,
+              new: null,
+              error: "write rejected",
+            },
+          ],
+          functions_affected: [],
+        };
+      };
+      const result = await client.execute("annotate_native_function", {
+        procedure: "main",
+        comment: "replacement",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisProtocolError");
+        expect(JSON.stringify(result.error.partialObservation)).toContain(
+          "previous value and whether it was applied are unknown",
+        );
+      }
+      expect(producer.comments.get("0x1000")).toBe("original");
     } finally {
       await client.close();
     }
