@@ -48,6 +48,18 @@ export const TOOL_EXAMPLE_OVERRIDES: Readonly<
     name: "entry",
     comment: "Analyst observation",
   },
+  rename_native_variables: {
+    items: [{ procedure: "main", variable: "v0", new_name: "username" }],
+  },
+  set_native_variable_types: {
+    items: [{ procedure: "main", variable: "v0", type: "char *" }],
+  },
+  set_native_function_prototypes: {
+    items: [
+      { procedure: "main", signature: "int main(int argc, char **argv)" },
+    ],
+  },
+  set_native_decompilation_flavor: { flavor: "rust" },
   analyze_swift_types: { category: "classes", pattern: "Account" },
   inspect_native_api: { procedure: "main" },
   trace_feature: { query: "license" },

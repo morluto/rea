@@ -42,7 +42,7 @@ A stdio command defaults to **headless** mode: REA owns the process and its proj
 
 Start that server yourself with `python -m angr.mcp --transport http --port 8000`, or use the MCP server built into angr management when it is listening on loopback. Only `localhost`, `127.0.0.1`, and `[::1]` endpoints without URL credentials are accepted. Optional `headers` are sent on every request and redacted from diagnostics. An `mcpServers` envelope with an `angr` entry is also accepted.
 
-Optional keys on either form: `timeoutMs` (per request, default 300000), `startupTimeoutMs` (project load and CFG recovery, default 600000), and `autoLoadLibs` (default `false`).
+Optional keys on either form: `timeoutMs` (per request, default 300000), `startupTimeoutMs` (project load and CFG recovery, default 600000), `autoLoadLibs` (default `false`), and `flavor` (a session-wide decompilation flavor applied after load; see below).
 
 ## What each mode observes
 
@@ -52,16 +52,33 @@ In attached mode the server is shared with other clients. Results reflect its cu
 
 ## Supported targets and operations
 
-angr admits ELF, PE, and thin Mach-O executables and shared libraries on every architecture its loader and lifter support. REA declines universal Mach-O containers, headerless raw binaries, and 16-bit DOS inputs for this adapter; use Hopper or Ghidra for those.
+REA passes every executable kind to angr and reports angr's loader errors unchanged. angr admits ELF, PE, and Mach-O executables and shared libraries on every architecture its loader and lifter support. Universal Mach-O containers, headerless raw binaries, and 16-bit DOS inputs are not declined by REA, but angr's MCP `load_binary` currently has no way to receive REA's slice selection, architecture, or entry point for them, so they load only when angr's loader can identify them on its own.
 
-This adapter provides function and string inventory and search, function lookup, assembly, pseudocode, callers, callees, data xrefs, instruction windows, and function dossiers. Observed facts have these boundaries:
+This adapter provides function and string inventory and search, function lookup, assembly, pseudocode, callers, callees, data xrefs, instruction windows, function dossiers, knowledge-base edits, and the decompilation flavor. Observed facts have these boundaries:
 
 - Function bodies come from angr's recovered basic blocks and are reported as merged inclusive ranges.
 - Callers and callees come from angr's call graph, fetched once per session. Unresolved indirect calls are absent, so relationship coverage is reported as partial.
 - `xrefs` returns the instruction addresses of data references recorded during CFG recovery. Call and jump references are not included; use `procedure_callers`.
 - Pseudocode is angr's decompiler output. Functions above angr's complexity limits fail with the upstream reason; a function dossier retains assembly and relationships and reports the missing pseudocode as a limitation.
 - Signatures are angr's recovered prototypes when present. Locals, comments, typed reference flags, referenced strings and names, and basic-block successors are not reported.
-- Symbolic execution, emulation, and angr's edit tools are not exposed.
+- Symbolic execution and emulation are not exposed.
+
+## Knowledge-base edits
+
+angr's edit tools are exposed as session-scoped edits of its knowledge base. Original executable bytes are never written, and nothing persists after `close_binary`.
+
+- `set_address_name` and `set_addresses_names`: a function entry renames the function; any other mapped address names a global. Readback is the per-address boolean the shared contract defines.
+- `set_comment`: writes angr's comment at an instruction address. angr keeps one comment store that it mirrors next to the matching pseudocode statement; a comment at a non-statement address is snapped down to the nearest statement boundary. `set_inline_comment` is unsupported because angr has no separate inline store.
+- `annotate_native_function`: renames the function and sets its entry comment, then returns a refreshed dossier. `inline_comment` is rejected for this provider. When the comment is not changed, the readback reports `null` because angr's MCP server has no comment read.
+- `rename_native_variables`, `set_native_variable_types`, `set_native_function_prototypes`: batch edits mapped to angr's `rename` and `set_type` tools. Each item reports its own outcome; a failed item does not discard its siblings, and applied items are not rolled back, so use `dry_run` as a pre-flight. Retyping an argument rewrites the prototype and re-decompiles the function; a prototype change discards the cached decompilation, and angr restores earlier renames and manual types afterwards.
+
+Edits invalidate REA's immutable analysis snapshots and the session's cached call graph, so later callers, callees, and dossiers reflect the new names.
+
+## Decompilation flavor
+
+angr renders pseudocode in a session-wide flavor: `pseudocode` (C-like, the default), `rust`, or `go`. Caches, prototypes, and edits are kept per flavor. `inspect_native_decompilation_flavor` reports the current flavor, the available flavors, and angr's source-language detection as a hint; `set_native_decompilation_flavor` changes it for later `procedure_pseudo_code` and `analyze_function` calls and is recorded in each result's raw Evidence. The `flavor` registration key applies a default after the project loads.
+
+These operations need an angr whose MCP server advertises `get_decompilation_flavor` and `set_decompilation_flavor`. On an older angr they fail with a capability-unavailable error, and a configured `flavor` key fails the session at startup with that reason.
 
 The provider version identifies REA's adapter. The connected server's `serverInfo` is retained in raw Evidence; it reports the MCP framework version, not necessarily the angr release.
 

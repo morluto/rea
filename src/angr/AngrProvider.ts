@@ -93,30 +93,6 @@ export class AngrProvider implements AnalysisProviderCandidate {
           "angr admits executable inputs, not analysis databases or archives. Select the original input binary.",
         diagnostics,
       };
-    if (target.format === "raw-binary")
-      return {
-        status: "unsupported",
-        code: "target_format_unsupported",
-        reason:
-          "REA's angr adapter does not admit headerless raw binaries. Open the target with Ghidra and supply architecture and entry_point.",
-        diagnostics,
-      };
-    if (target.format === "mach-o-universal")
-      return {
-        status: "unsupported",
-        code: "target_format_unsupported",
-        reason:
-          "REA's angr adapter does not select a slice from universal Mach-O containers. Extract the slice or use Hopper or Ghidra.",
-        diagnostics,
-      };
-    if (target.format === "dos-mz" || target.format === "dos-com")
-      return {
-        status: "unsupported",
-        code: "target_format_unsupported",
-        reason:
-          "angr does not load 16-bit DOS executables. Use the Ghidra DOS profile.",
-        diagnostics,
-      };
     return { status: "supported", code: null, reason: null, diagnostics };
   }
   async resolveAnalysisProfile(

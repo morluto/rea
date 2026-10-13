@@ -40,7 +40,12 @@ describe("angr provider composition", () => {
     });
     expect(first.ok && first.value.result).toContain("42");
     expect(producer.connects).toBe(1);
-    expect(producer.calls.map(({ name }) => name).slice(0, 4)).toEqual([
+    expect(
+      producer.calls
+        .map(({ name }) => name)
+        .filter((name) => name !== "get_decompilation_flavor")
+        .slice(0, 4),
+    ).toEqual([
       "load_binary",
       "get_cfg",
       "get_function_info",

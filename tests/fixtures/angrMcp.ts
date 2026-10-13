@@ -6,7 +6,10 @@ import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import type { AngrMcpConnection } from "../../src/angr/AngrMcpConnection.js";
-import { ANGR_REQUIRED_TOOLS } from "../../src/angr/AngrProviderCapabilities.js";
+import {
+  ANGR_FLAVOR_TOOLS,
+  ANGR_REQUIRED_TOOLS,
+} from "../../src/angr/AngrProviderCapabilities.js";
 import { elf } from "../../src/domain/binaryTarget.fixture.js";
 
 /** Create a test-owned executable without invoking an engine. */
@@ -58,6 +61,12 @@ export class RecordingAngrMcp implements AngrMcpConnection {
   loadedPath: string;
   openProjects = new Set<string>();
   pseudocode = "int main(void) { return 42; }";
+  flavor = "pseudocode";
+  /** Names applied through rename, by function address. */
+  readonly names = new Map<string, string>(
+    FUNCTIONS.map((fn) => [fn.address, fn.name]),
+  );
+  readonly comments = new Map<string, string>();
   tools?: readonly string[];
   beforeCall?: (
     name: string,
@@ -73,7 +82,7 @@ export class RecordingAngrMcp implements AngrMcpConnection {
   }
   async connect() {
     this.connects += 1;
-    return this.tools ?? [...ANGR_REQUIRED_TOOLS];
+    return this.tools ?? [...ANGR_REQUIRED_TOOLS, ...ANGR_FLAVOR_TOOLS];
   }
   serverInfo() {
     return { name: "angr-mcp", version: "fixture" };
@@ -137,11 +146,17 @@ export class RecordingAngrMcp implements AngrMcpConnection {
           total: FUNCTIONS.length,
           offset,
           limit,
-          functions: FUNCTIONS.slice(offset, offset + limit),
+          functions: FUNCTIONS.slice(offset, offset + limit).map((fn) => ({
+            ...fn,
+            name: this.names.get(fn.address) ?? fn.name,
+          })),
         };
       }
       case "get_function_info": {
-        const fn = FUNCTIONS.find(
+        const fn = FUNCTIONS.map((candidate) => ({
+          ...candidate,
+          name: this.names.get(candidate.address) ?? candidate.name,
+        })).find(
           (candidate) =>
             candidate.name === args.name || candidate.address === args.address,
         );
@@ -170,41 +185,11 @@ export class RecordingAngrMcp implements AngrMcpConnection {
         return {
           project_id: projectId,
           function_address: args.address ?? null,
-          function_name: "main",
+          function_name: this.names.get(String(args.address)) ?? "main",
           code: this.pseudocode,
         };
       case "get_basic_blocks":
-        return {
-          project_id: projectId,
-          function_address: args.function_address ?? null,
-          function_name:
-            FUNCTIONS.find((fn) => fn.address === args.function_address)
-              ?.name ?? "main",
-          block_count: 2,
-          blocks: [
-            {
-              address: "0x1010",
-              size: 16,
-              instruction_count: 1,
-              instructions: [
-                { address: "0x1010", mnemonic: "ret", op_str: "", bytes: "c3" },
-              ],
-            },
-            {
-              address: "0x1000",
-              size: 16,
-              instruction_count: 1,
-              instructions: [
-                {
-                  address: "0x1000",
-                  mnemonic: "call",
-                  op_str: "0x2000",
-                  bytes: "e8fb0f0000",
-                },
-              ],
-            },
-          ],
-        };
+        return this.basicBlocks(args);
       case "get_xrefs":
         return {
           project_id: projectId,
@@ -234,6 +219,13 @@ export class RecordingAngrMcp implements AngrMcpConnection {
             { address: "0x3010", content: "a.b", size: 4, type: "ascii" },
           ],
         };
+      case "get_decompilation_flavor":
+      case "set_decompilation_flavor":
+        return this.flavorTool(name, args);
+      case "rename":
+      case "set_type":
+      case "set_comments":
+        return this.edit(name, args);
       case "get_callgraph":
         return {
           project_id: projectId,
@@ -252,5 +244,174 @@ export class RecordingAngrMcp implements AngrMcpConnection {
       default:
         throw new AnalysisProtocolError(`Unmodeled angr MCP tool ${name}`);
     }
+  }
+
+  private basicBlocks(args: Readonly<Record<string, JsonValue>>): JsonValue {
+    const projectId = this.projectId;
+    return {
+      project_id: projectId,
+      function_address: args.function_address ?? null,
+      function_name:
+        this.names.get(String(args.function_address)) ??
+        FUNCTIONS.find((fn) => fn.address === args.function_address)?.name ??
+        "main",
+      block_count: 2,
+      blocks: [
+        {
+          address: "0x1010",
+          size: 16,
+          instruction_count: 1,
+          instructions: [
+            { address: "0x1010", mnemonic: "ret", op_str: "", bytes: "c3" },
+          ],
+        },
+        {
+          address: "0x1000",
+          size: 16,
+          instruction_count: 1,
+          instructions: [
+            {
+              address: "0x1000",
+              mnemonic: "call",
+              op_str: "0x2000",
+              bytes: "e8fb0f0000",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  private flavorTool(
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): JsonValue {
+    if (name === "get_decompilation_flavor")
+      return {
+        project_id: this.projectId,
+        flavor: this.flavor,
+        available_flavors: ["pseudocode", "rust", "go"],
+        detected_language: "c",
+        detected_compiler: "gcc",
+        detection_confidence: "medium",
+      };
+    const flavor = String(args.flavor);
+    if (!["pseudocode", "rust", "go"].includes(flavor))
+      throw new AnalysisProtocolError(
+        `angr MCP tool failed: Unknown decompilation flavor ${JSON.stringify(flavor)}. Valid flavors: pseudocode, rust, go.`,
+      );
+    const previous = this.flavor;
+    this.flavor = flavor;
+    return { project_id: this.projectId, previous_flavor: previous, flavor };
+  }
+
+  /** Model angr's batch edit tools: per-item results, counts, and affected functions. */
+  private edit(
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): JsonValue {
+    const items = Array.isArray(args.items) ? args.items : [];
+    const dryRun = args.dry_run === true;
+    const results: Record<string, JsonValue>[] = [];
+    const touched = new Set<string>();
+    items.forEach((raw, index) => {
+      const item = raw as Record<string, JsonValue>;
+      const kind = String(item.kind);
+      const fnKey = String(item.function ?? item.address ?? item.name ?? "");
+      const fn = FUNCTIONS.find(
+        (candidate) =>
+          candidate.address === fnKey ||
+          (this.names.get(candidate.address) ?? candidate.name) === fnKey,
+      );
+      const entry: Record<string, JsonValue> = {
+        index,
+        kind,
+        status: "ok",
+        function_address: fn?.address ?? null,
+        function_name:
+          fn === undefined ? null : (this.names.get(fn.address) ?? fn.name),
+        target: null,
+        old: null,
+        new: null,
+        detail: {},
+        error: null,
+      };
+      const fail = (error: string) => {
+        entry.status = "error";
+        entry.error = error;
+      };
+      if (name === "rename") {
+        const newName = String(item.new_name);
+        if (kind === "function" && fn !== undefined) {
+          entry.old = this.names.get(fn.address) ?? fn.name;
+          entry.target = entry.old;
+          entry.new = newName;
+          if (entry.old === newName) entry.status = "unchanged";
+          else if (!dryRun) this.names.set(fn.address, newName);
+        } else if (kind === "variable" && fn !== undefined) {
+          if (item.name === "absent_variable")
+            fail(`No variable named 'absent_variable' in ${fnKey}.`);
+          else {
+            entry.target = String(item.name);
+            entry.old = String(item.name);
+            entry.new = newName;
+            entry.detail = { storage: "stack", offset: -8 };
+          }
+        } else if (kind === "global") {
+          entry.target = String(item.address);
+          entry.old = "unk_3000";
+          entry.new = newName;
+          entry.function_address = null;
+          entry.function_name = null;
+        } else fail(`No function named ${JSON.stringify(fnKey)}.`);
+      } else if (name === "set_type") {
+        if (fn === undefined && kind !== "global")
+          fail(`No function named ${JSON.stringify(fnKey)}.`);
+        else {
+          entry.target =
+            kind === "global"
+              ? String(item.address)
+              : String(item.name ?? fnKey);
+          entry.old =
+            kind === "function" ? "int main(int argc, char **argv)" : "char";
+          entry.new = String(item.type);
+          if (kind === "global") {
+            entry.function_address = null;
+            entry.function_name = null;
+          }
+        }
+      } else {
+        const address =
+          kind === "function" ? (fn?.address ?? "") : String(item.address);
+        if (address === "") fail(`No function named ${JSON.stringify(fnKey)}.`);
+        else {
+          const comment = String(item.comment ?? "");
+          entry.target = address;
+          entry.old = this.comments.get(address) ?? null;
+          entry.new = comment;
+          if (!dryRun) {
+            if (comment === "") this.comments.delete(address);
+            else this.comments.set(address, comment);
+          }
+          entry.detail = { snapped_from: null, rendered_inline: true };
+        }
+      }
+      if (entry.status === "ok" && typeof entry.function_address === "string")
+        touched.add(entry.function_address);
+      results.push(entry);
+    });
+    const count = (status: string) =>
+      results.filter((entry) => entry.status === status).length;
+    return {
+      project_id: this.projectId,
+      dry_run: dryRun,
+      total: results.length,
+      succeeded: count("ok"),
+      unchanged: count("unchanged"),
+      failed: count("error"),
+      skipped: count("skipped"),
+      results,
+      functions_affected: [...touched].sort(),
+    };
   }
 }

@@ -179,6 +179,132 @@ const mcp = async (cliDossier) => {
           normalized.some(({ value }) => value === dossier.procedure.name),
         );
     }
+    phase = "production MCP knowledge-base edits";
+    const flavor = await client.callTool({
+      name: "inspect_native_decompilation_flavor",
+      arguments: {},
+    });
+    const flavorTools = flavor.isError !== true;
+    if (flavorTools) {
+      const current = observe(
+        toolContract("inspect_native_decompilation_flavor").outputSchema.parse(
+          flavor.structuredContent,
+        ),
+      );
+      assert.ok(current.available_flavors.includes(current.flavor));
+      const changed = observe(
+        await call("set_native_decompilation_flavor", { flavor: "rust" }),
+      );
+      assert.equal(changed.flavor, "rust");
+      assert.equal(changed.previous_flavor, current.flavor);
+      const rust = observe(
+        await call("procedure_pseudo_code", {
+          procedure: dossier.procedure.address,
+        }),
+      );
+      assert.notEqual(rust, dossier.pseudocode);
+      const restored = observe(
+        await call("set_native_decompilation_flavor", {
+          flavor: current.flavor,
+        }),
+      );
+      assert.equal(restored.flavor, current.flavor);
+      report.checks.push(
+        "decompilation flavor inspect, set, render, and restore",
+      );
+    } else {
+      assert.equal(requireMcpToolError(flavor).code, "capability_unavailable");
+      report.checks.push(
+        "decompilation flavor reported unavailable on an angr without flavor tools",
+      );
+    }
+    const renamed = observe(
+      await call("annotate_native_function", {
+        procedure: dossier.procedure.address,
+        name: "rea_verifier_renamed",
+        comment: "REA verifier entry comment",
+      }),
+    );
+    assert.equal(renamed.annotations.name, "rea_verifier_renamed");
+    assert.equal(renamed.annotations.comment, "REA verifier entry comment");
+    assert.equal(renamed.dossier.procedure.address, dossier.procedure.address);
+    assert.equal(
+      observe(
+        await call("procedure_address", { procedure: "rea_verifier_renamed" }),
+      ),
+      dossier.procedure.address,
+    );
+    const restoredName = observe(
+      await call("set_address_name", {
+        address: dossier.procedure.address,
+        name: dossier.procedure.name,
+      }),
+    );
+    assert.equal(restoredName, true);
+    const variable = dossier.pseudocode.match(/\b(v\d+)\b/u)?.[1];
+    if (variable !== undefined) {
+      const renamedVariables = observe(
+        await call("rename_native_variables", {
+          items: [
+            {
+              procedure: dossier.procedure.address,
+              variable,
+              new_name: "rea_verifier_variable",
+            },
+            {
+              procedure: dossier.procedure.address,
+              variable: "rea_verifier_absent",
+              new_name: "unused",
+            },
+          ],
+        }),
+      );
+      assert.equal(renamedVariables.total, 2);
+      assert.equal(renamedVariables.succeeded, 1);
+      assert.equal(renamedVariables.failed, 1);
+      assert.equal(renamedVariables.results[0].new, "rea_verifier_variable");
+      const retyped = observe(
+        await call("set_native_variable_types", {
+          items: [
+            {
+              procedure: dossier.procedure.address,
+              variable: "rea_verifier_variable",
+              type: "unsigned int",
+            },
+          ],
+        }),
+      );
+      assert.equal(retyped.succeeded, 1);
+      const code = observe(
+        await call("procedure_pseudo_code", {
+          procedure: dossier.procedure.address,
+        }),
+      );
+      assert.ok(code.includes("rea_verifier_variable"));
+      report.checks.push(
+        "variable rename and retype with per-item failure and pseudocode readback",
+      );
+    }
+    const prototypes = observe(
+      await call("set_native_function_prototypes", {
+        items: [{ procedure: dossier.procedure.address, return_type: "int" }],
+        dry_run: true,
+      }),
+    );
+    assert.equal(prototypes.dry_run, true);
+    assert.equal(prototypes.total, 1);
+    assert.equal(
+      observe(
+        await call("set_comment", {
+          address: dossier.procedure.address,
+          comment: "",
+        }),
+      ),
+      true,
+    );
+    report.checks.push(
+      "function annotation, name restore, prototype dry run, and comment clear",
+    );
     const invalid = await client.callTool({
       name: "xrefs",
       arguments: { address: "not-an-address" },

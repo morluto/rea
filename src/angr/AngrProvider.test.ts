@@ -46,45 +46,35 @@ describe("angr provider discovery", () => {
         ),
     ).toBe(true);
   });
-  it("admits headered executables and declines slices, raw and DOS inputs", () => {
+  it("admits every executable format and declines non-executable kinds", () => {
     const provider = configured();
-    expect(
-      provider.inspectTargetSupport({ ...identity, format: "elf" }),
-    ).toMatchObject({ status: "supported" });
-    const unsupported: readonly [BinaryTarget, string][] = [
-      [
-        {
-          ...identity,
-          format: "raw-binary",
-          entryPoint: "0x8000000",
-          entryPointSource: "0x8000000",
-        },
-        "target_format_unsupported",
-      ],
-      [{ ...identity, format: "dos-com" }, "target_format_unsupported"],
-      [
-        {
-          ...identity,
-          format: "mach-o-universal",
-          universalSlice: { offset: 0, size: 1 },
-        },
-        "target_format_unsupported",
-      ],
-      [
-        {
-          path: "/tmp/target.i64",
-          sha256: "b".repeat(64),
-          kind: "database",
-          format: "analysis-database",
-        },
-        "target_kind_unsupported",
-      ],
+    const executables: readonly BinaryTarget[] = [
+      { ...identity, format: "elf" },
+      { ...identity, format: "dos-com" },
+      {
+        ...identity,
+        format: "raw-binary",
+        entryPoint: "0x8000000",
+        entryPointSource: "0x8000000",
+      },
+      {
+        ...identity,
+        format: "mach-o-universal",
+        universalSlice: { offset: 0, size: 1 },
+      },
     ];
-    for (const [target, code] of unsupported)
+    for (const target of executables)
       expect(provider.inspectTargetSupport(target)).toMatchObject({
-        status: "unsupported",
-        code,
+        status: "supported",
       });
+    expect(
+      provider.inspectTargetSupport({
+        path: "/tmp/target.i64",
+        sha256: "b".repeat(64),
+        kind: "database",
+        format: "analysis-database",
+      }),
+    ).toMatchObject({ status: "unsupported", code: "target_kind_unsupported" });
   });
   it("commits a live profile that never persists the registration itself", async () => {
     const resolution = await configured().resolveAnalysisProfile({

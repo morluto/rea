@@ -28,6 +28,7 @@ import type { AngrMcpConnection } from "./AngrMcpConnection.js";
 import { parseAngrInput } from "./AngrInput.js";
 import { AngrOperationRunner } from "./AngrOperationRunner.js";
 import {
+  ANGR_FLAVOR_TOOLS,
   ANGR_LIMITATIONS,
   ANGR_OPERATIONS,
   ANGR_PROVIDER_IDENTITY,
@@ -37,6 +38,7 @@ import {
 import {
   cfgStatsSchema,
   closeProjectSchema,
+  flavorSchema,
   loadBinarySchema,
   type AngrCallGraph,
   type AngrLoadedBinary,
@@ -76,6 +78,8 @@ export class AngrSessionClient implements AnalysisClient {
   #loaded: AngrLoadedBinary | undefined;
   #cfg: JsonValue = null;
   #callGraph: Promise<AngrCallGraph> | undefined;
+  #flavor: string | null = null;
+  #flavorToolsAvailable = false;
 
   constructor(
     private readonly config: AngrConfiguration,
@@ -166,6 +170,7 @@ export class AngrSessionClient implements AnalysisClient {
           rawResult: {
             upstream: this.connection.serverInfo(),
             project: jsonValueSchema.parse(this.#loaded ?? null),
+            decompilation_flavor: this.#flavor,
             observations: jsonValueSchema.parse(runner.raw),
           },
           limitations: [...ANGR_LIMITATIONS, ...new Set(runner.limitations)],
@@ -199,6 +204,14 @@ export class AngrSessionClient implements AnalysisClient {
         });
         return this.#callGraph;
       },
+      flavorToolsAvailable: this.#flavorToolsAvailable,
+      // Call-graph nodes carry function names, so any applied edit invalidates it.
+      onMutation: () => {
+        this.#callGraph = undefined;
+      },
+      onFlavor: (flavor) => {
+        this.#flavor = flavor;
+      },
     });
   }
 
@@ -210,6 +223,7 @@ export class AngrSessionClient implements AnalysisClient {
           mode: this.config.mode,
           project: jsonValueSchema.parse(this.#loaded ?? null),
           cfg: this.#cfg,
+          decompilation_flavor: this.#flavor,
           upstream: this.connection.serverInfo(),
         },
         ANGR_PROVIDER_IDENTITY,
@@ -342,6 +356,30 @@ export class AngrSessionClient implements AnalysisClient {
         "angr CFG recovery answered for a different project than the loaded target.",
       );
     this.#cfg = jsonValueSchema.parse(cfg);
+    this.#flavorToolsAvailable = ANGR_FLAVOR_TOOLS.every((name) =>
+      tools.has(name),
+    );
+    if (this.#flavorToolsAvailable) {
+      const current = flavorSchema.parse(
+        await this.connection.call("get_decompilation_flavor", {
+          project_id: loaded.project_id,
+        }),
+      );
+      this.#flavor = current.flavor;
+    }
+    if (this.config.flavor !== undefined) {
+      if (!this.#flavorToolsAvailable)
+        throw new AnalysisProtocolError(
+          `The angr registration selects flavor ${this.config.flavor}, but the connected server has no decompilation-flavor tools; upgrade angr or remove the flavor setting.`,
+        );
+      const changed = flavorSchema.parse(
+        await this.connection.call("set_decompilation_flavor", {
+          project_id: loaded.project_id,
+          flavor: this.config.flavor,
+        }),
+      );
+      this.#flavor = changed.flavor;
+    }
   }
 
   async close(): Promise<Result<null, AnalysisError>> {

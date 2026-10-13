@@ -19,6 +19,8 @@ const common = {
     .max(2_147_483_647)
     .default(600_000),
   autoLoadLibs: z.boolean().default(false),
+  /** Session-wide decompilation flavor applied after load; requires an angr with flavor tools. */
+  flavor: z.string().min(1).optional(),
 };
 const registrationSchema = z
   .union([

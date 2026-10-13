@@ -17,7 +17,11 @@ import { combineFunctionRelationshipCoverage } from "../domain/functionCallCover
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AngrMcpConnection } from "./AngrMcpConnection.js";
 import type { AngrOperation } from "./AngrProviderCapabilities.js";
-import { ANGR_LIMITATIONS } from "./AngrProviderCapabilities.js";
+import {
+  ANGR_LIMITATIONS,
+  ANGR_MUTATING_OPERATIONS,
+} from "./AngrProviderCapabilities.js";
+import { AngrEditRunner } from "./AngrEditRunner.js";
 import {
   angrAddressSchema,
   basicBlocksSchema,
@@ -156,6 +160,11 @@ export class AngrOperationRunner {
       readonly callGraph: (
         load: () => Promise<AngrCallGraph>,
       ) => Promise<AngrCallGraph>;
+      /** Whether the connected server advertises the decompilation-flavor tools. */
+      readonly flavorToolsAvailable: boolean;
+      /** Called after an upstream edit applied; session caches derived from names are stale. */
+      readonly onMutation: () => void;
+      readonly onFlavor: (flavor: string) => void;
     },
   ) {}
 
@@ -355,6 +364,15 @@ export class AngrOperationRunner {
     parameters: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
     if (
+      ANGR_MUTATING_OPERATIONS.has(operation) ||
+      operation === "inspect_native_decompilation_flavor"
+    )
+      return new AngrEditRunner(this, {
+        flavorToolsAvailable: this.options.flavorToolsAvailable,
+        onMutation: this.options.onMutation,
+        onFlavor: this.options.onFlavor,
+      }).run(operation, parameters);
+    if (
       operation === "list_procedures" ||
       operation === "search_procedures" ||
       operation === "list_strings" ||
@@ -397,6 +415,10 @@ export class AngrOperationRunner {
       }
       case "analyze_function":
         return this.dossier(fn);
+      default:
+        throw new AnalysisProtocolError(
+          `angr operation ${operation} has no read implementation.`,
+        );
     }
   }
 
@@ -443,7 +465,7 @@ export class AngrOperationRunner {
       (query.case_sensitive ? value : value.toLowerCase()).includes(needle);
   }
 
-  private async dossier(fn: AngrFunction): Promise<JsonValue> {
+  async dossier(fn: AngrFunction): Promise<JsonValue> {
     const blocks = await this.blocks(fn);
     let pseudocode: string | null;
     try {

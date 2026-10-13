@@ -376,7 +376,14 @@ setting `REA_ANGR_PYTHON` to an interpreter that has `angr[llm]`, or
 angr recovers a static CFG without shared libraries. Callers and callees come
 from its call graph with partial coverage, `xrefs` lists data references only,
 and functions above angr's complexity limits report missing pseudocode in the
-dossier limitations. angr does not supply `binary_overview`.
+dossier limitations. angr does not supply `binary_overview`. angr also accepts
+session-scoped edits: `annotate_native_function` and `set_address_name` for
+names and entry comments, `set_comment` at instruction addresses, and the batch
+tools `rename_native_variables`, `set_native_variable_types`, and
+`set_native_function_prototypes`, each reporting per-item outcomes without
+rolling back applied siblings. `set_native_decompilation_flavor` switches later
+pseudocode to angr's `rust` or `go` rendering when the installed angr supports
+it; `inspect_native_decompilation_flavor` reports the detected source language.
 
 With `REA_KUNA_COMMAND` configured, `provider_id: "kuna"` answers procedure
 lists, lookups, pseudocode, assembly and `analyze_function` from Kuna's cached

@@ -160,6 +160,52 @@ export const callGraphSchema = z
   .passthrough();
 export type AngrCallGraph = z.infer<typeof callGraphSchema>;
 
+const editText = z
+  .union([z.string(), z.number(), z.boolean()])
+  .nullable()
+  .optional()
+  .transform((value) => (value == null ? null : String(value)));
+
+export const editEntrySchema = z
+  .object({
+    index: z.number().int().min(0),
+    kind: z.string(),
+    status: z.enum(["ok", "unchanged", "error", "skipped"]),
+    function_address: angrAddressSchema.nullable(),
+    function_name: z.string().nullable(),
+    target: editText,
+    old: editText,
+    new: editText,
+    detail: z.record(z.string(), z.unknown()).nullable().optional(),
+    error: z.string().nullable().optional(),
+  })
+  .passthrough();
+export type AngrEditEntry = z.infer<typeof editEntrySchema>;
+
+export const editBatchSchema = z
+  .object({
+    dry_run: z.boolean(),
+    total: z.number().int().min(0),
+    succeeded: z.number().int().min(0),
+    unchanged: z.number().int().min(0),
+    failed: z.number().int().min(0),
+    skipped: z.number().int().min(0),
+    results: z.array(editEntrySchema),
+    functions_affected: z.array(angrAddressSchema),
+  })
+  .passthrough();
+export type AngrEditBatch = z.infer<typeof editBatchSchema>;
+
+export const flavorSchema = z
+  .object({
+    flavor: z.string().min(1),
+    previous_flavor: z.string().min(1).optional(),
+    available_flavors: z.array(z.string().min(1)).optional(),
+    detected_language: z.string().min(1).nullable().optional(),
+    detection_confidence: z.string().min(1).nullable().optional(),
+  })
+  .passthrough();
+
 export const closeProjectSchema = z
   .object({ project_id: z.string(), closed: z.boolean() })
   .passthrough();

@@ -506,6 +506,23 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     writesFilesystem: true,
     mayDiscardData: true,
   }),
+  rename_native_variables: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_native_variable_types: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  set_native_function_prototypes: effects({
+    mutatesTarget: true,
+    mutatesSession: true,
+    mayDiscardData: true,
+  }),
+  inspect_native_decompilation_flavor: evidence,
+  set_native_decompilation_flavor: effects({ mutatesSession: true }),
   inspect_native_load_image: evidence,
   inspect_native_dispatch_metadata: evidence,
   trace_native_ui_action: evidence,

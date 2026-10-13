@@ -3,6 +3,12 @@ import { analysisDetailSchema } from "./analysisDetail.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
+import {
+  renameNativeVariablesInputSchema,
+  setNativeDecompilationFlavorInputSchema,
+  setNativeFunctionPrototypesInputSchema,
+  setNativeVariableTypesInputSchema,
+} from "../domain/native/nativeDecompilationEdits.js";
 
 import { officialOutputSchemas } from "./toolOutputSchemaGroups.js";
 import {
@@ -52,6 +58,31 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "annotate_native_function",
     "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra changes its ephemeral session analysis database only; original executable bytes remain unchanged. Empty comment text clears that comment. Edits remain available to subsequent MCP calls until close; CLI returns the updated dossier before discarding its session. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
+  ),
+  official(
+    "rename_native_variables",
+    "Rename decompilation variables (locals, arguments, and stack slots) in one batch, each identified by its procedure and current pseudocode name. Returns per-item readback with old and new names and resolved storage; failed items report their reason without discarding sibling edits. Renames persist across re-decompilation in the session analysis database only; original executable bytes remain unchanged. Providers without this capability are unsupported.",
+    renameNativeVariablesInputSchema,
+  ),
+  official(
+    "set_native_variable_types",
+    "Set C types on decompilation variables or globals in one batch. A variable is identified by its procedure and current pseudocode name; a global by its address. Retyping an argument rewrites the procedure prototype and re-decompiles it. Types are re-inferred once per affected procedure; pass redecompile to rebuild the syntax tree when a retype should change how an access renders. Per-item readback reports old and new types. Session analysis database only; providers without this capability are unsupported.",
+    setNativeVariableTypesInputSchema,
+  ),
+  official(
+    "set_native_function_prototypes",
+    "Replace procedure prototypes in one batch, either as a complete C signature or as a return type that keeps the argument list. A prototype change discards that procedure's cached decompilation; earlier variable renames and manual types are restored afterwards. Per-item readback reports old and new prototypes. Session analysis database only; providers without this capability are unsupported.",
+    setNativeFunctionPrototypesInputSchema,
+  ),
+  official(
+    "inspect_native_decompilation_flavor",
+    "Report the session-wide decompilation flavor that procedure_pseudo_code and analyze_function render in, the flavors the provider supports, and the provider's source-language detection as a hint. Read-only.",
+    z.strictObject({}),
+  ),
+  official(
+    "set_native_decompilation_flavor",
+    "Select the session-wide decompilation flavor for later pseudocode and dossier requests, such as pseudocode, rust, or go. Decompilation caches, prototypes, and variable edits are kept per flavor by the provider. Returns the previous and current flavor. Providers without this capability are unsupported.",
+    setNativeDecompilationFlavorInputSchema,
   ),
   official(
     "inspect_native_load_image",

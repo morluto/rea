@@ -5,6 +5,7 @@ import { createAngrTarget, RecordingAngrMcp } from "../../fixtures/angrMcp.js";
 import { AngrSessionClient } from "../../../src/angr/AngrSessionClient.js";
 import { readAngrConfiguration } from "../../../src/angr/AngrConfiguration.js";
 import {
+  ANGR_MUTATING_OPERATIONS,
   ANGR_OPERATIONS,
   angrCapabilities,
 } from "../../../src/angr/AngrProviderCapabilities.js";
@@ -24,19 +25,43 @@ afterEach(async () => {
 const parametersFor = (
   operation: string,
 ): Readonly<Record<string, JsonValue>> => {
-  if (operation.startsWith("search_")) return { pattern: "a.b" };
-  if (operation === "xrefs") return { address: "0x1000" };
-  if (operation.startsWith("list_")) return {};
-  return { procedure: "main" };
+  switch (operation) {
+    case "xrefs":
+      return { address: "0x1000" };
+    case "set_address_name":
+      return { address: "0x1000", name: "entry" };
+    case "set_addresses_names":
+      return { names: { "0x1000": "entry", "0x3000": "greeting" } };
+    case "set_comment":
+      return { address: "0x1004", comment: "validated" };
+    case "annotate_native_function":
+      return { procedure: "main", name: "entry", comment: "entry point" };
+    case "rename_native_variables":
+      return {
+        items: [{ procedure: "main", variable: "v0", new_name: "username" }],
+      };
+    case "set_native_variable_types":
+      return { items: [{ procedure: "main", variable: "v0", type: "char *" }] };
+    case "set_native_function_prototypes":
+      return { items: [{ procedure: "main", return_type: "void" }] };
+    case "inspect_native_decompilation_flavor":
+      return {};
+    case "set_native_decompilation_flavor":
+      return { flavor: "rust" };
+    default:
+      if (operation.startsWith("search_")) return { pattern: "a.b" };
+      if (operation.startsWith("list_")) return {};
+      return { procedure: "main" };
+  }
 };
 
 describe("angr caller-visible contracts", () => {
-  it("advertises every operation without UI or mutation effects", () => {
+  it("advertises every operation without UI effects and marks edits as mutations", () => {
     for (const mode of ["attached", "headless"] as const)
       for (const capability of angrCapabilities(mode)) {
         expect(capability.available).toBe(true);
         expect(capability.effects).toMatchObject({
-          mutatesArtifact: false,
+          mutatesArtifact: ANGR_MUTATING_OPERATIONS.has(capability.operation),
           mayShowUi: false,
           launchesProcess: mode === "headless",
         });
