@@ -9,7 +9,11 @@ const reportedMetadata = z.strictObject({
       key: z.string(),
       value: z.discriminatedUnion("type", [
         z.strictObject({ type: z.literal("string"), value: z.string() }),
-        z.strictObject({ type: z.literal("integer"), value: z.number() }),
+        z.strictObject({
+          type: z.literal("integer"),
+          // Reported integers can exceed the safe range; fractions still violate the tag.
+          value: z.number().refine(Number.isInteger, "Expected an integer"),
+        }),
         z.strictObject({ type: z.literal("bytes"), value: z.string() }),
         z.strictObject({ type: z.literal("bool"), value: z.boolean() }),
         z.strictObject({ type: z.literal("undecoded"), value: z.string() }),

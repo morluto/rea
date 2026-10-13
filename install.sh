@@ -167,7 +167,7 @@ main() {
   [ "$installed_version" = "$version" ] || fail "installed version $installed_version does not match $version. Reinstall the requested version, then retry."
 
   printf 'REA %s is installed.\n' "$version"
-  if [ "$start_setup" = true ] && [ -r /dev/tty ] && [ -w /dev/tty ] && [ -t 1 ]; then
+  if [ "$start_setup" = true ] && [ -r /dev/tty ] && [ -w /dev/tty ] && [ -t 1 ] && [ -t 2 ]; then
     printf 'Starting REA setup...\n'
     "$install_bin" setup </dev/tty >/dev/tty
   else

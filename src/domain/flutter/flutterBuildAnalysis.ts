@@ -30,6 +30,12 @@ export const flutterInputSchemas = {
   }),
 } as const;
 
+/** Retained delivery is selected independently of the provider's ABI request. */
+export const dartAotInspectionInputSchema =
+  flutterInputSchemas.inspect_dart_aot.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  });
+
 /** Supported Flutter-backed operations. */
 export type FlutterOperation = keyof typeof flutterInputSchemas;
 /** Validated Flutter requests carry their selected operation. */

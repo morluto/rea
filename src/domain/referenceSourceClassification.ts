@@ -37,6 +37,8 @@ const CODE_EXTENSIONS = new Set([
   "m",
   "mm",
   "sh",
+  "cs",
+  "php",
 ]);
 
 const LANGUAGE_BY_EXTENSION = new Map<string, string>([
@@ -59,6 +61,8 @@ const LANGUAGE_BY_EXTENSION = new Map<string, string>([
   ["cc", "C++"],
   ["cxx", "C++"],
   ["swift", "Swift"],
+  ["cs", "C#"],
+  ["php", "PHP"],
   ["m", "Objective-C"],
   ["mm", "Objective-C++"],
   ["sh", "Shell"],

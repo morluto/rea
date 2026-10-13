@@ -29,7 +29,12 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import type { ToolResultDelivery } from "./toolResult.js";
-import { encodeToolResult } from "./toolResultEncoding.js";
+import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
+import {
+  carriesTargetContentMarker,
+  encodeToolResult,
+  TARGET_CONTENT_RESULT_META,
+} from "./toolResultEncoding.js";
 
 /** Compact advertised input schemas within this per-schema byte budget. */
 export interface CompactInputSchemaPresentation {
@@ -236,7 +241,18 @@ class ErrorEvidenceTransport implements Transport {
         // success outputSchema data; oversized recovery must consume their
         // private structured carrier before it is removed from the wire.
         const { structuredContent: _diagnostic, ...result } = recovered.result;
-        await this.transport.send({ ...recovered, result }, options);
+        // Errors the SDK builds itself (input validation, a thrown handler)
+        // bypass ToolResultDelivery; mark them for target-content tools too.
+        const marked =
+          tool !== undefined &&
+          toolReturnsTargetContent(tool) &&
+          !carriesTargetContentMarker(result)
+            ? {
+                ...result,
+                _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
+              }
+            : result;
+        await this.transport.send({ ...recovered, result: marked }, options);
       } else await this.transport.send(recovered, options);
     } finally {
       if (!isJSONRPCRequest(message) && id !== undefined) {
@@ -259,8 +275,11 @@ class ErrorEvidenceTransport implements Transport {
       return message;
     const structured = jsonObjectSchema.parse(message.result.structuredContent);
     const budget = this.delivery.resultBudgetBytes;
+    // Count the provenance marker exactly as the projected error did, and keep
+    // it on the replacement: the retained original may hold target content.
+    const targetContent = carriesTargetContentMarker(message.result);
     // The delivered error omits structuredContent, so only its text counts.
-    const encoded = encodeToolResult(structured, budget, "text");
+    const encoded = encodeToolResult(structured, budget, "text", targetContent);
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
     const originalError = analysisErrorProjectionSchema.safeParse(
@@ -311,6 +330,9 @@ class ErrorEvidenceTransport implements Transport {
           : "Restart REA with a larger REA_MCP_MAX_RESPONSE_BYTES and matching client receive buffer, then retry. The original error could not be retained by this server.",
       },
     );
-    return { ...message, result: this.delivery.toErrorToolResult(failure) };
+    return {
+      ...message,
+      result: this.delivery.toErrorToolResult(failure, targetContent),
+    };
   }
 }

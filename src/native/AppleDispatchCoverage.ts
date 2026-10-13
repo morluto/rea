@@ -42,14 +42,62 @@ export const pushDispatchCoverage = (input: {
     vtables,
     swift,
   } = input;
+  const classOwnedMethods = result.objc_dispatch_implementations.filter(
+    ({ category }) => category === undefined,
+  );
+  const classRecords = [
+    ...result.objc_classes.flatMap((record) =>
+      record.decode?.status === "decoded"
+        ? []
+        : [
+            `class ${record.name}: ${record.decode?.reason ?? record.decode?.status ?? "decode_status_missing"}`,
+          ],
+    ),
+    ...result.objc_protocol_records.flatMap((record) =>
+      record.decode.status === "decoded"
+        ? []
+        : [
+            `protocol ${record.name}: ${record.decode.reason ?? record.decode.status}`,
+          ],
+    ),
+    ...classOwnedMethods.flatMap((record) =>
+      record.decode.status === "decoded"
+        ? []
+        : [
+            `method ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
+          ],
+    ),
+    ...result.objc_ivars.flatMap((record) =>
+      record.decode.status === "decoded"
+        ? []
+        : [
+            `ivar ${record.class_name}.${record.name}: ${record.decode.reason ?? record.decode.status}`,
+          ],
+    ),
+  ];
+  const classReasons = [
+    ...failures,
+    ...classRecords,
+    ...(truncated ? ["max_records_reached"] : []),
+  ];
+  const categoryMethods = result.objc_dispatch_implementations.filter(
+    ({ category }) => category !== undefined,
+  );
+  const categoryMethodReasons = categoryMethods.flatMap((record) =>
+    record.decode.status === "decoded"
+      ? []
+      : [
+          `category method ${record.category} ${record.class_name} ${record.method_type} ${record.selector}: ${record.decode.reason ?? record.decode.status}`,
+        ],
+  );
   result.coverage.push({
     facet: "objc_class_method_ivar_metadata",
-    status: failures.length > 0 || truncated ? "partial" : "complete",
-    reason:
-      [...failures, ...(truncated ? ["max_records_reached"] : [])].join("; ") ||
-      null,
+    status: classReasons.length > 0 ? "partial" : "complete",
+    reason: classReasons.join("; ") || null,
     examined,
-    decoded: result.objc_classes.length,
+    decoded: result.objc_classes.filter(
+      ({ decode }) => decode?.status === "decoded",
+    ).length,
   });
   result.coverage.push({
     facet: "binary_relative_pointers",
@@ -79,13 +127,18 @@ export const pushDispatchCoverage = (input: {
     status:
       truncated ||
       categoryFailures.length > 0 ||
-      result.objc_categories.some(({ decode }) => decode.status !== "decoded")
+      result.objc_categories.some(
+        ({ decode }) => decode.status !== "decoded",
+      ) ||
+      categoryMethodReasons.length > 0
         ? "partial"
         : "complete",
     reason:
-      [...categoryFailures, ...(truncated ? ["max_records_reached"] : [])].join(
-        "; ",
-      ) || null,
+      [
+        ...categoryFailures,
+        ...categoryMethodReasons,
+        ...(truncated ? ["max_records_reached"] : []),
+      ].join("; ") || null,
     examined: categoriesExamined,
     decoded: result.objc_categories.filter(
       ({ decode }) => decode.status === "decoded",
@@ -110,7 +163,7 @@ export const pushDispatchCoverage = (input: {
           : "complete",
     reason: fixupReason.length > 0 ? fixupReason : null,
     examined: fixups.examined,
-    decoded: fixups.issues.length > 0 ? 0 : fixups.examined,
+    decoded: fixups.decoded,
   });
   result.coverage.push({
     facet: "swift_generic_resilient_witnesses_overrides_async_coroutines",

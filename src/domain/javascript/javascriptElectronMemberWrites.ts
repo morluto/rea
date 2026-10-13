@@ -52,13 +52,17 @@ export interface JavaScriptIntrinsicInvocation {
     | undefined;
 }
 
-/** Index member and binding writes through caller-proven lexical identities. */
+/**
+ * Index writes through possible lexical object identities. Resolve the complete
+ * object before appending the written key: self-reference properties can denote
+ * the same object, while replacing that property is a distinct write.
+ */
 export function* collectJavaScriptIdentityWritesSteps(
   program: t.Program,
   origin: (
     root: t.Node,
     kind: "binding" | "member" | "opaque-call",
-  ) => readonly string[] | undefined,
+  ) => readonly (readonly (string | null)[])[],
   intrinsicInvocation: (
     node: t.CallExpression | t.OptionalCallExpression,
   ) => JavaScriptIntrinsicInvocation | undefined,
@@ -84,8 +88,7 @@ export function* collectJavaScriptIdentityWritesSteps(
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const invocation = intrinsicInvocation(node);
         if (invocation?.kind === "opaque") {
-          const scope = origin(node, "opaque-call");
-          if (scope !== undefined) retain(node, scope);
+          for (const scope of origin(node, "opaque-call")) retain(node, scope);
           return;
         }
         const callee = invocation?.path;
@@ -114,20 +117,20 @@ export function* collectJavaScriptIdentityWritesSteps(
             // A known mutator with an opaque argument list can overwrite any
             // captured intrinsic. Do not turn an unexamined target into proof.
             if (target === undefined || t.isSpreadElement(target)) {
-              const scope = origin(node, "opaque-call");
-              if (scope !== undefined) retain(node, scope);
+              for (const scope of origin(node, "opaque-call"))
+                retain(node, scope);
             }
             if (t.isNode(target) && !t.isSpreadElement(target)) {
-              const { root, members } = electronMemberPath(target);
-              const exported = origin(root, "member");
-              if (exported !== undefined) {
+              const identities = origin(target, "member");
+              if (identities.length > 0) {
                 const key = keyedMutators.has(method ?? "")
                   ? [staticString(arguments_?.[1]) ?? null]
                   : [];
-                retain(node, [...exported, ...members, ...key]);
+                for (const identity of identities)
+                  retain(node, [...identity, ...key]);
               } else if (!freshObject(target)) {
-                const scope = origin(node, "opaque-call");
-                if (scope !== undefined) retain(node, scope);
+                for (const scope of origin(node, "opaque-call"))
+                  retain(node, scope);
               }
             }
           }
@@ -145,13 +148,19 @@ export function* collectJavaScriptIdentityWritesSteps(
       if (target === undefined) return;
       for (const leaf of semanticWriteTargets(target)) {
         if (t.isIdentifier(leaf)) {
-          const exported = origin(leaf, "binding");
-          if (exported !== undefined) retain(node, exported);
+          for (const identity of origin(leaf, "binding"))
+            retain(node, identity);
           continue;
         }
-        const { root, members } = electronMemberPath(leaf);
-        const exported = origin(root, "member");
-        if (exported !== undefined) retain(node, [...exported, ...members]);
+        const member = unwrapJavaScriptExpression(leaf).node;
+        if (
+          !t.isMemberExpression(member) &&
+          !t.isOptionalMemberExpression(member)
+        )
+          continue;
+        const key = semanticStaticPropertyKey(member.property, member.computed);
+        for (const identity of origin(member.object, "member"))
+          retain(node, [...identity, key]);
       }
     },
   });

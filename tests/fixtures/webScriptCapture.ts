@@ -105,6 +105,7 @@ export const scriptScenarioFixture = (
         response_body: true,
         header_values: false,
       },
+      event_families: ["network"],
     },
     duration_ms: 2,
     steps: [step(0), step(1)],

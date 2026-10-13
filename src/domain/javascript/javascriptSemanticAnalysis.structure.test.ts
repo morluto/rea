@@ -38,10 +38,12 @@ describe("JavaScript semantic analysis: structure 1", () => {
     expect(origin(topLevelBinding(ir, "bus"))).toEqual({
       specifier: "electron",
       importedPath: ["ipcMain"],
+      resolutionMode: "require",
     });
     expect(origin(topLevelBinding(ir, "forwarded"))).toEqual({
       specifier: "electron",
       importedPath: ["ipcMain"],
+      resolutionMode: "require",
     });
     expect(topLevelBinding(ir, "assigned").provenance).toMatchObject({
       status: "ambiguous",
@@ -66,12 +68,13 @@ describe("JavaScript semantic analysis: structure 1", () => {
     expect(origin(innerBus)).toEqual({
       specifier: "./local-bus.js",
       importedPath: [],
+      resolutionMode: "require",
     });
     const shadow = onlyBinding(ir, "ipcRenderer");
     expect(shadow.provenance).toEqual({
-      status: "local",
+      status: "unknown",
       origins: [],
-      reason: null,
+      reason: "Parameter provenance depends on caller arguments.",
     });
     const shadowReference = ir.references.find(
       ({ name, bindingId, role }) =>

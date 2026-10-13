@@ -5,6 +5,7 @@ import {
   SNAPSHOT_HASH_OFFSET,
   SNAPSHOT_HASH_PATTERN,
 } from "./FlutterPayloadScan.js";
+import { readElfFixedHeader } from "../domain/elfFixedHeader.js";
 
 /** Bounds-checked little-endian reader over one loaded buffer. */
 class BoundedReader {
@@ -80,24 +81,13 @@ export const readElfHeader = (
   totalBytes: number = bytes.length,
 ) => {
   const reader = new BoundedReader(bytes);
-  const magic = reader.u32(0);
-  if (magic !== 0x464c457f) return { failure: { reason: "not an ELF image" } };
-  const elfClass = reader.u8(4);
-  if (elfClass !== 1 && elfClass !== 2)
-    return { failure: { reason: `unsupported ELF class ${String(elfClass)}` } };
-  const is64 = elfClass === 2;
+  const fixedHeader = readElfFixedHeader(bytes, totalBytes);
+  if (!fixedHeader.ok) return { failure: { reason: fixedHeader.error } };
+  const is64 = fixedHeader.value.elfClass === 64;
   const headerBytes = is64 ? ELF_HEADER_MAX_BYTES : 52;
-  if (
-    bytes.length < headerBytes ||
-    !Number.isSafeInteger(totalBytes) ||
-    totalBytes < headerBytes
-  )
-    return { failure: { reason: "ELF header is truncated" } };
-  if (reader.u8(5) !== 1)
+  if (fixedHeader.value.byteOrder !== "little")
     return { failure: { reason: "unsupported ELF byte order" } };
-  if (reader.u8(6) !== 1 || reader.u32(0x14) !== 1)
-    return { failure: { reason: "unsupported ELF version" } };
-  if (reader.u16(is64 ? 0x34 : 0x28) !== headerBytes)
+  if (fixedHeader.value.headerSize !== headerBytes)
     return { failure: { reason: "unsupported ELF header size" } };
   const e_type = reader.u16(0x10);
   if (e_type !== 1 && e_type !== 2 && e_type !== ET_DYN)

@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import {
   isMachOFormat,
+  isElfMetadataArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import { BinaryTargetError } from "../domain/configurationErrors.js";
@@ -47,7 +48,10 @@ export const resolveHopperMachOImage = async (
       ),
     );
   if (signal?.aborted) return err(new AnalysisCancelledError("open_binary"));
-  if (!isMachOFormat(target.format) || target.architecture === "mips")
+  if (
+    !isMachOFormat(target.format) ||
+    isElfMetadataArchitecture(target.architecture)
+  )
     return invalid("Hopper FAT64 image preparation requires a Mach-O target");
   let file: FileHandle;
   try {

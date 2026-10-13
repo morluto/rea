@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { dosMz, pe } from "./binaryTarget.fixture.js";
 import { parseExecutableHeader } from "./binaryTarget.js";
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "./dosMz.js";
+import { observeMzWindowsHeader, parseDosMzHeader } from "./dosMz.js";
 
 describe("DOS MZ load-module validation", () => {
   it("separates initialized module and appended overlay bytes", () => {
@@ -33,7 +33,7 @@ describe("DOS MZ load-module validation", () => {
     bytes.writeUInt16LE(1, 62);
     bytes.writeUInt16LE(8, 66);
     expect(bytes.readUInt32LE(60)).toBe(65536);
-    expect(mzWindowsHeaderOffset(bytes)).toBeNull();
+    expect(observeMzWindowsHeader(bytes)).toEqual({ state: "absent" });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
       ok: true,
       value: { format: "dos-mz" },
@@ -53,12 +53,54 @@ describe("DOS MZ load-module validation", () => {
     });
   });
 
+  it("keeps a partial DOS prefix unknown until the Windows pointer is examined", () => {
+    const bytes = dosMz(64);
+
+    expect(observeMzWindowsHeader(bytes.subarray(0, 32), bytes.length)).toEqual(
+      {
+        state: "header-needed",
+      },
+    );
+    expect(
+      parseExecutableHeader(bytes.subarray(0, 32), "x64", bytes.length),
+    ).toMatchObject({ ok: false });
+    expect(observeMzWindowsHeader(bytes.subarray(0, 32))).toEqual({
+      state: "absent",
+    });
+  });
+
+  it("parses a tiny known-length DOS module without requiring an impossible pointer", () => {
+    const bytes = Buffer.alloc(33);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(bytes.length, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes[32] = 0xc3;
+
+    expect(observeMzWindowsHeader(bytes.subarray(0, 28), bytes.length)).toEqual(
+      {
+        state: "absent",
+      },
+    );
+    expect(
+      parseExecutableHeader(bytes.subarray(0, 28), "x64", bytes.length),
+    ).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+  });
+
   it("preserves PE classification when low relocation records do not overlap e_lfanew", () => {
     const bytes = pe(0x8664);
     bytes.writeUInt16LE(4, 8);
     bytes.writeUInt16LE(1, 6);
     bytes.writeUInt16LE(28, 24);
-    expect(mzWindowsHeaderOffset(bytes)).toBe(64);
+    expect(observeMzWindowsHeader(bytes)).toEqual({
+      state: "declared",
+      offset: 64,
+      signature: "PE",
+    });
     expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
       ok: true,
       value: { format: "pe", architecture: "x86_64" },
@@ -100,7 +142,9 @@ describe("DOS MZ load-module validation", () => {
       },
     );
   });
+});
 
+describe("MZ Windows header observations", () => {
   it.each(["NE", "LE", "LX"])(
     "distinguishes unsupported %s from DOS",
     (signature) => {
@@ -114,6 +158,97 @@ describe("DOS MZ load-module validation", () => {
       });
     },
   );
+
+  it("keeps a short-header nonzero module value as DOS without a signature", () => {
+    const bytes = dosMz(64);
+    bytes.writeUInt32LE(bytes.length, 60);
+
+    expect(observeMzWindowsHeader(bytes)).toEqual({ state: "absent" });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+  });
+
+  it.each(["PEZZ", "NE", "LE", "LX", "PE"])(
+    "keeps a non-Windows %s signature candidate as DOS",
+    (signature) => {
+      const bytes = dosMz(64);
+      const offset = 32;
+      bytes.writeUInt32LE(offset, 60);
+      const candidate = Buffer.from(
+        [...Buffer.from(signature)].map((byte) =>
+          signature === "PEZZ" ? byte : byte | 0x80,
+        ),
+      );
+      bytes.set(candidate, offset);
+
+      expect(observeMzWindowsHeader(bytes)).toEqual({ state: "absent" });
+      expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+        ok: true,
+        value: { format: "dos-mz", architecture: "x86" },
+      });
+    },
+  );
+
+  it("accepts a short-header candidate only when it points at a Windows signature", () => {
+    const stub = dosMz(64);
+    const offset = stub.length;
+    stub.writeUInt32LE(offset, 60);
+    const record = pe(0x8664).subarray(64);
+    const bytes = Buffer.concat([stub, record]);
+
+    expect(observeMzWindowsHeader(bytes)).toMatchObject({
+      state: "declared",
+      offset,
+      signature: "PE",
+    });
+    expect(parseExecutableHeader(bytes, "x64")).toMatchObject({
+      ok: true,
+      value: { format: "pe", architecture: "x86_64" },
+    });
+  });
+
+  it.each(["NE", "LE", "LX"])(
+    "recognizes short-header %s signatures as Windows declarations",
+    (signature) => {
+      const stub = dosMz(64);
+      const offset = stub.length;
+      stub.writeUInt32LE(offset, 60);
+      const bytes = Buffer.concat([stub, Buffer.alloc(24)]);
+      bytes.write(signature, offset, "ascii");
+
+      expect(observeMzWindowsHeader(bytes)).toMatchObject({
+        state: "declared",
+        offset,
+        signature,
+      });
+      expect(parseExecutableHeader(bytes, "x64")).toEqual({
+        ok: false,
+        error: `unsupported ${signature} executable in MZ image`,
+      });
+    },
+  );
+
+  it("requests the signature when a short-header candidate is outside its prefix", () => {
+    const offset = 8192;
+    const bytes = dosMz(64);
+    bytes.writeUInt32LE(offset, 60);
+    const prefix = Buffer.alloc(4096);
+    bytes.copy(prefix);
+
+    expect(observeMzWindowsHeader(prefix, offset + 512)).toEqual({
+      state: "signature-needed",
+      offset,
+    });
+    expect(
+      observeMzWindowsHeader(
+        prefix,
+        offset + 512,
+        Buffer.from("PE\0\0", "binary"),
+      ),
+    ).toEqual({ state: "declared", offset, signature: "PE" });
+  });
 
   it("does not fall back to DOS when a Windows declaration is damaged", () => {
     const bytes = Buffer.alloc(256);

@@ -75,6 +75,42 @@ async function createCompleteAppleProjection() {
 }
 
 describe("Apple application projection", () => {
+  it("keeps a case-colliding real IPA inventory partial", async () => {
+    const root = await createTestTempDirectory("rea-apple-case-collision-");
+    const path = join(root, "CaseCollision.ipa");
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    await writer.add(
+      "Payload/Example.app/Contents/Info.plist",
+      new TextReader("upper"),
+    );
+    await writer.add(
+      "Payload/Example.app/contents/Info.plist",
+      new TextReader("lower"),
+    );
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}),
+    );
+    expect(inventory.normalized_result).toMatchObject({
+      coverage_status: "partial",
+    });
+    const result = projectAppleApplicationEvidence({
+      inventory_evidence: [inventory],
+    });
+    const projection = appleApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(result).normalized_result,
+    );
+
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: true,
+    });
+    expect(projection.limitations).toContain(
+      "Source inventory coverage is partial; absence is unknown.",
+    );
+  });
+
   it("projects deterministic IPA components and bridge hypotheses from exact inventory Evidence", async () => {
     const root = await createTestTempDirectory("rea-apple-");
     const path = join(root, "Fixture.ipa");

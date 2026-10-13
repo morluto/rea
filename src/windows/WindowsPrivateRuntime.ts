@@ -1,6 +1,7 @@
 import { win32 } from "node:path";
 
 import { z } from "zod";
+import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 
 import {
   requireWindowsNativeAuthority,
@@ -23,6 +24,13 @@ const fileSchema = windowsFileIdentitySchema.extend({
   handle: windowsHandleSchema,
 });
 const runtimes = new Map<string, WindowsPrivateRuntime>();
+// Retry only a proven pre-allocation sharing/lock conflict, never opaque text
+// or an operation that may already own an unpublished runtime directory.
+const transientRuntimeAdmissionSchema = z.object({
+  code: z.literal("ERR_REA_WINDOWS_NATIVE"),
+  win32Code: z.union([z.literal(32), z.literal(33)]),
+  runtimeAllocation: z.literal("not-started"),
+});
 
 /** Retain private DACL and path handles until native recursive cleanup settles. */
 export class WindowsPrivateRuntime {
@@ -40,9 +48,21 @@ export class WindowsPrivateRuntime {
   /** Create a new directory with its private DACL installed at creation. */
   static create(parent: string, prefix: string): WindowsPrivateRuntime {
     const authority = requireWindowsNativeAuthority();
-    const observation = runtimeSchema.parse(
-      authority.call("runtime_create", [parent, prefix]),
-    );
+    let observed: unknown;
+    try {
+      observed = authority.call("runtime_create", [parent, prefix]);
+    } catch (cause: unknown) {
+      if (
+        cause instanceof Error &&
+        transientRuntimeAdmissionSchema.safeParse(cause).success
+      )
+        throw new PrivateRuntimeRootUnavailableError(cause.message, {
+          cause,
+          retryable: true,
+        });
+      throw cause;
+    }
+    const observation = runtimeSchema.parse(observed);
     const runtime = new WindowsPrivateRuntime(observation, authority);
     runtimes.set(windowsRuntimeIdentityKey(observation), runtime);
     return runtime;

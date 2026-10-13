@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
-import { TextDecoder } from "node:util";
 import { isSafeNumber, LosslessNumber } from "lossless-json";
-import { parseHarJson } from "./HarJson.js";
+import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
@@ -26,25 +25,12 @@ type Projection = Pick<
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
 >;
 
-/**
- * Decode retained HAR bytes as UTF-8. HAR 1.2 lets writers emit a byte-order
- * mark and requires readers to ignore it, so one leading BOM is skipped.
- */
-export const decodeHarText = (bytes: Uint8Array): string => {
-  try {
-    // ignoreBOM: false (the default) is what skips the mark; true keeps it.
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw new CaptureFormatError("format", "HAR is not valid UTF-8 JSON.");
-  }
-};
-
 /** Decode a retained HAR with exact numeric lexemes and unchanged upstream schema validation. */
 export const decodeHarCapture = (
   text: string,
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
-  const raw = parseHarJson(text);
+  const raw = parseCaptureJson(text, "HAR");
   const validation = projectHar(raw, [], false);
   createHarValidator()(validation.reported);
   if (
@@ -158,7 +144,8 @@ const projectHar = (
             (literal) =>
               item.includes(literal) ||
               contentBase64.includes(literal) ||
-              sha256.includes(literal),
+              sha256.includes(literal) ||
+              String(bytes.length).includes(literal),
           );
         binary_fields.push(
           hidden

@@ -2,11 +2,13 @@ name: Real browser verification
 
 on:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
-
-concurrency:
-  group: real-browser-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   HUSKY: "0"
@@ -26,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - run: npm run verify:browser
         env:
           REA_BROWSER_EXECUTABLE: /usr/bin/google-chrome

@@ -42,7 +42,7 @@ const X86_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
 const host: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\n",
+  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
   probeJava: () => ({
     version: "21.0.11",

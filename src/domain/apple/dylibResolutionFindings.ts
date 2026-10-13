@@ -1,14 +1,18 @@
 import type {
   DylibEdge as Edge,
   DylibFinding as Finding,
-  DylibTrace,
-  MachoImageFacts,
+  MachoSlice,
 } from "./dylibResolution.js";
+
+/** One traced process root with the exact slice it was traced from. */
+export interface TracedRootSlice {
+  readonly image: string;
+  readonly slice: MachoSlice;
+}
 
 export const deriveFindings = (
   edges: readonly Edge[],
-  roots: DylibTrace["roots"],
-  images: ReadonlyMap<string, MachoImageFacts>,
+  roots: readonly TracedRootSlice[],
 ): Finding[] => {
   const findings: Finding[] = [];
   edges.forEach((edge, index) => {
@@ -32,15 +36,11 @@ export const deriveFindings = (
         explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
-  for (const { image, architecture } of roots) {
-    const facts = images.get(image);
-    const slice =
-      facts?.status === "parsed"
-        ? facts.slices.find(
-            (candidate) => candidate.architecture === architecture,
-          )
-        : undefined;
-    const environment = slice?.dyld_environment ?? [];
+  // Slices can share an architecture name (arm64e and arm64e.x1), so each
+  // finding uses the slice its root was traced from, not a name lookup.
+  for (const { image, slice } of roots) {
+    const { architecture } = slice;
+    const environment = slice.dyld_environment;
     if (environment.length > 0)
       findings.push({
         kind: "dyld-environment-present",
@@ -48,7 +48,7 @@ export const deriveFindings = (
         image,
         basis: "derived",
         explanation:
-          slice?.file_type === "execute"
+          slice.file_type === "execute"
             ? `${image} (${architecture}) sets dyld environment variables through LC_DYLD_ENVIRONMENT (${environment.join(", ")}); any image-selection overrides they request are not modeled. Diagnostic settings alone do not alter resolution.`
             : `${image} (${architecture}) contains LC_DYLD_ENVIRONMENT (${environment.join(", ")}). Dyld reads these commands only from the main executable; entries in this non-executable root are observations and do not alter resolution.`,
       });
@@ -91,7 +91,7 @@ export const DYLIB_RESOLUTION_LIMITATIONS = [
   "Slices are matched by dyld's graded architectures (an x86_64h process also loads x86_64). arm64e processes that disable pointer authentication can also load arm64 slices; that fallback is not modeled.",
   "Absolute install names and rpaths are outside the analyzed root and are not evaluated, including /System and /usr/lib libraries that the dyld shared cache usually provides.",
   "Leaf and relative install names depend on dyld fallback paths, DYLD_* variables, and the working directory; they are undetermined.",
-  "Load order follows dyld's dependents-first traversal in load-command order. An image reached through several chains is resolved once per process, with the rpath stack and conditionality of the first chain; a later request whose install name matches an already loaded image reuses it.",
+  "Load order follows dyld's dependents-first traversal in load-command order. An image reached through several chains is resolved once per process, with the rpath stack and conditionality of the first chain; a later @rpath request whose install name matches an already loaded image reuses it.",
   "@loader_path uses each image's symlink-resolved path within the analyzed root.",
   "Code-signing checks that can reject a found image, such as library validation and the hardened runtime, are not evaluated.",
   "Dylib compatibility versions are not compared. Apple's linker documentation describes a load-time rejection when an image's compatibility version is older than the loader requires, but dyld on macOS 26 was observed to load such an image.",

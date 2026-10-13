@@ -3,6 +3,29 @@ import { z } from "zod";
 import { jsonValueSchema } from "../jsonValue.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
 
+const RESOURCE_KEY_FIELDS = new Set([
+  "image",
+  "imageName",
+  "image_name",
+  "resourceName",
+  "resource_name",
+  "assetName",
+  "asset_name",
+  "UIImageName",
+  "NSImageName",
+]);
+
+/** Recognized direct scalar resource fields; nested dictionaries are not inferred. */
+export const appleResourceKeyFields = (
+  attributes: Readonly<Record<string, unknown>>,
+): [string, string][] =>
+  Object.entries(attributes).filter(
+    (entry): entry is [string, string] =>
+      RESOURCE_KEY_FIELDS.has(entry[0]) &&
+      typeof entry[1] === "string" &&
+      entry[1].length > 0,
+  );
+
 /** Caller-controlled page bounds for compiled Apple asset metadata. */
 export const appleAssetCatalogInputSchema = z.strictObject({
   offset: z.number().int().min(0).default(0),

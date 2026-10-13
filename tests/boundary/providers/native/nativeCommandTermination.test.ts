@@ -8,6 +8,7 @@ import {
   type NativeCommandLauncher,
 } from "../../../../src/native/CommandRunner.js";
 import { ok } from "../../../../src/domain/result.js";
+import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -210,3 +211,23 @@ it.skipIf(process.platform === "win32")(
     if (!killed.ok) expect(killed.error.reason).toBe("nonzero-exit");
   },
 );
+
+it("keeps the ownership helper prerequisite when xcrun cannot be supervised", async () => {
+  const inspection = new DarwinProcessOwnershipInspectionError(
+    "macOS process ownership inspection requires the Apple Swift compiler via xcrun",
+  );
+  const runner = new XcrunCommandRunner({}, undefined, () =>
+    Promise.reject(inspection),
+  );
+
+  const result = await runner.run("file", [], {});
+
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toMatchObject({
+    tool: "file",
+    reason: "io",
+    detail: inspection.message,
+    cause: { tool: "xcrun", detail: inspection.message, cause: inspection },
+  });
+});

@@ -16,24 +16,21 @@ export const functionMatch = (
   left: FunctionSnapshot,
   right: FunctionSnapshot,
 ): FunctionComparisonResult["function_match"] => {
-  if (
-    !isAutoName(left.dossier.procedure.name) &&
-    left.dossier.procedure.name === right.dossier.procedure.name
-  )
+  const leftName = left.dossier.procedure.name;
+  const rightName = right.dossier.procedure.name;
+  const stableNames = !isAutoName(leftName) && !isAutoName(rightName);
+  if (stableNames && leftName === rightName)
     return {
       status: "matched",
       method: "symbol",
-      left_name: left.dossier.procedure.name,
-      right_name: right.dossier.procedure.name,
+      left_name: leftName,
+      right_name: rightName,
     };
   return {
-    status:
-      left.dossier.procedure.name === right.dossier.procedure.name
-        ? "ambiguous"
-        : "mismatched",
+    status: stableNames ? "mismatched" : "ambiguous",
     method: "explicit",
-    left_name: left.dossier.procedure.name,
-    right_name: right.dossier.procedure.name,
+    left_name: leftName,
+    right_name: rightName,
   };
 };
 

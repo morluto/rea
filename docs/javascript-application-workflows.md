@@ -23,6 +23,14 @@ artifact digest and structural graph ID. Semantic tracing requires the semantic
 relation graph and reports when it is unavailable rather than treating missing
 data as an empty graph.
 
+Explicit TypeScript `import type` and `export type` declarations remain source
+facts and do not create runtime import or export relationships. Type export names
+are reported separately from value export names. Inline `type` specifiers can
+leave an empty import or re-export with side effects under
+[`verbatimModuleSyntax`](https://www.typescriptlang.org/tsconfig/verbatimModuleSyntax.html);
+REA retains those dependency candidates and reports the unavailable compiler
+options rather than assuming the dependency is erased.
+
 The semantic graph wire format stores shared non-location provenance once in
 its required `evidence_contexts` table. Each node, relation, fingerprint, and
 unknown retains its exact `evidence.location` and names the owning context with
@@ -156,9 +164,12 @@ to the comparison Evidence in a live session.
 `compare_source_to_bundle` compares one cryptographically committed
 `HistoricalSourceGraph` with authenticated application-graph Evidence. The
 stable scoring model reports every admitted signal and weight: exact source
-digest, source-map original path, exact current path, path suffix, basename, and
-language extension. Exact digest wins over location inference; weak basename
-or extension evidence never forces a mapping.
+digest, source-map original path, exact current path, path suffix, Unicode-
+equivalent path, basename, and language extension. Exact digest wins over
+location inference; weak basename, extension, and Unicode-equivalence evidence
+never forces a mapping. Unicode-equivalent spellings are candidate evidence
+only because distinct filesystem paths can preserve those spellings as separate
+files; multiple canonical-equivalent candidates remain unknown.
 
 Each historical source file is classified as `unchanged`, `modified`,
 `removed`, `split`, `merged`, `duplicated`, or `unknown`. Multiple equally

@@ -3,14 +3,12 @@ import { spawn, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access } from "node:fs/promises";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CdpBrowserProvider } from "../../dist/browser/CdpBrowserProvider.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import { waitForBrowserDevtoolsPort } from "../../dist/browser/BrowserProcessStartup.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webExecutionSchema } from "../../dist/domain/webExecution.js";
 import { webEventListenersSchema } from "../../dist/domain/webEventListeners.js";
@@ -42,23 +40,11 @@ export async function verifyBrowserRuntime(
   const site = await startBrowserRuntimeSite();
   let fixture;
   let primaryError;
-  let stderr = "";
   let action;
   let client;
   try {
     fixture = await startRuntimeFixtureBrowser(executable, site.origin);
-    const { browser, profile } = fixture;
-    browser.stderr.on("data", (chunk) => {
-      if (stderr.length < 65536) stderr += chunk;
-    });
-    const port = await waitForBrowserDevtoolsPort({
-      child: browser,
-      executable,
-      activePortPath: join(profile, "DevToolsActivePort"),
-      stderr: () => stderr,
-      timeoutMs: 20_000,
-    });
-    const endpoint = `http://127.0.0.1:${port}`;
+    const endpoint = `http://127.0.0.1:${fixture.port}`;
     const targets = await new CdpBrowserProvider().listTargets({
       cdp_endpoint: endpoint,
       allowed_origins: [site.origin],

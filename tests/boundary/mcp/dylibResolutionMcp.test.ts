@@ -247,7 +247,7 @@ it("traces a standalone Mach-O file whose name ends in .app", async () => {
   });
 });
 
-it.skipIf(process.getuid?.() === 0)(
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "keeps a permission denied while canonicalizing the opened bundle",
   async () => {
     const parent = await createTestTempDirectory("rea-dylib-mcp-revoked-");
@@ -451,52 +451,57 @@ it.each([
   },
 );
 
-it("reports caller-selected roots that cannot be traced as invalid input", async () => {
-  const app = join(
-    await createTestTempDirectory("rea-dylib-roots-"),
-    "Fixture.app",
-  );
-  await mkdir(join(app, "Contents/MacOS"), { recursive: true });
-  await writeFile(
-    join(app, "Contents/Info.plist"),
-    "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
-  );
-  await writeFile(
-    join(app, "Contents/MacOS/App"),
-    machoImage({ commands: [buildVersionCommand(1)] }),
-  );
-  await symlink("/bin/ls", join(app, "Contents/MacOS/outside"));
-  await withClient(async (client) => {
-    const opened = await client.callTool({
-      name: "open_binary",
-      arguments: { path: app },
-    });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    for (const [root, message] of [
-      ["Contents/MacOS/Missing", "is not a regular file"],
-      ["Contents/MacOS", "is not a regular file"],
-      ["Contents/Info.plist", "is not a Mach-O image"],
-      ["Contents/MacOS/outside", "resolves outside the analyzed root"],
-    ] as const) {
-      const called = await client.callTool({
-        name: "trace_dylib_resolution",
-        arguments: { roots: ["Contents/MacOS/App", root] },
-      });
-      expect(called.isError, root).toBe(true);
-      expect(parseMcpToolError(called), root).toMatchObject({
-        error: {
-          code: "invalid_request",
-          details: {
-            issues: [
-              {
-                path: ["roots", 1],
-                reason: "invalid_value",
-                message: expect.stringContaining(`Root ${root} ${message}`),
-              },
-            ],
+for (const [root, message] of [
+  ["Contents/MacOS/Missing", "is not a regular file"],
+  ["Contents/MacOS", "is not a regular file"],
+  ["Contents/Info.plist", "is not a Mach-O image"],
+  ["Contents/MacOS/outside", "resolves outside the analyzed root"],
+] as const) {
+  const needsFileSymlink = root === "Contents/MacOS/outside";
+  // File symlinks on Windows need Developer Mode or an elevated token.
+  it.skipIf(process.platform === "win32" && needsFileSymlink)(
+    `reports caller-selected root ${root} as invalid input`,
+    async () => {
+      const app = join(
+        await createTestTempDirectory("rea-dylib-roots-"),
+        "Fixture.app",
+      );
+      await mkdir(join(app, "Contents/MacOS"), { recursive: true });
+      await writeFile(
+        join(app, "Contents/Info.plist"),
+        "<plist><dict><key>CFBundleExecutable</key><string>App</string></dict></plist>",
+      );
+      await writeFile(
+        join(app, "Contents/MacOS/App"),
+        machoImage({ commands: [buildVersionCommand(1)] }),
+      );
+      if (needsFileSymlink) await symlink("/bin/ls", join(app, root));
+      await withClient(async (client) => {
+        const opened = await client.callTool({
+          name: "open_binary",
+          arguments: { path: app },
+        });
+        expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+        const called = await client.callTool({
+          name: "trace_dylib_resolution",
+          arguments: { roots: ["Contents/MacOS/App", root] },
+        });
+        expect(called.isError, root).toBe(true);
+        expect(parseMcpToolError(called), root).toMatchObject({
+          error: {
+            code: "invalid_request",
+            details: {
+              issues: [
+                {
+                  path: ["roots", 1],
+                  reason: "invalid_value",
+                  message: expect.stringContaining(`Root ${root} ${message}`),
+                },
+              ],
+            },
           },
-        },
+        });
       });
-    }
-  });
-});
+    },
+  );
+}

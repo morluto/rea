@@ -19,6 +19,10 @@ import type {
   UnknownStatus,
   UpdateUnknownInput,
 } from "../../domain/residualUnknown.js";
+import type {
+  UnknownPage,
+  UnknownQuery,
+} from "../investigation/InvestigationRecordPort.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import type {
   AnalysisExecution,
@@ -348,6 +352,10 @@ export abstract class BinarySessionRecords {
     } = {},
   ): ResidualUnknown[] {
     return this.#records.listUnknowns(filters);
+  }
+
+  listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
+    return this.#records.listUnknownsPage(query);
   }
 
   verifyUnknownResolution(unknownId: string): Result<

@@ -58,5 +58,15 @@
     "file": "licenses/Node-22.19.0-LICENSE.txt",
     "source": "https://raw.githubusercontent.com/nodejs/node/v22.19.0/LICENSE",
     "sha256": "e991d81497a85bb24fc6bffae0a3637a6accd6c6bc5ce1f2c5698bd555cf9d49"
+  },
+  {
+    "file": "licenses/frida-17.23.2-COPYING.txt",
+    "source": "https://raw.githubusercontent.com/frida/frida/9adf8ed33ab6f1122b17399ee96dcbe101b941c9/COPYING",
+    "sha256": "5ea1544b51a28bc823b03159190d4108f9fb4f4ef912389f5137c6d295e175b2"
+  },
+  {
+    "file": "licenses/LGPL-2.0.txt",
+    "source": "https://www.gnu.org/licenses/old-licenses/lgpl-2.0.txt",
+    "sha256": "cc535c21133c895b56b374c8a1dc1eb948d99003ed2b47372069456b62f42b24"
   }
 ]

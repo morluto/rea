@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
+import {
+  hasCompleteInventoryCoverage,
+  parseArtifactInventoryEvidence,
+} from "../artifactInventoryEvidence.js";
 import { digestSchema } from "../digests.js";
 import { prefixedDigestSchema } from "../digests.js";
 import { nativeRuntimeConvention } from "../nativeConvention.js";
@@ -66,6 +69,7 @@ export const harmonyApplicationProjectionResultSchema = z.strictObject({
   bridge_candidate_coverage: bridgeCandidateCoverageSchema,
   coverage: z.strictObject({
     status: z.enum(["complete-within-inventory", "partial"]),
+    // Count completeness is separate from the declared coverage status.
     inventory_complete: z.boolean(),
   }),
   limitations: z.array(z.string().min(1)),
@@ -108,8 +112,8 @@ export const projectHarmonyApplication = (
     classified.native_libraries,
   );
   const limitations = [
-    ...(!inventory.complete
-      ? ["Source inventory pages are incomplete; absence is unknown."]
+    ...(!hasCompleteInventoryCoverage(inventory)
+      ? ["Source inventory coverage is partial; absence is unknown."]
       : []),
     ...(unavailable.length > 0
       ? [

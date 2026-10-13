@@ -10,6 +10,10 @@ REA_EXPORT REA_NOINLINE int rea_fixture_add(int left, int right) {
   return left + right + 7;
 }
 
+REA_EXPORT REA_NOINLINE int rea_fixture_subtract(int left, int right) {
+  return left - right - 13;
+}
+
 int main(void) {
-  return rea_fixture_add(11, 24);
+  return rea_fixture_add(11, 24) + rea_fixture_subtract(24, 11);
 }

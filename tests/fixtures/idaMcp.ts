@@ -113,10 +113,13 @@ export class RecordingIdaMcp implements IdaMcpConnection {
     if (overridden !== undefined) return overridden;
     if (["idb_open", "idb_list", "idb_close", "server_health"].includes(name))
       return this.lifecycle(name, args);
-    return this.read(name);
+    return this.read(name, args);
   }
 
-  private read(name: string): JsonValue {
+  private read(
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): JsonValue {
     const fn = { address: "0x1000", name: "main", size: "0x20" };
     const asm = {
       name: "main",
@@ -153,13 +156,13 @@ export class RecordingIdaMcp implements IdaMcpConnection {
       case "get_function_by_name":
         return fn;
       case "lookup_funcs":
-        return [
-          {
-            query: "main",
-            fn: { addr: fn.address, name: fn.name, size: fn.size },
-            error: null,
-          },
-        ];
+        if (!Array.isArray(args.queries))
+          throw new Error("Invalid fixture lookup queries");
+        return args.queries.map((query) => ({
+          query,
+          fn: { addr: fn.address, name: fn.name, size: fn.size },
+          error: null,
+        }));
       case "decompile_function":
         return this.pseudocode;
       case "decompile":

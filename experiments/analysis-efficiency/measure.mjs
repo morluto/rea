@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import {
   NATIVE_ARTIFACTS,
   measureNativeEntry,
@@ -23,9 +23,12 @@ const { values } = parseArgs({
     providers: { type: "string" },
     output: { type: "string" },
     delivery: { type: "string", default: "complete" },
+    "verify-retained": { type: "boolean", default: false },
     "native-question": { type: "string", default: "entry" },
     "javascript-question": { type: "string", default: "inventory" },
+    "managed-question": { type: "string", default: "inventory" },
     schemas: { type: "string", default: "default" },
+    "sqlite-selection": { type: "string", default: "all" },
   },
 });
 if (
@@ -41,6 +44,21 @@ if (
   ) ||
   !["inventory", "selected"].includes(values["javascript-question"]) ||
   !["default", "selected"].includes(values.schemas) ||
+  !["all", "columns"].includes(values["sqlite-selection"]) ||
+  (values.artifact !== "qgis-world-map.gpkg" &&
+    values["sqlite-selection"] !== "all") ||
+  (values.artifact === "qgis-world-map.gpkg" &&
+    values.delivery !== "complete") ||
+  !["inventory", "identity"].includes(values["managed-question"]) ||
+  (!["sharex.dll", "sharex.helpers.dll"].includes(values.artifact) &&
+    values["managed-question"] !== "inventory") ||
+  (["sharex.dll", "sharex.helpers.dll"].includes(values.artifact) &&
+    values.delivery === "summary" &&
+    values["managed-question"] !== "identity") ||
+  (values["verify-retained"] &&
+    !["weth.hex", "uniswap-v3.factory.hex", "uniswap-v3.pool.hex"].includes(
+      values.artifact,
+    )) ||
   (!NATIVE_ARTIFACTS.includes(values.artifact) &&
     values["native-question"] !== "entry") ||
   (values.artifact !== "jq" &&
@@ -238,15 +256,55 @@ const targetSha = (value) => value.subject?.digest.sha256;
 const inventoryPaths = ["package.json", "main.js", "preload.js"];
 const unique = (values) => [...new Set(values)].sort();
 const inspectManagedTarget = async () => {
-  const info = await call("inspect_managed_artifact", { path: values.path });
+  const arguments_ = {
+    path: values.path,
+    ...(values.delivery === "summary" ? { detail: "summary" } : {}),
+  };
+  const definition = catalogDefinitions.get("inspect_managed_artifact");
+  if (definition === undefined)
+    throw new Error("Managed inspection is not advertised");
+  const accepted = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(definition.inputSchema)(arguments_);
+  if (!accepted)
+    throw new Error(
+      "Selected managed delivery is not advertised by this runtime",
+    );
+  const info = await call("inspect_managed_artifact", arguments_);
   const boundaries = await call("inspect_managed_native_boundaries", {
     path: values.path,
   });
+  const received = normalized(info);
+  const report = received.kind === "summary" ? received.summary : received;
+  let artifact = report;
+  if (values["managed-question"] === "identity") {
+    const {
+      references,
+      resources,
+      attributes,
+      reported_counts,
+      identity_scope: _scope,
+      ...identity
+    } = report;
+    artifact = {
+      ...identity,
+      reported_counts: reported_counts ?? {
+        references: references.length,
+        resources: resources.length,
+        attributes: attributes.length,
+      },
+    };
+  }
   return {
     artifact_sha256: targetSha(info),
-    artifact: normalized(info),
+    artifact,
     boundaries: normalized(boundaries),
-    evidence_ids: [info.evidence_id, boundaries.evidence_id],
+    evidence_ids: [
+      info.evidence_id,
+      ...(received.kind === "summary" ? [received.parent_evidence_id] : []),
+      boundaries.evidence_id,
+    ],
   };
 };
 
@@ -350,7 +408,170 @@ const inspectWasmTarget = async () => {
   };
 };
 
+/** Identical interface facts for complete delivery, selected summary or old-server fallback. */
+const inspectEvmTarget = async () => {
+  const definition = catalogDefinitions.get("inspect_evm_interface");
+  if (!definition) throw new Error("Missing advertised EVM definition");
+  const input = { path: values.path, encoding: "hex" };
+  const supportsSummary = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(definition.inputSchema)({ ...input, detail: "summary" });
+  const info = await call("inspect_evm_interface", {
+    ...input,
+    ...(values.delivery === "summary" && supportsSummary
+      ? { detail: "summary" }
+      : {}),
+  });
+  const result = normalized(info);
+  const projected = result.kind === "summary";
+  const n = projected ? result.summary : result;
+  const references = [info.evidence_id];
+  if (projected) {
+    if (
+      result.parent_operation !== "inspect_evm_interface" ||
+      result.parent_evidence_id === info.evidence_id ||
+      !info.evidence_links.includes(result.parent_evidence_id) ||
+      "hex" in n.bytecode ||
+      "stdout" in n.diagnostics
+    )
+      throw new Error(
+        "EVM summary changed source provenance or precise delivery",
+      );
+    references.push(result.parent_evidence_id);
+  }
+  if (
+    n.evidence_kind !== "inferred" ||
+    n.artifact.path !== values.path ||
+    n.artifact.sha256 !== inputSha ||
+    n.artifact.bytes !== artifact.bytes ||
+    n.artifact.encoding !== "hex" ||
+    n.discovery_completeness !== "unknown" ||
+    n.runtime_execution !== "not-performed" ||
+    ["kind", "hardfork", "deployment_authenticity"].some(
+      (key) => n.bytecode[key] !== "unknown",
+    ) ||
+    (artifact.decoded_sha256 !== undefined &&
+      n.bytecode.sha256 !== artifact.decoded_sha256) ||
+    (artifact.decoded_bytes !== undefined &&
+      n.bytecode.bytes !== artifact.decoded_bytes)
+  )
+    throw new Error("EVM interface identity or uncertainty changed");
+  if (values["verify-retained"]) {
+    if (!projected)
+      throw new Error(
+        "Retained verification requires supported selected summary",
+      );
+    const bundle = (await call("get_evidence_bundle", {})).result;
+    const parent = bundle.records.find(
+      (record) => record.evidence_id === result.parent_evidence_id,
+    );
+    if (
+      !parent ||
+      parent.operation !== "inspect_evm_interface" ||
+      parent.subject?.digest.sha256 !== inputSha ||
+      parent.parameters.path !== values.path ||
+      parent.parameters.encoding !== "hex" ||
+      "detail" in parent.parameters
+    )
+      throw new Error(
+        "Complete original EVM source was not retained unchanged",
+      );
+    const original = normalized(parent);
+    const { hex: _hex, ...identity } = original.bytecode;
+    const { stdout, ...diagnostics } = original.diagnostics;
+    const expected = {
+      ...original,
+      bytecode: identity,
+      diagnostics: { ...diagnostics, stdout_code_units: stdout.length },
+    };
+    if (!isDeepStrictEqual(expected, n))
+      throw new Error("EVM summary changed selected original facts");
+    for (const [facet, item] of [
+      ["functions", original.functions.slice(0, 64)],
+      [
+        "bytecode_hex",
+        { text: original.bytecode.hex.slice(0, 64), unit: "utf16-code-units" },
+      ],
+    ]) {
+      const page = await call("inspect_analysis_view", {
+        source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
+        view: { kind: "evm", facet, offset: 0, limit: 64 },
+      });
+      const v = normalized(page);
+      if (
+        !isDeepStrictEqual(v.item, item) ||
+        v.parent_evidence_id !== parent.evidence_id ||
+        v.artifact.sha256 !== inputSha
+      )
+        throw new Error("EVM retained read changed source facts or identity");
+      if (references.includes(page.evidence_id))
+        throw new Error("EVM retained read reused an Evidence identity");
+      references.push(page.evidence_id);
+    }
+  }
+  const { hex: _hex, ...bytecode } = n.bytecode;
+  return {
+    artifact_sha256: targetSha(info),
+    artifact: n.artifact,
+    bytecode,
+    functions: n.functions,
+    discovery_completeness: n.discovery_completeness,
+    runtime_execution: n.runtime_execution,
+    limitations: n.limitations,
+    evidence_ids: references,
+  };
+};
+
 const workflows = {
+  "qgis-world-map.gpkg": async () => {
+    const columns = ["fid", "NAME", "ISO_A3"];
+    const input = {
+      path: values.path,
+      table: "countries",
+      row_limit: 1,
+      ...(values["sqlite-selection"] === "columns" ? { columns } : {}),
+    };
+    const definition = catalogDefinitions.get("inspect_sqlite_database");
+    if (
+      definition === undefined ||
+      !new Ajv2020({ strict: false, validateFormats: false }).validate(
+        definition.inputSchema,
+        input,
+      )
+    )
+      throw new Error(
+        "Selected SQLite request is not advertised by this runtime",
+      );
+    const inspected = await call("inspect_sqlite_database", input);
+    const report = normalized(inspected);
+    if (report.rows === null || report.rows.table !== "countries")
+      throw new Error("Runtime returned no selected country sample");
+    const indexes = columns.map((column) => {
+      const index = report.rows.columns.indexOf(column);
+      if (index < 0)
+        throw new Error(`Missing requested SQLite column ${column}`);
+      return index;
+    });
+    return {
+      artifact_sha256: targetSha(inspected),
+      artifact: report.artifact,
+      wal: report.wal,
+      engine: report.engine,
+      database_encoding: report.database_encoding,
+      schema: report.schema,
+      rows: {
+        ...report.rows,
+        columns,
+        values: report.rows.values.map((row) =>
+          indexes.map((index) => row[index]),
+        ),
+      },
+      producer_limitations: report.limitations,
+      limitations: inspected.limitations,
+      evidence_ids: [inspected.evidence_id],
+    };
+  },
   "obsidian.asar": async () => {
     if (values["javascript-question"] === "selected") {
       const inspected = await call("analyze_javascript_application", {
@@ -499,7 +720,40 @@ const workflows = {
     }
   },
   "newpipe.apk": async () => {
-    const pkg = await call("inspect_android_package", { path: values.path });
+    const packageInput = {
+      path: values.path,
+      ...(values.delivery === "summary" ? { detail: "summary" } : {}),
+    };
+    const definition = catalogDefinitions.get("inspect_android_package");
+    if (
+      definition === undefined ||
+      !new Ajv2020({ strict: false, validateFormats: false }).validate(
+        definition.inputSchema,
+        packageInput,
+      )
+    )
+      throw new Error(
+        "Selected Android delivery is not advertised by this runtime",
+      );
+    const pkg = await call("inspect_android_package", packageInput);
+    const result = normalized(pkg);
+    const report = values.delivery === "summary" ? result.summary : result;
+    if (
+      values.delivery === "summary" &&
+      (result.kind !== "summary" ||
+        result.parent_operation !== "inspect_android_package")
+    )
+      throw new Error("Runtime returned no retained Android package summary");
+    const { manifest, ...declarations } = report;
+    const manifestObservation =
+      values.delivery === "summary"
+        ? manifest
+        : {
+            status: manifest.status,
+            reported_total_bytes: manifest.reported_total_bytes,
+            text_code_units: manifest.text.length,
+            text_included: false,
+          };
     const found = await call("search_android_classes", {
       path: values.path,
       query: "MainActivity",
@@ -510,9 +764,12 @@ const workflows = {
     });
     return {
       artifact_sha256: targetSha(pkg),
-      package_name: normalized(pkg).package_name,
-      version_name: normalized(pkg).version_name,
-      version_code: normalized(pkg).version_code,
+      package_name: report.package_name,
+      version_name: report.version_name,
+      version_code: report.version_code,
+      package_declarations: declarations,
+      manifest_observation: manifestObservation,
+      package_limitations: pkg.limitations,
       matches: normalized(found).matches,
       coverage: normalized(found).coverage,
       onCreate: normalized(cls).methods.filter(
@@ -523,6 +780,54 @@ const workflows = {
   },
   "sharex.dll": inspectManagedTarget,
   "sharex.helpers.dll": inspectManagedTarget,
+  "localsend-arm64.apk": async () => {
+    const input = {
+      path: values.path,
+      ...(values.delivery === "summary" ? { detail: "summary" } : {}),
+    };
+    const definition = catalogDefinitions.get("inspect_dart_aot");
+    if (
+      definition === undefined ||
+      !new Ajv2020({ strict: false, validateFormats: false }).validate(
+        definition.inputSchema,
+        input,
+      )
+    )
+      throw new Error(
+        "Selected Dart AOT delivery is not advertised by this runtime",
+      );
+    const inspected = await call("inspect_dart_aot", input);
+    const result = normalized(inspected);
+    if (
+      values.delivery === "summary" &&
+      (result.kind !== "summary" ||
+        result.parent_operation !== "inspect_dart_aot")
+    )
+      throw new Error("Runtime returned no retained Dart AOT summary");
+    const report = values.delivery === "summary" ? result.summary : result;
+    const { package_uris, dart_uris, class_like_tokens, ...pool } =
+      report.string_pool;
+    return {
+      artifact_sha256: targetSha(inspected),
+      target: report.target,
+      abi: report.abi,
+      libapp: report.libapp,
+      string_pool:
+        values.delivery === "summary"
+          ? pool
+          : {
+              ...pool,
+              returned_counts: {
+                package_uris: package_uris.length,
+                dart_uris: dart_uris.length,
+                class_like_tokens: class_like_tokens.length,
+              },
+            },
+      coverage: report.coverage,
+      limitations: inspected.limitations,
+      evidence_ids: [inspected.evidence_id],
+    };
+  },
   "openwrt.bin": async () => {
     const info = await call("inspect_firmware_regions", { path: values.path });
     return {
@@ -534,23 +839,9 @@ const workflows = {
   "sqlite.wasm": inspectWasmTarget,
   "vscode.tree-sitter.wasm": inspectWasmTarget,
   "vscode.tree-sitter-css.wasm": inspectWasmTarget,
-  "weth.hex": async () => {
-    const info = await call("inspect_evm_interface", {
-      path: values.path,
-      encoding: "hex",
-    });
-    const n = normalized(info);
-    return {
-      artifact_sha256: targetSha(info),
-      artifact: n.artifact,
-      bytecode: n.bytecode,
-      functions: n.functions,
-      discovery_completeness: n.discovery_completeness,
-      runtime_execution: n.runtime_execution,
-      limitations: n.limitations,
-      evidence_ids: [info.evidence_id],
-    };
-  },
+  "weth.hex": inspectEvmTarget,
+  "uniswap-v3.factory.hex": inspectEvmTarget,
+  "uniswap-v3.pool.hex": inspectEvmTarget,
   ...Object.fromEntries(
     NATIVE_ARTIFACTS.map((artifact) => [
       artifact,
@@ -654,11 +945,21 @@ const report = {
   artifact_sha256_after: finalInputSha,
   delivery: values.delivery,
   sdk_schema_mode: values.schemas,
+  retained_verification: values["verify-retained"],
   native_question: NATIVE_ARTIFACTS.includes(values.artifact)
     ? values["native-question"]
     : null,
   javascript_question:
     values.artifact === "obsidian.asar" ? values["javascript-question"] : null,
+  managed_question: ["sharex.dll", "sharex.helpers.dll"].includes(
+    values.artifact,
+  )
+    ? values["managed-question"]
+    : null,
+  sqlite_selection:
+    values.artifact === "qgis-world-map.gpkg"
+      ? values["sqlite-selection"]
+      : null,
   provider_settings_sha256: sha(JSON.stringify(selectedProviders)),
   provider_search_path_sha256: sha(
     selectedProviders.PATH ?? process.env.PATH ?? "",

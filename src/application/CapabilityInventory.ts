@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
@@ -42,6 +43,8 @@ type ToolAvailabilityReason = "available" | ToolUnavailabilityReason;
 
 type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
+  readonly packetCaptureEnabled?: boolean;
+  readonly signalRecordingEnabled?: boolean;
   readonly wasmArtifactEnabled?: boolean;
   readonly evmInterfaceEnabled?: boolean;
   readonly processCaptureEnabled: boolean;
@@ -341,6 +344,15 @@ const workflowAvailabilityFor = ({
 }: AvailabilityContext): Availability | null => {
   if (name === "inspect_go_binary")
     return { reason: "available", remediation: null };
+  if (name === "inspect_sqlite_database") {
+    const capability = sqliteDatabaseCapability(process.versions.node);
+    return capability.available
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_unavailable",
+          remediation: capability.reason,
+        };
+  }
   if (name === "trace_web_module_imports")
     return {
       reason: "available",
@@ -384,6 +396,22 @@ const workflowAvailabilityFor = ({
           reason: "provider_missing",
           remediation:
             "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
+        };
+  if (name === "inspect_packet_capture" || name === "inspect_packet_fields")
+    return policy.packetCaptureEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux, supply TShark 4.x via absolute REA_TSHARK_COMMAND and util-linux prlimit (REA_TSHARK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
+        };
+  if (name === "decode_signal_recording" || name === "inspect_signal_decoders")
+    return policy.signalRecordingEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux, supply sigrok-cli 0.7.2 via absolute REA_SIGROK_COMMAND and util-linux prlimit (REA_SIGROK_PRLIMIT_COMMAND, default /usr/bin/prlimit). No active binary target or hardware is required; the tool is checked at execution.",
         };
   if (name === "inspect_wasm_artifact")
     return policy.wasmArtifactEnabled === true
@@ -453,7 +481,7 @@ const workflowAvailabilityFor = ({
       remediation: "Run process capture on a supported Linux or macOS host.",
     };
   if (kind === "application") return { reason: "available", remediation: null };
-  if (kind === "flutter-provider")
+  if (kind === "pcap-provider" || kind === "flutter-provider")
     return { reason: "available", remediation: null };
   const electron = electronProviderAvailability(name, kind, policy);
   if (electron !== null) return electron;

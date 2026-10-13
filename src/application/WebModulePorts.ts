@@ -22,6 +22,7 @@ export interface WebModuleArtifacts extends SelectedWebScriptArtifacts {
 
 /** Read selected local artifacts without refetching website assets. */
 export interface WebModuleArtifactPort {
+  close?(): Promise<void>;
   load(
     input: WebModuleTraceInput,
     options?: ExecutionOptions,

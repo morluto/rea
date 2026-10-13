@@ -38,8 +38,19 @@ it("completes an empty ZIP extraction with an empty identity", async () => {
   expect(await readdir(output)).toEqual([]);
 });
 
+const legacyControlNames = [
+  ["legacy ASCII control", Buffer.from("Icon\r"), false, "Icon\r"],
+  [
+    "legacy CP437 control",
+    Buffer.from([0x82, 0x09, 0x7f, 0x2e, 0x61]),
+    false,
+    "é\t\u007F.a",
+  ],
+] as const;
+
 it.each([
   ["legacy CP437", Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]), false, "é.txt"],
+  ...legacyControlNames,
   [
     "EFS with leading U+FEFF",
     Buffer.from([0xef, 0xbb, 0xbf, 0x61, 0x62]),
@@ -64,6 +75,38 @@ it.each([
         logical_path: logicalPath,
         hash_status: "verified",
       }),
+    );
+  },
+);
+
+it.skipIf(process.platform === "win32").each(legacyControlNames)(
+  "extracts %s ZIP members under their stored names",
+  async (_label, rawName, utf8Flag, logicalPath) => {
+    const root = await createTestTempDirectory("rea-zip-extracted-name-");
+    const path = join(root, "names.zip");
+    await writeSingleEntryZip(path, "x.txt");
+    const archive = await readFile(path);
+    await writeFile(
+      path,
+      rewriteSingleEntryName(archive, "x.txt", rawName, utf8Flag),
+    );
+    const target = await parseBinaryTarget(path);
+    if (!target.ok) throw target.error;
+
+    const output = join(root, "output");
+    const result = await withArtifactClient(target.value, (client) =>
+      client.execute("extract_artifact", { output_root: output }),
+    );
+    if (!result.ok) throw result.error;
+    const extraction = artifactExtractionResultSchema.parse(
+      result.value.result,
+    );
+    expect(
+      extraction.artifacts.map(({ relative_path }) => relative_path),
+    ).toEqual([logicalPath]);
+    expect(await readdir(output)).toEqual([logicalPath]);
+    expect(await readFile(join(output, logicalPath), "utf8")).toBe(
+      "member bytes",
     );
   },
 );

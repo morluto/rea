@@ -1,0 +1,58 @@
+name: Real packet capture
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tests/boundary/captures/**"
+      - "tests/boundary/cli/captureCleanup.test.ts"
+      - "tests/boundary/mcp/packetCaptureMcp.test.ts"
+      - "src/captures/**"
+      - "src/pcap/**"
+      - "src/domain/pcap/**"
+      - "src/domain/analysisView/pcapCaptureView.ts"
+      - "src/application/pcap/**"
+      - "src/contracts/pcap/**"
+      - "src/server/registerPcapTools.ts"
+      - "tests/boundary/pcap/**"
+      - "src/domain/captures/**"
+      - "src/application/captures/**"
+      - "src/contracts/captures/**"
+      - "src/composition/captures.ts"
+      - "src/cli/captureCommands.ts"
+      - "src/server/registerCaptureTools.ts"
+      - "src/server/createServer.ts"
+      - "src/server/sessionAvailabilityPolicy.ts"
+      - "src/application/CapabilityInventory.ts"
+      - "src/contracts/toolContracts.ts"
+      - "src/contracts/toolEffects.ts"
+      - "src/cli.ts"
+      - "src/cliCommandNames.ts"
+      - "src/process/**"
+      - "src/artifacts/readStableArtifact.ts"
+      - "scripts/verify-packet-capture.mjs"
+      - ".github/workflows/real-packet-capture.yml"
+      - "package*.json"
+      - ".nvmrc"
+permissions:
+  contents: read
+concurrency:
+  group: real-packet-capture-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  tshark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y tshark util-linux python3
+      - run: npm ci
+      - run: npm run build:cached
+      - run: npm run test:focused -- tests/boundary/captures/fieldDiscovery.test.ts src/process/LinuxResourceLimits.test.ts tests/boundary/captures/captureProvider.test.ts tests/boundary/captures/captureDescriptorCleanup.test.ts tests/boundary/captures/resourceLimits.test.ts tests/boundary/captures/packetOutput.test.ts tests/boundary/mcp/packetCaptureMcp.test.ts tests/boundary/cli/captureCleanup.test.ts
+      - run: node scripts/verify-packet-capture.mjs
+        env:
+          REA_TSHARK_COMMAND: /usr/bin/tshark
+          REA_CAPINFOS_COMMAND: /usr/bin/capinfos

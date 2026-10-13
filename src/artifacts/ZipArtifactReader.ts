@@ -12,6 +12,11 @@ import {
   type ArtifactReader,
 } from "./ArtifactReader.js";
 import type { ZipPackageFormat } from "../domain/zipPackageFormat.js";
+import {
+  ARTIFACT_DECOMPRESSION_RATIO,
+  artifactDecompressionBudgetBytes,
+  MINIMUM_ARTIFACT_DECOMPRESSION_BYTES,
+} from "../domain/artifactDecompressionBudget.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   NonRegularFileReadError,
@@ -132,7 +137,6 @@ export class ZipArtifactReader implements ArtifactReader {
     string,
     { readonly source: Entry; readonly metadata: ArtifactEntry }
   >();
-
   /** Optionally bound each metadata read before allocating its backing buffer. */
   constructor(
     path: string,
@@ -153,6 +157,8 @@ export class ZipArtifactReader implements ArtifactReader {
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
     let index = 0;
+    // A traversal owns its accounting, including overlapping or repeated passes.
+    let declaredFileBytes = 0;
     for await (const entry of this.#reader.getEntriesGenerator({
       decodeText: decodeZipEntryText,
     })) {
@@ -160,6 +166,22 @@ export class ZipArtifactReader implements ArtifactReader {
       // ZIP member identity is its directory occurrence, not its filename.
       // Logical path uniqueness belongs to the artifact inventory boundary.
       const metadata = projectZipEntry(entry, index++);
+      // zip.js enforces each member's declared output size, so this sum bounds streamed work.
+      if (
+        metadata.kind === "file" &&
+        !metadata.encrypted &&
+        metadata.declaredSize !== null &&
+        Number.isSafeInteger(metadata.declaredSize) &&
+        metadata.declaredSize >= 0
+      ) {
+        declaredFileBytes += metadata.declaredSize;
+        const budget = artifactDecompressionBudgetBytes(this.#source.size);
+        if (declaredFileBytes > budget)
+          throw new ArtifactReaderFailure(
+            "limit",
+            `ZIP entries declare ${String(declaredFileBytes)} uncompressed bytes, exceeding this archive's ${String(budget)}-byte decompression budget (${String(MINIMUM_ARTIFACT_DECOMPRESSION_BYTES)}-byte minimum, ${String(ARTIFACT_DECOMPRESSION_RATIO)}x archive size); a small archive cannot expand this far`,
+          );
+      }
       const stored = this.#entries.get(metadata.adapterKey);
       if (stored !== undefined && !sameArtifactEntry(metadata, stored.metadata))
         throw new ArtifactReaderFailure(
@@ -233,9 +255,28 @@ const decodeZipEntryText = (
   encoding: string,
   type: "filename" | "comment",
 ): string | undefined => {
-  if (type !== "filename" || encoding !== "utf-8") return undefined;
-  return decodeStrictZipUtf8(bytes, "ZIP filename is not valid UTF-8");
+  if (type !== "filename") return undefined;
+  if (encoding === "utf-8")
+    return decodeStrictZipUtf8(bytes, "ZIP filename is not valid UTF-8");
+  return encoding === "cp437" ? decodeCp437(bytes) : undefined;
 };
+
+/** CP437 characters for bytes 0x80-0xFF. */
+const CP437_HIGH_HALF =
+  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00A0";
+
+/**
+ * Decode a legacy ZIP name with the Unicode CP437 mapping, which Python's
+ * zipfile also uses: bytes below 0x80 are ASCII. zip.js shows 0x01-0x1F and
+ * 0x7F as IBM PC display glyphs, which turns the macOS folder icon file
+ * `Icon\r` into `Icon♪`.
+ */
+const decodeCp437 = (bytes: Uint8Array): string =>
+  Array.from(bytes, (byte) =>
+    byte < 0x80
+      ? String.fromCharCode(byte)
+      : CP437_HIGH_HALF.charAt(byte - 0x80),
+  ).join("");
 
 const zipEntryPath = (entry: Entry): string => {
   const field = entry.extraFieldUnicodePath;

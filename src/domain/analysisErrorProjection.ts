@@ -52,6 +52,9 @@ export const projectAnalysisError = (
   const primaryDetails = errorDetails(error);
   const details = {
     ...primaryDetails,
+    ...(error.diagnostics === undefined
+      ? {}
+      : { diagnostics: error.diagnostics }),
     ...(error.cleanupIncomplete
       ? {
           cleanup: "incomplete",
@@ -78,7 +81,13 @@ export const projectAnalysisError = (
     code,
     category: analysisErrorCategory(error),
     message: analysisErrorUserMessage(error),
-    retryable: RETRYABLE_CODES.has(code),
+    retryable:
+      RETRYABLE_CODES.has(code) ||
+      (error instanceof AnalysisCapabilityUnavailableError &&
+        error.retryable) ||
+      (code === "resource_constraint" &&
+        error instanceof AnalysisResourceConstraintError &&
+        error.resource === "capacity"),
     remediation: {
       action: analysisErrorRemediationAction(error),
     },
@@ -354,9 +363,6 @@ const providerErrorDetails = (
             resources: [...error.cleanupResources],
           }
         : {}),
-      ...(error.diagnostics === undefined
-        ? {}
-        : { diagnostics: error.diagnostics }),
     };
   if (error instanceof BrowserObservationError) {
     const primaryReason = primaryBrowserFailureReason(error);

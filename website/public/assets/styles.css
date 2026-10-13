@@ -159,6 +159,7 @@ section[id] {
 }
 .language-picker {
   position: relative;
+  min-inline-size: 0;
   font-size: 0.8rem;
 }
 .language-picker summary {
@@ -174,11 +175,17 @@ section[id] {
   white-space: nowrap;
   list-style: none;
 }
+.language-picker summary > span:last-child {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .language-picker summary::-webkit-details-marker {
   display: none;
 }
 .language-picker summary::after {
   content: "⌄";
+  flex-shrink: 0;
 }
 .language-picker nav {
   position: absolute;
@@ -237,6 +244,7 @@ section[id] {
 .brand-name {
   font-size: 1.45rem;
   font-weight: 750;
+  white-space: nowrap;
   letter-spacing: -0.065em;
 }
 .brand-caption {
@@ -275,6 +283,31 @@ section[id] {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--page);
+  color: var(--muted);
+}
+.theme-toggle:hover {
+  background: var(--soft);
+  color: var(--ink);
+}
+.theme-toggle[hidden],
+.theme-toggle .theme-sun,
+:root[data-theme="dark"] .theme-toggle .theme-moon {
+  display: none;
+}
+:root[data-theme="dark"] .theme-toggle .theme-sun {
+  display: block;
 }
 .nav-github,
 .nav-discord,
@@ -378,6 +411,18 @@ section[id] {
 }
 .button.secondary:hover {
   background: var(--soft);
+}
+.button.home-setup-link {
+  gap: 0.5rem;
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.button.home-setup-link:hover {
+  background: var(--soft);
+}
+html[dir="rtl"] .home-setup-link .button-arrow {
+  transform: scaleX(-1);
 }
 .text-link {
   font-size: 0.95rem;
@@ -2586,96 +2631,94 @@ pre code {
   }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --ink: #cdd6f4;
-    --muted: #a6adc8;
-    --line: #45475a;
-    --soft: #181825;
-    --accent: #89b4fa;
-    --page: #1e1e2e;
-  }
-  ::selection {
-    background: #45475a;
-  }
-  .dino-stage {
-    --dino-ground: #45475a;
-    --dino-ink: #a6adc8;
-    --dino-player: #89b4fa;
-    --dino-crash: #f38ba8;
-    --dino-eye: #181825;
-  }
-  .reconstruction-flywheel [stroke="#294f82"] {
-    stroke: var(--accent);
-  }
-  .reconstruction-flywheel [stroke="#5b6570"] {
-    stroke: var(--muted);
-  }
-  .skip-link,
-  .button,
-  .dino-buttons .button {
-    color: var(--page);
-  }
-  .button {
-    border-color: #bac2de;
-    background: #bac2de;
-  }
-  .button:hover {
-    border-color: #a6adc8;
-    background: #a6adc8;
-  }
-  .code-key,
-  .notion-channel,
-  .prose-highlight,
-  .step-selector button[aria-pressed="true"],
-  .percent-operation button[aria-pressed="true"],
-  .flow-result,
-  .home-nav-links a[aria-current="location"] {
-    background: #313244;
-  }
-  .copy-button:hover {
-    background: #313244;
-  }
-  .step-comparison .is-active {
-    background: #313244;
-    color: #b4befe;
-  }
-  .article p,
-  .article li,
-  .guide-route span {
-    color: #bac2de;
-  }
-  .prompt {
-    border-left-color: #585b70;
-  }
-  .agent-terminal {
-    border-color: var(--line);
-    background: #181825;
-  }
-  .terminal-header {
-    border-bottom-color: #313244;
-  }
-  .agent-terminal .copy-button:hover {
-    background: #313244;
-  }
-  .agent-one-prompt {
-    color: var(--ink);
-  }
-  .workflow-figure {
-    background: var(--soft);
-  }
-  .flow-node {
-    background: #313244;
-    border-color: #585b70;
-  }
-  .flow-steps li:not(:last-child)::after,
-  .notion-mini-flow li:not(:last-child)::after {
-    color: #9399b2;
-  }
-  .percent-controls .percent-key {
-    border-color: #585b70;
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #cdd6f4;
+  --muted: #a6adc8;
+  --line: #45475a;
+  --soft: #181825;
+  --accent: #89b4fa;
+  --page: #1e1e2e;
+}
+:where(:root[data-theme="dark"]) ::selection {
+  background: #45475a;
+}
+:where(:root[data-theme="dark"]) .dino-stage {
+  --dino-ground: #45475a;
+  --dino-ink: #a6adc8;
+  --dino-player: #89b4fa;
+  --dino-crash: #f38ba8;
+  --dino-eye: #181825;
+}
+:where(:root[data-theme="dark"]) .reconstruction-flywheel [stroke="#294f82"] {
+  stroke: var(--accent);
+}
+:where(:root[data-theme="dark"]) .reconstruction-flywheel [stroke="#5b6570"] {
+  stroke: var(--muted);
+}
+:where(:root[data-theme="dark"]) .skip-link,
+:where(:root[data-theme="dark"]) .button,
+:where(:root[data-theme="dark"]) .dino-buttons .button {
+  color: var(--page);
+}
+:where(:root[data-theme="dark"]) .button {
+  border-color: #bac2de;
+  background: #bac2de;
+}
+:where(:root[data-theme="dark"]) .button:hover {
+  border-color: #a6adc8;
+  background: #a6adc8;
+}
+:where(:root[data-theme="dark"]) .code-key,
+:where(:root[data-theme="dark"]) .notion-channel,
+:where(:root[data-theme="dark"]) .prose-highlight,
+:where(:root[data-theme="dark"]) .step-selector button[aria-pressed="true"],
+:where(:root[data-theme="dark"]) .percent-operation button[aria-pressed="true"],
+:where(:root[data-theme="dark"]) .flow-result,
+:where(:root[data-theme="dark"]) .home-nav-links a[aria-current="location"] {
+  background: #313244;
+}
+:where(:root[data-theme="dark"]) .copy-button:hover {
+  background: #313244;
+}
+:where(:root[data-theme="dark"]) .step-comparison .is-active {
+  background: #313244;
+  color: #b4befe;
+}
+:where(:root[data-theme="dark"]) .article p,
+:where(:root[data-theme="dark"]) .article li,
+:where(:root[data-theme="dark"]) .guide-route span {
+  color: #bac2de;
+}
+:where(:root[data-theme="dark"]) .prompt {
+  border-left-color: #585b70;
+}
+:where(:root[data-theme="dark"]) .agent-terminal {
+  border-color: var(--line);
+  background: #181825;
+}
+:where(:root[data-theme="dark"]) .terminal-header {
+  border-bottom-color: #313244;
+}
+:where(:root[data-theme="dark"]) .agent-terminal .copy-button:hover {
+  background: #313244;
+}
+:where(:root[data-theme="dark"]) .agent-one-prompt {
+  color: var(--ink);
+}
+:where(:root[data-theme="dark"]) .workflow-figure {
+  background: var(--soft);
+}
+:where(:root[data-theme="dark"]) .flow-node {
+  background: #313244;
+  border-color: #585b70;
+}
+:where(:root[data-theme="dark"]) .flow-steps li:not(:last-child)::after,
+:where(:root[data-theme="dark"]) .notion-mini-flow li:not(:last-child)::after {
+  color: #9399b2;
+}
+:where(:root[data-theme="dark"]) .percent-controls .percent-key {
+  border-color: #585b70;
 }
 
 @media (max-width: 360px) {
@@ -2751,7 +2794,7 @@ html[dir="rtl"] .brand-name {
 }
 @media (max-width: 850px) {
   .header-inner {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
   }
   .brand-caption {
     display: none;
@@ -2765,6 +2808,8 @@ html[dir="rtl"] .brand-name {
   .header-social {
     grid-column: 2;
     grid-row: 1;
+    min-inline-size: 0;
+    justify-content: flex-end;
     gap: 0.45rem;
   }
   .nav-github-count {
@@ -2783,6 +2828,12 @@ html[dir="rtl"] .brand-name {
   }
 }
 @media (max-width: 400px) {
+  .header-inner {
+    column-gap: 1rem;
+  }
+  .language-picker summary > span[aria-hidden="true"] {
+    display: none;
+  }
   .header-social .nav-x {
     display: none;
   }

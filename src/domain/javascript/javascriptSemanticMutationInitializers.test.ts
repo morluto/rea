@@ -54,6 +54,7 @@ describe("parameter references copied into function body bindings", () => {
         initializers: [entry, assigned],
         referenceInitializers: [],
         directOrigins: [],
+        runtimeImport: false,
       };
       const origins = semanticMutationInitializers(binding, mutation, parents);
       expect(origins.initializers.includes(entry)).toBe(retained);

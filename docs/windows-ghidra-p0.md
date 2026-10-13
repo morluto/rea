@@ -153,8 +153,12 @@ the private runtime, isolating Ghidra preferences, logs, and caches.
 Process creation assigns a suspended child atomically to an owned Job Object.
 Membership and kill-on-owner-close policy are verified before resume.
 Breakaway is disabled. Only the child's default file owner is normalized;
-the caller token stays unchanged. Caller CPU affinity and priority are
-preserved. Close, cancellation, timeout, startup failure, and provider failure
+the caller token stays unchanged. Caller priority is preserved, and caller CPU
+affinity whenever the caller and the child share a processor group. A child that
+Windows places in another group keeps that group's default when the caller asked
+for no bound of its own; a caller pinned to fewer processors than its group
+holds is refused there rather than widened.
+Close, cancellation, timeout, startup failure, and provider failure
 terminate the job and verify all members have settled before runtime cleanup.
 Cleanup removes admitted objects by handle and unlinks reparse entries without
 following their targets. Abrupt owner death kills the job but can leave

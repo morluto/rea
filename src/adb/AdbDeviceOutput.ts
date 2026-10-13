@@ -10,11 +10,15 @@ import {
   adbHostFileName,
   type AdbHostFileNameReason,
 } from "./AdbHostFileName.js";
+import {
+  ADB_DEVICE_STATES,
+  type AdbDeviceState,
+} from "../domain/adb/adbDeviceAnalysis.js";
 
 /** One device exactly as `adb devices -l` reports it. */
 export interface AdbDeviceEntry {
   readonly serial: string;
-  readonly state: string;
+  readonly state: AdbDeviceState;
   readonly transport: "usb" | "tcp" | "unknown";
   readonly product: string | null;
   readonly model: string | null;
@@ -23,25 +27,6 @@ export interface AdbDeviceEntry {
   readonly kind: "emulator" | "physical" | "unknown";
   readonly kind_basis: "emulator_serial_prefix" | "usb_transport" | "none";
 }
-
-/**
- * Device states adb prints after the serial, longest first so two-word
- * states match before their single-word prefixes. A line whose remainder
- * starts with none of them is not a device line.
- */
-const DEVICE_STATES = [
-  "no permissions",
-  "unauthorized",
-  "authorizing",
-  "offline",
-  "recovery",
-  "sideload",
-  "connecting",
-  "bootloader",
-  "device",
-  "unknown",
-  "host",
-] as const;
 
 const DEVICE_LINE = /^(\S+)\s+(.*)$/u;
 
@@ -73,11 +58,15 @@ export const parseAdbDevicesOutput = (
       continue;
     }
     const match = DEVICE_LINE.exec(line);
-    const state = DEVICE_STATES.find((candidate) =>
-      match?.[2]?.startsWith(candidate),
-    );
+    const state = ADB_DEVICE_STATES.find((candidate) => {
+      const remainder = match?.[2];
+      if (remainder === undefined || !remainder.startsWith(candidate))
+        return false;
+      const next = remainder[candidate.length];
+      return next === undefined || /\s/u.test(next);
+    });
     if (match === null || state === undefined) {
-      if (line.trim() !== "") unparsedLines.push(line);
+      if (rawLine.trim() !== "") unparsedLines.push(rawLine);
       continue;
     }
     const serial = match[1]!;
@@ -192,7 +181,7 @@ export const parsePackageListOutput = (
     if (line === "") continue;
     const match = PACKAGE_LINE.exec(line);
     if (match === null) {
-      unparsedLines.push(line);
+      unparsedLines.push(rawLine);
       continue;
     }
     packages.push({

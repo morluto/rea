@@ -80,6 +80,49 @@ const baseScenario = () => ({
   },
 });
 
+describe("browser scenario secret redaction", () => {
+  it("matches percent-escape hex case without case-folding raw secrets", () => {
+    const secrets = BrowserScenarioSecrets.resolve(
+      browserScenarioSchema.parse(baseScenario()),
+      {
+        REA_TEST_SESSION: "a/b?",
+        REA_TEST_PASSWORD: "password",
+        REA_TEST_COOKIE: "cookie",
+      },
+    );
+    if (secrets === undefined) throw new Error("Expected resolved secrets");
+
+    expect(secrets.redact("logged a%2fb%3f, a%2Fb%3F and a%2fb%3F")).toBe(
+      "logged [REDACTED:session], [REDACTED:session] and [REDACTED:session]",
+    );
+    expect(secrets.redact("raw A/B? remains case-sensitive")).toBe(
+      "raw A/B? remains case-sensitive",
+    );
+    expect(
+      secrets.redactBytes(
+        Buffer.concat([
+          Buffer.from([0xff, 0]),
+          Buffer.from("a%2fb%3F"),
+          Buffer.from([0x80]),
+        ]),
+      ),
+    ).toEqual(
+      Buffer.concat([
+        Buffer.from([0xff, 0]),
+        Buffer.from("[REDACTED:session]"),
+        Buffer.from([0x80]),
+      ]),
+    );
+    expect(
+      secrets.sanitizeUrl("https://app.example.test/?token=a%2fb%3F").url,
+    ).toBe("https://app.example.test/?token=[REDACTED:session]");
+    expect(secrets.fingerprint("stored a%2fb%3F")).toEqual({
+      value_state: "redacted-secret",
+      value_sha256: null,
+    });
+  });
+});
+
 describe("browserScenarioSchema", () => {
   it("accepts and normalizes a declared scenario", () => {
     const parsed = browserScenarioSchema.parse(baseScenario());

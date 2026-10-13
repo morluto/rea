@@ -57,6 +57,10 @@ Hopper installation or any file write. Declining or pressing Ctrl-C makes no
 changes. Agent configuration writes preserve unrelated entries and comments,
 create backups, use atomic replacement, and verify their result. Setup and
 uninstall retain an existing `.rea.backup` rather than replacing the first snapshot.
+If that snapshot differs from the current configuration, setup previews and
+preserves a verified `.rea.backup.<sha256>.recovery` copy of the current bytes.
+Both snapshots remain available; a failed rollback reports the current recovery
+copy's path and the restore failure.
 Setup also retains valid environment overrides in REA's existing server entry,
 such as `REA_MCP_INPUT_SCHEMA_PROFILE` and `REA_MCP_MAX_RESPONSE_BYTES`.
 Detected provider settings replace only matching environment keys.
@@ -101,13 +105,11 @@ rea setup --yes --all-detected --install-hopper --json
 
 ### Skill destinations
 
-The bundled skill is installed where each selected client discovers personal
-skills: Claude Code uses `~/.claude/skills` (or
-`$CLAUDE_CONFIG_DIR/skills` when configured). Gemini CLI uses `.agents/skills`
-under its selected home; Antigravity 2.0 uses `~/.gemini/config/skills`.
-Other integrations, including Qwen Code, use `~/.agents/skills`.
-A mixed selection plans each distinct destination. Selecting the skill without a client uses the shared
-directory. Setup leaves existing skill copies in other locations untouched.
+The bundled skill is installed in each selected client's personal skill directory.
+See [client configuration](client-configuration.md) for client-specific roots,
+profiles, and environment overrides. A mixed selection plans each distinct
+destination. Selecting the skill without a client uses `~/.agents/skills`.
+Setup leaves existing skill copies in other locations untouched.
 
 `rea setup --skill-client claude_code --yes --json` refreshes and verifies the
 selected skill destination independently of MCP registration selection. The
@@ -319,8 +321,8 @@ The Hopper launcher action used by REA creates a document from an executable;
 its supported command-line interface does not attach to an already-open
 document. While another live REA session owns the same target and loader
 profile, a second session reports the owning run ID instead of opening a
-duplicate document. Closing the owning REA session releases this guard; Hopper
-keeps its document open. A later REA session can therefore open another
+duplicate document. On macOS, closing the owning REA session releases this guard;
+Hopper keeps its document open. A later REA session can therefore open another
 document for the same target. REA does not currently identify, focus, or reuse
 that existing GUI document, and the supported launcher exposes no attach or
 reuse action for it.
@@ -343,8 +345,14 @@ Hopper application per user across cooperating REA processes. A competing
 CLI or MCP session receives the owning session ID before Hopper is launched,
 for both the same target and a different target. Switch targets through that
 MCP session, or close it before starting another session. Closing the owner
-releases the reservation. This does not attach to or claim ownership of
-manually opened Hopper applications.
+releases the reservation and stops REA's owned demo application and private
+display; the headless Linux demo does not retain documents after MCP shutdown.
+Its helper watches a private lifetime pipe, so an owner crash or SIGKILL also
+stops those children, without relying on a reusable PID or a process-name scan.
+A later session recovers the dead owner's stale lease after child cleanup;
+private runtime files can remain when REA itself was killed. This does not attach to
+or claim ownership of manually opened Hopper applications. An application left
+running by an older REA version must still be closed before starting a new session.
 
 Stale lease recovery is serialized. If an interrupted recovery leaves its
 reservation directory, the diagnostic identifies that exact path. Stop REA
@@ -437,8 +445,9 @@ For cursor navigation, string decoding, symbol-name limits, and regex matching,
 see [Hopper analysis behavior](native-investigation.md#hopper-analysis-behavior).
 
 Closing or switching a target closes its bound Hopper document, shuts down REA's
-bridge and removes its temporary socket directory while preserving the Hopper
-application and unrelated documents. A `cleanup_incomplete`
+bridge and removes its temporary socket directory. The macOS Hopper application
+and unrelated documents remain open; the owned Linux demo application stops.
+A `cleanup_incomplete`
 result identifies resources whose cleanup could not be verified.
 REA retains unresolved cleanup ownership and any confirmed shutdown phases.
 After addressing the reported failure, retry `close_binary` on the same
@@ -605,11 +614,38 @@ rea doctor --json
 The copy step requires the destination to be absent and preserves an existing
 decompiler. This recipe is specific to macOS x64: the
 [Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
-explicitly selects `-arch x86_64` on Darwin. For other architectures or a Gradle
+explicitly selects `-arch x86_64` on Darwin. For a Gradle
 build, follow the matching release's
 [native component instructions](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-native-components).
 REA accepts the matching executable under either `os/<platform>/` or
 `build/os/<platform>/`; it does not build the component during setup or diagnosis.
+
+### macOS arm64 native decompiler
+
+On Apple Silicon the same source build works with explicit overrides; no
+Makefile edits and no Rosetta are needed. The Darwin block in the
+[Ghidra 12.1.4 Makefile](https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/Ghidra/Features/Decompiler/src/decompile/cpp/Makefile)
+pins `-arch x86_64`, but `ARCH_TYPE` and `OSDIR` are ordinary make variables,
+and command-line assignments replace them for every compile and link rule:
+
+```bash
+cd "$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/src/decompile/cpp"
+make ghidra_opt ARCH_TYPE="-arch arm64" OSDIR=mac_arm_64
+decompiler_dir="$GHIDRA_INSTALL_DIR/Ghidra/Features/Decompiler/os/mac_arm_64"
+mkdir -p "$decompiler_dir"
+test ! -e "$decompiler_dir/decompile" && test ! -L "$decompiler_dir/decompile" &&
+  install -m 755 ghidra_opt "$decompiler_dir/decompile"
+rea doctor --json
+```
+
+Verified end to end on macOS 15.6 arm64 with Apple clang 17 and the stock
+bison 2.3, against Ghidra 12.1.4: the build produces a Mach-O arm64
+`ghidra_opt`, the doctor check `ghidra-native_decompiler` turns healthy with
+"reports mach-o arm64, which matches darwin/arm64", and `rea decompile` on an
+arm64 Mach-O returns decompiled C through the headless provider. The JDK is
+not needed for the make step, only for the Ghidra provider. If your toolchain
+rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
+`ADDITIONAL_FLAGS="-w"`.
 
 ### Ghidra import language and analysis seeds
 

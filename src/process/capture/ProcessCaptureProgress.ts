@@ -1,4 +1,5 @@
 import type { ProcessCaptureCleanupReport } from "../../domain/process/processCapture.js";
+import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 
 /**
  * Progress port accepted by process capture.
@@ -61,7 +62,7 @@ const formatProgressMessage = (
 /** Serialize observed capture status through one rate-limited reporter. */
 export const createProcessCaptureProgressTracker = (
   progress: ProcessCaptureProgress | undefined,
-  now: () => number = Date.now,
+  now: () => number = monotonicProcessCaptureClock,
 ) => {
   const started = now();
   let completed = 0;

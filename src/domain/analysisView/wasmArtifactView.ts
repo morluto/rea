@@ -103,6 +103,7 @@ export const projectWasmArtifactView = (
         : {
             path: parent.subject.local_path,
             sha256: parent.subject.digest.sha256,
+            format: parent.subject.format,
           },
     )
   )

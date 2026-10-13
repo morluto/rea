@@ -489,4 +489,28 @@ describe("safe artifact output Windows stream paths", () => {
     await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readdir(parent)).toEqual([]);
   });
+
+  it.each(["Folder/Icon\r", "Fold\ter/file.txt"])(
+    "refuses Windows control characters before creating %j",
+    async (path) => {
+      const parent = await createTestTempDirectory("rea-safe-output-control-");
+      const output = join(parent, "published");
+      const tree = await SafeOutputTree.create(output, "win32");
+      const bytes = Buffer.from("regular file content");
+      await expect(
+        tree.write(path, Readable.from(bytes), {
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.byteLength,
+        }),
+      ).rejects.toMatchObject({
+        reason: "path",
+        message: `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
+      });
+      expect(await readdir(output)).toEqual([]);
+      expect(await tree.rollback()).toEqual({
+        status: "complete",
+        residualPaths: [],
+      });
+    },
+  );
 });

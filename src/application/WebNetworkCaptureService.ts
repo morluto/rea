@@ -10,12 +10,14 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   inspectWebNetworkCaptureInputSchema,
+  captureSensitiveValues,
   webNetworkCaptureSchema,
 } from "../domain/webNetworkCapture.js";
 
@@ -25,6 +27,11 @@ const OPERATION = "inspect_web_network_capture";
 export class WebNetworkCaptureService {
   constructor(readonly port: WebNetworkCapturePort) {}
 
+  /** Release resources retained by the selected capture adapter. */
+  close(): Promise<void> {
+    return this.port.close?.() ?? Promise.resolve();
+  }
+
   /** Return selected complete records inline, without inventing live browser attribution. */
   async inspect(
     rawInput: unknown,
@@ -32,21 +39,8 @@ export class WebNetworkCaptureService {
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
       return err(new AnalysisCancelledError(OPERATION));
-    const declarations =
-      inspectWebNetworkCaptureInputSchema.shape.sensitive_values.safeParse(
-        typeof rawInput === "object" &&
-          rawInput !== null &&
-          "sensitive_values" in rawInput
-          ? rawInput.sensitive_values
-          : undefined,
-      );
     const failure = (error: AnalysisError): Result<never, AnalysisError> =>
-      err(
-        redactExplicitFailure(
-          error,
-          declarations.success ? declarations.data : [],
-        ),
-      );
+      err(redactExplicitFailure(error, captureSensitiveValues(rawInput)));
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
     if (!parsed.success)
       return failure(
@@ -187,6 +181,15 @@ export class WebNetworkCaptureService {
                 ? [...limitations, subjectUnavailableReason]
                 : limitations,
           },
+          ...(safeValue.format !== "qlog"
+            ? {}
+            : {
+                analysisProfile: createAnalysisProfile(value.decoder, {
+                  qlog_profile: safeValue.qlog.profile,
+                  clock: safeValue.qlog.clock,
+                  scope: safeValue.qlog.scope,
+                }),
+              }),
           confidence: "observed",
           authority: "historical-reference",
           limitations,

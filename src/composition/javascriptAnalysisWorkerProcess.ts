@@ -1,3 +1,4 @@
+import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
 import {
@@ -53,7 +54,10 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     );
   await callbacks.phase("semantic");
   const ir = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptSemanticsSteps(parsed),
+    analyzeParsedJavaScriptSemanticsSteps(
+      parsed,
+      moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+    ),
   );
   parsed = null;
   const module = projectJavaScriptModuleSemantics(ir);

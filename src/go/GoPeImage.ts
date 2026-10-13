@@ -1,4 +1,4 @@
-import { mzWindowsHeaderOffset, parseDosMzHeader } from "../domain/dosMz.js";
+import { observeMzWindowsHeader, parseDosMzHeader } from "../domain/dosMz.js";
 import {
   GoBinaryFormatFailure,
   GoBinaryReader,
@@ -8,8 +8,8 @@ import {
 } from "./GoBinaryContainer.js";
 
 const peHeaderOffset = (reader: GoBinaryReader): number => {
-  const pe = mzWindowsHeaderOffset(reader.bytes);
-  if (pe === null) {
+  const windowsHeader = observeMzWindowsHeader(reader.bytes);
+  if (windowsHeader.state !== "declared") {
     const dos = parseDosMzHeader(reader.bytes);
     if (!dos.ok) throw new GoBinaryFormatFailure("malformed", dos.error);
     throw new GoBinaryFormatFailure(
@@ -17,18 +17,22 @@ const peHeaderOffset = (reader: GoBinaryReader): number => {
       "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
     );
   }
+  const { offset: pe } = windowsHeader;
   if (pe < 64)
     throw new GoBinaryFormatFailure(
       "malformed",
       "PE signature overlaps the DOS header",
     );
-  const signature = reader
-    .range(pe, 2, "Windows new-header signature")
-    .toString("latin1");
-  if (["NE", "LE", "LX"].includes(signature))
+  reader.range(pe, 24, "PE signature and COFF header");
+  if (["NE", "LE", "LX"].includes(windowsHeader.signature))
     throw new GoBinaryFormatFailure(
       "unsupported",
-      `${signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+      `${windowsHeader.signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+    );
+  if (windowsHeader.signature !== "PE")
+    throw new GoBinaryFormatFailure(
+      "malformed",
+      "PE signature is invalid or overlaps the DOS header",
     );
   return pe;
 };
@@ -51,16 +55,6 @@ const optionalHeaderMagic = (
 export const readGoPeImage = (bytes: Buffer): GoBinaryContainer => {
   const reader = new GoBinaryReader(bytes, true);
   const pe = peHeaderOffset(reader);
-  if (
-    !reader
-      .range(pe, 24, "PE signature and COFF header")
-      .subarray(0, 4)
-      .equals(Buffer.from("PE\0\0"))
-  )
-    throw new GoBinaryFormatFailure(
-      "malformed",
-      "PE signature is invalid or overlaps the DOS header",
-    );
   const optional = pe + 24;
   const optionalSize = reader.u16(pe + 20);
   const magic = optionalHeaderMagic(reader, optional, optionalSize);

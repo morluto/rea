@@ -3,6 +3,14 @@
 These source-owned fixtures are compiled at verification time; generated
 binaries and Ghidra projects are never committed.
 
+- `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
+  with double-float ABI declarations and an independently known instruction.
+  `npm run verify:ghidra:riscv` exercises real CLI/MCP discovery, decompilation,
+  output schemas, profile and snapshot identity, refusal diagnostics, immutable
+  source bytes, and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and
+  RISC-V Clang/LLD/LLVM readelf; `REA_RISCV_CLANG`, `REA_RISCV_LLD` and
+  `REA_RISCV_READELF` select existing tool commands.
+
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a

@@ -5,42 +5,44 @@ on:
     branches: [main]
   pull_request:
     branches: [main, "release/*"]
+  schedule:
+    - cron: "23 0-2,4-23 * * *"
+    - cron: "23 3 * * *"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact qualification source; must match the caller revision.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  # The latest main push verifies the full tree, including earlier changes.
-  # Publication uses its own release workflow and concurrency group.
-  cancel-in-progress: true
+  # Complete qualification finishes even while main receives more pushes.
+  # Main feedback also finishes, coalescing newer pushes to one pending run.
+  # Scheduled/manual main runs coalesce to one active and the latest pending;
+  # release and label-triggered qualification use exact-revision groups.
+  group: ci-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && 'qualification' || 'feedback' }}-${{ inputs.source_sha || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && inputs.source_sha == '' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}
 
 env:
   HUSKY: "0"
 
 jobs:
-  pr-title:
-    name: Conventional PR title
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate title for Release Please
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: >-
-          node -e 'const title = process.env.PR_TITLE ?? "";
-          const conventional = /^(?:feat|fix|docs|refactor|perf|test|build|ci|chore|revert)(?:\([a-z0-9._/-]+\))?!?: .+/u;
-          if (!conventional.test(title)) {
-            console.error("PR title must use Conventional Commits, for example: feat: add historical source import");
-            process.exit(1);
-          }'
-
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
+      tier: ${{ steps.plan.outputs.tier }}
+      qualification_run_id: ${{ steps.qualification.outputs.run_id }}
       code: ${{ steps.plan.outputs.code }}
+      sqlite: ${{ steps.plan.outputs.sqlite }}
       runtime: ${{ steps.plan.outputs.runtime }}
       package: ${{ steps.plan.outputs.package }}
       apple: ${{ steps.plan.outputs.apple }}
@@ -59,26 +61,58 @@ jobs:
       nativeaot: ${{ steps.plan.outputs.nativeaot }}
       website: ${{ steps.plan.outputs.website }}
       matrix: ${{ steps.plan.outputs.matrix }}
+      test_selection: ${{ steps.plan.outputs.test_selection }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      - name: Bind qualification to the caller revision
+        if: inputs.source_sha != ''
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "${SOURCE_SHA}" = "${GITHUB_SHA}"
+          test "${SOURCE_SHA}" = "$(git rev-parse HEAD)"
+      - name: Find a verified ancestor for push selection
+        id: baseline
+        if: github.event_name == 'push' && inputs.source_sha == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/ci/baseline.mjs
+      - name: Admit scheduled full qualification
+        id: qualification
+        if: github.event_name == 'schedule' && inputs.source_sha == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_REPOSITORY_ID: ${{ github.repository_id }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CI_FORCE_FULL: ${{ github.event.schedule == '23 3 * * *' }}
+        run: node scripts/ci/qualification.mjs
       - name: Select verification lanes
         id: plan
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          CI_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          BASE_SHA: ${{ steps.baseline.outputs.base || github.event.pull_request.base.sha }}
+          BASELINE_REASON: ${{ steps.baseline.outputs.reason }}
+          HEAD_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha || github.sha }}
+          CI_FULL: ${{ inputs.source_sha != '' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          CI_SKIP_FULL: ${{ steps.qualification.outputs.run_full == 'false' }}
         run: node scripts/ci/plan.mjs
 
   static:
     name: Static checks
     needs: changes
-    if: ${{ always() }}
+    if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Require successful change classification
         env:
@@ -90,6 +124,9 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Validate workflow syntax and expressions
+        if: needs.changes.outputs.workflows == 'true'
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
       - if: needs.changes.outputs.code == 'true'
         run: npm run check:ci
       - if: needs.changes.outputs.code == 'true'
@@ -99,12 +136,22 @@ jobs:
         run: npm run test:python
       - if: needs.changes.outputs.code != 'true'
         run: npm run format:check
+      - name: Upload complete static diagnostics
+        if: always() && needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-check-reports
+          path: .cache/static-checks/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   test-shard:
     name: Test shard (${{ matrix.shard }})
     needs: [changes, build]
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -120,7 +167,14 @@ jobs:
         with:
           name: rea-test-runtime
           path: .
-      - run: npm run test:ci:shard:run -- --shard=${{ matrix.shard }}
+      - name: Run complete portable suite with coverage
+        if: needs.changes.outputs.tier == 'full'
+        run: npm run test:ci:shard:run -- --shard=${{ matrix.shard }}
+        env:
+          REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
+      - name: Run complete portable suite for fast feedback
+        if: needs.changes.outputs.tier == 'fast'
+        run: npm run test:run -- --reporter=default --reporter=blob --shard=${{ matrix.shard }}
         env:
           REA_CI_TEST_HISTORY: .cache/ci-test-history/test-results.json
       - uses: actions/upload-artifact@v4
@@ -136,8 +190,20 @@ jobs:
   build:
     name: Build package
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    # Reusable provider workflows consume this run's portable build artifact,
+    # even when a workflow-only edit selects the lane without portable tests.
+    if: >-
+      needs.changes.outputs.code == 'true' ||
+      needs.changes.outputs.browser == 'true' ||
+      needs.changes.outputs.binary_layout == 'true' ||
+      needs.changes.outputs.evm == 'true' ||
+      needs.changes.outputs.javascript_recovery == 'true' ||
+      needs.changes.outputs.recorded_crash == 'true' ||
+      needs.changes.outputs.web_network == 'true' ||
+      needs.changes.outputs.web_runtime == 'true' ||
+      needs.changes.outputs.web_source_map == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
@@ -151,21 +217,17 @@ jobs:
       - name: Reuse portable build outputs across runs
         uses: ./.github/actions/portable-build-cache
         with:
-          save: "true"
+          save: ${{ github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - run: npm run test:prepare
-      - name: Find successful default-branch timing history
+      - name: Find available trusted full-suite timing history
         id: history
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           CI_REPOSITORY: ${{ github.repository }}
+          CI_REPOSITORY_ID: ${{ github.repository_id }}
           CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          run_id="$(gh api --method GET \
-            "repos/${CI_REPOSITORY}/actions/workflows/ci.yml/runs" \
-            -f branch="${CI_DEFAULT_BRANCH}" -f event=push -f status=success -f per_page=1 \
-            --jq '.workflow_runs[0].id // empty')"
-          echo "run-id=${run_id}" >> "${GITHUB_OUTPUT}"
+        run: node scripts/ci/test-history.mjs
       - name: Download previous timing report
         if: steps.history.outputs.run-id != ''
         continue-on-error: true
@@ -200,11 +262,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  sqlite-runtime:
+    # Preserve all selected coverage, but admit expensive host/provider work
+    # only after static validation. Portable tests still provide early feedback.
+    needs: [changes, static, build]
+    if: needs.changes.outputs.sqlite == 'true'
+    uses: ./.github/workflows/sqlite-runtime.yml
+
   test:
-    name: Test (coverage + timing)
+    name: Portable tests
     needs: [changes, test-shard]
-    if: ${{ always() }}
+    if: ${{ !cancelled() && needs.changes.outputs.tier != 'reused' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Require successful change classification
         env:
@@ -227,7 +297,7 @@ jobs:
           merge-multiple: true
       - name: Merge coverage, JUnit, and timing reports
         id: merge
-        if: needs.changes.outputs.code == 'true' && success()
+        if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'full' && success()
         run: >-
           npm run test:ci:merge --
           --coverage.reportsDirectory=coverage
@@ -237,13 +307,28 @@ jobs:
           --reporter=default
           --reporter=junit
           --reporter=json
+          --reporter=./scripts/ci/test-timing-reporter.mjs
+          --outputFile.junit=test-results.xml
+          --outputFile.json=test-results.json
+      - name: Merge fast-suite JUnit and timing reports
+        id: merge-fast
+        if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'fast' && success()
+        run: >-
+          npm exec -- vitest --merge-reports
+          --reporter=default
+          --reporter=junit
+          --reporter=json
+          --reporter=./scripts/ci/test-timing-reporter.mjs
           --outputFile.junit=test-results.xml
           --outputFile.json=test-results.json
       - name: Summarize slowest test files
-        if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
+        if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-timings.json') != ''
         env:
           SHARD_RESULT: ${{ needs.test-shard.result }}
-          MERGE_RESULT: ${{ steps.merge.outcome }}
+          MERGE_RESULT: ${{ needs.changes.outputs.tier == 'full' && steps.merge.outcome || steps.merge-fast.outcome }}
+          CI_VERIFY_TEST_INVENTORY: "true"
+          CI_TEST_SELECTION: ${{ needs.changes.outputs.test_selection }}
+          CI_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/ci/test-report.mjs
       - uses: actions/upload-artifact@v4
         if: needs.changes.outputs.code == 'true' && !cancelled() && hashFiles('test-results.json') != ''
@@ -252,11 +337,14 @@ jobs:
           path: |
             test-results.xml
             test-results.json
+            test-timings.json
             coverage/
+            .cache/ci-test-selection/report.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
       - name: Publish successful timing history
-        if: needs.changes.outputs.code == 'true' && success() && needs.test-shard.result == 'success'
+        if: needs.changes.outputs.code == 'true' && needs.changes.outputs.tier == 'full' && success() && needs.test-shard.result == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: test-timings
@@ -273,7 +361,7 @@ jobs:
 
   conformance-fixtures:
     name: Source-built conformance fixtures
-    needs: changes
+    needs: [changes, static]
     if: needs.changes.outputs.fixtures == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -284,7 +372,7 @@ jobs:
 
   windows-native-build:
     name: Build bundled Windows x64 native controls
-    needs: changes
+    needs: [changes, static]
     if: needs.changes.outputs.runtime == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -320,7 +408,7 @@ jobs:
 
   package-e2e:
     name: Native package baseline (${{ matrix.platform }} ${{ matrix.architecture }})
-    needs: [changes, build, windows-native-build]
+    needs: [changes, static, build, windows-native-build]
     if: needs.changes.outputs.runtime == 'true'
     strategy:
       fail-fast: false
@@ -359,6 +447,8 @@ jobs:
           name: windows-native-controls
           path: native/windows/build/
       - run: npm run verify:windows-native:artifact
+      - name: Verify NativeAOT diagnostic applicability on this host
+        run: npm run test:focused -- tests/evaluation/package/nativeAotDiagnostics.test.ts
       - name: Resolve npm cache before verifier HOME isolation
         id: npm-cache
         run: |
@@ -367,13 +457,24 @@ jobs:
       - run: npm run verify:package
         env:
           npm_config_cache: ${{ steps.npm-cache.outputs.path }}
+          REA_VERIFIED_PACKAGE_DIRECTORY: ${{ needs.changes.outputs.tier == 'full' && matrix.platform == 'linux' && matrix.architecture == 'x64' && '.cache/verified-package' || '' }}
       - name: Verify real Node Inspector discovery and observation
         timeout-minutes: 10
         run: npm run verify:inspector
+      - name: Retain the exact qualified release package
+        if: needs.changes.outputs.tier == 'full' && matrix.platform == 'linux' && matrix.architecture == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-release-package
+          path: .cache/verified-package/
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
   apple-artifacts:
     name: Real Apple artifact CLI/MCP E2E
-    needs: [changes, build]
+    needs: [changes, static, build]
     if: needs.changes.outputs.apple == 'true'
     runs-on: macos-15
     timeout-minutes: 15
@@ -421,7 +522,7 @@ jobs:
 
   reconstruction-readiness:
     name: Reconstruction readiness
-    needs: changes
+    needs: [changes, static]
     if: needs.changes.outputs.readiness == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -450,7 +551,7 @@ jobs:
 
   windows-curated:
     name: Windows capability and package lane
-    needs: [changes, build, windows-native-build]
+    needs: [changes, static, build, windows-native-build]
     if: needs.changes.outputs.package == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
@@ -495,6 +596,7 @@ jobs:
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts
           tests/boundary/filesystem/windowsNpxRegistration.test.ts
+          tests/acceptance/setup/homeDirectoryFallback.test.ts
           tests/boundary/filesystem/webScriptManifestPaths.test.ts
           tests/boundary/process/ProcessEvidence.host.test.ts
           tests/acceptance/webModuleCli.test.ts
@@ -504,6 +606,7 @@ jobs:
           tests/boundary/filesystem/javascript-applications/javascriptArtifactReconstruction.test.ts
           tests/conformance/providers/ghidra/windowsCapabilities.test.ts
           src/ghidra/GhidraInstallation.test.ts
+          tests/boundary/filesystem/ghidraJavaProbe.test.ts
           tests/boundary/providers/ghidra/ghidraTransport.test.ts
           tests/boundary/providers/ghidra/ghidraTargetSnapshot.test.ts
           tests/boundary/providers/ghidra/ghidraLauncher.test.ts
@@ -560,6 +663,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -579,63 +683,69 @@ jobs:
             skills/reverse-engineer-anything
           if-no-files-found: error
 
-  workflows:
-    name: Validate workflows
-    needs: changes
-    if: needs.changes.outputs.workflows == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate workflow syntax and expressions
-        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck= -pyflakes=
-
   browser:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.browser == 'true'
     uses: ./.github/workflows/real-browser.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   binary_layout:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.binary_layout == 'true'
     uses: ./.github/workflows/real-binary-layout.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   evm:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.evm == 'true'
     uses: ./.github/workflows/real-evm-interface.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   javascript_recovery:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.javascript_recovery == 'true'
     uses: ./.github/workflows/real-javascript-recovery.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   recorded_crash:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.recorded_crash == 'true'
     uses: ./.github/workflows/real-recorded-crash.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   web_network:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.web_network == 'true'
     uses: ./.github/workflows/real-web-network-captures.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   web_runtime:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.web_runtime == 'true'
     uses: ./.github/workflows/real-web-runtime.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   web_source_map:
-    needs: changes
+    needs: [changes, static, build]
     if: needs.changes.outputs.web_source_map == 'true'
     uses: ./.github/workflows/real-web-source-map.yml
+    with:
+      build_cache_artifact: rea-build-cache
 
   nativeaot:
-    needs: changes
+    needs: [changes, static]
     if: needs.changes.outputs.nativeaot == 'true'
     uses: ./.github/workflows/nativeaot-fixtures.yml
 
   website:
-    needs: changes
+    needs: [changes, static]
     if: needs.changes.outputs.website == 'true'
     uses: ./.github/workflows/website-check.yml
 
@@ -645,10 +755,10 @@ jobs:
     needs:
       [
         changes,
-        pr-title,
         static,
         build,
         test-shard,
+        sqlite-runtime,
         test,
         conformance-fixtures,
         windows-native-build,
@@ -657,7 +767,6 @@ jobs:
         reconstruction-readiness,
         windows-curated,
         docs,
-        workflows,
         browser,
         binary_layout,
         evm,
@@ -670,12 +779,24 @@ jobs:
         website,
       ]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
       - name: Require every selected lane to pass
+        id: gate
         env:
           CI_JOBS: ${{ toJSON(needs) }}
+          CI_QUALIFICATION_DIRECTORY: .cache/ci-qualification
         run: node scripts/ci/required.mjs
+      - name: Upload full qualification receipt artifact
+        if: needs.changes.outputs.tier == 'full' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.gate.outputs.receipt_name }}
+          path: ${{ steps.gate.outputs.receipt_path }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7

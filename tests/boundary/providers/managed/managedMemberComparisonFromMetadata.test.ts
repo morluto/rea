@@ -116,6 +116,66 @@ describe("managed member comparison", () => {
   });
 });
 
+describe("managed member comparison floating-point constants", () => {
+  it.each([
+    {
+      opcode: "ldc.r4",
+      positive: "22000000002a",
+      negative: "22000000802a",
+      type: 0x0c,
+    },
+    {
+      opcode: "ldc.r8",
+      positive: "2300000000000000002a",
+      negative: "2300000000000000802a",
+      type: 0x0d,
+    },
+  ])(
+    "detects a change from positive to negative zero in $opcode",
+    ({ opcode, positive, negative, type }) => {
+      const observe = (hex: string, path: string) => {
+        const il = Buffer.from(hex, "hex");
+        return inspect(
+          buildManagedPeFixture({
+            methodSignature: Buffer.from([0x00, 0x00, type]),
+            ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+          }),
+          path,
+        );
+      };
+      const left = observe(positive, "/tmp/positive-zero.dll");
+      const right = observe(negative, "/tmp/negative-zero.dll");
+      const comparison = compareManagedMembers(left, right);
+
+      expect(comparison.methods[0]).toMatchObject({
+        status: "changed",
+        match: { status: "matched", basis: "exact-signature" },
+        dimensions: ["cil"],
+      });
+      for (const [observation, operand] of [
+        [left, "0"],
+        [right, "-0"],
+      ] as const) {
+        expect(observation.result.methods[0]?.body).toMatchObject({
+          status: "present",
+          anchors: [
+            { il_offset: 0, opcode, operand_kind: "constant", operand },
+          ],
+        });
+      }
+      expect(left.result.methods[0]?.body.normalized_il_sha256).not.toBe(
+        right.result.methods[0]?.body.normalized_il_sha256,
+      );
+      const repeated = observe(negative, "/tmp/negative-zero-copy.dll");
+      expect(compareManagedMembers(right, repeated).methods[0]).toMatchObject({
+        status: "unchanged",
+        match: { status: "matched", basis: "exact-il-signature" },
+        dimensions: [],
+      });
+    },
+  );
+});
+
 describe("managed member comparison uncertainty", () => {
   it("does not infer a structural method match from undecoded signature fields", () => {
     const left = inspect(

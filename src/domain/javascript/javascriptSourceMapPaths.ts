@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import { domainToASCII, fileURLToPath, pathToFileURL } from "node:url";
+import { TraceMap } from "@jridgewell/trace-mapping";
 
 import { z } from "zod";
 
@@ -25,21 +26,63 @@ export type JavaScriptSourceMapReference = z.infer<
   typeof javascriptSourceMapReferenceSchema
 >;
 
-/** Interpret a declaration once at the source-map ingestion boundary. */
-export const resolveJavaScriptSourceMapReference = (
-  sourceName: string,
+/** Interpret declarations together once at their source-map ingestion boundary. */
+export const resolveJavaScriptSourceMapReferences = (
+  sourceNames: readonly (string | null)[],
   sourceRoot: string | null,
   mapPath: string,
-): JavaScriptSourceMapReference => {
-  // TraceMap's producer prefixes sourceRoot before resolving the URL reference.
-  const reference = `${sourceRoot ? `${sourceRoot}/` : ""}${sourceName}`;
-  return {
-    source_name: sourceName,
-    source_root: sourceRoot,
-    map_path: mapPath,
-    resolution: resolveJavaScriptSourceMapPath(reference, mapPath),
-  };
+): (JavaScriptSourceMapReference | null)[] => {
+  if (sourceNames.length === 0) return [];
+  const resolvedSources = resolveSourceMapUrls(
+    sourceNames.map((sourceName) => sourceName ?? ""),
+    sourceRoot,
+    "",
+  );
+  return sourceNames.map((sourceName, index) => {
+    if (sourceName === null) return null;
+    const reference = resolvedSources[index];
+    if (reference === undefined)
+      throw new TypeError(
+        `TraceMap did not resolve source declaration ${String(index)}`,
+      );
+    return {
+      source_name: sourceName,
+      source_root: sourceRoot,
+      map_path: mapPath,
+      resolution: resolveJavaScriptSourceMapPath(reference, mapPath),
+    };
+  });
 };
+
+/** Resolve a source declaration using the same pinned format implementation as map consumers. */
+export const resolveJavaScriptSourceMapUrl = (
+  source: string | null,
+  sourceRoot: string | null | undefined,
+  mapUrl: string,
+): string => {
+  const resolved = resolveSourceMapUrls([source ?? ""], sourceRoot, mapUrl)[0];
+  if (resolved === undefined)
+    throw new TypeError(
+      "TraceMap did not resolve its single source declaration",
+    );
+  return resolved;
+};
+
+const resolveSourceMapUrls = (
+  sources: string[],
+  sourceRoot: string | null | undefined,
+  mapUrl: string,
+): readonly string[] =>
+  new TraceMap(
+    {
+      version: 3,
+      names: [],
+      sources,
+      ...(sourceRoot == null ? {} : { sourceRoot }),
+      mappings: "",
+    },
+    mapUrl,
+  ).resolvedSources;
 
 /** Resolve a source-map URL reference without changing its recorded identity. */
 const resolveJavaScriptSourceMapPath = (

@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  CPU,
+  LC,
+  dylibCommand,
+  fatImage,
+  machoImage,
+} from "../artifacts/apple/MachoImage.fixture.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../domain/analysisErrorCore.js";
 import { err, ok } from "../domain/result.js";
+import { parseMachoLayout, selectMachoSlice } from "./AppleMachoSelection.js";
 import type { NativeCommandCapture } from "./CommandRunner.js";
 import { inspectNativeMacho } from "./NativeMachoInspection.js";
 import {
@@ -75,6 +86,62 @@ describe("Mach-O tool architecture selection", () => {
       "/fixture/app",
     ]);
   });
+
+  it.each([
+    { names: ["arm64v8", "arm64e"], selected: "arm64e" },
+    { names: ["arm64e", "arm64v8"], selected: "arm64e" },
+    { names: ["arm64v8", "arm64e", "arm64"], selected: "arm64" },
+    { names: ["arm64v8"], selected: "arm64v8" },
+    { names: ["arm64v8", "arm64e.x1"], selected: "arm64v8" },
+    { names: ["arm64e.x1", "arm64v8"], selected: "arm64v8" },
+    { names: ["arm64v8", "arm64e.v1"], selected: "arm64e.v1" },
+    { names: ["arm64e.v1", "arm64v8"], selected: "arm64e.v1" },
+  ] as const)(
+    "keeps inspection and dispatch on $selected for FAT order $names",
+    async ({ names, selected }) => {
+      const cpus = {
+        arm64: CPU.arm64,
+        arm64v8: { type: CPU.arm64.type, subtype: 1 },
+        arm64e: CPU.arm64e,
+        "arm64e.x1": { type: CPU.arm64.type, subtype: 0x8000000c },
+        "arm64e.v1": { type: CPU.arm64.type, subtype: 0x81000002 },
+      };
+      const slices = names.map((name) => {
+        const cpu = cpus[name];
+        return {
+          cpu,
+          bytes: machoImage({
+            cpu,
+            commands: [dylibCommand(LC.LOAD_DYLIB, `/fixture/${name}.dylib`)],
+          }),
+        };
+      });
+      const fat = Buffer.from(fatImage(slices));
+      const lipo = names
+        .map(
+          (name, index) =>
+            `architecture ${name}\n cputype ${cpus[name].type}\n cpusubtype ${cpus[name].subtype}\n offset ${(index + 1) * 4096}\n size ${slices[index]?.bytes.length}\n align 2^12\n`,
+        )
+        .join("");
+      const { commands } = await inspect(lipo, "arm64");
+      expect(commands.find(({ tool }) => tool === "otool")?.args).toEqual([
+        "-h",
+        "-l",
+        "-arch",
+        selected.split(".")[0],
+        "/fixture/app",
+      ]);
+      expect(commands.find(({ tool }) => tool === "dyld_info")?.args).toContain(
+        selected,
+      );
+      expect(selectMachoSlice(fat, "arm64").slice).toBe(
+        (names.findIndex((name) => name === selected) + 1) * 4096,
+      );
+      expect(parseMachoLayout(fat, "arm64").fixups.dylibs).toEqual([
+        `/fixture/${selected}.dylib`,
+      ]);
+    },
+  );
 });
 
 describe("Mach-O UUID reconciliation", () => {
@@ -184,5 +251,66 @@ describe("Mach-O UUID reconciliation", () => {
     expect(result.value.limitations).toContain(
       "dwarfdump --uuid returned conflicting UUIDs for selected architecture arm64",
     );
+  });
+});
+
+describe("Mach-O slice command scheduling", () => {
+  const SLICE_TOOLS = ["otool", "nm", "dyld_info", "dyld_info", "dwarfdump"];
+
+  /** Finish later-launched slice commands first and record overlap. */
+  const reorderingRunner = (failing: ReadonlySet<string> = new Set()) => {
+    const fixtures = new NativeFixtureRunner();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let launched = 0;
+    const run = async (tool: string, args: readonly string[]) => {
+      if (tool === "file" || tool === "lipo") return fixtures.run(tool, args);
+      const order = launched++;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      for (let turn = 0; turn < 12 - order * 2; turn += 1)
+        await new Promise((resolve) => setImmediate(resolve));
+      inFlight -= 1;
+      if (failing.has(tool))
+        return err(new AnalysisOutputError("inspect_macho", `${tool} failed`));
+      return fixtures.run(tool, args);
+    };
+    return { run, maxInFlight: () => maxInFlight };
+  };
+
+  const inspectWith = (run: ReturnType<typeof reorderingRunner>["run"]) =>
+    inspectNativeMacho({
+      target: nativeMachoTarget("/fixture/app"),
+      run,
+      invocation: (capture) => ({
+        tool: capture.tool,
+        command: [capture.executable, ...capture.arguments],
+        tool_version: capture.toolVersion,
+        version_reason: capture.versionReason,
+        executable_sha256: capture.executableSha256,
+        exit: { code: capture.exitCode, signal: capture.signal },
+        stdout_bytes: capture.stdoutBytes,
+        stderr_bytes: capture.stderrBytes,
+      }),
+    });
+
+  it("runs independent slice commands together and keeps provenance in declared order", async () => {
+    const runner = reorderingRunner();
+    const result = await inspectWith(runner.run);
+    if (!result.ok) throw result.error;
+    expect(runner.maxInFlight()).toBe(SLICE_TOOLS.length + 1);
+    expect(result.value.result).toMatchObject({
+      provenance: ["file", "lipo", ...SLICE_TOOLS, "vtool"].map((tool) => ({
+        tool,
+      })),
+    });
+  });
+
+  it("reports the first failing slice command in declared order", async () => {
+    const runner = reorderingRunner(new Set(["nm", "dwarfdump"]));
+    const result = await inspectWith(runner.run);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({ reason: "nm failed" });
   });
 });

@@ -16,6 +16,10 @@ const { values } = parseArgs({
   options: {
     target: { type: "string" },
     procedure: { type: "string", default: "rea_fixture_add" },
+    "second-procedure": { type: "string" },
+    "second-marker": { type: "string" },
+    "expected-string": { type: "string" },
+    "expected-xref": { type: "string" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -24,6 +28,16 @@ if (values.target === undefined || process.env.REA_IDA_MCP_CONFIG === undefined)
   throw new Error(
     "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/ida-provider.md. No toolchain is installed by this lane.",
   );
+if (
+  (values["second-procedure"] === undefined) !==
+    (values["second-marker"] === undefined) ||
+  values["second-marker"] === ""
+)
+  throw new Error(
+    "IDA verification requires --second-procedure and a nonempty --second-marker together; choose a marker unique to the second function's pseudocode.",
+  );
+if (values["expected-string"] === "" || values["expected-xref"] === "")
+  throw new Error("IDA verification oracles must be nonempty.");
 const packageRoot = resolve(
   values["package-root"] ?? fileURLToPath(new URL("..", import.meta.url)),
 );
@@ -37,16 +51,26 @@ const [
   { functionDossierSchema },
   { readIdaConfiguration },
   { createIdaMcpConnection },
+  { idaAddressSchema },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
   importBuilt("domain/hopperValues.js"),
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
+  importBuilt("ida/IdaProtocolValues.js"),
 ]);
 const registration = readIdaConfiguration(process.env.REA_IDA_MCP_CONFIG);
 if (!registration.ok) throw registration.error;
 const config = registration.value;
+if (
+  config.protocol === "native" &&
+  (values["second-procedure"] === undefined ||
+    values["second-marker"] === undefined)
+)
+  throw new Error(
+    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/ida-provider.md.",
+  );
 const environment = Object.fromEntries(
   Object.entries({
     ...process.env,
@@ -57,9 +81,16 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
+  protocol:
+    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
   checks: [],
   observations: [],
+  unverified: [],
 };
+const expectedXref =
+  values["expected-xref"] === undefined
+    ? undefined
+    : idaAddressSchema.parse(values["expected-xref"]);
 let phase = "target admission";
 const workspaces = new Set();
 const databases = new Set();
@@ -75,6 +106,8 @@ const observe = (input) => {
   assert.equal(evidence.analysis_profile.parameters.cache_policy, "live");
   assert.equal(evidence.analysis_profile.parameters.engine_version, null);
   assert.ok(evidence.limitations.length > 0);
+  if (config.protocol === "native" && evidence.operation === "analyze_function")
+    assert.equal(evidence.relationship_coverage?.status, "unknown");
   assert.ok(
     evidence.locations.some((location) => location.kind === "artifact-path"),
   );
@@ -156,17 +189,122 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached"
+      ...(config.mode === "attached" && config.protocol !== "native"
         ? [["procedure_callers", { procedure: dossier.procedure.address }]]
         : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
       ["procedure_pseudo_code", { procedure: dossier.procedure.address }],
       ["read_function_instructions", { procedure: dossier.procedure.address }],
-      ["search_strings", { pattern: "a.b", mode: "literal" }],
+      [
+        "search_strings",
+        {
+          pattern: values["expected-string"] ?? "a.b",
+          mode: "literal",
+          case_sensitive: true,
+        },
+      ],
       ["xrefs", { address: dossier.procedure.address }],
     ]) {
       const result = await call(name, args);
-      observe(result);
+      const value = observe(result);
+      switch (name) {
+        case "list_procedures":
+        case "search_procedures":
+          assert.ok(
+            value.some(
+              (item) =>
+                item.address === dossier.procedure.address &&
+                item.value === dossier.procedure.name,
+            ),
+            `${name} omitted the resolved procedure.`,
+          );
+          break;
+        case "procedure_address":
+          assert.equal(value, dossier.procedure.address);
+          break;
+        case "procedure_assembly":
+          assert.equal(value, dossier.assembly.join("\n"));
+          break;
+        case "procedure_pseudo_code":
+          assert.equal(value, dossier.pseudocode);
+          break;
+        case "procedure_callers":
+        case "procedure_callees": {
+          const expected =
+            name === "procedure_callers" ? dossier.callers : dossier.callees;
+          assert.deepEqual(
+            [...value].sort(),
+            expected.map((item) => item.address).sort(),
+          );
+          break;
+        }
+        case "read_function_instructions":
+          assert.deepEqual(value.procedure.address, dossier.procedure.address);
+          assert.deepEqual(value.instructions, dossier.assembly);
+          break;
+        case "list_strings":
+        case "search_strings":
+          if (values["expected-string"] !== undefined)
+            assert.ok(
+              value.some((item) =>
+                item.value.includes(values["expected-string"]),
+              ),
+              `${name} omitted the expected literal.`,
+            );
+          break;
+        case "xrefs":
+          if (expectedXref !== undefined)
+            assert.ok(
+              value.includes(expectedXref),
+              "xrefs omitted the expected source address.",
+            );
+          break;
+      }
+    }
+    if (values["expected-string"] === undefined)
+      report.unverified.push(
+        "String inventory/search correctness: no independent expected literal supplied.",
+      );
+    else
+      report.checks.push(
+        "string inventory and literal search contain the expected literal",
+      );
+    if (expectedXref === undefined)
+      report.unverified.push(
+        "Xref correctness: no independent expected source address supplied.",
+      );
+    else report.checks.push("xrefs contain the expected source address");
+    if (values["second-procedure"] !== undefined) {
+      const secondAddress = observe(
+        await call("procedure_address", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.notEqual(secondAddress, dossier.procedure.address);
+      const secondCode = observe(
+        await call("procedure_pseudo_code", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.equal(typeof secondCode, "string");
+      assert.ok(secondCode.length > 0);
+      assert.ok(
+        !dossier.pseudocode.includes(values["second-marker"]),
+        "The second marker also appears in the first function's pseudocode.",
+      );
+      assert.ok(
+        secondCode.includes(values["second-marker"]),
+        "The second function's pseudocode omitted its expected marker.",
+      );
+      const restored = observe(
+        await call("procedure_pseudo_code", {
+          procedure: dossier.procedure.address,
+        }),
+      );
+      assert.equal(restored, dossier.pseudocode);
+      report.checks.push(
+        "second-function pseudocode identity and return to the original function",
+      );
     }
     const invalid = await client.callTool({
       name: "xrefs",
@@ -177,10 +315,10 @@ const mcp = async (cliDossier) => {
     await call("close_binary", {});
     opened = false;
     report.checks.push(
-      "one MCP connection, target selection, analysis/search/xrefs, invalid input, and close",
+      "one MCP connection, positive procedure inventory/search, contract-valid tool results, invalid input, and close",
     );
     report.checks.push(
-      "CLI/MCP function identity, pseudocode, assembly, and raw Evidence parity",
+      "CLI/MCP function identity, pseudocode, assembly, instructions, and relationship parity",
     );
   } finally {
     const completedPhase = phase;
@@ -195,7 +333,10 @@ const cleanup = async () => {
   try {
     await upstream.connect();
     if (config.mode === "attached") {
-      const metadata = await upstream.call("get_metadata", {});
+      const metadata =
+        config.protocol === "native"
+          ? await upstream.readResource("ida://idb/metadata")
+          : await upstream.call("get_metadata", {});
       assert.equal(metadata.sha256.toLowerCase(), await digest());
       report.checks.push(
         "existing GUI target remains open with the original input identity",
@@ -243,6 +384,7 @@ try {
         passed: report.passed,
         mode: report.mode,
         checks: report.checks,
+        unverified: report.unverified,
         ...(report.passed
           ? {}
           : {

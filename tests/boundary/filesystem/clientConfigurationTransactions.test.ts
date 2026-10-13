@@ -1,12 +1,90 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 
-import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
+import {
+  configureClientConfiguration,
+  inspectClientConfiguration,
+} from "../../../src/application/SetupClientConfiguration.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("accepts a literal UTF-8 replacement character without changing its value", async () => {
+  const root = await createTestTempDirectory("rea-client-config-utf8-");
+  const configPath = join(root, "config.json");
+  const original = Buffer.concat([
+    Buffer.from('{"label":"'),
+    Buffer.from("\uFFFD"),
+    Buffer.from('"}'),
+  ]);
+  await writeFile(configPath, original);
+  const result = await configureClientConfiguration(
+    { name: "cursor", format: "json", configPath },
+    {},
+    ["rea", "mcp"],
+  );
+  expect(result.status).toBe("configured");
+  expect(await readFile(`${configPath}.rea.backup`)).toEqual(original);
+  expect(JSON.parse(await readFile(configPath, "utf8")).label).toBe("\uFFFD");
+});
+
+it("previews and creates a current recovery backup while preserving the first backup", async () => {
+  const root = await createTestTempDirectory("rea-client-current-recovery-");
+  const configPath = join(root, "config.json");
+  const firstOriginal = '{"keep":"first"}\n';
+  const currentOriginal = '{"keep":"current"}\n';
+  const client = { name: "cursor", format: "json", configPath } as const;
+  await writeFile(configPath, currentOriginal);
+  await writeFile(`${configPath}.rea.backup`, firstOriginal);
+
+  const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
+    .update(currentOriginal, "utf8")
+    .digest("hex")}.recovery`;
+  expect(await inspectClientConfiguration(client, {}, ["rea", "mcp"])).toEqual({
+    status: "update",
+    backupPath: recoveryPath,
+  });
+
+  expect(
+    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toEqual({ status: "configured", backupPath: recoveryPath });
+  expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(
+    firstOriginal,
+  );
+  expect(await readFile(recoveryPath, "utf8")).toBe(currentOriginal);
+});
+
+it("blocks configuration when the planned content-addressed backup is occupied", async () => {
+  const root = await createTestTempDirectory("rea-client-recovery-conflict-");
+  const configPath = join(root, "config.json");
+  const firstOriginal = '{"keep":"first"}\n';
+  const currentOriginal = '{"keep":"current"}\n';
+  const client = { name: "cursor", format: "json", configPath } as const;
+  await writeFile(configPath, currentOriginal);
+  await writeFile(`${configPath}.rea.backup`, firstOriginal);
+  const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
+    .update(currentOriginal, "utf8")
+    .digest("hex")}.recovery`;
+  await writeFile(recoveryPath, "occupied by other data");
+
+  expect(
+    await inspectClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toMatchObject({
+    status: "invalid",
+    remediation: expect.stringContaining(recoveryPath),
+  });
+  expect(
+    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toEqual({ status: "failed", reason: "backup" });
+  expect(await readFile(configPath, "utf8")).toBe(currentOriginal);
+  expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(
+    firstOriginal,
+  );
+  expect(await readFile(recoveryPath, "utf8")).toBe("occupied by other data");
+});
 
 describe("client configuration write failures", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0).each([

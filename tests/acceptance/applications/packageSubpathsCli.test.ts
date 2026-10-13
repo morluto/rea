@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { expect } from "vitest";
 import { z } from "zod";
@@ -28,12 +29,18 @@ const createPackageSubpathFixture = async () => {
     'const literal = require("fi%xture");',
     'const scalar = require("scalar");',
     'const self = require("../node_modules/fi%xture/run.cjs");',
+    'const uri = require("file:///src/uri-dep.cjs");',
+    'const relativeUri = require("./uri-dep.cjs");',
   ].join("\n");
   const selfSource = 'const self = require("fi%xture"); module.exports = self;';
-  const importSource = 'import literal from "fi%xture";';
+  const importSource = [
+    'import literal from "fi%xture";',
+    'import uri from "FILE:///src/uri-dep.cjs?token=%2F#entry";',
+  ].join("\n");
   const files = {
     "src/main.cjs": source,
     "src/imports.mjs": importSource,
+    "src/uri-dep.cjs": "module.exports = 42;",
     "src/node_modules/fixture/parser.js": "module.exports = 1;",
     "src/node_modules/fixture.js": "module.exports = 'file';",
     "src/node_modules/fixture/index.js": "module.exports = 'directory';",
@@ -104,11 +111,20 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "fi%xture": "node_modules/fi%xture.js",
       scalar: "node_modules/scalar.js",
       "../node_modules/fi%xture/run.cjs": "node_modules/fi%xture/run.cjs",
+      "./uri-dep.cjs": "src/uri-dep.cjs",
     };
     for (const [specifier, target] of Object.entries(expectedTargets))
       expect(
         relative(root, nativeRequire.resolve(specifier)).replaceAll("\\", "/"),
       ).toBe(target);
+    expect(nativeRequire("./uri-dep.cjs")).toBe(42);
+    for (const specifier of [
+      "file:///src/uri-dep.cjs",
+      pathToFileURL(join(root, "src/uri-dep.cjs")).href,
+    ])
+      expect(() => nativeRequire.resolve(specifier)).toThrow(
+        expect.objectContaining({ code: "MODULE_NOT_FOUND" }),
+      );
     for (const specifier of ["exported/parser/", "exported/hidden", "blocked"])
       expect(() => nativeRequire.resolve(specifier)).toThrow(
         expect.objectContaining({ code: "ERR_PACKAGE_PATH_NOT_EXPORTED" }),
@@ -137,6 +153,41 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       },
     ])
       expectResolvedImports(imports, observation);
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "imports",
+        properties: expect.objectContaining({
+          module_link_kind: "require",
+          specifier: "file:///src/uri-dep.cjs",
+          resolved_path: null,
+          resolution_status: "external",
+        }),
+        evidence: sourceEvidence("src/main.cjs", source),
+      }),
+    );
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "imports",
+        properties: expect.objectContaining({
+          kind: "require",
+          specifier: "file:///src/uri-dep.cjs",
+          resolved_path: null,
+        }),
+        evidence: sourceEvidence("src/main.cjs", source),
+      }),
+    );
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "imports",
+        properties: expect.objectContaining({
+          module_link_kind: "import",
+          specifier: "FILE:///src/uri-dep.cjs?token=%2F#entry",
+          resolved_path: "src/uri-dep.cjs",
+          resolution_status: "resolved",
+        }),
+        evidence: sourceEvidence("src/imports.mjs", importSource),
+      }),
+    );
     expect(graph.edges).toContainEqual(
       expect.objectContaining({
         properties: expect.objectContaining({

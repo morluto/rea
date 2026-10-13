@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -74,7 +74,6 @@ function runCommand() {
     child = spawn(command[0], command.slice(1), {
       cwd: process.cwd(),
       env: process.env,
-      shell: process.platform === "win32",
       stdio: "inherit",
     });
     child.once("error", reject);

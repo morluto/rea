@@ -23,7 +23,9 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
+import { idaProtocol } from "./IdaConfiguration.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
+import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 import { isX86OnlyTarget } from "./IdaCallGraph.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
@@ -75,6 +77,7 @@ const modernTools = [
   "xrefs_to",
 ];
 const operationSet: ReadonlySet<string> = new Set(IDA_OPERATIONS);
+
 const isIdaOperation = (operation: string): operation is IdaOperation =>
   operationSet.has(operation);
 const wasCancelled = (options: ExecutionOptions | undefined): boolean =>
@@ -191,12 +194,15 @@ export class IdaSessionClient implements AnalysisClient {
           "This integration admits read-only analysis operations only.",
         ),
       );
-    if (operation === "procedure_callers" && this.config.mode === "headless")
+    if (
+      operation === "procedure_callers" &&
+      idaProtocol(this.config) !== "legacy"
+    )
       return err(
         new AnalysisCapabilityUnavailableError(
           "ida",
           operation,
-          "The modern upstream profile does not prove direct callers.",
+          "This upstream profile does not prove direct callers.",
         ),
       );
     if (operation !== "health") {
@@ -280,7 +286,7 @@ export class IdaSessionClient implements AnalysisClient {
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
     return new IdaOperationRunner(
       this.connection,
-      this.config.mode === "attached" ? "legacy" : "modern",
+      idaProtocol(this.config),
       this.#database,
       {
         signal: options?.signal,
@@ -418,11 +424,15 @@ export class IdaSessionClient implements AnalysisClient {
     const tools = new Set(await this.connection.connect());
     this.#callGraphAdvertised = tools.has("callgraph");
     const expected =
-      this.config.mode === "attached" ? legacyTools : modernTools;
+      this.config.protocol === "native"
+        ? nativeTools
+        : this.config.mode === "attached"
+          ? legacyTools
+          : modernTools;
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0)
       throw new AnalysisProtocolError(
-        `IDA MCP ${this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`,
+        `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`,
       );
     if (this.config.mode === "headless") {
       this.#workspace = await IdaWorkspace.allocate(
@@ -472,13 +482,24 @@ export class IdaSessionClient implements AnalysisClient {
     }
   }
 
+  async #nativeMetadata(): Promise<JsonValue> {
+    if (this.connection.readResource === undefined)
+      throw new AnalysisProtocolError(
+        "Native IDA MCP requires resources/read for recorded input metadata.",
+      );
+    return this.connection.readResource("ida://idb/metadata");
+  }
+
   async #observe(
     options?: ExecutionOptions,
     onObserved?: (metadata: JsonValue) => void,
   ): Promise<JsonValue> {
     let identity: string;
     if (this.config.mode === "attached") {
-      const raw = await this.connection.call("get_metadata", {});
+      const raw =
+        this.config.protocol === "native"
+          ? await this.#nativeMetadata()
+          : await this.connection.call("get_metadata", {});
       const metadata = legacyMetadataSchema.parse(raw);
       this.#metadata = raw;
       onObserved?.(raw);

@@ -227,6 +227,9 @@ describe("case-distinct APK resource names", () => {
     const inventory = parseEvidence(
       await runProviderAnalysis(path, "inventory_artifact", {}),
     );
+    expect(inventory.normalized_result).toMatchObject({
+      coverage_status: "partial",
+    });
     const result = projectAndroidApplicationEvidence({
       inventory_evidence: [inventory],
     });
@@ -234,6 +237,13 @@ describe("case-distinct APK resource names", () => {
       requireSuccessfulProjection(result).normalized_result,
     );
     expect(projection.root_format).toBe("apk");
+    expect(projection.coverage).toEqual({
+      status: "partial",
+      inventory_complete: true,
+    });
+    expect(projection.limitations).toContain(
+      "Source inventory coverage is partial; absence is unknown.",
+    );
     expect(projection.components.manifests).toHaveLength(1);
     expect(projection.components.dex).toHaveLength(1);
     expect(JSON.stringify(inventory)).toContain("res/2F.xml");

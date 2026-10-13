@@ -16,9 +16,9 @@ from urllib.parse import quote, urlsplit
 SITE_ORIGIN = "https://rea.tools"
 NOTES_FIXTURES = {"examples/notes-electron/index.html", "examples/notes-web/index.html"}
 NAVIGATION = (
+    ("Get started", "get-started/"),
     ("Showcases", "showcase/"),
     ("Blog", "blog/"),
-    ("Get started", "get-started/"),
     ("Guides", "guides/"),
     ("FAQ", "faq/"),
 )
@@ -114,12 +114,12 @@ def shared_blocks(root, path, source):
     }
     from website_i18n import language_markup
     selector, alternates = language_markup(root, path.relative_to(site).as_posix())
-    values["language_picker"] = selector if not metadata.noindex else ""
+    values["language_picker"] = indent(selector, "      ") if not metadata.noindex else ""
     values["alternates"] = alternates if not metadata.noindex else ""
     templates = root / "website/templates"
     return {
         name: indent(Template((templates / f"{name}.html.tmpl").read_text(encoding="utf-8")).substitute(values), "    ")
-        for name in ("sharing", "header", "footer")
+        for name in ("sharing", "theme", "header", "footer")
     }
 
 

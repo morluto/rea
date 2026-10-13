@@ -6,7 +6,7 @@ import { analyzeJavaScriptApplication } from "../../support/javascriptApplicatio
 import { parseApplicationGraphEvidence } from "../../../src/application/javascript/JavaScriptApplicationEvidenceGraph.js";
 import { findApplicationFeatureSeeds } from "../../../src/domain/javascript/javascriptFeatureSeed.js";
 import { compareSourceToBundle } from "../../../src/domain/javascript/sourceToBundleComparison.js";
-import { resolveSourceMapSource } from "../../../src/javascript/sourceMaps/DecodedSourceMap.js";
+import { resolveJavaScriptSourceMapUrl } from "../../../src/domain/javascript/javascriptSourceMapPaths.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
@@ -180,7 +180,7 @@ it.each([
     decoy: decoyPath = "src/a.js",
   }) => {
     if (sourceRoot !== undefined) {
-      const resolved = resolveSourceMapSource(
+      const resolved = resolveJavaScriptSourceMapUrl(
         source,
         sourceRoot,
         `https://example.test/${mapPath}`,

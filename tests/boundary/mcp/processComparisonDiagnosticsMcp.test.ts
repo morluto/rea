@@ -252,6 +252,56 @@ it("reports CLI trace specification issues like the MCP trace_spec input", async
   });
 });
 
+it("rejects a deep trace cycle as an input error through CLI and MCP", async () => {
+  const events = Array.from({ length: 6000 }, (_, index) => ({
+    id: `e${String(index)}`,
+    source: "lifecycle",
+    exact: { marker: index },
+  }));
+  const trace = {
+    events,
+    language: {
+      kind: "partial_order",
+      happens_before: events.map((event, index) => ({
+        before: event.id,
+        after: events[(index + 1) % events.length]!.id,
+      })),
+      not_before: events.map((event, index) => ({
+        event: event.id,
+        anchor: events[(index + 1) % events.length]!.id,
+      })),
+      unordered_groups: [{ events: events.map(({ id }) => id) }],
+    },
+  };
+  const issue = {
+    path: ["trace_spec", "language"],
+    message: "happens-before graph must be acyclic",
+  };
+  const capture = captureEvidence("left");
+  const root = await createTestTempDirectory("rea-process-trace-cycle-");
+  const capturePath = join(root, "capture.json");
+  const specPath = join(root, "spec.json");
+  await writeFile(capturePath, JSON.stringify(capture));
+  await writeFile(specPath, JSON.stringify(trace));
+  expect(
+    await compareProcessEvidenceFiles(capturePath, capturePath, specPath),
+  ).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [issue] },
+  });
+
+  const client = await connect();
+  const response = await client.callTool({
+    name: "compare_process_captures",
+    arguments: { left: capture, right: capture, trace_spec: trace },
+  });
+  expect(response.isError).toBe(true);
+  expect(response.content).toEqual([
+    { type: "text", text: expect.stringContaining(issue.message) },
+  ]);
+  await client.ping();
+});
+
 it("names the side and constraint when Evidence is not a usable capture", async () => {
   const client = await connect();
   const capture = captureEvidence("right");

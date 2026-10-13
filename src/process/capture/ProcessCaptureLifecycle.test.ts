@@ -5,6 +5,7 @@ import { parseProcessScenario } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
+import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 
 type Delivery = ProcessCaptureFinalization["signals"][number]["delivery"];
 
@@ -79,8 +80,8 @@ const start = (
       idle_timeout_ms: 10_000,
       ...scenario,
     }),
-    started: Date.now(),
-    lastOutput: () => Date.now(),
+    started: monotonicProcessCaptureClock(),
+    lastOutput: monotonicProcessCaptureClock,
     signal,
     signalTarget: fake.signalTarget,
     recordFinalization: (snapshot) => {

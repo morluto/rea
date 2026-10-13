@@ -39,7 +39,8 @@ const fixture = (version = "12.1.4") => {
     {
       platform: "linux",
       architecture: "x64",
-      readText: () => `application.version=${version}\n`,
+      readText: () =>
+        `application.version=${version}\napplication.java.min=21\n`,
       executable: () => true,
       probeJava: () => ({
         version: "21.0.11",

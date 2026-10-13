@@ -73,9 +73,9 @@ processTest.for(cases)(
       [
         "--input-type=module",
         "--eval",
-        `import { resolveJavaScriptSourceMapReference } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
+        `import { resolveJavaScriptSourceMapReferences } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
        const [source, root] = JSON.parse(process.argv[1]);
-       console.log(JSON.stringify(resolveJavaScriptSourceMapReference(source, root, "maps/main.js.map")));`,
+       console.log(JSON.stringify(resolveJavaScriptSourceMapReferences([source], root, "maps/main.js.map")[0]));`,
         JSON.stringify([scenario.source, sourceRoot]),
       ],
       { timeoutMs: 10_000 },

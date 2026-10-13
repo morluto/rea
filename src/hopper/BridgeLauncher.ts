@@ -413,6 +413,8 @@ const launchHopperProcess = async (input: {
       runId: input.session.runId,
       expectedCommand: ownershipCommand,
       hostEnvironment: input.options.environment,
+      // The helper observes EOF when this REA process exits, including SIGKILL.
+      stdin: "pipe",
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
   return spawn(input.argumentsForTarget);
@@ -434,6 +436,7 @@ export const linuxDemoLaunch = (
     return undefined;
   const helperArguments = [
     options.demoHelperPath,
+    "--owner-stdin",
     "--strategy",
     strategy ?? "direct",
     ...(strategy === "user-mount-namespace" ? ["--mount-private-x11"] : []),

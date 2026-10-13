@@ -1,0 +1,246 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  projectAnalysisView,
+  type AnalysisViewParent,
+} from "./analysisView.js";
+
+const symbol = (name: string) => ({
+  name,
+  address: null,
+  weak: null,
+  reexport: null,
+  source: "libSystem",
+});
+const coverage = <T>(items: T[], exhaustive = true) => ({
+  items,
+  total: exhaustive ? items.length : null,
+  exhaustive,
+  limitations: exhaustive ? [] : ["nm output may omit stripped symbols."],
+});
+const report = {
+  format: "mach-o",
+  selected_architecture: { name: "arm64", container_file_offset: 0 },
+  endian: null,
+  word_size: 64,
+  file_type: "2",
+  flags: ["0x00200085"],
+  uuid: "4C4C44E9-5555-3144-A1E9-D858E24A1CCE",
+  entrypoints: coverage([{ file_offset: 16384 }]),
+  architectures: coverage([
+    {
+      name: "arm64",
+      cpu_type: "16777228",
+      cpu_subtype: "0",
+      file_offset: 0,
+      size: 4096,
+      alignment: 14,
+    },
+  ]),
+  build_metadata: coverage([
+    { platform: "1", minimum_os: "14.0", sdk: "15.0", tools: [] },
+  ]),
+  load_commands: coverage([{ index: 0, kind: "LC_MAIN", fields: {} }]),
+  dependencies: coverage([
+    {
+      path: "/usr/lib/libSystem.B.dylib",
+      kind: "LC_LOAD_DYLIB",
+      current_version: "1351.0.0",
+      compatibility_version: "1.0.0",
+    },
+  ]),
+  imports: coverage(
+    ["_malloc", "_free", "_open"].map((name) => symbol(name)),
+    false,
+  ),
+  exports: coverage([symbol("__mh_execute_header")]),
+  segments: coverage([
+    {
+      name: "__TEXT",
+      vm_address: "0x100000000",
+      vm_size: 16384,
+      file_offset: 0,
+      file_size: 16384,
+      maximum_permissions: {
+        read: true,
+        write: false,
+        execute: true,
+        raw: "5",
+      },
+      initial_permissions: {
+        read: true,
+        write: false,
+        execute: true,
+        raw: "5",
+      },
+      sections: coverage([]),
+    },
+  ]),
+  provenance: [
+    {
+      tool: "nm",
+      command: ["/usr/bin/nm", "$ARTIFACT"],
+      tool_version: null,
+      version_reason: "fixture",
+      executable_sha256: "a".repeat(64),
+      exit: { code: 0, signal: null },
+      stdout_bytes: 10,
+      stderr_bytes: 0,
+    },
+  ],
+  limitations: ["Imports and exports combine dyld_info and nm."],
+};
+const parent = (
+  normalizedResult: unknown = report,
+  subject: AnalysisViewParent["subject"] = {
+    name: "tool",
+    digest: { sha256: "b".repeat(64) },
+    format: "mach-o",
+    architecture: "arm64",
+    local_path: "/bin/tool",
+  },
+): AnalysisViewParent => ({
+  evidenceId: `ev_${"c".repeat(64)}`,
+  operation: "inspect_macho",
+  normalizedResult,
+  subject,
+  limitations: ["Parent limitation."],
+});
+
+describe("Mach-O analysis views", () => {
+  it("summarizes slice identity and collection counts without rows", () => {
+    const projected = projectAnalysisView(parent(), { kind: "summary" });
+    if (!projected.ok) throw projected.error;
+    expect(projected.value).toMatchObject({
+      kind: "summary",
+      parent_operation: "inspect_macho",
+      artifact: { path: "/bin/tool", sha256: "b".repeat(64) },
+      summary: {
+        selected_architecture: { name: "arm64", container_file_offset: 0 },
+        uuid: report.uuid,
+        collections: {
+          imports: { returned: 3, total: null, exhaustive: false },
+          exports: { returned: 1, total: 1, exhaustive: true },
+          segments: { returned: 1, total: 1, exhaustive: true },
+        },
+        provenance_count: 1,
+        limitation_count: 3,
+      },
+      coverage: { status: "complete-within-view", examined: 10, total: 10 },
+      limitations: [
+        "Imports and exports combine dyld_info and nm.",
+        "Parent limitation.",
+        "nm output may omit stripped symbols.",
+      ],
+      unknowns: [expect.stringContaining("exhaustive imports;")],
+    });
+    expect(JSON.stringify(projected.value)).not.toContain("_malloc");
+  });
+
+  it("pages original rows with the producer's own coverage", () => {
+    const first = projectAnalysisView(parent(), {
+      kind: "macho",
+      facet: "imports",
+      offset: 1,
+      limit: 1,
+    });
+    if (!first.ok) throw first.error;
+    expect(first.value).toMatchObject({
+      kind: "macho",
+      item: [symbol("_free")],
+      source_total: null,
+      source_exhaustive: false,
+      coverage: { status: "page", examined: 1, total: 3, next_offset: 2 },
+    });
+    expect(first.value.limitations).toContain(
+      "nm output may omit stripped symbols.",
+    );
+    // Rows whose keys include an earlier row shape's keys stay whole.
+    for (const facet of ["architectures", "segments"] as const) {
+      const page = projectAnalysisView(parent(), {
+        kind: "macho",
+        facet,
+        offset: 0,
+        limit: 64,
+      });
+      if (!page.ok) throw page.error;
+      expect(page.value.kind === "macho" && page.value.item).toEqual(
+        report[facet].items,
+      );
+    }
+    const provenance = projectAnalysisView(parent(), {
+      kind: "macho",
+      facet: "provenance",
+      offset: 0,
+      limit: 64,
+    });
+    if (!provenance.ok) throw provenance.error;
+    expect(provenance.value).toMatchObject({
+      item: report.provenance,
+      source_total: 1,
+      source_exhaustive: true,
+      coverage: { exhausted: true, next_offset: null },
+    });
+    const past = projectAnalysisView(parent(), {
+      kind: "macho",
+      facet: "exports",
+      offset: 5,
+      limit: 64,
+    });
+    if (!past.ok) throw past.error;
+    expect(past.value.coverage).toMatchObject({
+      status: "empty",
+      exhausted: true,
+    });
+  });
+
+  it("keeps a missing subject unknown instead of inventing identity", () => {
+    const projected = projectAnalysisView(parent(report, null), {
+      kind: "summary",
+    });
+    if (!projected.ok) throw projected.error;
+    expect(projected.value.artifact).toEqual({ path: "", sha256: null });
+    expect(projected.value.unknowns).toContain(
+      "The parent has no recorded subject, so the inspected artifact path and SHA-256 are unknown.",
+    );
+  });
+
+  it("rejects other view kinds and malformed retained results", () => {
+    const wrongKind = projectAnalysisView(parent(), {
+      kind: "wasm",
+      facet: "exports",
+      offset: 0,
+      limit: 64,
+    });
+    if (wrongKind.ok) throw new Error("expected a view-kind refusal");
+    expect(wrongKind.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["view"],
+          message: "Mach-O inspection supports summary and macho views.",
+        },
+      ],
+    });
+    const contradictory = projectAnalysisView(
+      parent(report, {
+        name: "tool",
+        digest: { sha256: "b".repeat(64) },
+        format: "elf",
+        architecture: null,
+        local_path: "/bin/tool",
+      }),
+      { kind: "summary" },
+    );
+    if (contradictory.ok) throw new Error("expected a subject refusal");
+    expect(contradictory.error).toMatchObject({
+      issues: [{ path: ["source", "subject"] }],
+    });
+    const malformed = projectAnalysisView(
+      parent({ ...report, imports: { items: "x" } }),
+      { kind: "summary" },
+    );
+    expect(malformed.ok).toBe(false);
+    if (!malformed.ok) expect(malformed.error._tag).toBe("AnalysisInputError");
+  });
+});

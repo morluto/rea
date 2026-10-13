@@ -471,7 +471,18 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
       };
     }),
 );
-const origin = z.strictObject({ specifier: z.string(), importedPath: strings });
+const origin = z
+  .strictObject({
+    specifier: z.string(),
+    importedPath: strings,
+    resolutionMode: z
+      .enum(["import", "require", "compiler-dependent"])
+      .optional(),
+  })
+  .transform(({ resolutionMode, ...rest }) => ({
+    ...rest,
+    ...(resolutionMode === undefined ? {} : { resolutionMode }),
+  }));
 const provenance = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("module"),
@@ -519,15 +530,30 @@ const coverage = z
       ...(resourceLimits === undefined ? {} : { resourceLimits }),
     };
   });
-const moduleLink = z.strictObject({
-  kind: z.enum(["import", "require", "export", "re-export", "commonjs-export"]),
-  specifier: z.string().nullable(),
-  importedName: z.string().nullable(),
-  localName: z.string().nullable(),
-  exportedName: z.string().nullable(),
-  callableId: z.string().nullable(),
-  location: range,
-});
+const moduleLink = z
+  .strictObject({
+    resolutionMode: z
+      .enum(["import", "require", "compiler-dependent"])
+      .optional(),
+    kind: z.enum([
+      "import",
+      "type-import",
+      "require",
+      "export",
+      "re-export",
+      "commonjs-export",
+    ]),
+    specifier: z.string().nullable(),
+    importedName: z.string().nullable(),
+    localName: z.string().nullable(),
+    exportedName: z.string().nullable(),
+    callableId: z.string().nullable(),
+    location: range,
+  })
+  .transform(({ resolutionMode, ...rest }) => ({
+    ...rest,
+    ...(resolutionMode === undefined ? {} : { resolutionMode }),
+  }));
 const definitionKind = z.enum([
   "import",
   "variable",

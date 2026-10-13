@@ -21,6 +21,10 @@ import { err, ok, type Result } from "../../domain/result.js";
 export class PeResourcesService {
   constructor(readonly provider: PeResourcesPort) {}
 
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,

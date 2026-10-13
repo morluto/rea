@@ -78,7 +78,9 @@ export const readJsonObjectFile = (
             value === null ||
             Array.isArray(value)
           )
-            throw new TypeError("JSON document root must be an object");
+            return err(
+              invalidJson(operation, "JSON document root must be an object"),
+            );
           for (const members of scans)
             for (const [key, member] of members) {
               if (!Object.hasOwn(value, key)) continue;
@@ -177,7 +179,9 @@ export const readJsonObjectFile = (
             signal === undefined ? {} : { signal },
           );
           if (!rootObject)
-            throw new TypeError("JSON document root must be an object");
+            return err(
+              invalidJson(operation, "JSON document root must be an object"),
+            );
           const digest = hash.digest("hex");
           if (previousDigest !== undefined && digest !== previousDigest)
             throw new RegularFileChangedError(path);

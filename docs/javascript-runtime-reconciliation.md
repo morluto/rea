@@ -1,18 +1,21 @@
 # JavaScript static/runtime reconciliation
 
 REA can combine an existing static JavaScript Application Graph with one or
-more passive browser, Electron page, or Node/Electron V8 Inspector captures without collapsing their different
-authorities. The `reconcile_javascript_runtime` MCP tool and
+more browser, Electron, or Node/Electron V8 Inspector observations while
+preserving their different authorities. The `reconcile_javascript_runtime` MCP tool and
 `rea reconcile-javascript-runtime` CLI command accept Evidence records and
 return derived Evidence containing a combined JavaScript Application Graph
 and explicit match, ambiguity, mismatch, and unknown classifications.
 
 The operation performs no filesystem, browser, or Electron I/O. It accepts only
 semantically verified Evidence produced by `analyze_javascript_application`,
-`inspect_web_page`, `inspect_electron_page`, or
-`observe_javascript_runtime`; matching operation names alone
+`inspect_web_page`, `inspect_electron_page`, `observe_javascript_runtime`, or
+`capture_electron_scenario`; matching operation names alone
 is insufficient. Provider identity, predicate type, subject digest, target
 parameters, and normalized-result schemas are checked before reconciliation.
+
+`capture_electron_scenario` supplies target-only partial observations. It does
+not establish loaded-script coverage; see [Electron observation](electron-observation.md).
 
 ## Workflow
 
@@ -20,9 +23,9 @@ parameters, and normalized-result schemas are checked before reconciliation.
    Optional cache or assets directories can be analyzed independently and
    supplied as additional layers.
 2. Run `inspect_web_page`, `inspect_electron_page`, or the attach-only
-   `observe_javascript_runtime`. Capturing script sources
-   is optional, but a source capture provides the strongest byte
-   identity.
+   `observe_javascript_runtime`, or supply existing `capture_electron_scenario`
+   Evidence with the partial scope above. Capturing script sources is optional,
+   but a source capture provides the strongest byte identity.
 3. Pass the resulting Evidence records to `reconcile_javascript_runtime`.
    Browser URLs normally need an explicit URL-prefix mapping. Extracted
    Electron and V8 Inspector file locations are mapped automatically when runtime files remain
@@ -104,7 +107,7 @@ nodes. REA evaluates compatible static candidates conservatively:
 
 Every successful cross-layer `observed_as` edge has
 `authority: cross-layer-reconciliation` and `state: inferred`. The underlying
-artifact/AST observations and passive-CDP observations remain unchanged and
+artifact/AST observations and runtime observations remain unchanged and
 retain their own Evidence links.
 
 ## Loaded, resident, and not observed

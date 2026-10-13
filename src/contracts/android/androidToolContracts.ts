@@ -1,7 +1,10 @@
+import { z } from "zod";
 import {
   androidInputSchemas,
+  androidPackageInspectionInputSchema,
   androidResultSchemas,
 } from "../../domain/android/androidAnalysis.js";
+import { androidPackageSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";
@@ -12,14 +15,21 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_package",
     ...toolContractMetadata("inspect_android_package"),
     description:
-      "Inspect a local APK's package, SDK and permission declarations, decoded manifest and class/resource counts. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.",
+      'Inspect a local APK\'s package, SDK and permission declarations, decoded manifest and class/resource counts. Omitted or complete detail preserves the complete result. Select detail: "summary" for all declarations, engine identity and counts without decoded manifest text or duplicate raw calls; retains the complete source and returns a distinct linked inspect_analysis_view summary. Read the exact retained manifest with view kind android, facet manifest, offset and limit (UTF-16 code units), using normalized_result.parent_evidence_id. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.',
     kind: "android-provider",
-    inputSchema: androidInputSchemas.inspect_android_package,
+    inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
-      androidResultSchemas.inspect_android_package,
+      z.union([
+        androidResultSchemas.inspect_android_package,
+        androidPackageSummaryViewResultSchema,
+      ]),
     ),
     examples: [
       { title: "Inspect an APK", input: { path: "/tmp/Example.apk" } },
+      {
+        title: "Inspect APK declarations with retained manifest",
+        input: { path: "/tmp/Example.apk", detail: "summary" },
+      },
     ],
   },
   {

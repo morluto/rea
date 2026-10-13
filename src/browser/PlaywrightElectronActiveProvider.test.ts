@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { dirname } from "node:path";
 
 import * as processOwnership from "../process/ProcessOwnership.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
@@ -28,12 +29,13 @@ it("passes the selected environment and ownership token to Electron launch", asy
       throw new Error("launch boundary reached");
     },
   );
-  const result = await provider.capture(
-    electronActiveObservationInputSchema.parse({
+  const result = await provider.capture({
+    ...electronActiveObservationInputSchema.parse({
       executable_path: process.execPath,
       application_path: process.execPath,
     }),
-  );
+    application_root: dirname(process.execPath),
+  });
 
   expect(result.ok).toBe(false);
   expect(launchedEnvironment).toEqual({
@@ -151,12 +153,13 @@ it("retains the partial capture without taskkill when Windows lineage is unavail
   );
 
   try {
-    const result = await provider.capture(
-      electronActiveObservationInputSchema.parse({
+    const result = await provider.capture({
+      ...electronActiveObservationInputSchema.parse({
         executable_path: process.execPath,
         application_path: process.execPath,
       }),
-    );
+      application_root: dirname(process.execPath),
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected unverified cleanup to fail");

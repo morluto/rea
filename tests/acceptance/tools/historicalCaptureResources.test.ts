@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
-import { HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../src/browser/history/CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../src/browser/history/CaptureRelease.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../../../src/domain/webNetworkCapture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -46,7 +46,7 @@ const capture = (count: number) =>
 // Node.js enforces the decoder's V8 heap flags. Bun ignores them; on Windows
 // the decoder's Job Object commit limit is the enforced bound instead, and
 // Bun elsewhere has no bound this capture can reach.
-const jobLimit = HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES;
+const jobLimit = NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES;
 it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
   "reports real HAR memory exhaustion through CLI and MCP and preserves server usability",
   async () => {

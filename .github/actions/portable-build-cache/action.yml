@@ -1,14 +1,24 @@
 name: Portable build cache
-description: Reuse Turbo build outputs without serializing verification jobs.
+description: Restore portable Turbo build outputs from the current run or cross-run cache.
 inputs:
   save:
     description: Save newly built outputs after the job succeeds.
     default: "false"
+  build_cache_artifact:
+    description: Reuse portable Turbo outputs uploaded by the current workflow run.
+    default: ""
 runs:
   using: composite
   steps:
+    - name: Download portable build outputs from this workflow run
+      if: inputs.build_cache_artifact != ''
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.build_cache_artifact }}
+        path: .turbo/cache/
     - name: Resolve portable build task hashes
       id: plan
+      if: inputs.build_cache_artifact == ''
       shell: bash
       env:
         BUILD_CACHE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.npmrc', '.nvmrc', 'package-lock.json') }}
@@ -28,14 +38,14 @@ runs:
             console.log(`prefix=${process.env.BUILD_CACHE_PREFIX}-`);
           ' >> "$GITHUB_OUTPUT"
     - name: Restore portable build outputs
-      if: inputs.save != 'true'
+      if: inputs.build_cache_artifact == '' && inputs.save != 'true'
       uses: actions/cache/restore@v4
       with:
         path: .turbo/cache/
         key: ${{ steps.plan.outputs.key }}
         restore-keys: ${{ steps.plan.outputs.prefix }}
     - name: Restore and save portable build outputs
-      if: inputs.save == 'true'
+      if: inputs.build_cache_artifact == '' && inputs.save == 'true'
       uses: actions/cache@v4
       with:
         path: .turbo/cache/

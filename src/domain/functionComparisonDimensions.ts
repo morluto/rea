@@ -233,6 +233,18 @@ const compareCalls = (
 ): FunctionDimension => {
   const leftValues = callProjection(left);
   const rightValues = callProjection(right);
+  const coverageLimitations = [
+    ...left.callCoverageLimitations.map((reason) => `Left: ${reason}`),
+    ...right.callCoverageLimitations.map((reason) => `Right: ${reason}`),
+  ];
+  if (coverageLimitations.length > 0)
+    return unresolvedDimension({
+      dimension: "calls",
+      links: context.links,
+      leftCount: leftValues.length,
+      rightCount: rightValues.length,
+      limitations: coverageLimitations,
+    });
   if ([...leftValues, ...rightValues].some(({ name }) => isAutoName(name)))
     return unresolvedDimension({
       dimension: "calls",

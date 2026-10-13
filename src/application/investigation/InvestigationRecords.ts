@@ -19,6 +19,8 @@ import type {
   EvidenceWriter,
   EvidenceUnknownWriter,
   UnknownRegistryPort,
+  UnknownPage,
+  UnknownQuery,
 } from "./InvestigationRecordPort.js";
 
 /** One investigation's validated record owner, independent of binary execution. */
@@ -122,6 +124,10 @@ export class InvestigationRecords
     } = {},
   ): ResidualUnknown[] {
     return this.#evidence.listUnknowns(filters);
+  }
+
+  listUnknownsPage(query: UnknownQuery = {}): UnknownPage {
+    return this.#evidence.listUnknownsPage(query);
   }
 
   /** Verify registry consistency without asserting the answer is true. */

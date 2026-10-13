@@ -228,11 +228,19 @@ The shared stylesheet defines the site. Its core colors are:
 | `--soft`   | `#f4f6f8` | `#181825` | Code and supporting surfaces     |
 | `--accent` | `#294f82` | `#89b4fa` | Links and meaningful highlights  |
 
-The light values are the default. When the reader's system is set to dark, a
-`prefers-color-scheme: dark` block at the end of the stylesheet swaps in the dark
-values, which are [Catppuccin Mocha](https://github.com/catppuccin/palette)
-(MIT). There is no toggle. Any new fixed color needs a dark counterpart in
-that block.
+The header's sun/moon button switches between light and dark. On the first visit,
+the site follows the system preference; a manual choice is saved for later visits
+and shared across pages and languages on that host. Without JavaScript, the site
+uses the light palette and hides the switch.
+
+`assets/theme.js` applies the choice before styles load and owns theme changes.
+The stylesheet scopes the dark palette to `data-theme="dark"` on the root,
+using [Catppuccin Mocha](https://github.com/catppuccin/palette) colors (MIT).
+Any new fixed color needs a dark counterpart in that section. Keep selector
+specificity unchanged with `:where()` when scoping component rules.
+Embedded SVGs inherit the page's `color-scheme`; canvas demos listen for
+`website-theme-change` to redraw. Check both themes, including a manual choice
+that differs from the system preference.
 
 Use the system sans-serif stack for prose and the shared monospace stack for
 code. The current container is at most 1080px wide, with article text limited to

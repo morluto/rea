@@ -134,6 +134,114 @@ describe("Codex agent release evaluation", () => {
   });
 });
 
+describe("Codex completed tool call parsing", () => {
+  it("does not let an unfinished direct event reserve a completed call identity", () => {
+    const evidence = observation();
+    const metrics = evaluateCodexEvents(
+      [
+        {
+          type: "mcp_tool_call",
+          id: "same-call",
+          status: "in_progress",
+          server: "rea",
+          tool: evidence.operation,
+          arguments: {},
+        },
+        {
+          type: "item.completed",
+          item: {
+            id: "same-call",
+            type: "mcp_tool_call",
+            status: "completed",
+            server: "rea",
+            tool: evidence.operation,
+            arguments: {},
+            result: { structuredContent: evidence },
+          },
+        },
+        {
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: `Observed Evidence ${evidence.evidence_id} supports the artifact claim; runtime behavior remains unknown without runtime authority.`,
+          },
+        },
+      ],
+      evidence.operation,
+      { requireEvidence: true },
+    );
+
+    expect(metrics).toMatchObject({
+      naturalUse: true,
+      correctFirstTool: true,
+      reaCalls: [{ id: "same-call" }],
+      evidenceIds: [evidence.evidence_id],
+      finalCitesEvidence: true,
+      answerHeuristicsMet: true,
+    });
+  });
+
+  it.each([
+    { server: "rea", server_name: "other" },
+    { tool: "inspect_managed_artifact", name: "other_tool" },
+    { server: 42 },
+    { arguments: { value: 1 }, input: { value: 2 } },
+  ])(
+    "rejects completed calls with invalid or conflicting fields: %j",
+    (aliases) => {
+      const evidence = observation();
+      const metrics = evaluateCodexEvents(
+        [
+          {
+            type: "item.completed",
+            item: {
+              type: "mcp_tool_call",
+              status: "completed",
+              server: "rea",
+              tool: evidence.operation,
+              arguments: {},
+              result: { structuredContent: evidence },
+              ...aliases,
+            },
+          },
+        ],
+        evidence.operation,
+        { requiredToolSubsequence: [evidence.operation] },
+      );
+
+      expect(metrics).toMatchObject({
+        naturalUse: false,
+        correctFirstTool: false,
+        requiredToolSubsequenceMet: false,
+        evidenceIds: [],
+      });
+    },
+  );
+
+  it("preserves legacy completed calls with no server field", () => {
+    const metrics = evaluateCodexEvents(
+      [
+        {
+          type: "item.completed",
+          item: {
+            type: "mcp_tool_call",
+            status: "completed",
+            tool: "inspect_managed_artifact",
+            arguments: {},
+          },
+        },
+      ],
+      "inspect_managed_artifact",
+    );
+
+    expect(metrics).toMatchObject({
+      naturalUse: true,
+      correctFirstTool: true,
+      reaCalls: [{ server: null }],
+    });
+  });
+});
+
 describe("Codex Evidence delivery", () => {
   it("rejects diagnostic IDs and failed results as delivered Evidence", () => {
     const evidenceId = `ev_${"a".repeat(64)}`;
@@ -524,28 +632,32 @@ describe("Codex agent completion evaluation", () => {
     });
   });
 
-  it("recognizes Codex MCP failed status when the error field is null", () => {
-    const metrics = evaluateCodexEvents(
-      [
-        {
-          type: "item.completed",
-          item: {
-            id: "item-failed",
-            type: "mcp_tool_call",
-            server: "rea",
-            tool: "analyze_javascript_application",
-            arguments: { input_path: "/tmp/app.asar" },
-            result: { structured_content: { error: { code: "denied" } } },
-            error: null,
-            status: "failed",
-          },
-        },
-      ],
-      "analyze_javascript_application",
-    );
+  it.each(["item.completed", "mcp_tool_call"] as const)(
+    "counts a failed completed invocation from %s without delivering Evidence",
+    (type) => {
+      const item = {
+        id: "item-failed",
+        type: "mcp_tool_call",
+        server: "rea",
+        tool: "analyze_javascript_application",
+        arguments: { input_path: "/tmp/app.asar" },
+        result: { structured_content: { error: { code: "denied" } } },
+        error: null,
+        status: "failed",
+      };
+      const metrics = evaluateCodexEvents(
+        [type === "item.completed" ? { type, item } : item],
+        "analyze_javascript_application",
+      );
 
-    expect(metrics.reaCalls[0]?.error).toBe(true);
-  });
+      expect(metrics).toMatchObject({
+        naturalUse: true,
+        correctFirstTool: true,
+        evidenceIds: [],
+        reaCalls: [{ error: true }],
+      });
+    },
+  );
 });
 
 describe("Codex agent workflow evaluation", () => {

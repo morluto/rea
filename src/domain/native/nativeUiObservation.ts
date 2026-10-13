@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { decodeCanonicalBase64 } from "../webScreenshot.js";
+import { readPngHeaderDimensions } from "../pngHeader.js";
 
 const scope = {
   pid: z.number().int().positive(),
@@ -95,11 +96,8 @@ const nativeUiScreenshotSchema = z
         code: "custom",
         message: "PNG screenshot digest mismatch",
       });
-    if (
-      bytes.byteLength < 24 ||
-      !bytes.subarray(0, 8).equals(PNG_SIGNATURE) ||
-      bytes.subarray(12, 16).toString("ascii") !== "IHDR"
-    ) {
+    const dimensions = readPngHeaderDimensions(bytes);
+    if (dimensions === undefined) {
       context.addIssue({
         code: "custom",
         message: "Screenshot bytes are not a PNG image",
@@ -107,16 +105,14 @@ const nativeUiScreenshotSchema = z
       return;
     }
     if (
-      bytes.readUInt32BE(16) !== screenshot.width ||
-      bytes.readUInt32BE(20) !== screenshot.height
+      dimensions.width !== screenshot.width ||
+      dimensions.height !== screenshot.height
     )
       context.addIssue({
         code: "custom",
         message: "PNG screenshot dimensions mismatch",
       });
   });
-
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 export const nativeUiSnapshotSchema = z.strictObject({
   window: z.strictObject({

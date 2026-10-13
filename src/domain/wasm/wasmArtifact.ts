@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { localPathStringSchema } from "../localPath.js";
 
@@ -137,11 +138,20 @@ export type InspectWasmArtifactInput = z.infer<
 >;
 export type WasmArtifact = z.infer<typeof wasmArtifactSchema>;
 
-/** A WASM observation must identify the exact selected path and byte digest. */
+/** A WASM observation must identify the selected file path and byte digest. */
+export type WasmArtifactSubject = Pick<
+  EvidenceSubjectTarget,
+  "path" | "sha256" | "format"
+>;
+type WasmArtifactFileSubject = WasmArtifactSubject & {
+  readonly format: "file";
+};
+
 export const wasmArtifactMatchesSubject = (
   artifact: WasmArtifact["artifact"],
-  subject: Pick<WasmArtifact["artifact"], "path" | "sha256"> | null | undefined,
-): subject is Pick<WasmArtifact["artifact"], "path" | "sha256"> =>
+  subject: WasmArtifactSubject | null | undefined,
+): subject is WasmArtifactFileSubject =>
   subject != null &&
   subject.path === artifact.path &&
-  subject.sha256 === artifact.sha256;
+  subject.sha256 === artifact.sha256 &&
+  subject.format === "file";

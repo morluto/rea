@@ -3,6 +3,18 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "./config/parseConfig.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 
+it("reports a configuration failure for a NUL in Hopper loader arguments", () => {
+  const result = parseConfig({
+    HOPPER_LOADER_ARGS_JSON: JSON.stringify(["--option", "value\0suffix"]),
+  });
+  if (result.ok)
+    throw new Error("NUL argv cannot be passed to a child process");
+  expect(result.error).toMatchObject({
+    settings: [{ setting: "HOPPER_LOADER_ARGS_JSON" }],
+  });
+  expect(result.error.message).toContain("NUL");
+});
+
 describe("runtime configuration", () => {
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});

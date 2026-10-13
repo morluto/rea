@@ -38,6 +38,21 @@ export interface EvidenceUnknownWriter {
   ): Result<ResidualUnknown | null, AnalysisError>;
 }
 
+export type UnknownPage = {
+  readonly items: ResidualUnknown[];
+  readonly total: number;
+  readonly offset: number;
+  readonly next_offset: number | null;
+};
+
+export interface UnknownQuery {
+  readonly status?: UnknownStatus;
+  readonly severity?: ResidualUnknown["severity"];
+  readonly domain?: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
 /** Optimistic Unknown revisions and consistency verification. */
 export interface UnknownRegistryPort {
   recordUnknown(
@@ -51,6 +66,7 @@ export interface UnknownRegistryPort {
     readonly severity?: ResidualUnknown["severity"];
     readonly domain?: string;
   }): ResidualUnknown[];
+  listUnknownsPage(query?: UnknownQuery): UnknownPage;
   verifyUnknownResolution(unknownId: string): Result<
     {
       readonly valid: boolean;

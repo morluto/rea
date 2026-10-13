@@ -374,9 +374,7 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(session.exportAnalysisSnapshot()).toMatchObject({
       ok: false,
       error: {
-        message: expect.stringContaining(
-          "Analysis snapshots are unavailable because analysis metadata may have changed",
-        ),
+        _tag: "EvidenceIntegrityError",
       },
     });
     expect((await session.open(target)).ok).toBe(true);
@@ -384,9 +382,7 @@ describe("evidence metadata imports and snapshot cache", () => {
     expect(session.importAnalysisSnapshot(baseline.value)).toMatchObject({
       ok: false,
       error: {
-        userMessage: expect.stringContaining(
-          "Close the active target without saving a snapshot",
-        ),
+        _tag: "EvidenceIntegrityError",
       },
     });
     expect(session.exportEvidenceBundle().records).toContainEqual(relocated);

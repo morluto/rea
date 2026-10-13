@@ -14,7 +14,9 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { browserCaptureComparisonInputSchema } from "../domain/browserCaptureComparison.js";
+import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
+import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
+import { compareWebCapturesInputSchema } from "../domain/webCaptureDiffSchemas.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
@@ -59,13 +61,18 @@ const registerWebMcp = (
     run: ({ args, options }) =>
       logCliCommand(logger, "discover-webmcp-tools", async () => {
         const context = browserContext();
-        const parsed = discoverWebMcpToolsInputSchema.safeParse({
+        const input = {
           cdp_endpoint: args.endpoint,
           allowed_origins: options.allowedOrigins,
           target_id: args.targetId,
           observation_ms: options.observationMs,
-        });
-        if (!parsed.success) return inputError("discover_webmcp_tools");
+        };
+        const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
+        if (!parsed.success)
+          return inputError(
+            "discover_webmcp_tools",
+            projectInputIssues(parsed.error.issues, input),
+          );
         const result = await discoverWebMcpTools(context.provider, parsed.data);
         return result.ok ? result.value : browserCliError(result.error);
       }),
@@ -104,16 +111,28 @@ const registerCaptureDiff = (
         });
         if (!inputs.ok) return inputs.error;
         const { before, after, normalization } = inputs.value;
-        const scenarioComparison =
-          browserCaptureComparisonInputSchema.safeParse({
-            before_scenario: before,
-            after_scenario: after,
-            normalization,
-          });
-        const parsed = scenarioComparison.success
-          ? scenarioComparison
-          : browserCaptureComparisonInputSchema.safeParse({ before, after });
-        if (!parsed.success) return inputError("compare_web_captures");
+        // Passive snapshots own the inspection wrapper. Otherwise recognize
+        // scenario-owned fields even when the scenario manifest is missing.
+        const scenarioInput = [before, after].some(
+          (capture) =>
+            typeof capture === "object" &&
+            capture !== null &&
+            !("inspection" in capture) &&
+            Object.keys(browserScenarioCaptureSchema.shape).some(
+              (field) => field in capture,
+            ),
+        );
+        const input = scenarioInput
+          ? { before_scenario: before, after_scenario: after, normalization }
+          : { before, after };
+        const parsed = scenarioInput
+          ? compareBrowserScenariosInputSchema.safeParse(input)
+          : compareWebCapturesInputSchema.safeParse(input);
+        if (!parsed.success)
+          return inputError(
+            "compare_web_captures",
+            projectInputIssues(parsed.error.issues, input),
+          );
         const result = await compareWebCaptureEvidence(
           new CdpBrowserProvider(),
           parsed.data,
@@ -140,12 +159,17 @@ const registerScreenshot = (
     run: ({ args, options }) =>
       logCliCommand(logger, "capture-web-screenshot", async () => {
         const context = browserContext();
-        const parsed = captureWebScreenshotInputSchema.safeParse({
+        const input = {
           cdp_endpoint: args.endpoint,
           allowed_origins: options.allowedOrigins,
           target_id: args.targetId,
-        });
-        if (!parsed.success) return inputError("capture_web_screenshot");
+        };
+        const parsed = captureWebScreenshotInputSchema.safeParse(input);
+        if (!parsed.success)
+          return inputError(
+            "capture_web_screenshot",
+            projectInputIssues(parsed.error.issues, input),
+          );
         const result = await captureWebScreenshot(
           context.provider,
           parsed.data,

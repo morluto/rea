@@ -1,11 +1,11 @@
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { hasNibArchiveSignature } from "../../domain/apple/appleArchiveFormat.js";
 import { TextDecoder } from "node:util";
 import {
   InterfaceBuilderDecodeBudget,
   InterfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
 
-const MAGIC = Buffer.from("NIBArchive", "ascii");
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
 
 interface NibObjectRecord {
@@ -39,7 +39,7 @@ export const decodeNibArchive = (
   bytes: Buffer,
   budget = new InterfaceBuilderDecodeBudget(DEFAULT_DECODE_BUDGET_BYTES),
 ): NibArchiveDocument => {
-  if (bytes.length < 50 || !bytes.subarray(0, MAGIC.length).equals(MAGIC))
+  if (bytes.length < 50 || !hasNibArchiveSignature(bytes))
     throw new TypeError("NIBArchive magic or header is invalid");
 
   const formatVersion = readU32(bytes, 10);
@@ -134,7 +134,14 @@ export const decodeNibArchive = (
       const value = values.get(index);
       if (value === undefined) continue;
       const key = keys[value.key_index];
-      if (key !== undefined) fields[key] = value.value;
+      if (key !== undefined)
+        // Archive keys are data, including the legacy __proto__ setter name.
+        Object.defineProperty(fields, key, {
+          value: value.value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
     }
     return [{ id, class_name: className, values: fields }];
   });
@@ -519,7 +526,8 @@ const decodeUtf8 = (
   label: string,
 ): string => {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
+    // These are length-prefixed names, not standalone text documents.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
       bytes.subarray(start, end),
     );
   } catch (cause: unknown) {

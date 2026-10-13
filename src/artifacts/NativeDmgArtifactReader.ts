@@ -22,6 +22,7 @@ import {
   type NativeDmgInfo,
 } from "./NativeDmgOwnership.js";
 const HDIUTIL_COMMAND_TIMEOUT_MS = 120_000;
+const VERIFY_SETTLE_DELAYS_MS = [250, 500] as const;
 // APFS ejects and busy reporting can lag a detach attempt.
 const DETACH_SETTLE_DELAYS_MS = [250, 500, 1000] as const;
 const delay = (milliseconds: number): Promise<void> =>
@@ -44,22 +45,30 @@ export interface NativeDmgHost {
 
 class NativeDmgCommandFailure extends ArtifactReaderFailure {
   readonly processNotStarted: boolean;
+  readonly verifyDiagnostic: string | undefined;
+  readonly exitCode: number | null;
 
   constructor(
-    reason: ArtifactReaderFailure["reason"],
+    failure: {
+      readonly reason: ArtifactReaderFailure["reason"];
+      readonly verifyDiagnostic?: string;
+    },
     message: string,
     readonly stdout: string,
     options?: {
       readonly cause?: unknown;
       readonly processNotStarted?: boolean;
+      readonly exitCode?: number;
     },
   ) {
     super(
-      reason,
+      failure.reason,
       message,
       options?.cause === undefined ? undefined : { cause: options.cause },
     );
     this.processNotStarted = options?.processNotStarted ?? false;
+    this.verifyDiagnostic = failure.verifyDiagnostic;
+    this.exitCode = options?.exitCode ?? null;
   }
 }
 
@@ -84,7 +93,7 @@ const createSystemHost = (
       const output = execFileOutputFailure(cause);
       if (cause instanceof Error && cause.name === "AbortError")
         throw new NativeDmgCommandFailure(
-          "cancelled",
+          { reason: "cancelled" },
           "DMG operation cancelled",
           output?.stdout ?? "",
           { cause },
@@ -99,7 +108,7 @@ const createSystemHost = (
           cause,
         };
       throw new NativeDmgCommandFailure(
-        commandFailureReason(cause, arguments_[0]),
+        classifyCommandFailure(cause, arguments_[0]),
         `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(cause, arguments_)}`,
         output?.stdout ?? "",
         { cause, processNotStarted: processNotStarted(cause) },
@@ -348,8 +357,7 @@ export class NativeDmgArtifactReader implements ArtifactReader {
   }
 
   async #attach(signal?: AbortSignal): Promise<void> {
-    await runChecked(this.host, ["verify", this.path], signal);
-    this.#provenance.push(command(["verify", this.path], ["read"]));
+    await this.#verify(signal);
     const baseline = await this.#readInfo();
     this.#baselineDevices = new Set(
       baseline.images.flatMap((image) =>
@@ -431,6 +439,40 @@ export class NativeDmgArtifactReader implements ArtifactReader {
     }
   }
 
+  async #verify(signal?: AbortSignal): Promise<void> {
+    const arguments_ = ["verify", this.path];
+    const deadline = performance.now() + HDIUTIL_COMMAND_TIMEOUT_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      if (signal?.aborted === true)
+        throw new NativeDmgCommandFailure(
+          { reason: "cancelled" },
+          "DMG operation cancelled",
+          "",
+          { cause: signal.reason },
+        );
+      try {
+        await runChecked(this.host, arguments_, signal, {
+          timeoutMs: Math.max(1, Math.ceil(deadline - performance.now())),
+        });
+        this.#provenance.push(command(arguments_, ["read"]));
+        return;
+      } catch (cause: unknown) {
+        if (!(cause instanceof NativeDmgCommandFailure)) throw cause;
+        this.#provenance.push(command(arguments_, ["read"], cause.exitCode));
+        const delayMs = VERIFY_SETTLE_DELAYS_MS[attempt];
+        // Retry only the producer's explicit transient diagnostic, before any mount.
+        if (
+          cause.verifyDiagnostic !== "Resource temporarily unavailable" ||
+          delayMs === undefined ||
+          deadline - performance.now() <= delayMs
+        )
+          throw cause;
+        await (this.host.delay ?? delay)(delayMs);
+        if (performance.now() >= deadline) throw cause;
+      }
+    }
+  }
+
   async #readInfo(): Promise<NativeDmgInfo> {
     const info = await runChecked(this.host, ["info", "-plist"], undefined, {
       timeoutMs: HDIUTIL_COMMAND_TIMEOUT_MS,
@@ -501,14 +543,14 @@ const runChecked = async (
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (cause instanceof Error && cause.name === "AbortError")
       throw new NativeDmgCommandFailure(
-        "cancelled",
+        { reason: "cancelled" },
         "DMG operation cancelled",
         execFileOutputFailure(cause)?.stdout ?? "",
         { cause },
       );
     const output = execFileOutputFailure(cause);
     throw new NativeDmgCommandFailure(
-      commandFailureReason(cause, arguments_[0]),
+      classifyCommandFailure(cause, arguments_[0]),
       `hdiutil ${arguments_[0] ?? "operation"} failed: ${describeCommandFailure(
         cause,
         arguments_,
@@ -527,17 +569,17 @@ const runChecked = async (
       stdout: result.stdout,
       ...(result.stderr === undefined ? {} : { stderr: result.stderr }),
     };
-    const reason = commandFailureReason(failure, arguments_[0]);
+    const classification = classifyCommandFailure(failure, arguments_[0]);
     const details = describeCommandFailure(failure, arguments_);
     const unknownVerifyFailure =
-      arguments_[0] === "verify" && reason === "unavailable";
+      arguments_[0] === "verify" && classification.reason === "unavailable";
     throw new NativeDmgCommandFailure(
-      reason,
+      classification,
       unknownVerifyFailure
         ? `hdiutil verify failed; captured diagnostics do not establish the failure cause: ${details}`
         : `hdiutil ${arguments_[0] ?? "operation"} failed: ${details}`,
       result.stdout,
-      { cause: result.cause ?? failure },
+      { cause: result.cause ?? failure, exitCode: result.exitCode },
     );
   }
   return { stdout: result.stdout, exitCode: 0 };
@@ -587,20 +629,36 @@ const processOutput = (cause: unknown, field: "stdout" | "stderr"): string => {
   return typeof value === "string" ? value : "";
 };
 
-const commandFailureReason = (
+const classifyCommandFailure = (
   cause: unknown,
   operation: string | undefined,
-): ArtifactReaderFailure["reason"] => {
-  if (typeof cause !== "object" || cause === null) return "unavailable";
+): {
+  readonly reason: ArtifactReaderFailure["reason"];
+  readonly verifyDiagnostic?: string;
+} => {
+  if (typeof cause !== "object" || cause === null)
+    return { reason: "unavailable" };
   const code = Reflect.get(cause, "code");
   const exitCode = Reflect.get(cause, "exitCode");
-  if (typeof code === "number" || typeof exitCode === "number")
-    return operation === "verify" ? verifyFailureReason(cause) : "unavailable";
+  if (typeof code === "number" || typeof exitCode === "number") {
+    if (operation !== "verify") return { reason: "unavailable" };
+    const diagnostic = verifyFailureDiagnostic(
+      processOutput(cause, "stdout"),
+      processOutput(cause, "stderr"),
+    );
+    return {
+      reason: verifyFailureReason(diagnostic),
+      ...(diagnostic === undefined ? {} : { verifyDiagnostic: diagnostic }),
+    };
+  }
   if (code === "ENOENT") {
     const syscall = Reflect.get(cause, "syscall");
-    return typeof syscall === "string" && syscall.startsWith("spawn")
-      ? "unavailable"
-      : "io";
+    return {
+      reason:
+        typeof syscall === "string" && syscall.startsWith("spawn")
+          ? "unavailable"
+          : "io",
+    };
   }
   if (
     code === "EACCES" ||
@@ -613,19 +671,17 @@ const commandFailureReason = (
     code === "EMFILE" ||
     code === "ENFILE"
   )
-    return "io";
-  return "unavailable";
+    return { reason: "io" };
+  return { reason: "unavailable" };
 };
 
 const verifyFailureReason = (
-  cause: unknown,
+  diagnostic: string | undefined,
 ): ArtifactReaderFailure["reason"] => {
-  const diagnostic = verifyFailureDiagnostic(
-    processOutput(cause, "stdout"),
-    processOutput(cause, "stderr"),
-  );
   switch (diagnostic) {
+    // hdiutil follows AppleLanguages, so en-GB and en-AU spell it "recognised".
     case "image not recognized":
+    case "image not recognised":
       return "format";
     case "invalid checksum":
     case "image data corrupted":
@@ -654,11 +710,12 @@ const verifyFailureDiagnostic = (
 const command = (
   arguments_: readonly string[],
   effects: ArtifactCommand["effects"],
+  exitCode: number | null = 0,
 ): ArtifactCommand => ({
   tool: "/usr/bin/hdiutil",
   arguments: [...arguments_],
   tool_version: null,
   executable_sha256: null,
-  exit_code: 0,
+  exit_code: exitCode,
   effects,
 });

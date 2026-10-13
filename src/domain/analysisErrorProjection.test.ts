@@ -25,6 +25,91 @@ import { ProviderSelectionError } from "./providerSelectionError.js";
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import { nativeCallPartialObservationSchema } from "./native/nativeCallPartialObservation.js";
 
+describe("capability failure retry disposition", () => {
+  it.each([
+    { options: {}, retryable: false, category: "unsupported_provider" },
+    {
+      options: { retryable: false },
+      retryable: false,
+      category: "unsupported_provider",
+    },
+    { options: { retryable: true }, retryable: true, category: "unavailable" },
+  ] as const)(
+    "preserves the producer's $retryable disposition",
+    ({ options, retryable, category }) => {
+      const reason = "Native self-test failed with a sharing violation";
+      const projected = projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture-provider",
+          "inspect",
+          reason,
+          options,
+        ),
+      );
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        category,
+        retryable,
+        details: { reason },
+      });
+      if (retryable) {
+        expect(projected.message).toBe(
+          "Required runtime controls are unavailable for this attempt.",
+        );
+        expect(projected.remediation.action).toContain(
+          "retry the same analysis",
+        );
+      }
+      expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+        true,
+      );
+    },
+  );
+
+  it("preserves a caller-selected message for a retryable failure", () => {
+    expect(
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture-provider",
+          "inspect",
+          "temporary failure",
+          {
+            retryable: true,
+            userMessage: "Selected runtime diagnostic",
+          },
+        ),
+      ).message,
+    ).toBe("Selected runtime diagnostic");
+  });
+
+  it("retains cleanup ownership before allowing a transient operation to retry", () => {
+    expect(
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture-provider",
+          "inspect",
+          "temporary failure",
+          {
+            retryable: true,
+            cleanup: {
+              reason: "owned handle is still live",
+              resources: ["native-owner"],
+            },
+          },
+        ),
+      ),
+    ).toMatchObject({
+      code: "cleanup_incomplete",
+      retryable: false,
+      details: {
+        cleanup: "incomplete",
+        resources: ["native-owner"],
+        execution_failure: "capability_unavailable",
+      },
+    });
+  });
+});
+
 it("projects a published file receipt alongside retained cleanup failure", () => {
   const projected = projectAnalysisError(
     new EvidenceFileError("write", "io", {
@@ -115,6 +200,40 @@ it("distinguishes unsupported target formats from unavailable provider capabilit
   expect(projected.remediation.action).not.toContain("doctor");
   expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(true);
 });
+
+it.each([false, true])(
+  "marks occupied capacity retryable only while cleanup is confirmed: %s",
+  (cleanupIncomplete) => {
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_sqlite_database",
+        "capacity",
+        "Inspection slots are occupied",
+        { max_concurrent_inspections: 2 },
+        cleanupIncomplete
+          ? {
+              cleanup: {
+                reason: "Snapshot removal denied",
+                resources: ["/private/snapshot"],
+              },
+            }
+          : undefined,
+      ),
+    );
+    expect(projected.retryable).toBe(!cleanupIncomplete);
+    expect(projected.code).toBe(
+      cleanupIncomplete ? "cleanup_incomplete" : "resource_constraint",
+    );
+    expect(projected.details).toMatchObject({
+      resource: "capacity",
+      reported_limits: { max_concurrent_inspections: 2 },
+    });
+    expect(projected.remediation.action).toContain("Wait");
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  },
+);
 
 it.each([
   ["memory", null],
@@ -369,25 +488,33 @@ describe("analysis error projection: provider failures", () => {
     });
   });
 
-  it("preserves detached, actionable provider diagnostics", () => {
-    const diagnostics = {
-      runtime_root: "/tmp/rea-ghidra-fixture",
-      profile_digest: "a".repeat(64),
-      exit_code: 1,
-    };
-    const error = new ProviderAdapterError("ghidra", "health", {
-      diagnostics,
-    });
+  it.each(["adapter", "cancelled", "timeout"])(
+    "preserves detached, actionable diagnostics for %s errors",
+    (kind) => {
+      const diagnostics = {
+        runtime_root: "/tmp/rea-ghidra-fixture",
+        profile_digest: "a".repeat(64),
+        exit_code: 1,
+      };
+      const error =
+        kind === "adapter"
+          ? new ProviderAdapterError("ghidra", "health", { diagnostics })
+          : kind === "cancelled"
+            ? new AnalysisCancelledError("health", { diagnostics })
+            : new AnalysisTimeoutError("health", 250, { diagnostics });
 
-    expect(error.diagnostics).not.toBe(diagnostics);
-    expect(projectAnalysisError(error)).toMatchObject({
-      details: {
-        provider_id: "ghidra",
-        operation: "health",
-        diagnostics,
-      },
-    });
-  });
+      expect(error.diagnostics).not.toBe(diagnostics);
+      expect(projectAnalysisError(error)).toMatchObject({
+        details: {
+          ...(kind === "adapter" ? { provider_id: "ghidra" } : {}),
+          operation: "health",
+          diagnostics,
+        },
+      });
+      diagnostics.exit_code = 2;
+      expect(error.diagnostics?.exit_code).toBe(1);
+    },
+  );
 
   it("maps the Linux startup compatibility exit codes without host internals", () => {
     const expected = [

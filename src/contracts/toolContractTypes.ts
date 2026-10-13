@@ -33,6 +33,7 @@ export const TOOL_KINDS = [
   "browser-provider",
   "electron-provider",
   "runtime-provider",
+  "pcap-provider",
   "application",
   "session",
 ] as const;
@@ -58,5 +59,10 @@ export interface ToolContract<
   readonly outputSchema: OutputSchema;
   readonly effects: ToolEffects;
   readonly annotations: ToolAnnotations;
+  /**
+   * Results, successful or failed, can contain text that originates from the
+   * analysis target. MCP delivery marks such results as untrusted data.
+   */
+  readonly returnsTargetContent: boolean;
   readonly examples: readonly ToolExample[];
 }

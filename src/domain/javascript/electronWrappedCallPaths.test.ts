@@ -140,6 +140,60 @@ it("preserves an observed empty contextBridge API object", () => {
   expect(result.parse_status).toBe("complete");
 });
 
+describe("wrapped contextBridge exposure methods", () => {
+  it("retains the original expression for a dynamic isolated world id", () => {
+    const result = analyzeJavaScriptStaticSource(
+      bundle(
+        `const worldId = selectWorld(); electron.contextBridge.exposeInIsolatedWorld(worldId, "isolatedApi", {ping: true});`,
+      ),
+    );
+    expect(result.electron.context_bridge_apis).toContainEqual(
+      expect.objectContaining({
+        world: "isolated",
+        world_id: {
+          status: "dynamic",
+          value: null,
+          expression: "worldId",
+        },
+        api_key: "isolatedApi",
+        members: ["ping"],
+        resolution_basis: "wrapper-substitution",
+      }),
+    );
+    expect(result.parse_status).toBe("partial");
+  });
+
+  it("does not report a conditionally selected world as unconditional", () => {
+    const result = analyzeJavaScriptStaticSource(
+      bundle(
+        `if (useIsolated) electron.contextBridge.exposeInIsolatedWorld(1001, "isolatedApi", {ping: true});`,
+      ),
+    );
+    expect(result.electron.context_bridge_apis).not.toContainEqual(
+      expect.objectContaining({
+        api_key: "isolatedApi",
+        resolution_basis: "wrapper-substitution",
+      }),
+    );
+    expect(result.parse_status).toBe("partial");
+  });
+
+  it("does not report conditionally resolved world ids as unconditional", () => {
+    const result = analyzeJavaScriptStaticSource(
+      bundle(
+        `const worldId = useFirstWorld ? 1001 : 1002; electron.contextBridge.exposeInIsolatedWorld(worldId, "isolatedApi", {ping: true});`,
+      ),
+    );
+    expect(result.electron.context_bridge_apis).not.toContainEqual(
+      expect.objectContaining({
+        api_key: "isolatedApi",
+        resolution_basis: "wrapper-substitution",
+      }),
+    );
+    expect(result.parse_status).toBe("partial");
+  });
+});
+
 it("connects exposed closures to IPC sends and text clipboard calls", () => {
   const result = analyzeJavaScriptStaticSource(
     bundle(`

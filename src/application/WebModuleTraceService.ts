@@ -1,3 +1,4 @@
+import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -70,7 +71,13 @@ export class WebModuleTraceService {
   ) {}
 
   close(): Promise<void> {
-    return this.resolver.close?.() ?? Promise.resolve();
+    return closeOwnedWebResources(
+      [
+        this.artifacts.close?.bind(this.artifacts),
+        this.resolver.close?.bind(this.resolver),
+      ],
+      "Web module trace cleanup failed",
+    );
   }
 
   async trace(

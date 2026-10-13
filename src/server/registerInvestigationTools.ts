@@ -21,7 +21,10 @@ import {
   RECONSTRUCTION_PROVIDER,
   STATIC_RUNTIME_PROVIDER,
 } from "../application/InvestigationProviders.js";
-import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
+import {
+  applicationValidatedInputSchema,
+  toolRegistrationOptions,
+} from "./toolRegistrationOptions.js";
 
 import { verifyReconstruction } from "../domain/reconstructionVerification.js";
 /** Register Evidence-composed differential investigation workflows. */
@@ -52,30 +55,29 @@ const registerChangedBehavior = (
   session: BinarySessionPort,
   contract: ReturnType<typeof toolContract<"find_changed_behavior">>,
 ): void => {
+  const registration = toolRegistrationOptions(contract);
   server.registerTool(
     contract.name,
-    toolRegistrationOptions(contract),
+    {
+      ...registration,
+      inputSchema: applicationValidatedInputSchema(registration.inputSchema),
+    },
     async (input, context) => {
-      const closure = evidenceClosure(
-        session,
-        comparisonClosure(input.comparisons),
-      );
-      if (!closure.ok)
-        return server.delivery.toCallToolResult(closure, contract);
-      const links = closure.value;
       const computed = await runDerivedOperation(context, contract.name, () =>
-        findChangedBehavior(input.comparisons),
+        findChangedBehavior(input),
       );
       if (!computed.ok)
         return server.delivery.toCallToolResult(computed, contract);
-      const result = computed.value;
+      const { result, comparisonEvidenceIds } = computed.value;
+      const closure = evidenceClosure(session, result.evidence_links);
+      if (!closure.ok)
+        return server.delivery.toCallToolResult(closure, contract);
+      const links = closure.value;
       const evidence = createEvidence(undefined, CHANGED_BEHAVIOR_PROVIDER, {
         predicateType: "rea.changed-behavior",
         operation: contract.name,
         parameters: {
-          comparison_evidence_ids: input.comparisons.map(
-            ({ evidence_id: id }) => id,
-          ),
+          comparison_evidence_ids: [...comparisonEvidenceIds],
         },
         result: jsonValueSchema.parse(result),
         confidence: "derived",

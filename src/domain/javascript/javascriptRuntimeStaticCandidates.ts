@@ -1,4 +1,4 @@
-import { posix, relative, win32 } from "node:path";
+import { posix, win32 } from "node:path";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
@@ -216,7 +216,7 @@ const pathBelowRoot = (root: string, value: string): string | null => {
   const remainder =
     rootStyle === "windows"
       ? win32.relative(root, value)
-      : relative(root, value);
+      : posix.relative(root, value);
   const portableRemainder = remainder.replaceAll("\\", "/");
   if (
     remainder === "" ||

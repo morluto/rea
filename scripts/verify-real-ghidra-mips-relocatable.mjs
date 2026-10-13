@@ -124,9 +124,7 @@ async function verifyFixture(byteOrder, kernelModule) {
   });
   const call = async (name, args = {}) =>
     requireMcpOperationResult(
-      await client.callTool({ name, arguments: args }, undefined, {
-        timeout: 180000,
-      }),
+      await client.callTool({ name, arguments: args }, { timeout: 180000 }),
       name,
     );
   try {

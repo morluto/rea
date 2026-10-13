@@ -67,6 +67,7 @@ export class EvmInterfaceService {
       !report.success ||
       report.data.artifact.path !== input.data.path ||
       report.data.artifact.encoding !== input.data.encoding ||
+      execution.subject?.format !== "file" ||
       execution.subject?.path !== input.data.path ||
       execution.subject.sha256 !== report.data.artifact.sha256
     )

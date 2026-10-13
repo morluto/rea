@@ -18,9 +18,9 @@ import {
 } from "../../domain/webNetworkCapture.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
-  HAR_CAPTURE_HEAP_ENFORCED,
-  HAR_CAPTURE_HEAP_LIMITS,
-  HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+  NODE_CAPTURE_HEAP_ENFORCED,
+  NODE_CAPTURE_HEAP_LIMITS,
+  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
 } from "./CaptureRelease.js";
 const OPERATION = "inspect_web_network_capture";
 
@@ -78,7 +78,7 @@ export const historicalCaptureFailure = (
       );
     if (
       phase === "decoder" &&
-      input.format === "har" &&
+      input.format !== "mitmproxy" &&
       cause.reason === "process" &&
       (cause.snapshot?.signal === "SIGABRT" ||
         (cause.snapshot?.signal === null && cause.snapshot.exitCode === 134)) &&
@@ -86,7 +86,7 @@ export const historicalCaptureFailure = (
     )
       return captureMemoryFailure(
         input,
-        "The HAR decoder exhausted its fixed V8 heap",
+        `The ${input.format} decoder exhausted its fixed V8 heap`,
         cause,
       );
   }
@@ -195,15 +195,17 @@ export const captureMemoryFailure = (
       format: input.format,
       maximum_input_bytes: WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
       maximum_reply_bytes: WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
-      ...(input.format === "har" && HAR_CAPTURE_HEAP_ENFORCED
+      ...(input.format !== "mitmproxy" && NODE_CAPTURE_HEAP_ENFORCED
         ? {
-            old_generation_heap_mib: HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
-            semi_space_heap_mib: HAR_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
+            old_generation_heap_mib: NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
+            semi_space_heap_mib: NODE_CAPTURE_HEAP_LIMITS.semiSpaceMiB,
           }
         : {}),
-      ...(input.format === "har" &&
-      HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null
-        ? { process_memory_limit_bytes: HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES }
+      ...(input.format !== "mitmproxy" &&
+      NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null
+        ? {
+            process_memory_limit_bytes: NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
+          }
         : {}),
       ...(cause instanceof OwnedCommandFailure
         ? {
@@ -214,7 +216,7 @@ export const captureMemoryFailure = (
     },
     {
       cause,
-      remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format === "har" && HAR_CAPTURE_HEAP_ENFORCED ? ` REA's HAR old-generation heap is fixed at ${HAR_CAPTURE_HEAP_LIMITS.oldGenerationMiB} MiB; inherited NODE_OPTIONS cannot raise it.` : ""}${input.format === "har" && HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null ? ` REA's HAR decoder process commit limit is fixed at ${String(HAR_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes.` : ""}`,
+      remediationAction: `Use a smaller capture exported by its producer, or another decoder with sufficient capacity for the original capture. Preserve the original for provenance; a subset does not establish complete-capture coverage.${input.format !== "mitmproxy" && NODE_CAPTURE_HEAP_ENFORCED ? ` REA's Node capture old-generation heap is fixed at ${NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB} MiB; inherited NODE_OPTIONS cannot raise it.` : ""}${input.format !== "mitmproxy" && NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null ? ` REA's Node capture decoder process commit limit is fixed at ${String(NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES)} bytes.` : ""}`,
       ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
         ? {
             capturedOutput: {

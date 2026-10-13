@@ -1,0 +1,123 @@
+import { z } from "zod";
+import type { AnalysisError } from "../analysisErrorBase.js";
+import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
+import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
+import { err, ok, type Result } from "../result.js";
+import {
+  analysisViewInputError,
+  type AnalysisViewParent,
+  type AnalysisViewRequest,
+  type UnsignedAnalysisView,
+} from "./analysisView.js";
+import {
+  completeWithinViewCoverage,
+  pageViewCoverage,
+} from "./analysisViewCoverage.js";
+
+const aotSchema = flutterResultSchemas.inspect_dart_aot;
+
+/** Snapshot identity and original coverage, without unrelated string inventories. */
+export const dartAotSummarySchema = aotSchema.extend({
+  string_pool: aotSchema.shape.string_pool
+    .omit({ package_uris: true, dart_uris: true, class_like_tokens: true })
+    .extend({
+      returned_counts: z.strictObject({
+        package_uris: z.number().int().nonnegative(),
+        dart_uris: z.number().int().nonnegative(),
+        class_like_tokens: z.number().int().nonnegative(),
+      }),
+    }),
+});
+
+/** Pages of the producer-returned strings, preserving original order and scope. */
+export const dartAotViewRequestSchema = z.strictObject({
+  kind: z.literal("dart-aot"),
+  collection: z.enum(["package_uris", "dart_uris", "class_like_tokens"]),
+  offset: z.number().int().nonnegative().default(0),
+  limit: z.number().int().positive().default(64),
+});
+
+export const dartAotViewContextSchema = z.strictObject({
+  abi: aotSchema.shape.abi,
+  libapp: aotSchema.shape.libapp,
+  source_coverage: aotSchema.shape.coverage,
+  string_pool: dartAotSummarySchema.shape.string_pool,
+});
+
+/** Reuse authenticated AOT Evidence without opening the APK or rescanning its ELF. */
+export const projectDartAotView = (
+  parent: AnalysisViewParent,
+  view: AnalysisViewRequest,
+): Result<UnsignedAnalysisView, AnalysisError> => {
+  if (view.kind !== "summary" && view.kind !== "dart-aot")
+    return err(
+      analysisViewInputError([
+        {
+          path: ["view"],
+          reason: "invalid_value",
+          message: "Dart AOT Evidence supports summary and string-pool pages.",
+        },
+      ]),
+    );
+  const parsed = aotSchema.safeParse(parent.normalizedResult);
+  if (!parsed.success)
+    return err(
+      analysisInputErrorFromIssues(
+        "inspect_analysis_view",
+        parsed.error.issues.map((issue) => ({
+          ...issue,
+          path: ["source", "normalized_result", ...issue.path],
+        })),
+        { source: { normalized_result: parent.normalizedResult } },
+        { cause: parsed.error },
+      ),
+    );
+  const report = parsed.data;
+  const { package_uris, dart_uris, class_like_tokens, ...pool } =
+    report.string_pool;
+  const string_pool = {
+    ...pool,
+    returned_counts: {
+      package_uris: package_uris.length,
+      dart_uris: dart_uris.length,
+      class_like_tokens: class_like_tokens.length,
+    },
+  };
+  const shared = {
+    parent_evidence_id: parent.evidenceId,
+    parent_operation: "inspect_dart_aot" as const,
+    parent_digest: parent.evidenceId.slice(3),
+    artifact: { path: report.target.path, sha256: report.target.sha256 },
+    limitations: [...parent.limitations],
+    unknowns: [
+      "String-pool entries are byte-pattern observations, not recovered typed classes or functions.",
+      "Counts ending in _at_least remain lower bounds; exhausting returned strings does not establish a complete snapshot inventory.",
+      ...(parent.subject == null
+        ? [
+            "The parent has no recorded subject; its normalized target identity cannot be cross-checked against a subject digest.",
+          ]
+        : []),
+    ],
+  };
+  if (view.kind === "summary")
+    return ok({
+      kind: "summary",
+      view,
+      ...shared,
+      summary: { ...report, string_pool },
+      coverage: completeWithinViewCoverage(1, 1),
+    });
+  const collection = report.string_pool[view.collection];
+  const items = collection.slice(view.offset, view.offset + view.limit);
+  return ok({
+    kind: "dart-aot",
+    view,
+    ...shared,
+    items,
+    abi: report.abi,
+    libapp: report.libapp,
+    source_coverage: report.coverage,
+    string_pool,
+    coverage: pageViewCoverage(view.offset, items.length, collection.length),
+  });
+};

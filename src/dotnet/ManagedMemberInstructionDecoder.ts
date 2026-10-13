@@ -265,6 +265,10 @@ type OperandResult = {
 
 type OperandReader = (il: Buffer, offset: number) => OperandResult;
 
+// String(-0) loses a CIL constant's sign in both anchors and normalized hashes.
+const floatingPointOperand = (value: number): string =>
+  Object.is(value, -0) ? "-0" : String(value);
+
 const FIXED_OPERAND_READERS = new Map<string, OperandReader>([
   [
     "none",
@@ -315,7 +319,7 @@ const FIXED_OPERAND_READERS = new Map<string, OperandReader>([
     (il, offset) => ({
       next: offset + 4,
       anchorKind: "constant",
-      value: String(il.readFloatLE(offset)),
+      value: floatingPointOperand(il.readFloatLE(offset)),
     }),
   ],
   [
@@ -323,7 +327,7 @@ const FIXED_OPERAND_READERS = new Map<string, OperandReader>([
     (il, offset) => ({
       next: offset + 8,
       anchorKind: "constant",
-      value: String(il.readDoubleLE(offset)),
+      value: floatingPointOperand(il.readDoubleLE(offset)),
     }),
   ],
   [

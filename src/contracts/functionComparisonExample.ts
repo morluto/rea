@@ -50,6 +50,7 @@ const observe = (digit: string, text: string) =>
       result: dossier(text),
       confidence: "derived",
       authority: "shipped-artifact",
+      relationshipCoverage: { status: "complete" },
     },
   );
 

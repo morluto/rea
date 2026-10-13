@@ -11,6 +11,7 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRootUnavailableError.js";
 import { WABT_LIMITS, WABT_PROVIDER_IDENTITY } from "./WabtRelease.js";
 /** Preserve lifecycle failures and diagnostic bytes instead of returning partial success. */
 export const wabtFailure = (
@@ -19,12 +20,19 @@ export const wabtFailure = (
   path: string,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
+  const artifactCleanup =
+    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+  const cleanupOptions =
+    artifactCleanup === undefined ? {} : { cleanup: artifactCleanup };
   const reason = cause instanceof Error ? cause.message : String(cause);
   if (
     (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
     (cause instanceof Error && cause.name === "AbortError")
   )
-    return new AnalysisCancelledError("inspect_wasm_artifact", { cause });
+    return new AnalysisCancelledError("inspect_wasm_artifact", {
+      cause,
+      ...cleanupOptions,
+    });
   if (cause instanceof OwnedCommandFailure) {
     const capturedOutput =
       cause.snapshot === null
@@ -70,6 +78,13 @@ export const wabtFailure = (
       );
     return new AnalysisOutputError("inspect_wasm_artifact", reason, options);
   }
+  if (cause instanceof PrivateRuntimeRootUnavailableError)
+    return new AnalysisCapabilityUnavailableError(
+      WABT_PROVIDER_IDENTITY.id,
+      "inspect_wasm_artifact",
+      reason,
+      { cause, retryable: cause.retryable },
+    );
   if (phase === "configuration")
     return new AnalysisCapabilityUnavailableError(
       WABT_PROVIDER_IDENTITY.id,
@@ -77,6 +92,7 @@ export const wabtFailure = (
       reason,
       {
         cause,
+        ...cleanupOptions,
         userMessage: `${reason} Supply WABT 1.0.42 via absolute REA_WABT_BIN_DIRECTORY; REA does not install tools.`,
       },
     );
@@ -89,7 +105,7 @@ export const wabtFailure = (
       "inspect_wasm_artifact",
       path,
       reason,
-      { cause },
+      { cause, ...cleanupOptions },
     );
   if (
     phase === "artifact" &&
@@ -101,11 +117,16 @@ export const wabtFailure = (
       "inspect_wasm_artifact",
       path,
       cause.code,
-      { cause },
+      { cause, ...cleanupOptions },
     );
   if (phase === "artifact")
-    return new AnalysisInputError("inspect_wasm_artifact", { cause }, [
-      { path: ["path"], reason: "invalid_value", message: reason },
-    ]);
-  return new AnalysisOutputError("inspect_wasm_artifact", reason, { cause });
+    return new AnalysisInputError(
+      "inspect_wasm_artifact",
+      { cause, ...cleanupOptions },
+      [{ path: ["path"], reason: "invalid_value", message: reason }],
+    );
+  return new AnalysisOutputError("inspect_wasm_artifact", reason, {
+    cause,
+    ...cleanupOptions,
+  });
 };

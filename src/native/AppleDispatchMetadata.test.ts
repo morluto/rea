@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
 
 const base = 0x100000000n;
-const fixture = (relative = false) => {
+const fixture = (
+  relative = false,
+  category?: "partial-method" | "unmapped-pointer",
+) => {
   const bytes = Buffer.alloc(4096);
   const u32 = (offset: number, value: number) =>
     bytes.writeUInt32LE(value, offset);
@@ -11,19 +14,26 @@ const fixture = (relative = false) => {
   u32(0, 0xfeedfacf);
   u32(4, 0x0100000c);
   u32(16, 1);
-  u32(20, 152);
+  u32(20, category === undefined ? 152 : 232);
   u32(32, 0x19);
-  u32(36, 152);
+  u32(36, category === undefined ? 152 : 232);
   bytes.write("__DATA", 40);
   ptr(56, 0);
   bytes.writeBigUInt64LE(4096n, 64);
   bytes.writeBigUInt64LE(4096n, 80);
   u32(92, 5);
-  u32(96, 1);
+  u32(96, category === undefined ? 1 : 2);
   bytes.write("__objc_classlist", 104);
   bytes.write("__DATA", 120);
   ptr(136, 0x180);
   bytes.writeBigUInt64LE(8n, 144);
+  if (category !== undefined) {
+    bytes.write("__objc_catlist", 184);
+    bytes.write("__DATA", 200);
+    ptr(216, 0xb00);
+    bytes.writeBigUInt64LE(8n, 224);
+    u32(232, 0xb00);
+  }
   u32(152, 0x180);
   ptr(0x180, 0x200);
   ptr(0x200, 0x280);
@@ -86,9 +96,91 @@ const fixture = (relative = false) => {
   bytes.write("FixtureProtocol\0", 0x900);
   bytes.write("requiredAction:\0", 0x920);
   bytes.write("optionalAction:\0", 0x940);
+  if (category !== undefined) {
+    if (category === "unmapped-pointer") {
+      bytes.writeBigUInt64LE(0xffffffffffffffffn, 0xb00);
+    } else {
+      ptr(0xb00, 0xb40);
+      ptr(0xb40, 0xbc0);
+      ptr(0xb48, 0x200);
+      ptr(0xb50, 0xb80);
+      u32(0xb80, 24);
+      u32(0xb84, 1);
+      ptr(0xb88, 0x460);
+      ptr(0xb90, 0x5c0);
+      bytes.writeBigUInt64LE(0xffffffffffffffffn, 0xb98);
+      bytes.write("FixtureCategory\0", 0xbc0);
+    }
+  }
   return bytes;
 };
 const provenance = { path: "/fixture/app", sha256: "a".repeat(64) };
+describe("Apple dispatch pointer fixup metadata", () => {
+  it("keeps decoded bindings and their coverage when an independent stream fails", () => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(200, 20);
+    bytes.writeUInt32LE(0x80000022, 184);
+    bytes.writeUInt32LE(48, 188);
+    const bindings = Buffer.from([
+      0x40,
+      ...Buffer.from("_OBJC_CLASS_$_NSObject\0"),
+      0x70,
+      0x88,
+      0x04,
+      0x90,
+      0x00,
+    ]);
+    bindings.copy(bytes, 0xc00);
+    bytes[0xc80] = 0xd0;
+    bytes.writeUInt32LE(0xc00, 200);
+    bytes.writeUInt32LE(bindings.length, 204);
+    bytes.writeUInt32LE(0xc80, 208);
+    bytes.writeUInt32LE(1, 212);
+
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_classes[0]).toMatchObject({
+      name: "Fixture",
+      super_class: "NSObject",
+    });
+    expect(
+      result.coverage.find(({ facet }) => facet === "pointer_fixups"),
+    ).toMatchObject({ status: "partial", examined: 2, decoded: 1 });
+  });
+
+  it("keeps absolute metadata pointers between declared chained fixups", () => {
+    const bytes = fixture();
+    bytes.writeUInt32LE(2, 16);
+    bytes.writeUInt32LE(168, 20);
+    bytes.writeUInt32LE(0x80000034, 184);
+    bytes.writeUInt32LE(16, 188);
+    bytes.writeUInt32LE(0xa00, 192);
+    bytes.writeUInt32LE(64, 196);
+    // Only the class-list pointer needs rebasing. All remaining metadata
+    // pointers carry their stored absolute values, outside the single chain.
+    bytes.writeBigUInt64LE(0x200n, 0x180);
+    bytes.writeUInt32LE(28, 0xa04);
+    bytes.writeUInt32LE(60, 0xa08);
+    bytes.writeUInt32LE(60, 0xa0c);
+    bytes.writeUInt32LE(1, 0xa14);
+    bytes.writeUInt32LE(1, 0xa1c);
+    bytes.writeUInt32LE(8, 0xa20);
+    bytes.writeUInt32LE(24, 0xa24);
+    bytes.writeUInt16LE(0x1000, 0xa28);
+    bytes.writeUInt16LE(6, 0xa2a);
+    bytes.writeUInt16LE(1, 0xa38);
+    bytes.writeUInt16LE(0x180, 0xa3a);
+    const result = decodeAppleDispatchMetadata(bytes, 100, provenance);
+    expect(result.objc_classes[0]).toMatchObject({ name: "Fixture" });
+    expect(result.objc_dispatch_implementations[0]).toMatchObject({
+      selector: "performAction:",
+      implementation_address: "0x100000700",
+    });
+    expect(
+      result.coverage.find(({ facet }) => facet === "pointer_fixups"),
+    ).toMatchObject({ status: "complete", examined: 1, decoded: 1 });
+  });
+});
 describe("Apple dispatch binary metadata", () => {
   it.each([false, true])(
     "decodes stripped absolute/relative method lists (relative=%s) with exact offsets",
@@ -187,6 +279,9 @@ describe("Apple dispatch binary metadata", () => {
       });
     },
   );
+});
+
+describe("Apple dispatch coverage ownership", () => {
   it("keeps unsupported pointers and record truncation explicit", () => {
     const bytes = fixture();
     bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x498);
@@ -194,6 +289,14 @@ describe("Apple dispatch binary metadata", () => {
     expect(result.objc_dispatch_implementations[0]).toMatchObject({
       implementation_address: null,
       decode: { status: "partial" },
+    });
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_class_method_ivar_metadata",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("method Fixture instance performAction:"),
     });
     const truncated = decodeAppleDispatchMetadata(fixture(), 1, provenance);
     expect(truncated.coverage[0]?.reason).toContain("max_records_reached");
@@ -203,6 +306,67 @@ describe("Apple dispatch binary metadata", () => {
       ),
     ).toMatchObject({ status: "partial", reason: "max_records_reached" });
   });
+  it("keeps partial category methods in category coverage only", () => {
+    const baseline = decodeAppleDispatchMetadata(fixture(), 100, provenance);
+    const result = decodeAppleDispatchMetadata(
+      fixture(false, "partial-method"),
+      100,
+      provenance,
+    );
+
+    expect(result.objc_dispatch_implementations).toContainEqual(
+      expect.objectContaining({
+        category: "FixtureCategory",
+        decode: {
+          status: "partial",
+          reason: "implementation_pointer_unmapped_or_encoded",
+        },
+      }),
+    );
+    const baselineClassCoverage = baseline.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+    const classCoverage = result.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+    expect(baselineClassCoverage).toBeDefined();
+    expect(classCoverage).toEqual(baselineClassCoverage);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("category method FixtureCategory"),
+    });
+  });
+  it("keeps malformed category pointers out of class failure coverage", () => {
+    const baseline = decodeAppleDispatchMetadata(fixture(), 100, provenance);
+    const result = decodeAppleDispatchMetadata(
+      fixture(false, "unmapped-pointer"),
+      100,
+      provenance,
+    );
+    const baselineClassCoverage = baseline.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+    const classCoverage = result.coverage.find(
+      ({ facet }) => facet === "objc_class_method_ivar_metadata",
+    );
+    expect(baselineClassCoverage).toBeDefined();
+    expect(classCoverage).toEqual(baselineClassCoverage);
+    expect(
+      result.coverage.find(
+        ({ facet }) => facet === "objc_properties_categories",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      reason: expect.stringContaining("category_decode_failed"),
+    });
+  });
+});
+
+describe("malformed Apple dispatch metadata", () => {
   it("rejects malformed command and section boundaries", () => {
     const bytes = fixture();
     bytes.writeUInt32LE(7, 36);

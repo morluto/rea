@@ -136,8 +136,8 @@ existing analysis families directly, for example
 ## Resource and lifecycle limits
 
 - Caller values reach adb only as positional arguments in fixed vectors;
-  no tool accepts an arbitrary shell command line, and UI interaction
-  (`input`, `am`, `monkey`) is deliberately not exposed.
+  no tool accepts an arbitrary shell command line, `input`, or `monkey`.
+  The app/activity lifecycle tools use `am start -W` and `am force-stop`.
 - Per-invocation budgets: client/devices 10-20 s, shell reads 20-60 s with
   64 KiB-8 MiB capture caps (logcat 4 MiB, screen 32 MiB), transfers and
   bugreports 600 s. Exceeded budgets report `resource_constraint`; stopped
@@ -148,6 +148,11 @@ existing analysis families directly, for example
 - Cancellation during a package pull preserves caller-selected output. The
   error includes partial observations identifying completed artifacts and the
   interrupted local path; remaining APKs were not attempted.
+- Bugreports collect into isolated staging and publish with exclusive creation;
+  filename collisions select the next numeric suffix. If publication fails, the
+  completed archive remains in staging. The error's partial observation gives
+  its recoverable `local_path`, the original `adb_reported_path`, and an unknown
+  digest status. Later operations and shutdown preserve this retained evidence.
 - Failed package acquisition rollback retains its directory identity and retries
   cleanup before later work and during shutdown. Cleanup refuses a replacement
   directory. Terminal shutdown stops admission and drains active operations.

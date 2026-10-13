@@ -28,6 +28,30 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
+it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+  const { client } = await armSession();
+  try {
+    const result = await client.execute("analyze_function", {
+      procedure: "main",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.relationshipCoverage).toMatchObject({
+      status: "unknown",
+      reason:
+        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      diagnostics: expect.arrayContaining([
+        expect.stringContaining("targets IDA does not recognize as functions"),
+      ]),
+    });
+    expect(result.value.result).toMatchObject({
+      callers: [],
+      callees: [{ address: "0x2000" }, { address: "0x3000" }],
+    });
+  } finally {
+    await client.close();
+  }
+});
+
 it("shows the callee edges of an ARM64 procedure in the call graph", async () => {
   const { client, producer } = await armSession();
   try {

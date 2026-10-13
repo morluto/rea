@@ -8,8 +8,10 @@ import type {
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  isElfMetadataArchitecture,
   type BinaryTarget,
-  type BinaryArchitecture,
+  type ElfMetadataArchitecture,
+  type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
@@ -101,6 +103,15 @@ export const resolveHopperAnalysisProfile = async (
   });
 };
 
+/** Ghidra owns these lanes; Hopper names the family it declines rather than guessing. */
+const HOPPER_DECLINED_ARCHITECTURE_LABELS: Record<
+  ElfMetadataArchitecture,
+  string
+> = {
+  mips: "MIPS",
+  riscv: "RISC-V",
+};
+
 /** Derive Hopper's complete non-interactive CLI loader selection. */
 export const hopperLoaderArgsForTarget = (
   target: BinaryTarget,
@@ -113,12 +124,12 @@ export const hopperLoaderArgsForTarget = (
   if (target.kind !== "executable")
     return err(new ProviderAdapterError("hopper", "resolve_analysis_profile"));
   const architecture = target.architecture;
-  if (architecture === "mips")
+  if (isElfMetadataArchitecture(architecture))
     return err(
       new AnalysisCapabilityUnavailableError(
         "hopper",
         "resolve_analysis_profile",
-        "REA's Hopper adapter does not admit MIPS targets. Select a verified Ghidra MIPS profile instead.",
+        `REA's Hopper adapter does not admit ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} targets. Select a verified Ghidra ${HOPPER_DECLINED_ARCHITECTURE_LABELS[architecture]} profile instead.`,
       ),
     );
   const flag = hopperArchitectureFlag(architecture);
@@ -151,9 +162,7 @@ export const hopperLoaderArgsForTarget = (
   }
 };
 
-const hopperArchitectureFlag = (
-  architecture: Exclude<BinaryArchitecture, "mips">,
-): string => {
+const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
   switch (architecture) {
     case "x86":
       return "--intel-32";

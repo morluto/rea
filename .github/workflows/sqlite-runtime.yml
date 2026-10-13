@@ -1,0 +1,37 @@
+name: SQLite runtime compatibility
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+
+jobs:
+  sqlite:
+    name: SQLite runtime compatibility (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Exercise unavailable-runtime diagnostics, the first supported release,
+        # and new patches on both supported lines without hand-editing versions.
+        # The repository-pinned Node 24 version also runs the complete test suite.
+        node: ["22.x", "24.15.0", "24.x", "26.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: rea-test-runtime
+          path: .
+      - name: Verify SQLite discovery, inspection and cleanup
+        run: npm run test:sqlite:run

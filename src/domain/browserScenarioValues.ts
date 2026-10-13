@@ -5,6 +5,7 @@ import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 
 import { localPathStringSchema } from "./localPath.js";
 import { browserNetworkContentSelectionSchema } from "./browserNetworkEvidence.js";
+import { browserScenarioEventFamilySchema } from "./browserScenarioCaptureValues.js";
 
 import {
   browserEndpointSchema,
@@ -289,20 +290,7 @@ export const browserScenarioCaptureSchema = z
   .strictObject({
     after_each_step: z.array(snapshotKindSchema).default([]),
     at_end: z.array(snapshotKindSchema).default(["url"]),
-    events: z
-      .array(
-        z.enum([
-          "console",
-          "page-errors",
-          "network",
-          "websockets",
-          "frames",
-          "workers",
-          "popups",
-          "downloads",
-        ]),
-      )
-      .default([]),
+    events: z.array(browserScenarioEventFamilySchema).default([]),
     network: browserNetworkContentSelectionSchema,
   })
   .default({

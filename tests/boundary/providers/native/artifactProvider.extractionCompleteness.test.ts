@@ -3,7 +3,7 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
@@ -13,6 +13,7 @@ import {
 import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
 
 it.each(["file", "directory"] as const)(
   "rolls back when an inventoried %s disappears before extraction",
@@ -59,6 +60,42 @@ it("still refuses a regular file added after inventory and rolls back", async ()
     message: "Regular artifact entry is missing from inventory: z.txt",
   });
   await expect(access(output)).rejects.toThrow();
+});
+
+it("rolls back when cancellation arrives while closing the materialization reader", async () => {
+  const root = await createTestTempDirectory("rea-extract-cancel-close-");
+  const source = join(root, "source");
+  await mkdir(source);
+  await writeFile(join(source, "payload.txt"), "complete payload\n");
+  const snapshot = await scanArtifactInventory(source);
+  const output = join(root, "output");
+  const controller = new AbortController();
+  const close = DirectoryArtifactReader.prototype.close;
+  const closeSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "close")
+    .mockImplementation(async function (this: DirectoryArtifactReader) {
+      controller.abort();
+      await close.call(this);
+    });
+  try {
+    await expect(
+      materializeArtifactInventory(
+        {
+          inputPath: source,
+          inputFormat: "asar",
+          outputRoot: output,
+          environment: process.env,
+          integrityPolicy: "fail",
+        },
+        source,
+        snapshot,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled" });
+    await expect(access(output)).rejects.toThrow();
+  } finally {
+    closeSpy.mockRestore();
+  }
 });
 
 it("preserves every equal-content occurrence and copies a nested ASAR as its containing file", async () => {

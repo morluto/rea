@@ -62,6 +62,7 @@ const networkCapture = (sourceSequence: number, receiptStep: number) => {
         response_body: false,
         header_values: false,
       },
+      event_families: ["network"],
     },
     events: { items: events, retained: 2, dropped: 0 },
   });
@@ -144,6 +145,94 @@ it("reports content-selection mismatch as unknown instead of a website change", 
         after_scenario: withBody,
       }).success,
     ).toBe(false);
+});
+
+it("reports event-family mismatch and legacy selection as unknown", () => {
+  const consoleOnly = scenarioCapture({});
+  const withFamilies = (
+    capture: BrowserScenarioCapture,
+    families: BrowserScenarioCapture["scenario"]["event_families"],
+  ) =>
+    browserScenarioCaptureSchema.parse({
+      ...capture,
+      scenario: { ...capture.scenario, event_families: families },
+    });
+  const compare = (
+    before: BrowserScenarioCapture,
+    after: BrowserScenarioCapture,
+  ) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+      }),
+    );
+  const eventDiffs = (compared: ReturnType<typeof compare>) =>
+    compared.steps
+      .flatMap((step) => step.artifact_diffs)
+      .filter(({ artifact }) => artifact === "events");
+
+  const widened = withFamilies(consoleOnly, ["page-errors", "console"]);
+  const mismatched = compare(consoleOnly, widened);
+  expect(mismatched.overall_status).toBe("unknown");
+  expect(eventDiffs(mismatched)).toContainEqual(
+    expect.objectContaining({
+      status: "unknown",
+      before_state: "captured",
+      after_state: "captured",
+      reason: expect.stringContaining(
+        "Event family selections differ (console before, console, page-errors after)",
+      ),
+    }),
+  );
+  expect(
+    compare(
+      withFamilies(consoleOnly, ["console", "page-errors"]),
+      withFamilies(consoleOnly, ["page-errors", "console"]),
+    ).overall_status,
+  ).toBe("unchanged");
+
+  const legacy = withFamilies(consoleOnly, undefined);
+  expect(legacy.scenario.event_families).toBeUndefined();
+  for (const [before, after] of [
+    [legacy, consoleOnly],
+    [legacy, legacy],
+  ] as const)
+    expect(eventDiffs(compare(before, after))).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        reason: expect.stringContaining("Event family selection is unknown"),
+      }),
+    );
+  expect(
+    compareBrowserScenariosInputSchema.safeParse({
+      before_scenario: {
+        ...consoleOnly,
+        scenario: { ...consoleOnly.scenario, event_families: ["dialogs"] },
+      },
+      after_scenario: consoleOnly,
+    }).success,
+  ).toBe(false);
+
+  const quiet = browserScenarioCaptureSchema.parse({
+    ...withFamilies(consoleOnly, []),
+    events: { retained: 0, dropped: 0, items: [] },
+  });
+  const differentEvents = compare(quiet, widened);
+  expect(differentEvents.overall_status).toBe("unknown");
+  expect(eventDiffs(differentEvents).map(({ status }) => status)).toEqual([
+    "unknown",
+    "unknown",
+  ]);
+
+  const both = eventDiffs(compare(networkCapture(1, 0), consoleOnly));
+  expect(both).toContainEqual(
+    expect.objectContaining({
+      reason: expect.stringMatching(
+        /Event family selections differ.*content selections differ/u,
+      ),
+    }),
+  );
 });
 
 describe("browser scenario comparison", () => {
@@ -485,6 +574,7 @@ const scenarioCapture = (
         response_body: false,
         header_values: false,
       },
+      event_families: ["console"],
     },
     duration_ms: options.elapsedMs ?? 10,
     steps: [

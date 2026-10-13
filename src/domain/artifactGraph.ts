@@ -188,6 +188,12 @@ export const artifactGraphManifestSchema = z.object({
   edge_count: z.number().int().min(0),
 });
 
+/** Whether the inventory producer covered its modeled child-entry scope. */
+export const artifactInventoryCoverageSchema = z.enum(["complete", "partial"]);
+export type ArtifactInventoryCoverage = z.infer<
+  typeof artifactInventoryCoverageSchema
+>;
+
 /** Complete inventory observation containing the stable artifact graph. */
 export const artifactInventoryResultSchema = z.object({
   manifest: artifactGraphManifestSchema,
@@ -197,7 +203,18 @@ export const artifactInventoryResultSchema = z.object({
   provenance: z.array(artifactCommandSchema),
   integrity_contradictions: z.array(integrityContradictionSchema).default([]),
   limitations: z.array(z.string()),
+  /** Optional only for persisted inventory Evidence written before this field. */
+  coverage_status: artifactInventoryCoverageSchema.optional(),
 });
+
+/** Current inventory producers always classify the coverage they examined. */
+export const artifactInventoryOutputSchema =
+  artifactInventoryResultSchema.extend({
+    coverage_status: artifactInventoryCoverageSchema,
+  });
+export type ArtifactInventoryOutput = z.infer<
+  typeof artifactInventoryOutputSchema
+>;
 
 /** One safely materialized artifact beneath caller-approved output root. */
 const extractedArtifactSchema = z.object({

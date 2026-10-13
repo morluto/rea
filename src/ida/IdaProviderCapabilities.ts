@@ -3,14 +3,14 @@ import type {
   CapabilityDescriptor,
 } from "../application/AnalysisProvider.js";
 
-/** This version identifies REA's adapter, not IDA or the upstream Python package. */
+/** This version identifies REA's adapter, not IDA or the upstream MCP server. */
 export const IDA_PROVIDER_IDENTITY = Object.freeze({
   id: "ida",
-  name: "IDA Pro MCP adapter",
+  name: "IDA MCP adapter",
   version: "1",
 });
 
-/** Read-only analyst outcomes supported by both upstream compatibility profiles. */
+/** Read-only analyst outcomes supported by the upstream compatibility profiles. */
 export const IDA_OPERATIONS = Object.freeze([
   "list_procedures",
   "search_procedures",
@@ -37,6 +37,9 @@ export const IDA_LIMITATIONS = Object.freeze([
   "Complete function body ranges, typed references, unresolved indirect calls, referenced data, and basic blocks are unavailable in this adapter. Empty unsupported dossier facets are unknown, not observed absence.",
 ]);
 
+export const IDA_NATIVE_STRING_LIMITATION =
+  "Native string observations use upstream C-string rendering; other string representations remain unknown.";
+
 /**
  * Attached mode requires the legacy 1.4 profile, whose `disassemble_function`
  * jumps to the function and whose `decompile_function` opens or reuses a
@@ -53,15 +56,17 @@ const ATTACHED_GUI_NAVIGATION_OPERATIONS: ReadonlySet<IdaOperation> = new Set([
 export const idaCapabilities = (
   mode: "attached" | "headless",
   stdio: boolean,
+  native = false,
 ): readonly CapabilityDescriptor[] =>
   IDA_OPERATIONS.map((operation) => ({
     provider: IDA_PROVIDER_IDENTITY,
     operation,
-    ...(mode === "headless" && operation === "procedure_callers"
+    ...((mode === "headless" || native) && operation === "procedure_callers"
       ? ({
           available: false,
-          reason:
-            "The modern upstream profile reports code references without proving direct call edges.",
+          reason: native
+            ? "The native upstream profile reports code references without proving direct call edges."
+            : "The modern upstream profile reports code references without proving direct call edges.",
         } as const)
       : ({ available: true, reason: null } as const)),
     cachePolicy: "live",
@@ -70,11 +75,17 @@ export const idaCapabilities = (
       launchesProcess: stdio || mode === "headless",
       mayShowUi:
         mode === "attached" &&
-        ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation),
+        (native
+          ? operation === "procedure_pseudo_code" ||
+            operation === "analyze_function"
+          : ATTACHED_GUI_NAVIGATION_OPERATIONS.has(operation)),
       mayAccessNetwork: true,
       mayWriteFilesystem: stdio || mode === "headless",
       changesPermissions: false,
       requiresRoot: false,
     },
-    limitations: IDA_LIMITATIONS,
+    limitations:
+      native && (operation === "list_strings" || operation === "search_strings")
+        ? [...IDA_LIMITATIONS, IDA_NATIVE_STRING_LIMITATION]
+        : IDA_LIMITATIONS,
   }));

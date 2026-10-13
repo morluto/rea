@@ -18,6 +18,7 @@ import {
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
@@ -1529,6 +1530,60 @@ const analyzeComparisonSources = async (
     ),
   );
 };
+
+it("retains bundled isolated-world contextBridge APIs through dedicated and generic CLI routes", async () => {
+  const root = await createTestTempDirectory(
+    "rea-context-bridge-isolated-cli-",
+  );
+  await writeFile(
+    join(root, "preload.js"),
+    `(() => {
+      const modules = {
+        2(module) { module.exports = require("electron"); },
+        5(module, exports, load) {
+          const electron = load(2);
+          electron.contextBridge.exposeInIsolatedWorld(1001, "isolatedApi", { ping: true });
+        },
+      };
+      function load(id) {
+        const module = { exports: {} };
+        modules[id].call(module.exports, module, module.exports, load);
+        return module.exports;
+      }
+      load(5);
+    })();`,
+  );
+
+  for (const arguments_ of [
+    ["analyze-javascript-application", root, "--json"],
+    ["analyze", root, "--format", "json"],
+  ]) {
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(await runCli(arguments_)).normalized_result,
+    );
+    expect(result.summary.context_bridge_apis).toBe(1);
+    const bridge = result.graph.nodes.find(
+      ({ kind }) => kind === "context-bridge-api",
+    );
+    expect(bridge?.observations).toContainEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          world: "isolated",
+          world_id: { status: "literal", value: 1001, expression: null },
+          api_key: "isolatedApi",
+          members: ["ping"],
+          resolution_basis: "wrapper-substitution",
+        }),
+        evidence: expect.objectContaining({
+          location: expect.objectContaining({
+            available: true,
+            value: expect.objectContaining({ source: "preload.js" }),
+          }),
+        }),
+      }),
+    );
+  }
+});
 
 const runCli = async (
   arguments_: readonly string[],

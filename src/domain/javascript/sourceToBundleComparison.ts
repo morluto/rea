@@ -258,7 +258,11 @@ const classifyMapping = (
       confidence: "unknown",
       currentNodeIds: [],
       limitations: [
-        "Only weak basename or extension signals were available; no mapping was forced.",
+        candidates.some((candidate) =>
+          hasSignal(candidate, "unicode-equivalent-path"),
+        )
+          ? "Unicode-equivalent paths are inferred candidates only; filesystem paths with distinct Unicode spellings may identify different files, so no mapping was forced."
+          : "Only weak basename or extension signals were available; no mapping was forced.",
       ],
     };
   return absenceComplete

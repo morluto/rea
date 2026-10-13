@@ -27,10 +27,8 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { ok, err, type Result } from "../../domain/result.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
-import {
-  PrivateRuntimeRoot,
-  PrivateRuntimeRootUnavailableError,
-} from "../../process/PrivateRuntimeRoot.js";
+import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
+import { PrivateRuntimeRootUnavailableError } from "../../process/PrivateRuntimeRootUnavailableError.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import {
   ProviderProcessSupervisor,
@@ -735,7 +733,7 @@ export class JavaScriptAnalysisWorker {
           PROVIDER,
           OPERATION,
           cause.message,
-          { cause },
+          { cause, retryable: cause.retryable },
         )
       : new ProviderAdapterError(PROVIDER, OPERATION, {
           cause,

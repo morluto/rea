@@ -2,6 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import {
@@ -10,11 +11,142 @@ import {
   SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE,
 } from "../../../src/contracts/javascript/javascriptApplicationWorkflowExamples.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import {
+  createJavaScriptApplicationGraph,
+  createJavaScriptApplicationNode,
+} from "../../../src/domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../../src/domain/javascript/javascriptSemanticGraph.js";
+import {
+  artifactEvidence,
+  sourceMapReference,
+} from "../../../src/domain/javascript/javascriptApplicationGraph.fixture.js";
 import {
   createApplicationMcpHarness,
   type ApplicationMcpHarness,
 } from "../../fixtures/applicationMcpHarness.js";
 import { createHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
+
+async function runUnicodeSourceMapComparison(
+  harness: ApplicationMcpHarness,
+): Promise<void> {
+  const baseApplication = SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.application;
+  const subject = baseApplication.subject;
+  if (subject === null) throw new Error("Application Evidence has no subject");
+  const baseResult = javascriptApplicationAnalysisResultSchema.parse(
+    baseApplication.normalized_result,
+  );
+  const baseGraph = baseResult.graph;
+  const decomposedSource = "cafe\u0301.ts";
+  const unicodeSourceNode = createJavaScriptApplicationNode({
+    kind: "source-module",
+    identity: {
+      strategy: "source-map-original",
+      source_root: "../src/",
+      stability: "source-map-exact",
+      source_map_sha256: "1".repeat(64),
+      original_source: decomposedSource,
+      source_sha256: "3".repeat(64),
+    },
+    observations: [
+      {
+        label: "decomposed source-map spelling",
+        source_map_reference: sourceMapReference(
+          decomposedSource,
+          "../src/",
+          "dist/main.js.map",
+        ),
+        properties: { content_available: true, content_sha256: "3".repeat(64) },
+        evidence: artifactEvidence("1".repeat(64), "dist/main.js.map"),
+      },
+    ],
+  });
+  const applicationGraph = createJavaScriptApplicationGraph({
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids: [...baseGraph.root_node_ids, unicodeSourceNode.node_id],
+    nodes: [...baseGraph.nodes, unicodeSourceNode],
+    edges: baseGraph.edges,
+    coverage: baseGraph.coverage,
+    limitations: baseGraph.limitations,
+  });
+  const semantic = baseResult.semantic_graph;
+  const { graph_id: _semanticGraphId, ...semanticInput } = semantic;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semanticInput,
+    application_graph_id: applicationGraph.graph_id,
+  });
+  const unicodeApplication = createEvidence(
+    {
+      path: baseResult.input_path,
+      sha256: subject.digest.sha256,
+      format: subject.format,
+    },
+    baseApplication.provider,
+    {
+      predicateType: baseApplication.predicate_type,
+      operation: baseApplication.operation,
+      parameters: baseApplication.parameters,
+      result: {
+        ...baseResult,
+        graph: applicationGraph,
+        semantic_graph: semanticGraph,
+      },
+      confidence: baseApplication.confidence,
+      authority: baseApplication.authority,
+      limitations: baseApplication.limitations,
+      evidenceLinks: baseApplication.evidence_links,
+    },
+  );
+  const historicalUnicodePath = "src/caf\u00e9.ts";
+  const unicodeReference = createHistoricalSourceGraph({
+    ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,
+    root_sha256: undefined,
+    entries: SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference.entries.map(
+      (entry) =>
+        entry.path === "src/main.ts"
+          ? { ...entry, path: historicalUnicodePath }
+          : entry,
+    ),
+  });
+  const reply = await harness.client.callTool({
+    name: "compare_source_to_bundle",
+    arguments: { reference: unicodeReference, application: unicodeApplication },
+  });
+  expect(reply.isError).not.toBe(true);
+  expect(reply.structuredContent).toMatchObject({
+    normalized_result: {
+      items: [
+        {
+          source_path: historicalUnicodePath,
+          status: "unknown",
+          current_node_ids: [],
+          candidates: [
+            expect.objectContaining({
+              confidence: "low",
+              signals: expect.arrayContaining([
+                expect.objectContaining({
+                  kind: "unicode-equivalent-path",
+                  source_value: historicalUnicodePath,
+                  current_values: ["src/cafe\u0301.ts"],
+                }),
+              ]),
+            }),
+          ],
+        },
+      ],
+    },
+  });
+  const advertised = (await harness.client.listTools()).tools.find(
+    ({ name }) => name === "compare_source_to_bundle",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("Comparison tool output schema is missing");
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const outputSchema = advertised.outputSchema as AnySchema;
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const validateOutput = ajv.compile(outputSchema);
+  expect(validateOutput(reply.structuredContent)).toBe(true);
+}
 
 async function runInlineWorkflowScenarios(
   harness: ApplicationMcpHarness,
@@ -91,6 +223,8 @@ async function runInlineWorkflowScenarios(
       ],
     },
   });
+
+  await runUnicodeSourceMapComparison(harness);
 
   const referenceWithExclusion = createHistoricalSourceGraph({
     ...SOURCE_TO_BUNDLE_COMPARISON_EXAMPLE.reference,

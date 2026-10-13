@@ -20,6 +20,8 @@ export interface SegmentSummary {
   readonly readable: boolean | null;
   readonly writable: boolean | null;
   readonly executable: boolean | null;
+  readonly image_base?: string;
+  readonly address_space?: string;
 }
 
 /** Return a bounded byte distance between canonical addresses in one space. */
@@ -58,6 +60,8 @@ const segmentSchema = z.object({
   readable: z.boolean().nullable(),
   writable: z.boolean().nullable(),
   executable: z.boolean().nullable(),
+  image_base: z.string().min(1).exactOptional(),
+  address_space: z.string().min(1).exactOptional(),
 });
 const unavailableAnalysisFactSchema = z
   .object({ available: z.literal(false), reason: z.string() })
@@ -412,7 +416,7 @@ export const parseRelatedAddresses = (
     : invalid(`${relation} list`, parsed.error);
 };
 
-/** Parse direct or wrapped Hopper segment records. */
+/** Preserve reported address context in direct or wrapped provider segments. */
 export const parseSegments = (
   value: JsonValue,
 ): Result<readonly SegmentSummary[], HopperProtocolError> => {
@@ -422,6 +426,17 @@ export const parseSegments = (
   return parsed.success
     ? ok(parsed.data)
     : invalid("segment list", parsed.error);
+};
+
+/** Return a reported overview base only when every parsed segment agrees. */
+export const parseSegmentImageBase = (
+  segments: readonly SegmentSummary[],
+): string | undefined => {
+  const base = segments[0]?.image_base;
+  return base !== undefined &&
+    segments.every((segment) => segment.image_base === base)
+    ? base
+    : undefined;
 };
 
 /** Parse direct or wrapped Hopper document names. */

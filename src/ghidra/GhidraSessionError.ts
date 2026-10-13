@@ -2,13 +2,15 @@ import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
-import { GhidraLaunchError } from "./GhidraLauncher.js";
+import {
+  GhidraLaunchError,
+  GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
+} from "./GhidraLauncher.js";
 
 const MAX_CAUSE_DEPTH = 3;
 const MAX_CAUSE_MESSAGE_BYTES = 2 * 1024;
 const MAX_CAUSE_FIELD_BYTES = 1024;
 const MAX_COMPILER_STDERR_BYTES = 8 * 1024;
-const MAX_LAUNCH_COMMAND_OUTPUT_BYTES = 8 * 1024;
 
 /** Stable failure phase for one private Ghidra headless session. */
 export type GhidraSessionFailureKind =
@@ -229,18 +231,28 @@ const causeLaunchOutcome = (
   redact: (value: string) => string,
 ): Record<string, JsonValue> => {
   if (!(cause instanceof GhidraLaunchError)) return {};
+  const launchSupport =
+    cause.launchSupport.length === 0
+      ? {}
+      : {
+          launch_support: cause.launchSupport.map((output) => ({
+            ...output,
+            stderr: redact(output.stderr),
+          })),
+        };
   const output = cause.capturedOutput;
-  if (output === undefined) return {};
+  if (output === undefined) return launchSupport;
   const stdout = boundedUtf8Text(
     redact(output.stdout),
-    MAX_LAUNCH_COMMAND_OUTPUT_BYTES,
+    GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );
   const stderr = boundedUtf8Text(
     redact(output.stderr),
-    MAX_LAUNCH_COMMAND_OUTPUT_BYTES,
+    GHIDRA_LAUNCH_COMMAND_OUTPUT_BYTES,
   );
   const truncated = output.truncated || stdout.truncated || stderr.truncated;
   return {
+    ...launchSupport,
     launch_outcome: {
       stdout: stdout.text,
       stderr: stderr.text,

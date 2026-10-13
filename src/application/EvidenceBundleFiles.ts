@@ -1,9 +1,9 @@
 import { resolve } from "node:path";
 
 import {
-  createImmutableEvidenceBundle,
   describeEvidenceBundleFailure,
   describeValidationFailure,
+  parseImmutableEvidenceBundle,
   parseEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
@@ -49,15 +49,7 @@ export const readImmutableEvidenceBundle = (
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
 ): Promise<Result<EvidenceBundle, EvidenceReadFailure>> =>
-  readBundle(
-    path,
-    (input) => {
-      const bundle = parseEvidenceBundle(input);
-      return createImmutableEvidenceBundle(bundle.records, bundle.unknowns);
-    },
-    signal,
-    resources,
-  );
+  readBundle(path, parseImmutableEvidenceBundle, signal, resources);
 
 const readBundle = async (
   path: string,

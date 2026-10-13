@@ -8,8 +8,9 @@ import { spawnOwnedProviderProcess } from "../../dist/process/ProviderProcess.js
 import { createSystemProcessOwnershipHost } from "../../dist/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../dist/process/ProcessOwnershipProcessTree.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
+import { waitForBrowserDevtoolsPort } from "../../dist/browser/BrowserProcessStartup.js";
 
-/** Launch only the synthetic fixture browser in its own verified process group. */
+/** Launch the synthetic fixture browser and await CDP in its own verified process group. */
 export async function startRuntimeFixtureBrowser(executable, origin) {
   const profile = await mkdtemp(join(tmpdir(), "rea-real-web-runtime-"));
   let owned;
@@ -38,9 +39,21 @@ export async function startRuntimeFixtureBrowser(executable, origin) {
       expectedCommand: null,
     });
     owned.process.stdout?.resume();
+    let stderr = "";
+    owned.process.stderr?.on("data", (chunk) => {
+      if (stderr.length < 65536) stderr += chunk;
+    });
+    const port = await waitForBrowserDevtoolsPort({
+      child: owned.process,
+      executable,
+      activePortPath: join(profile, "DevToolsActivePort"),
+      stderr: () => stderr,
+      // Match the broader real-browser verifier's allowance for cold Chrome
+      // startup on shared runners; early process failures still reject at once.
+      timeoutMs: 60_000,
+    });
     return {
-      browser: owned.process,
-      profile,
+      port,
       close: async () => {
         await stopOwnedBrowser(owned, profile);
         await rm(profile, {

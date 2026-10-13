@@ -11,6 +11,7 @@ import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
+import { analysisDetailSchema } from "../analysisDetail.js";
 
 const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   inspect_macho: {},
@@ -94,8 +95,15 @@ export const NATIVE_TOOL_CONTRACTS = [
   ),
   native(
     "inspect_macho",
-    "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper.",
-    z.object({}),
+    "Inspect Mach-O slices, load commands, imports, exports, dependencies, build metadata, segments, sections, permissions, and exact command provenance without launching Hopper. Large frameworks return megabytes of symbols; detail summary retains the complete Evidence and returns slice identity with per-collection counts, then page rows with inspect_analysis_view kind macho.",
+    z.object({
+      detail: analysisDetailSchema
+        .unwrap()
+        .optional()
+        .describe(
+          "Omitted or complete returns the complete inspection Evidence. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; use normalized_result.parent_evidence_id for macho pages.",
+        ),
+    }),
   ),
   native(
     "inspect_signature",

@@ -1,11 +1,16 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
+import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+} from "../application/analysisView/AnalysisViewService.js";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import { MANAGED_TOOL_CONTRACTS } from "../contracts/managed/managedToolContracts.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { err } from "../domain/result.js";
+import { err, ok } from "../domain/result.js";
 import type { Logger } from "pino";
 import { registerEvidenceTools } from "./registerEvidenceTools.js";
 import { runManagedProviderExecution } from "../composition/directAnalysis.js";
@@ -18,6 +23,7 @@ export const registerManagedTools = (
     readonly logger: Logger;
     readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
     readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+    readonly evidenceById?: EvidenceLookup | undefined;
     readonly withAdmittedAnalysis: import("./analysisAdmission.js").WithAdmittedAnalysis;
   },
 ): void => {
@@ -28,6 +34,17 @@ export const registerManagedTools = (
     execute: async (operation, parameters, executionOptions) => {
       if (!isManagedToolName(operation))
         return analysis.execute(operation, parameters, executionOptions);
+      const { detail: _detail, ...artifactParameters } = parameters;
+      if (
+        operation === "inspect_managed_artifact" &&
+        parameters.detail === "summary"
+      ) {
+        const ready = requireAnalysisViewRetention(operation, {
+          recordEvidence: options.recordEvidence,
+          evidenceById: options.evidenceById,
+        });
+        if (!ready.ok) return ready;
+      }
       const requestedPath = parameters.path;
       const activeTarget = options.activeTarget?.();
       const path =
@@ -52,7 +69,9 @@ export const registerManagedTools = (
         path,
         operation,
         executionOptions?.signal,
-        parameters,
+        operation === "inspect_managed_artifact"
+          ? artifactParameters
+          : parameters,
       );
       if (execution.ok && typeof requestedPath === "string")
         selectedManagedPath = requestedPath;
@@ -62,5 +81,13 @@ export const registerManagedTools = (
   registerEvidenceTools(server, MANAGED_TOOL_CONTRACTS, {
     ...options,
     analysisForAdmission,
+    projectEvidence: (operation, parameters, evidence) =>
+      operation === "inspect_managed_artifact" &&
+      parameters.detail === "summary"
+        ? summarizeRetainedAnalysis(evidence, {
+            recordEvidence: options.recordEvidence,
+            evidenceById: options.evidenceById,
+          })
+        : ok(evidence),
   });
 };

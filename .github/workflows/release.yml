@@ -290,13 +290,25 @@ jobs:
         if: inputs.phase == 'prepare' && steps.release.outputs.prs_created == 'true'
         run: npm run docs:check && git diff --exit-code
 
-  publish:
-    name: Publish to npm
+  qualification:
+    name: Qualify exact release revision
     needs: [merged-release, release-please]
     if: >-
       always() && !cancelled() &&
       ((needs.merged-release.result == 'success' && needs.merged-release.outputs.release_created == 'true') ||
       (needs.release-please.result == 'success' && inputs.phase == 'publish' && needs.release-please.outputs.release_created == 'true'))
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_sha: ${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}
+
+  publish:
+    name: Publish to npm
+    needs: [merged-release, release-please, qualification]
+    if: >-
+      always() && !cancelled() && needs.qualification.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -315,17 +327,20 @@ jobs:
 
       - run: npm ci
 
-      - name: Prepare Windows native build toolchain
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y g++-mingw-w64-x86-64
+      - name: Download the exact qualified package
+        uses: actions/download-artifact@v4
+        with:
+          name: verified-release-package
+          path: .cache/verified-package/
 
-      - name: Build and verify bundled Windows native controls
-        run: npm run build:windows-native && npm run verify:windows-native:artifact
-
-      - name: Verify packaged release before publishing
-        run: npm run verify:package
+      - name: Verify qualified package provenance and digest
+        id: package
+        run: node scripts/ci/verified-package.mjs validate .cache/verified-package
 
       - name: Publish
         shell: bash
+        env:
+          VERIFIED_PACKAGE_TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
           version="$(node --input-type=module -e 'import packageJson from "./package.json" with { type: "json" }; process.stdout.write(packageJson.version)')"
           published_version="$(npm view "rea-agents@${version}" version --json 2>/dev/null || true)"
@@ -333,7 +348,7 @@ jobs:
             echo "rea-agents@${version} is already published; verifying the existing package."
           else
             tag="$(node scripts/release-npm-tag.mjs "${version}")"
-            npm publish --access public --tag "${tag}"
+            npm publish "${VERIFIED_PACKAGE_TARBALL}" --access public --tag "${tag}"
           fi
 
       - name: Verify published CLI from npm

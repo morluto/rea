@@ -47,14 +47,8 @@ export const inspectAnalysisViewValidated = (
   input: InspectAnalysisViewInput,
   lookup?: EvidenceLookup,
 ): Result<Evidence, AnalysisError> => {
-  const inline = input.source.kind === "inline" ? input.source.evidence : null;
-  const inlineCapture =
-    typeof inline === "object" &&
-    inline !== null &&
-    Object.getOwnPropertyDescriptor(inline, "operation")?.value ===
-      "inspect_web_network_capture";
   const accumulator =
-    input.view.kind === "api-surface" || inlineCapture
+    input.view.kind === "api-surface"
       ? new WebNetworkApiSurfaceAccumulator()
       : undefined;
   if (input.source.kind === "inline" && accumulator !== undefined) {
@@ -102,6 +96,38 @@ export interface AnalysisViewRetention {
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
 }
 
+/** Fail before analysis when selected delivery cannot keep its complete source. */
+export const requireAnalysisViewRetention = (
+  operation: string,
+  retention: AnalysisViewRetention,
+): Result<
+  {
+    readonly evidenceById: EvidenceLookup;
+    readonly recordEvidence: EvidenceWriter["recordEvidence"];
+  },
+  AnalysisError
+> => {
+  if (
+    retention.recordEvidence === undefined ||
+    retention.evidenceById === undefined
+  )
+    return err(
+      new AnalysisCapabilityUnavailableError(
+        ANALYSIS_VIEW_PROVIDER.id,
+        operation,
+        "summary detail requires a server session that retains Evidence for later views",
+        {
+          userMessage:
+            "This server does not retain Evidence. Select detail complete to receive the complete analysis inline.",
+        },
+      ),
+    );
+  return ok({
+    evidenceById: retention.evidenceById,
+    recordEvidence: retention.recordEvidence,
+  });
+};
+
 /**
  * Retain complete analysis Evidence in the session, then project its summary
  * view from the retained record. Callers page or select the rest through
@@ -111,29 +137,16 @@ export const summarizeRetainedAnalysis = (
   evidence: Evidence,
   retention: AnalysisViewRetention,
 ): Result<Evidence, AnalysisError> => {
-  if (
-    retention.recordEvidence === undefined ||
-    retention.evidenceById === undefined
-  )
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        ANALYSIS_VIEW_PROVIDER.id,
-        evidence.operation,
-        "summary detail requires a server session that retains Evidence for later views",
-        {
-          userMessage:
-            "This server does not retain Evidence. Select detail complete to receive the complete analysis inline.",
-        },
-      ),
-    );
-  const recorded = retention.recordEvidence(evidence);
+  const ready = requireAnalysisViewRetention(evidence.operation, retention);
+  if (!ready.ok) return ready;
+  const recorded = ready.value.recordEvidence(evidence);
   if (!recorded.ok) return recorded;
   return inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
       view: { kind: "summary" },
     },
-    retention.evidenceById,
+    ready.value.evidenceById,
   );
 };
 

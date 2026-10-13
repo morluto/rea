@@ -341,6 +341,10 @@ describe("headless IDA procedure lookup failures", () => {
     ["an empty error", lookup("main", null, "")],
     ["a whitespace-only error", lookup("main", null, "  ")],
     ["an answer for a different query", lookup("helper", null, "Not found")],
+    [
+      "a successful answer for a different query",
+      lookup("helper", knownFunction, null),
+    ],
   ])("keeps %s as unreadable output", async (_label, answer) => {
     const client = await missingProcedureFixture(() => answer);
     try {

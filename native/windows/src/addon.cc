@@ -87,6 +87,8 @@ napi_value failureValue(napi_env env, const Failure& failure) {
     set(env, error, "requestedPath", string(env, failure.path));
     set(env, error, "win32Code", number(env, failure.win32));
     set(env, error, "win32Message", string(env, detail));
+    if (failure.runtimeDirectoryUnallocated)
+      set(env, error, "runtimeAllocation", string(env, std::string("not-started")));
     return error;
 }
 

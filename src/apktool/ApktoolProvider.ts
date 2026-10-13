@@ -117,13 +117,20 @@ const readBoundedText = async (
     throwIfCancelled(operation, signal);
     const truncated = length > budget;
     // A prefix may end within a UTF-8 character; omit those trailing bytes.
-    const decoder = new TextDecoder("utf-8");
-    return {
-      text: decoder.decode(bytes.subarray(0, Math.min(length, budget)), {
-        stream: truncated,
-      }),
-      truncated,
-    };
+    try {
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      return {
+        text: decoder.decode(bytes.subarray(0, Math.min(length, budget)), {
+          stream: truncated,
+        }),
+        truncated,
+      };
+    } catch (cause: unknown) {
+      throw new AnalysisProtocolError(
+        `apktool produced invalid UTF-8 in ${path}`,
+        { cause },
+      );
+    }
   } finally {
     await file.close();
   }

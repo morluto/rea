@@ -309,7 +309,9 @@ it("separately rejects a tampered digest before admission to any consumer or ses
   };
   const digestMismatch = /semantic identifier does not match/u;
   expect(() => parseEvidence(tampered)).toThrow(digestMismatch);
-  expect(() => findChangedBehavior([tampered])).toThrow(digestMismatch);
+  expect(() => findChangedBehavior({ comparisons: [tampered] })).toThrow(
+    digestMismatch,
+  );
   expect(() => correlateStaticAndRuntime(correlationInput(tampered))).toThrow(
     digestMismatch,
   );
@@ -334,6 +336,19 @@ it("separately rejects a tampered digest before admission to any consumer or ses
       error: { code: "invalid_request" },
     });
   }
+});
+
+it("maps malformed changed-behavior Evidence to an invalid request before closure lookup", async () => {
+  const { client, comparison } = await connectedComparison();
+  const malformed = { ...comparison, evidence_links: undefined } as unknown;
+  const response = await client.callTool({
+    name: "find_changed_behavior",
+    arguments: { comparisons: [malformed] },
+  });
+  expect(response.isError).toBe(true);
+  expect(parseMcpToolError(response)).toMatchObject({
+    error: { code: "invalid_request" },
+  });
 });
 
 it("keeps withheld ownership unknown through CLI and MCP comparison", async () => {

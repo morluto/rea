@@ -236,6 +236,8 @@ try {
     await exec("/usr/bin/xcrun", [
       "swiftc",
       "-emit-library",
+      "-module-name",
+      "ReaWitnessFixture",
       "-O",
       ...mode.flags
         .map((flag) => flag.replace(/^-Wl,/u, "-Xlinker\0"))

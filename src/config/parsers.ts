@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { nulFreeStringSchema } from "../domain/localPath.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -20,7 +21,8 @@ export const parseLoaderArgs = (
   return parseConfiguredStringArray(
     encoded,
     "HOPPER_LOADER_ARGS_JSON",
-    z.string(),
+    nulFreeStringSchema,
+    "must encode an array of strings without NUL bytes",
   );
 };
 
@@ -28,6 +30,7 @@ const parseConfiguredStringArray = (
   encoded: string,
   setting: string,
   itemSchema: z.ZodString,
+  requirement = "must encode an array of strings",
 ): Result<readonly string[], ConfigurationError> => {
   const decoded = safeParseJson(encoded);
   if (!decoded.ok)
@@ -37,13 +40,7 @@ const parseConfiguredStringArray = (
   const parsed = z.array(itemSchema).safeParse(decoded.value);
   return parsed.success
     ? ok(parsed.data)
-    : err(
-        configuredArrayError(
-          setting,
-          "must encode an array of strings",
-          parsed.error,
-        ),
-      );
+    : err(configuredArrayError(setting, requirement, parsed.error));
 };
 
 const configuredArrayError = (

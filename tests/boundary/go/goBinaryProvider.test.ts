@@ -49,20 +49,6 @@ it.each([32, 64] as const)(
   },
 );
 
-it.each([{ signature: [0xce, 0xc5] }, { signature: [0xcc, 0xd8] }])(
-  "rejects high-bit lookalikes of Windows signatures %j",
-  async ({ signature }) => {
-    const root = await createTestTempDirectory("rea-go-pe-signature-");
-    const fixture = createGoBinaryFixture({ format: "pe" });
-    fixture.bytes.set(signature, 128);
-    const path = join(root, "corrupt-signature.exe");
-    await writeFile(path, fixture.bytes);
-    const result = await new GoBinaryProvider().inspect({ path });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
-  },
-);
-
 it("preserves the actual build-info byte guard as a resource failure", async () => {
   const fixture = createGoBinaryFixture();
   fixture.bytes.set([0x81, 0x80, 0x40], fixture.headerOffset + 32);

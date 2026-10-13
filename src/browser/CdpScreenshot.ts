@@ -17,6 +17,7 @@ import { mainFrameUrl } from "./CdpCaptureDocuments.js";
 import { captureFrames } from "./CdpCaptureDocuments.js";
 import { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
 import { decodeCanonicalBase64 } from "../domain/webScreenshot.js";
+import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 
 interface ScreenshotContext {
   readonly connection: CdpConnection;
@@ -94,7 +95,9 @@ export const captureCdpScreenshot = async (
     encoded === undefined ? undefined : decodeCanonicalBase64(encoded);
   if (bytes === undefined)
     throw new BrowserObservationError("inspect_web_page", "payload_limit");
-  const dimensions = pngDimensions(bytes);
+  const dimensions = readPngHeaderDimensions(bytes);
+  if (dimensions === undefined)
+    throw new BrowserObservationError("inspect_web_page", "protocol_error");
   if (navigation.leftScope)
     throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
   const afterUrl = mainFrameUrl(after);
@@ -158,21 +161,3 @@ const observeScreenshotNavigation = (
   if (allowedSanitizedUrl(frame?.url, origins) === undefined)
     state.leftScope = true;
 };
-
-const pngDimensions = (
-  bytes: Buffer,
-): { readonly width: number; readonly height: number } => {
-  if (
-    bytes.byteLength < 24 ||
-    !bytes.subarray(0, 8).equals(PNG_SIGNATURE) ||
-    bytes.subarray(12, 16).toString("ascii") !== "IHDR"
-  )
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  const width = bytes.readUInt32BE(16);
-  const height = bytes.readUInt32BE(20);
-  if (width === 0 || height === 0)
-    throw new BrowserObservationError("inspect_web_page", "protocol_error");
-  return { width, height };
-};
-
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);

@@ -28,6 +28,7 @@ import {
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyGhidraCompactReferences } from "./lib/real-ghidra-compact-references.mjs";
+import { verifyGhidraFileOffsets } from "./lib/real-ghidra-file-offsets.mjs";
 
 const verifierRun = createVerifierRun();
 const SESSION_CAPABILITIES = GHIDRA_SESSION_CAPABILITIES.filter(
@@ -300,6 +301,11 @@ try {
 }
 if (report === undefined)
   throw new Error("Windows Ghidra report was not produced");
+report.file_offsets = await verifyGhidraFileOffsets(
+  targetPath,
+  resolve(root, "scripts", "rea.mjs"),
+  architecture === "x86" ? "0x401010" : "0x140001010",
+);
 process.stdout.write(
   `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), ...report })}\n`,
 );

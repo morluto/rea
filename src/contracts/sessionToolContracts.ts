@@ -139,7 +139,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "list_unknowns",
-    "List every current residual-unknown head in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete and inline. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
+    "List current residual-unknown heads in deterministic ID order, with optional exact status, severity, and domain filters. Results are complete inline by default; supply offset and limit to page the filtered order. total is the matching-head count and next_offset is null when the page exhausts the result. This is read-only; unresolved, contradicted, and non-truth dispositions remain distinct.",
     listUnknownsInputSchema,
   ),
   session(

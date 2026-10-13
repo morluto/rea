@@ -13,6 +13,7 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
+import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
 
 /** Installed processor code and data, distinct from REA's analysis-extension ABI. */
 export const ghidraPspExtensionSchema = z.strictObject({
@@ -88,7 +89,7 @@ export const inspectGhidraPspExtension = async (
     throw new Error("The installed Allegrex extension has no loader JAR.");
   const hash = createHash("sha256");
   let bytesRead = 0;
-  let properties = "";
+  let properties = Buffer.alloc(0);
   for (const relative of files) {
     signal?.throwIfAborted();
     const path = join(root, relative);
@@ -135,22 +136,22 @@ export const inspectGhidraPspExtension = async (
         );
       bytesRead += before.size;
       if (relative === "extension.properties")
-        properties = Buffer.concat(chunks).toString("utf8");
+        properties = Buffer.concat(chunks);
     } finally {
       await handle.close();
     }
   }
   // Ghidra's extension.properties version is the compatible Ghidra version,
   // not the extension release (e.g. v21.4); content identity supplies the latter.
-  const property = (name: string): string => {
-    const values = properties.split(/\r?\n/u).flatMap((line) => {
-      const match = /^\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*(.*?)\s*$/u.exec(line);
-      return match?.[1] === name ? [match[2] ?? ""] : [];
-    });
-    if (values.length !== 1)
-      throw new Error(`Allegrex extension must declare exactly one ${name}.`);
-    return values[0] ?? "";
-  };
+  const parsedProperties = parseGhidraJavaProperties(
+    properties.toString("latin1"),
+  );
+  if (!parsedProperties.ok)
+    throw new Error(
+      `Invalid Allegrex extension properties: ${parsedProperties.error}`,
+    );
+  const property = (name: string): string | undefined =>
+    parsedProperties.value.get(name);
   if (
     property("name") !== "ghidra-allegrex" ||
     property("version") !== ghidraVersion

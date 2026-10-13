@@ -31,9 +31,12 @@ it("reads exact binary and empty bytes and rejects symlink/size/cancellation bou
   });
   const controller = new AbortController();
   controller.abort();
-  await expect(readStableArtifact(real, 3, controller.signal)).rejects.toBe(
-    controller.signal.reason,
-  );
+  await expect(
+    readStableArtifact(real, 3, controller.signal),
+  ).rejects.toMatchObject({
+    reason: "cancelled",
+    cause: controller.signal.reason,
+  });
 });
 
 const checkChange = async (

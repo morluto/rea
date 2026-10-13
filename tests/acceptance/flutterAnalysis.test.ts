@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { flutterResultSchemas } from "../../src/domain/flutter/flutterBuildAnalysis.js";
 import {
   aotFixtureImage,
   engineFixtureImage,
@@ -59,6 +60,9 @@ cliTest(
       });
       expect(result.exitCode, result.stderr).toBe(0);
       const evidence = toolContract(name).outputSchema.parse(result.json);
+      const complete = flutterResultSchemas[name].parse(
+        evidence.normalized_result,
+      );
       const response = await call(name, {
         path,
         ...(abi === undefined ? {} : { abi }),
@@ -70,7 +74,7 @@ cliTest(
       expect(mcp.subject).toMatchObject({
         local_path: path,
         format: "apk",
-        digest: { sha256: evidence.normalized_result.target.sha256 },
+        digest: { sha256: complete.target.sha256 },
       });
       expect(mcp.evidence_id).toBe(evidence.evidence_id);
       if (name === "inspect_dart_aot") {
@@ -134,6 +138,9 @@ cliTest(
     const evidence = toolContract("inspect_dart_aot").outputSchema.parse(
       result.json,
     );
+    const complete = flutterResultSchemas.inspect_dart_aot.parse(
+      evidence.normalized_result,
+    );
     const { call } = await connectLocalToolsMcp();
     const response = await call("inspect_dart_aot", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -146,7 +153,7 @@ cliTest(
       string_pool: { coverage: "complete" },
     });
     expect(
-      evidence.normalized_result.libapp.sections
+      complete.libapp.sections
         .filter((section) => section.name.endsWith("Data"))
         .map((section) => section.kind),
     ).toEqual([4, 4]);

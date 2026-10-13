@@ -1,6 +1,7 @@
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
+  AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisUnsupportedTargetError,
   AnalysisResourceConstraintError,
@@ -33,6 +34,8 @@ import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 export const analysisErrorRemediationAction = (
   error: AnalysisError,
 ): string => {
+  if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
+    return "Review details.reason, then retry the same analysis after the condition clears.";
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
   if (error instanceof AnalysisSnapshotMismatchError)
@@ -45,13 +48,15 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisResourceConstraintError)
     return (
       error.remediationAction ??
-      (error.resource === "transport"
-        ? "Discover retained records with get_evidence_bundle and detail: summary, then inspect compatible records through inspect_analysis_view using an exact Evidence reference. Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable."
-        : error.resource === "cpu"
-          ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
-          : error.resource === "file-size"
-            ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
-            : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.")
+      (error.resource === "capacity"
+        ? "Wait for an active analysis to complete, then retry within the reported admission limits."
+        : error.resource === "transport"
+          ? "Discover retained records with get_evidence_bundle and detail: summary, then inspect compatible records through inspect_analysis_view using an exact Evidence reference. Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable."
+          : error.resource === "cpu"
+            ? "Review the reported worker CPU limits and observed signal. Retry with sufficient CPU time or a smaller artifact; REA retains tighter inherited limits."
+            : error.resource === "file-size"
+              ? "Review the reported worker file-size limits and write failure. Retry with a sufficient file-size allowance for the evidence reply; REA retains tighter inherited limits."
+              : "Review the reported worker memory limits and available host memory. Retry with sufficient memory or a smaller artifact; REA retains tighter inherited limits.")
     );
   if (error instanceof HopperTimeoutError)
     return error.operation === undefined
@@ -110,6 +115,8 @@ export const analysisErrorRemediationAction = (
 export const analysisErrorCategory = (
   error: AnalysisError,
 ): AnalysisErrorProjection["category"] => {
+  if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
+    return "unavailable";
   if (
     error instanceof BinaryTargetError &&
     error.constraint === "load_selection_rejected"
@@ -218,6 +225,8 @@ export const analysisErrorUserMessage = (error: AnalysisError): string => {
   const hopperMessage = hopperErrorUserMessage(error);
   if (hopperMessage !== undefined) return hopperMessage;
   if (error.userMessage !== undefined) return error.userMessage;
+  if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
+    return "Required runtime controls are unavailable for this attempt.";
   const standardMessage = standardErrorMessage(error._tag);
   if (standardMessage !== undefined) return standardMessage;
   if (error instanceof ArtifactOperationError) return artifactMessage(error);

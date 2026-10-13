@@ -19,10 +19,10 @@ export const withPlaywrightExecutionBoundary = <Value>(
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline =
-      timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
+      timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
     const scheduleTimeout = (): void => {
       if (deadline === undefined) return;
-      const remaining = deadline - Date.now();
+      const remaining = deadline - performance.now();
       if (remaining <= 0) {
         fail(new AnalysisTimeoutError(OPERATION, timeoutMs ?? 0));
         return;

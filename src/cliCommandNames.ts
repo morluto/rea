@@ -1,6 +1,11 @@
 /** Canonical names used by every one-shot CLI command registration. */
 export const CLI_COMMANDS = Object.freeze({
+  inspectPacketFields: "inspect-packet-fields",
+  inspectPacketCapture: "inspect-packet-capture",
+  inspectSignalDecoders: "inspect-signal-decoders",
+  decodeSignalRecording: "decode-signal-recording",
   inspectWasmArtifact: "inspect-wasm-artifact",
+  inspectSqliteDatabase: "inspect-sqlite-database",
   inspectEvmInterface: "inspect-evm-interface",
   inspectWebNetworkCapture: "inspect-web-network-capture",
   observeWebExecution: "observe-web-execution",
@@ -52,6 +57,8 @@ export const CLI_COMMANDS = Object.freeze({
   inspectFirmwareRegions: "inspect-firmware-regions",
   extractFirmware: "extract-firmware",
   inspectAndroidPackage: "inspect-android-package",
+  inspectPcapClient: "inspect-pcap-client",
+  inspectPcapCapture: "inspect-pcap-capture",
   identifyFlutterBuild: "identify-flutter-build",
   inspectDartAot: "inspect-dart-aot",
   inspectApktoolClient: "inspect-apktool-client",

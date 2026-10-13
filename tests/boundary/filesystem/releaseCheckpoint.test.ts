@@ -698,9 +698,8 @@ it.skipIf(process.platform === "win32").each([
     const sourceSha = await candidate(f, valid ? "6.0.0" : "5.1.0");
     const workflow = z
       .object({
-        jobs: z.record(
-          z.string(),
-          z.object({
+        jobs: z.object({
+          [job]: z.object({
             steps: z.array(
               z.object({
                 name: z.string().optional(),
@@ -708,7 +707,7 @@ it.skipIf(process.platform === "win32").each([
               }),
             ),
           }),
-        ),
+        }),
       })
       .parse(
         parse(

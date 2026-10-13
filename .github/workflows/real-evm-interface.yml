@@ -3,13 +3,15 @@ name: Real offline EVM interface
 on:
   workflow_dispatch:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
-
-concurrency:
-  group: real-evm-interface-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 env:
   NODE_OPTIONS: --max-old-space-size=768
@@ -27,6 +29,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Acquire unchanged fixture compiler in isolated runner storage
         shell: bash
         run: |

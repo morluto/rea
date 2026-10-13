@@ -312,3 +312,9 @@ artifacts carry their normalized before/after digests and capture states.
 Every changed or unknown artifact record is returned inline for each aligned
 step. Missing, truncated, or mismatched capture coverage remains unknown
 instead of being treated as equality.
+
+`scenario.event_families` records the sorted, de-duplicated `capture.events`
+selection. Captures with different selections report event evidence as unknown
+with a recovery instruction, even when no selected family emitted an event.
+Captures written before this field existed omit it, so their event evidence is
+also unknown.

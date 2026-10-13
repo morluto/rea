@@ -52,6 +52,22 @@ export const listUnknownsInputSchema = z.strictObject({
     .optional(),
   severity: z.enum(["low", "medium", "high", "critical"]).optional(),
   domain: z.string().trim().min(1).optional(),
+  offset: z
+    .number()
+    .int()
+    .min(0)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(0)
+    .describe("Zero-based offset in the stable filtered unknown ID order."),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .optional()
+    .describe(
+      "Optional maximum number of heads to return. Omit to return every matching head from offset.",
+    ),
 });
 
 /** Exact residual-unknown identity to revalidate. */

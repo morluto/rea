@@ -454,6 +454,35 @@ describe("MCP root input schemas", () => {
 
       expectStrictInputSchemaParity(tools, ajv);
 
+      for (const name of ["inspect_web_page", "analyze_web_bundle"]) {
+        const contract = TOOL_CONTRACTS.find((tool) => tool.name === name);
+        const tool = advertised.get(name);
+        if (contract === undefined || tool === undefined)
+          throw new Error(`${name} was not advertised`);
+        const validate = ajv.compile(tool.inputSchema);
+        const base = {
+          cdp_endpoint: "http://127.0.0.1:9222",
+          target_id: "target",
+        };
+        for (const flag of [undefined, false, true, "false", null]) {
+          const input =
+            flag === undefined
+              ? base
+              : { ...base, include_script_sources: flag };
+          const accepted =
+            flag === undefined ||
+            flag === true ||
+            (name === "inspect_web_page" && flag === false);
+          const parsed = contract.inputSchema.safeParse(input);
+          expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
+          expect(validate(input), `${name}: ${String(flag)}`).toBe(accepted);
+          if (parsed.success && flag === undefined)
+            expect(parsed.data).toMatchObject({
+              include_script_sources: name === "analyze_web_bundle",
+            });
+        }
+      }
+
       const nativeObservation = TOOL_CONTRACTS.find(
         ({ name }) => name === "observe_native_ui",
       );

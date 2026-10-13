@@ -47,14 +47,15 @@ Edit the page's HTML in `public/`. Keep the question, evidence and result easy t
 follow. The writing and design guidance in [style-guide.md](style-guide.md)
 applies to every page.
 
-| Change                         | Edit                                                             | Then run                                        |
-| ------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------- |
-| Page text, examples or figures | The page's HTML outside the marked shared regions                | `python3 scripts/website.py check`              |
-| Search title or description    | The page's `<title>` and first description meta tag              | `python3 scripts/website.py sync`, then `check` |
-| Main navigation                | `NAVIGATION` in `scripts/website.py`                             | `sync`, then `check`                            |
-| Header, social links or footer | `templates/header.html.tmpl` or `templates/footer.html.tmpl`     | `sync`, then `check`                            |
-| Shared link previews           | `templates/sharing.html.tmpl` or `public/assets/social-card.svg` | `sync`, then `check`                            |
-| Translation                    | `locales/<language>/messages.po`                                 | `translations check`, then `check`              |
+| Change                          | Edit                                                             | Then run                                        |
+| ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
+| Page text, examples or figures  | The page's HTML outside the marked shared regions                | `python3 scripts/website.py check`              |
+| Search title or description     | The page's `<title>` and first description meta tag              | `python3 scripts/website.py sync`, then `check` |
+| Main navigation                 | `NAVIGATION` in `scripts/website.py`                             | `sync`, then `check`                            |
+| Header, social links or footer  | `templates/header.html.tmpl` or `templates/footer.html.tmpl`     | `sync`, then `check`                            |
+| Theme loading and browser color | `templates/theme.html.tmpl` and `public/assets/theme.js`         | `sync`, then `check`                            |
+| Shared link previews            | `templates/sharing.html.tmpl` or `public/assets/social-card.svg` | `sync`, then `check`                            |
+| Translation                     | `locales/<language>/messages.po`                                 | `translations check`, then `check`              |
 
 After changing English text, run `python3 scripts/website.py translations extract`
 before `check`. Existing translations and reviewer comments survive extraction;
@@ -130,6 +131,7 @@ describe its recorded investigation; update them only when repeating that work.
 - `public/showcase/index.html`: the case-study index.
 - `public/blog/index.html`: articles about reconstruction methods, ports, mods and reverse engineering.
 - `public/blog/touhou-reconstruction/index.html`: a personal essay about agent autonomy, oracle quality, knowledge carried between TH08 and TH095, PC-98 TH04, and the path from exact reconstruction to readable source and modern ports.
+- `public/blog/reverse-engineering-models/index.html`: an essay on general models, compiler specialization and learning useful reconstruction experiments, with historical evidence from TH08, TH095, TH04 and TH09. Model attribution and verification scope are in [evidence/reverse-engineering-models.md](evidence/reverse-engineering-models.md).
 - `public/showcase/aegis/index.html`: Aegis's Android login-code calculation, with an adjustable clock and reference checks.
 - `public/showcase/dx-ball/index.html`: sound-pan investigation and project status.
 - `public/showcase/notion/index.html`: Notion's Electron clipboard bridge and rich clipboard format.
@@ -255,6 +257,19 @@ investigations. All cursors blink continuously with the same CSS animation,
 respecting reduced-motion preferences. Both the prompt and animation work
 without JavaScript. The homepage and agent setup section share a copyable
 installation prompt; setup still presents its plan for approval.
+
+The header's sun/moon button switches the color theme. A first visit follows the
+system preference, falling back to light when no preference is given. Manual
+choices are saved in browser storage under `rea-theme` and apply across pages,
+language editions and tabs on the same host. If storage is blocked, the button
+still works for the current page. Without JavaScript, the site stays light and
+the button stays hidden.
+
+The shared `theme` head region loads `assets/theme.js` before the stylesheet so a
+saved choice applies before the first paint. That script owns the resolved
+`data-theme`, browser `theme-color` and `website-theme-change` event. The CSS
+palette, embedded SVGs and dinosaur canvas follow that choice. Keep the theme
+region in the page scaffold and run `sync` after editing its template.
 
 Reading pages share a small `↑ Top` link at the bottom right. It appears after
 scrolling and returns to the page header, with smooth scrolling when reduced

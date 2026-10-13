@@ -34,6 +34,12 @@ async function readReleaseWorkflow() {
         "release-proposal": jobSchema,
         "release-please": jobSchema,
         "merged-release": jobSchema,
+        qualification: z.object({
+          if: z.string(),
+          needs: z.array(z.string()),
+          uses: z.string(),
+          with: z.record(z.string(), z.string()),
+        }),
         publish: jobSchema,
         "publish-mcp": jobSchema,
       }),
@@ -271,9 +277,18 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
     release_created: "${{ steps.release.outputs.release_created }}",
     sha: "${{ steps.release.outputs.sha }}",
   });
-  expect(workflow.jobs.publish.if).toContain("inputs.phase == 'publish'");
-  expect(workflow.jobs.publish.if).toContain(
+  expect(workflow.jobs.qualification.if).toContain("inputs.phase == 'publish'");
+  expect(workflow.jobs.qualification.if).toContain(
     "needs.release-please.outputs.release_created",
+  );
+  expect(workflow.jobs.qualification.uses).toBe("./.github/workflows/ci.yml");
+  expect(workflow.jobs.qualification.with).toEqual({
+    source_sha:
+      "${{ needs.merged-release.outputs.sha || needs.release-please.outputs.sha }}",
+  });
+  expect(workflow.jobs.publish.needs).toContain("qualification");
+  expect(workflow.jobs.publish.if).toContain(
+    "needs.qualification.result == 'success'",
   );
   expect(workflow.jobs["publish-mcp"].if).toContain(
     "needs.publish.result == 'success'",
@@ -309,7 +324,7 @@ it("binds npm and MCP publication to the same immutable release SHA", async () =
   )?.run;
   expect(publishCommand).toContain("scripts/release-npm-tag.mjs");
   expect(publishCommand).toContain(
-    'npm publish --access public --tag "${tag}"',
+    'npm publish "${VERIFIED_PACKAGE_TARBALL}" --access public --tag "${tag}"',
   );
   for (const [version, tag] of [
     ["6.1.0", "latest"],
@@ -644,7 +659,7 @@ it("routes website verification through the central PR policy", async () => {
 
 // Publishing is irreversible. Keep the release authority invariant as a static
 // boundary check; it is not proof that package installation or publishing works.
-it("requires package verification before publishing and retains the registry canary", async () => {
+it("requires qualified package validation before publishing and retains the registry canary", async () => {
   const workflow = z
     .object({
       jobs: z.object({
@@ -663,7 +678,7 @@ it("requires package verification before publishing and retains the registry can
     );
   const commands = workflow.jobs.publish.steps.map(({ run }) => run ?? "");
   const verify = commands.findIndex((command) =>
-    command.includes("npm run verify:package"),
+    command.includes("scripts/ci/verified-package.mjs validate"),
   );
   const publish = commands.findIndex((command) =>
     command.includes("npm publish"),

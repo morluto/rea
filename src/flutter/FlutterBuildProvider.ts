@@ -23,6 +23,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -759,7 +760,7 @@ export class FlutterBuildProvider {
           toolchain_capped: value.libflutter.toolchainCapped,
         },
       }))
-      .sort((left, right) => left.abi.localeCompare(right.abi));
+      .sort((left, right) => compareUnicodeCodePoints(left.abi, right.abi));
     const flutterDetected = abis.some((entry) => entry.libapp.present);
     const partial =
       abis.some(
@@ -871,7 +872,7 @@ export class FlutterBuildProvider {
             (left, right) =>
               (preference.indexOf(left.abi) + 1 || preference.length + 1) -
                 (preference.indexOf(right.abi) + 1 || preference.length + 1) ||
-              left.abi.localeCompare(right.abi),
+              compareUnicodeCodePoints(left.abi, right.abi),
           )[0]!
         : candidates.find((candidate) => candidate.abi === abi);
     if (selected === undefined)

@@ -12,7 +12,8 @@ jobs:
     name: Build Windows x64 NativeAOT fixture
     # .NET 8.0.22's bundled linker discovery supports VS 2019/2022.
     runs-on: windows-2022
-    timeout-minutes: 15
+    # Two bounded restore attempts and one compile can each take five minutes.
+    timeout-minutes: 20
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_PROCESSOR_COUNT: "1"

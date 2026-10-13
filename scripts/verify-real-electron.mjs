@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PlaywrightElectronActiveProvider } from "../dist/browser/PlaywrightElectronActiveProvider.js";
-import { electronActiveObservationInputSchema } from "../dist/domain/javascript/electronActiveObservation.js";
+import { captureElectronScenario } from "../dist/application/javascript/ElectronActiveObservationService.js";
+import {
+  electronActiveObservationInputSchema,
+  electronActiveObservationResultSchema,
+} from "../dist/domain/javascript/electronActiveObservation.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 import { verifyElectronToolContracts } from "./verify/electron/tool-contracts.mjs";
 
@@ -50,61 +54,65 @@ const input = electronActiveObservationInputSchema.parse({
   ],
 });
 const verifierRun = createVerifierRun();
-const result = await new PlaywrightElectronActiveProvider(process.env).capture(
+const result = await captureElectronScenario(
+  new PlaywrightElectronActiveProvider(process.env),
   input,
 );
 if (!result.ok) throw result.error;
+const capture = electronActiveObservationResultSchema.parse(
+  result.value.normalized_result,
+);
 
 const output = {
   verifier_run: await completeVerifierRun(verifierRun),
-  electron: result.value.application,
-  actions: result.value.actions,
-  processes: result.value.processes,
-  ipc: result.value.ipc,
-  timeline: result.value.timeline,
-  windows: result.value.windows,
+  electron: capture.application,
+  actions: capture.actions,
+  processes: capture.processes,
+  ipc: capture.ipc,
+  timeline: capture.timeline,
+  windows: capture.windows,
   verified:
-    result.value.coverage.status === "partial_attach" &&
-    result.value.actions.every(({ status }) => status === "completed") &&
-    result.value.actions.some(
+    capture.coverage.status === "partial_attach" &&
+    capture.actions.every(({ status }) => status === "completed") &&
+    capture.actions.some(
       ({ kind, window_index }) =>
         kind === "renderer-reload" && window_index === 1,
     ) &&
-    result.value.actions.some(
+    capture.actions.some(
       ({ kind, window_index }) =>
         kind === "renderer-crash" && window_index === 1,
     ) &&
-    result.value.windows.length >= 2 &&
-    result.value.ipc.events.some(
+    capture.windows.length >= 2 &&
+    capture.ipc.events.some(
       ({ kind, channel }) =>
         kind === "main-handler-invocation" && channel === "readiness:echo",
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event, phase }) =>
         kind === "window-lifecycle" &&
         event === "created" &&
         phase === "completed",
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event }) =>
         kind === "process-lifecycle" && event === "utility-process-fork",
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event, phase }) =>
         kind === "shell-attempt" &&
         event === "openExternal" &&
         phase === "blocked",
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event, phase }) =>
         kind === "preload" && event === "configured" && phase === "completed",
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event }) =>
         kind === "protocol" &&
         (event === "open-url" || event === "second-instance"),
     ) &&
-    result.value.timeline.events.some(
+    capture.timeline.events.some(
       ({ kind, event }) =>
         kind === "process-lifecycle" && event === "child.spawn",
     ),

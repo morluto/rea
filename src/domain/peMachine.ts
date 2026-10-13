@@ -1,6 +1,6 @@
-import type { BinaryArchitecture } from "./binaryTargetTypes.js";
+import type { HeaderArchitecture } from "./binaryTargetTypes.js";
 
-export type PeArchitecture = Exclude<BinaryArchitecture, "mips">;
+export type PeArchitecture = HeaderArchitecture;
 
 /** A decoded COFF machine and whether it carried a ReadyToRun OS override. */
 export interface PeMachine {

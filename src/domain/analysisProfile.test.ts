@@ -65,4 +65,11 @@ describe("analysis profile commitments", () => {
       analysisProfileSchema.parse({ ...profile, digest: "0".repeat(64) }),
     ).toThrow(/digest/u);
   });
+
+  it("projects known provider identity fields at construction", () => {
+    const liveProvider = { ...PROVIDER, transient_status: "starting" };
+    const profile = createAnalysisProfile(liveProvider, { loader: "default" });
+    expect(profile.provider).toEqual(PROVIDER);
+    expect(analysisProfileSchema.parse(profile)).toEqual(profile);
+  });
 });

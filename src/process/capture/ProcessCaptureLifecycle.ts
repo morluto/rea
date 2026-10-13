@@ -48,6 +48,7 @@ import {
   type ProcessCaptureTruncationDetails,
 } from "../../domain/process/processCaptureCoverage.js";
 import { scheduleProcessInterval, type ProcessTimer } from "./ProcessTimer.js";
+import { monotonicProcessCaptureClock } from "./ProcessCaptureClock.js";
 
 import type {
   FilesystemCheckpoint,
@@ -266,10 +267,10 @@ export const settleProcessCaptureJournal = async (
   quietMs = 25,
   maxWaitMs = 500,
 ): Promise<void> => {
-  const deadline = Date.now() + maxWaitMs;
+  const deadline = monotonicProcessCaptureClock() + maxWaitMs;
   let observed = journal.length;
-  let lastChangeAt = Date.now();
-  while (Date.now() < deadline) {
+  let lastChangeAt = monotonicProcessCaptureClock();
+  while (monotonicProcessCaptureClock() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, 4));
     // A stalled event loop can leave timer and poll callbacks that were already
     // due queued behind this wake-up. Drain them before judging silence so a
@@ -277,8 +278,8 @@ export const settleProcessCaptureJournal = async (
     await setImmediate();
     if (journal.length !== observed) {
       observed = journal.length;
-      lastChangeAt = Date.now();
-    } else if (Date.now() - lastChangeAt >= quietMs) return;
+      lastChangeAt = monotonicProcessCaptureClock();
+    } else if (monotonicProcessCaptureClock() - lastChangeAt >= quietMs) return;
   }
 };
 
@@ -337,6 +338,12 @@ export const buildCaptureResult = (
     truncation_details: options.truncationDetails,
     limitations: [
       "The executable digest is a prelaunch file sample; matching path metadata immediately after spawn does not prove an atomic operating-system image binding.",
+      ...(Date.parse(options.manifest.completed_at) <
+      Date.parse(options.manifest.started_at)
+        ? [
+            "Wall-clock completion time precedes start time; elapsed capture timing is recorded separately and remains monotonic.",
+          ]
+        : []),
       "Process trees are sampled and may omit short-lived descendants.",
       ...(options.samplingPartial
         ? ["Process-tree sampling ended with an incomplete observation."]
@@ -660,8 +667,9 @@ export const observeSettlement = async (
     recordEvent("lifecycle", 1);
     return { state: "unverifiable", elapsed_ms: 0 };
   }
-  const started = Date.now();
+  const started = monotonicProcessCaptureClock();
   let consecutiveEmpty = 0;
+  let sawLive = false;
   let deadlineReached = false;
   while (!deadlineReached) {
     onLiveProgress?.();
@@ -677,21 +685,40 @@ export const observeSettlement = async (
       [...observations.values()].some(({ state }) => state === "unverifiable")
     ) {
       recordEvent("lifecycle", 1);
-      return { state: "unverifiable", elapsed_ms: Date.now() - started };
+      return {
+        state: "unverifiable",
+        elapsed_ms: monotonicProcessCaptureClock() - started,
+      };
     }
     if ([...observations.values()].every(({ state }) => state === "empty")) {
       consecutiveEmpty += 1;
       if (consecutiveEmpty >= 2) {
         recordEvent("lifecycle", 1);
-        return { state: "quiesced", elapsed_ms: Date.now() - started };
+        return {
+          state: "quiesced",
+          elapsed_ms: monotonicProcessCaptureClock() - started,
+        };
       }
-    } else consecutiveEmpty = 0;
-    deadlineReached = Date.now() - started >= settleMs;
+    } else {
+      consecutiveEmpty = 0;
+      sawLive = true;
+    }
+    deadlineReached = monotonicProcessCaptureClock() - started >= settleMs;
     if (deadlineReached) break;
     await delay(50, undefined, { signal });
   }
   recordEvent("lifecycle", 1);
-  return { state: "alive_at_deadline", elapsed_ms: Date.now() - started };
+  // A lone empty observation proves neither liveness nor quiescence; only an
+  // observed live member justifies alive_at_deadline.
+  return sawLive
+    ? {
+        state: "alive_at_deadline",
+        elapsed_ms: monotonicProcessCaptureClock() - started,
+      }
+    : {
+        state: "unverifiable",
+        elapsed_ms: monotonicProcessCaptureClock() - started,
+      };
 };
 
 /** Name why an attempt is unverified; a blank message never reaches the capture schema. */
@@ -778,7 +805,10 @@ export const awaitTerminalExit = async ({
       if (finalizationStartedAt === undefined) return;
       const record: (typeof finalizationSignals)[number] = {
         signal: finalizationSignal,
-        sent_at_ms: Math.round(performance.now() - finalizationStartedAt),
+        sent_at_ms: Math.max(
+          0,
+          monotonicProcessCaptureClock() - finalizationStartedAt,
+        ),
         delivery: "unverified" as FinalizationDelivery,
         reason: "delivery had not settled when the record was published",
       };
@@ -848,7 +878,7 @@ export const awaitTerminalExit = async ({
         terminal.kill("SIGKILL");
         return;
       }
-      finalizationStartedAt = performance.now();
+      finalizationStartedAt = monotonicProcessCaptureClock();
       attempt("SIGTERM");
     };
     terminal.onExit((exit) => {
@@ -859,7 +889,7 @@ export const awaitTerminalExit = async ({
       const finalizationElapsedMs =
         finalizationStartedAt === undefined
           ? undefined
-          : Math.round(performance.now() - finalizationStartedAt);
+          : Math.max(0, monotonicProcessCaptureClock() - finalizationStartedAt);
       recordEvent("lifecycle", 0);
       for (const [eventIndex, event] of scenario.events.entries()) {
         if (dispatchedEventIndexes.has(eventIndex)) continue;
@@ -867,7 +897,10 @@ export const awaitTerminalExit = async ({
         interactions.push({
           sequence,
           scheduled_at_ms: event.at_ms,
-          dispatched_at_ms: Math.max(0, Date.now() - started),
+          dispatched_at_ms: Math.max(
+            0,
+            monotonicProcessCaptureClock() - started,
+          ),
           type: event.type,
           data:
             event.type === "input"
@@ -927,14 +960,20 @@ export const awaitTerminalExit = async ({
         forceKill();
       } else if (finalizationStartedAt !== undefined) {
         if (
-          performance.now() - finalizationStartedAt >=
+          monotonicProcessCaptureClock() - finalizationStartedAt >=
           scenario.finalization_ms
         )
           forceKill();
-      } else if (Date.now() - started >= scenario.timeout_ms) {
+      } else if (
+        monotonicProcessCaptureClock() - started >=
+        scenario.timeout_ms
+      ) {
         reason = "timeout";
         terminateAtDeadline();
-      } else if (Date.now() - lastOutput() >= scenario.idle_timeout_ms) {
+      } else if (
+        monotonicProcessCaptureClock() - lastOutput() >=
+        scenario.idle_timeout_ms
+      ) {
         reason = "idle_timeout";
         terminateAtDeadline();
       }
@@ -963,10 +1002,11 @@ const PROCESS_CLEANUP_VERIFICATION_INTERVAL_MS = 25;
 const verifyTokenOwnedProcessesUntilSettled = async (
   verify: () => Promise<ProcessCleanupResult>,
 ): Promise<ProcessCleanupResult> => {
-  const deadline = Date.now() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
+  const deadline =
+    monotonicProcessCaptureClock() + PROCESS_CLEANUP_VERIFICATION_GRACE_MS;
   let result = await verify();
   while (!result.cleaned) {
-    const remaining = deadline - Date.now();
+    const remaining = deadline - monotonicProcessCaptureClock();
     if (remaining <= 0) return result;
     await new Promise<void>((resolve) =>
       setTimeout(
@@ -1280,7 +1320,7 @@ export const captureTerminalFrames = (options: {
     }
     outputBytes += bytes;
     const atMs = normalizeProcessElapsedTime(
-      Date.now() - options.started,
+      monotonicProcessCaptureClock() - options.started,
       options.scenario.normalization.time_bucket_ms,
     );
     const normalized = normalizeProcessText(

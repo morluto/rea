@@ -509,17 +509,6 @@ describe("contextual JavaScript artifact path resolution", () => {
       resolution_status: "resolved",
       resolved_path: "renderer/local.js",
     });
-    expect(
-      resolve({
-        declaredPath: "file:///assets/app.js#entry",
-        sourcePath: "main.js",
-        context: "module-specifier",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "assets/app.js",
-    });
   });
 
   it.each(["node:fs", "electron", "../../escape.js", "%2e%2e/escape.js"])(
@@ -576,24 +565,52 @@ describe("contextual JavaScript artifact path resolution", () => {
   });
 });
 
-describe("CommonJS file URL resolution", () => {
-  it("keeps file URL resolution specific to the import loader", () => {
-    const files = fileMap([file("entry.cjs", "root"), file("dep.cjs", "root")]);
-    const input = {
-      declaredPath: "file:///dep.cjs",
-      sourcePath: "entry.cjs",
-      context: "module-specifier" as const,
-      files,
-    };
+describe("JavaScript file URL resolution", () => {
+  it("resolves file URL paths without interpreting query bytes as path syntax", () => {
+    const files = fileMap([file("assets/app.js", "root")]);
+    for (const declaredPath of [
+      "file:///assets/app.js#entry",
+      "FILE:///assets/app.js?token=%2F#entry",
+    ]) {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "main.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "resolved",
+        resolved_path: "assets/app.js",
+      });
+    }
 
-    expect(resolve({ ...input, moduleKind: "require" })).toMatchObject({
-      resolution_status: "external",
-      resolved_path: null,
-    });
-    expect(resolve({ ...input, moduleKind: "import" })).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "dep.cjs",
-    });
+    for (const declaredPath of [
+      "file:///assets%2Fapp.js",
+      "file:///assets%2\nFapp.js",
+    ]) {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "main.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    }
+
+    expect(
+      resolve({
+        declaredPath: "file:/assets/app.js",
+        sourcePath: "main.js",
+        context: "module-specifier",
+        moduleKind: "import",
+        files,
+      }),
+    ).toMatchObject({ resolution_status: "external", resolved_path: null });
   });
 });
 
@@ -1873,21 +1890,40 @@ describe("TypeScript NodeNext emitted-extension resolution", () => {
       ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
     },
   );
+});
+
+describe("TypeScript declaration fallback ownership", () => {
+  const container = "container";
 
   it.each([
     ["./dep.js", "src/dep.d.ts"],
     ["./cfg.mjs", "src/cfg.d.mts"],
     ["./legacy.cjs", "src/legacy.d.cts"],
   ] as const)(
-    "resolves %s to a declaration counterpart",
+    "retains %s as compile-time evidence without inventing a runtime target",
     (specifier, target) => {
       const files = fileMap([
         file("src/main.ts", container),
         file(target, container, "export const value = 1;"),
       ]);
+      for (const moduleKind of ["import", "require"] as const) {
+        expect(
+          resolve({
+            declaredPath: specifier,
+            sourcePath: "src/main.ts",
+            context: "module-specifier",
+            moduleKind,
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+          candidate_path: target,
+        });
+      }
       expect(
         resolve({
-          declaredPath: specifier,
+          declaredPath: "./" + target.slice(4),
           sourcePath: "src/main.ts",
           context: "module-specifier",
           moduleKind: "import",
@@ -2000,15 +2036,143 @@ describe("TypeScript NodeNext emitted-extension resolution", () => {
   });
 });
 
+describe("url-reference directory and empty-segment semantics", () => {
+  it.each([
+    "./worker.js/.",
+    "./worker.js/child/..",
+    "./worker.js/",
+    "/dist/worker.js/.",
+    "./worker.js/.?cache=1#entry",
+  ])("keeps directory-form URLs distinct from files: %s", (declaredPath) => {
+    expect(
+      resolve({
+        declaredPath,
+        sourcePath: "dist/app.mjs",
+        context: "url-reference",
+        files: fileMap([file("dist/worker.js", "root")]),
+      }),
+    ).toMatchObject({
+      declared_path: declaredPath,
+      resolution_status: "not-found",
+      resolved_path: null,
+    });
+  });
+
+  it.each(["./nested//worker.js", "./nested//../worker.js"])(
+    "does not collapse empty URL path segments: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "dist/app.mjs",
+          context: "url-reference",
+          files: fileMap([
+            file("dist/worker.js", "root"),
+            file("dist/nested/worker.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolved_path: null });
+    },
+  );
+
+  it.each([
+    ["./nested/.././worker.js?cache=1#entry", "dist/worker.js"],
+    ["./.worker.js", "dist/.worker.js"],
+  ])("resolves exact file URLs with dots: %s", (declaredPath, resolvedPath) => {
+    expect(
+      resolve({
+        declaredPath,
+        sourcePath: "dist/app.mjs",
+        context: "url-reference",
+        files: fileMap([file(resolvedPath, "root")]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: resolvedPath,
+    });
+  });
+});
+
 describe("url-reference JavaScript artifact path resolution", () => {
   it.each([
+    ["C|?cache=1#entry", "dist/C|"],
+    ["/c:/worker.js", "c:/worker.js"],
+    ["/./c|/worker.js", "c|/worker.js"],
+    ["../c|/worker.js", "c|/worker.js"],
+    ["/nested/../c|/worker.js", "c|/worker.js"],
+    ["c|/../worker.js", "dist/worker.js"],
+  ])("leaves drive-letter URL paths unresolved: %s", (declaredPath, decoy) => {
+    const resolution = resolve({
+      declaredPath,
+      sourcePath: "dist/app.mjs",
+      context: "url-reference",
+      files: fileMap([file(decoy, "root")]),
+    });
+    expect(resolution).toMatchObject({
+      declared_path: declaredPath,
+      resolution_status: "unavailable",
+      resolved_path: null,
+    });
+    expect(resolution.limitations.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["./c|/worker.js", "dist/c|/worker.js"],
+    ["c|name/worker.js", "dist/c|name/worker.js"],
+    ["/%63|/worker.js", "c|/worker.js"],
+    ["/c%3A/worker.js", "c:/worker.js"],
+  ])(
+    "retains non-drive URL path identities: %s",
+    (declaredPath, resolvedPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "dist/app.mjs",
+          context: "url-reference",
+          files: fileMap([file(resolvedPath, "root")]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "resolved",
+        resolved_path: resolvedPath,
+      });
+    },
+  );
+
+  it.each(["?value=", "#value="])(
+    "admits the pathname independently of its %s suffix",
+    (suffix) => {
+      for (const value of ["%2F", "%2E", "%5C", "%00", "%FF", "\\", "\0"]) {
+        const declaredPath = `./worker.js${suffix}${value}`;
+        expect(
+          resolve({
+            declaredPath,
+            sourcePath: "dist/app.js",
+            context: "url-reference",
+            files: fileMap([file("dist/worker.js", "root")]),
+          }),
+          declaredPath,
+        ).toMatchObject({
+          declared_path: declaredPath,
+          resolution_status: "resolved",
+          resolved_path: "dist/worker.js",
+        });
+      }
+    },
+  );
+
+  it.each([
+    "app\0.js.map?valid=1",
+    "nested\\worker.js#valid",
     "app%00.js.map",
     "app%FF.js.map",
     "app%C0%AF.js.map",
     "app%2ejs.map",
     "nested%2fworker.js",
     "nested%5cworker.js",
+    "h\nttp://[",
     "../../outside.js.map",
+    "../../outside/.",
   ])("rejects an inadmissible URL path: %s", (declaredPath) => {
     const resolution = resolve({
       declaredPath,

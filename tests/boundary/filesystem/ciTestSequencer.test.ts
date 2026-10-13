@@ -17,24 +17,24 @@ describe("CI test history", () => {
     const root = resolve("/workspace/rea");
     const durations = parseTestDurations(
       JSON.stringify({
+        version: 1,
         success: true,
-        numFailedTests: 0,
-        testResults: [
+        files: [
           {
             name: join(root, "tests/slow.test.ts"),
-            startTime: 10,
-            endTime: 110,
+            durationMs: 100,
           },
           {
             name: join(root, "tests/slow.test.ts"),
-            startTime: 20,
-            endTime: 80,
+            durationMs: 60,
           },
           {
             name: resolve(root, "../outside.test.ts"),
-            startTime: 10,
-            endTime: 1000,
+            durationMs: 990,
           },
+          { name: "tests/negative.test.ts", durationMs: -1 },
+          { name: "tests/zero.test.ts", durationMs: 0 },
+          { name: "tests/invalid.test.ts", durationMs: "100" },
           null,
         ],
       }),
@@ -43,7 +43,20 @@ describe("CI test history", () => {
 
     expect(durations).toEqual(new Map([["tests/slow.test.ts", 100]]));
     expect(
-      parseTestDurations('{"success": false, "numFailedTests": 1}', root),
+      parseTestDurations('{"version": 1, "success": false, "files": []}', root),
+    ).toBeUndefined();
+    // Legacy test-body spans must not be mixed with complete module costs.
+    expect(
+      parseTestDurations(
+        JSON.stringify({
+          success: true,
+          numFailedTests: 0,
+          testResults: [
+            { name: "tests/legacy.test.ts", startTime: 0, endTime: 100 },
+          ],
+        }),
+        root,
+      ),
     ).toBeUndefined();
     expect(parseTestDurations("not json", root)).toBeUndefined();
     expect(parseTestDurations("null", root)).toBeUndefined();

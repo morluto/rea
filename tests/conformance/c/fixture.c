@@ -5,13 +5,24 @@ volatile int rea_c_global = 7;
 #define REA_LONG_CHUNK "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 #define REA_LONG_256 REA_LONG_CHUNK REA_LONG_CHUNK REA_LONG_CHUNK REA_LONG_CHUNK
 #define REA_LONG_1024 REA_LONG_256 REA_LONG_256 REA_LONG_256 REA_LONG_256
+/* Keep the full-size literal even when a loader does not type it as a string. */
+__attribute__((used)) const char rea_long_literal[] =
+    "REA_LONG_LITERAL_" REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 "needle";
+/* Linux Hopper 6.4.2 recognizes this extent and splits it into native objects. */
+__attribute__((used)) const char rea_fragmented_literal[] =
+    "REA_FRAGMENTED_LITERAL_" REA_LONG_256 REA_LONG_256 "fragment_tail";
+__attribute__((used)) const char rea_utf8_literal[] = "REA_UTF8_é_😀";
+__attribute__((used)) const char rea_ellipsis_literal[] = "REA_LITERAL_…";
+__attribute__((used)) const char rea_latin1_literal[] = "REA_LATIN1_\xff";
+
 __attribute__((noinline, used)) void rea_long_literal_procedure(void) {
-  puts("REA_LONG_LITERAL_" REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 "needle");
-  puts("REA_UTF8_é_😀");
+  puts(rea_long_literal);
+  puts(rea_fragmented_literal);
+  puts(rea_utf8_literal);
   puts("REA_ESCAPED_\"\\line\nend\t\r");
   puts("REA_LITERAL_BACKSLASH_\\n");
-  puts("REA_LITERAL_…");
-  puts("REA_LATIN1_\xff");
+  puts(rea_ellipsis_literal);
+  puts(rea_latin1_literal);
 }
 
 __attribute__((noinline, used)) int rea_leaf(int value) {

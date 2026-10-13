@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { access, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
@@ -72,6 +73,61 @@ const clientStates = [
 ] as const;
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
+
+describe("TTY setup dry run", () => {
+  it("prints the plan and no-mutation notice for a TTY dry run", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-dry-run-");
+    const terminal = spawn(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "setup",
+        "--dry-run",
+        "--client",
+        "codex",
+        "--skill=false",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          REA_LOG_LEVEL: "silent",
+          NO_COLOR: "1",
+        },
+        name: "xterm-256color",
+        cols: 120,
+        rows: 40,
+      },
+    );
+    let output = "";
+    terminal.onData((data) => {
+      output += data;
+    });
+    const exitCode = await new Promise<number>((resolvePromise, reject) => {
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error(`TTY dry run timed out after output:\n${output}`));
+      }, 15_000);
+      terminal.onExit(({ exitCode: code }) => {
+        clearTimeout(timeout);
+        resolvePromise(code);
+      });
+    });
+
+    expect(exitCode, output).toBe(0);
+    expect(output).toContain("CREATE  Codex");
+    expect(output).toContain(join(home, ".codex/config.toml"));
+    expect(output).toContain("Dry run complete. No changes were made.");
+    await expect(
+      access(join(home, ".codex/config.toml")),
+    ).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+});
 
 describe("interactive setup journey", () => {
   it("shows detected and absent clients without preselecting detected clients", async () => {

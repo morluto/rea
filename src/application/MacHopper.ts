@@ -24,7 +24,35 @@ const execFileAsync = promisify(execFile);
 const RELEASES_URL =
   "https://www.hopperapp.com/include/files-api.php?request=releases&public=true";
 const DOWNLOAD_PREFIX = "https://www.hopperapp.com:443/downloader/public/";
-const BUNDLE_IDENTIFIER = "com.cryptic-apps.hopper-web-4";
+
+/**
+ * Apple publisher identity pinned for the official Hopper macOS bundle. The
+ * team identifier was captured from `Hopper-6.6.0-demo.dmg` at
+ * `https://www.hopperapp.com:443/downloader/public/Hopper-6.6.0-demo.dmg`
+ * (34846271 bytes, SHA-1 0be530f038249742590992199c7b042ea20ca955) with
+ * `codesign -dvvv`, which reported
+ * `Authority=Developer ID Application: Cryptic Apps (2AMA2753NF)`.
+ */
+export const HOPPER_PUBLISHER = Object.freeze({
+  bundleIdentifier: "com.cryptic-apps.hopper-web-4",
+  teamIdentifier: "2AMA2753NF",
+});
+
+/**
+ * Code requirement enforcing the bundle identifier and signing team together.
+ * The identifier is read from the sealed CodeDirectory, so it cannot be changed
+ * by editing `Info.plist` the way the previous string comparison could.
+ */
+const HOPPER_PUBLISHER_REQUIREMENT =
+  `= identifier "${HOPPER_PUBLISHER.bundleIdentifier}"` +
+  ` and anchor apple generic` +
+  ` and certificate leaf[subject.OU] = "${HOPPER_PUBLISHER.teamIdentifier}"`;
+
+/** Outcome of reading a mounted bundle's signature and publisher identity. */
+export type MacHopperBundleVerification =
+  | "verified"
+  | "invalid_signature"
+  | "unverified_publisher";
 
 /** Stable network and command effects disclosed before macOS Hopper setup. */
 export const macHopperInstallDisclosure = {
@@ -32,6 +60,7 @@ export const macHopperInstallDisclosure = {
   commands: [
     "hdiutil attach -readonly -nobrowse -mountpoint <private-mount> <verified-hopper.dmg>",
     "codesign --verify --deep --strict <mounted-hopper.app>",
+    `codesign --verify --strict '-R${HOPPER_PUBLISHER_REQUIREMENT}' <mounted-hopper.app>`,
     "ditto <mounted-hopper.app> <user-Applications-stage>",
     "open <installed-hopper.app>",
   ] as const,
@@ -52,6 +81,7 @@ export type MacHopperInstallResult =
         | "integrity"
         | "mount"
         | "bundle"
+        | "publisher_verification_failed"
         | "destination_exists"
         | "copy"
         | "launcher_missing";
@@ -69,7 +99,7 @@ export interface MacHopperInstallHost {
   mount(packagePath: string, mountPath: string): Promise<boolean>;
   unmount(mountPath: string): Promise<void>;
   appBundle(mountPath: string): Promise<string | undefined>;
-  validBundle(appPath: string): Promise<boolean>;
+  validBundle(appPath: string): Promise<MacHopperBundleVerification>;
   destinationExists(path: string): Promise<boolean>;
   installBundle(
     source: string,
@@ -124,8 +154,12 @@ export const installMacHopper = async (
         return { status: "failed", reason: "mount" };
       mounted = true;
       const source = await host.appBundle(mountPath);
-      if (source === undefined || !(await host.validBundle(source)))
+      if (source === undefined) return { status: "failed", reason: "bundle" };
+      const verification = await host.validBundle(source);
+      if (verification === "invalid_signature")
         return { status: "failed", reason: "bundle" };
+      if (verification === "unverified_publisher")
+        return { status: "failed", reason: "publisher_verification_failed" };
       const stage = `${destination}.rea-stage`;
       if (
         !(await host.installBundle(
@@ -222,25 +256,21 @@ export const systemMacHopperInstallHost = (
           environment,
         ))
       )
-        return false;
-      try {
-        const identifier = (
-          await execFileAsync(
-            "/usr/libexec/PlistBuddy",
-            [
-              "-c",
-              "Print :CFBundleIdentifier",
-              join(appPath, "Contents/Info.plist"),
-            ],
-            { env: environment },
-          )
-        ).stdout.trim();
-        return identifier === BUNDLE_IDENTIFIER;
-      } catch (cause: unknown) {
-        // best-effort cleanup: optional bundle probing; unreadable means invalid.
-        void cause;
-        return false;
-      }
+        return "invalid_signature";
+      if (
+        !(await commandSucceeds(
+          "codesign",
+          [
+            "--verify",
+            "--strict",
+            `-R${HOPPER_PUBLISHER_REQUIREMENT}`,
+            appPath,
+          ],
+          environment,
+        ))
+      )
+        return "unverified_publisher";
+      return "verified";
     },
     async destinationExists(path) {
       try {

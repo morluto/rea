@@ -6,7 +6,7 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import {
-  clearSemanticPrimitiveBindingValues,
+  clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
 } from "./javascriptSemanticValues.js";
@@ -256,7 +256,7 @@ export function* collectSemanticMemberMutationsSteps(
           if (effect === "escape")
             binding.escapedPaths.push({ path, node: mutation });
           else binding.mutatedPaths.push(path);
-          clearSemanticPrimitiveBindingValues(state);
+          clearSemanticValueCaches(state);
           for (const initializer of origins.initializers)
             pending.push({
               node: initializer.node,
@@ -548,7 +548,7 @@ export function* collectSemanticMemberMutationsSteps(
   }
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
-  clearSemanticPrimitiveBindingValues(state);
+  clearSemanticValueCaches(state);
 }
 
 interface ReferencedValue {

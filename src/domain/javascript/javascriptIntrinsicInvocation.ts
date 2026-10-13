@@ -6,13 +6,52 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
-const arrayArguments = (array: t.Node | undefined) =>
-  t.isArrayExpression(array) &&
-  array.elements.every((element) => t.isExpression(element))
-    ? array.elements.filter((element): element is t.Expression =>
+/** Expand only literal array spreads whose positional arguments are all known. */
+export const expandJavaScriptInvocationArguments = (
+  arguments_: readonly t.CallExpression["arguments"][number][],
+): t.CallExpression["arguments"] => {
+  const expanded: t.CallExpression["arguments"] = [];
+  const pending = [...arguments_].reverse();
+  while (pending.length > 0) {
+    const argument = pending.pop();
+    if (argument === undefined) break;
+    const array = t.isSpreadElement(argument)
+      ? unwrapJavaScriptExpression(argument.argument).node
+      : undefined;
+    if (
+      t.isArrayExpression(array) &&
+      array.elements.every(
+        (element) => t.isExpression(element) || t.isSpreadElement(element),
+      )
+    )
+      for (let index = array.elements.length - 1; index >= 0; index -= 1) {
+        const element = array.elements[index];
+        if (element !== null && element !== undefined) pending.push(element);
+      }
+    else expanded.push(argument);
+  }
+  return expanded;
+};
+
+const arrayArguments = (node: t.Node | undefined) => {
+  const array =
+    node === undefined ? undefined : unwrapJavaScriptExpression(node).node;
+  if (
+    !t.isArrayExpression(array) ||
+    array.elements.some((element) => element === null)
+  )
+    return undefined;
+  const expanded = expandJavaScriptInvocationArguments(
+    array.elements.filter(
+      (element): element is t.Expression | t.SpreadElement => element !== null,
+    ),
+  );
+  return expanded.every((element) => t.isExpression(element))
+    ? expanded.filter((element): element is t.Expression =>
         t.isExpression(element),
       )
     : undefined;
+};
 
 const invocationArguments = (
   method: "call" | "apply",
@@ -36,7 +75,8 @@ export const resolveJavaScriptIntrinsicInvocation = (
 ): JavaScriptIntrinsicInvocation | undefined => {
   const visited = new Set<t.Node>();
   let callee: t.Node = node.callee;
-  let arguments_: JavaScriptIntrinsicInvocation["arguments"] = node.arguments;
+  let arguments_: JavaScriptIntrinsicInvocation["arguments"] =
+    expandJavaScriptInvocationArguments(node.arguments);
   let receiver: t.Node | undefined;
   let explicitReceiver = false;
   for (;;) {

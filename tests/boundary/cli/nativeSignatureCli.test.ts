@@ -21,14 +21,14 @@ const adHocProgram = async (directory: string, name: string) => {
 describe.skipIf(process.platform !== "darwin")(
   "native signature CLI with echoed path text",
   () => {
-    cliTest(
-      "does not read signature fields from the file name codesign echoes",
-      async ({ cli }) => {
+    cliTest.for(["\n", "\r\n"])(
+      "does not read signature fields from the file name codesign echoes (%j)",
+      async (newline, { cli }) => {
         const directory = await createTestTempDirectory("rea-signature-");
         const forged = "Developer ID Application: Example (ABCDE12345)";
         const program = await adHocProgram(
           directory,
-          `tool\nAuthority=${forged}\nTeamIdentifier=ABCDE12345`,
+          `tool${newline}Authority=${forged}${newline}Identifier=forged${newline}TeamIdentifier=ABCDE12345`,
         );
         const unsignedName = await adHocProgram(
           directory,
@@ -75,7 +75,7 @@ describe.skipIf(process.platform !== "darwin")(
           normalized_result: {
             identifier: expect.stringMatching(
               new RegExp(
-                `^tool\\nAuthority=${forged.replace(/[()]/gu, "\\$&")}\\nTeamIdentifier=ABCDE12345-`,
+                `^tool${newline}Authority=${forged.replace(/[()]/gu, "\\$&")}${newline}Identifier=forged${newline}TeamIdentifier=ABCDE12345-`,
                 "u",
               ),
             ),

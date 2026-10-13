@@ -1,12 +1,15 @@
 name: Real website source-map verification
 on:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: real-web-source-map-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   HUSKY: "0"
 jobs:
@@ -21,6 +24,8 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Install the pinned compiler into an isolated fixture directory
         run: npm install --prefix "$RUNNER_TEMP/rea-web-source-map-compiler" --no-audit --no-fund --package-lock=false esbuild@0.25.10
       - run: npm run verify:browser:source-maps

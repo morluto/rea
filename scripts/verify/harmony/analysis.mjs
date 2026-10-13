@@ -153,10 +153,36 @@ try {
   });
   try {
     await client.connect(transport, { timeout: 30_000 });
+    await client.listTools();
+    const opened = await client.callTool(
+      { name: "open_binary", arguments: { path } },
+      { timeout: 150_000 },
+    );
+    assert.notEqual(opened.isError, true, JSON.stringify(opened));
+    assert.equal(opened.structuredContent?.result?.format, "hap");
+    assert.equal(opened.structuredContent?.result?.sha256, fixture.sha256);
+    const status = await client.callTool(
+      { name: "binary_session", arguments: {} },
+      { timeout: 150_000 },
+    );
+    assert.notEqual(status.isError, true, JSON.stringify(status));
+    assert.equal(status.structuredContent?.result?.open, true);
+    assert.equal(status.structuredContent?.result?.format, "hap");
+    const inspected = await client.callTool(
+      { name: "inspect_artifact", arguments: {} },
+      { timeout: 150_000 },
+    );
+    assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
+    const mcpInspection = parseEvidence(inspected.structuredContent);
+    assert.deepEqual(
+      mcpInspection.normalized_result,
+      inspection.normalized_result,
+    );
+    console.log("PASS MCP open/status/inspect_artifact parity");
     const response = await client.callTool(
       {
         name: "project_harmony_application_graph",
-        arguments: { inventory_evidence: [inspection] },
+        arguments: { inventory_evidence: [mcpInspection] },
       },
       { timeout: 150_000 },
     );
@@ -168,6 +194,23 @@ try {
       projectionEvidence.normalized_result,
     );
     console.log("PASS MCP/CLI parity project_harmony_application_graph");
+    const closed = await client.callTool(
+      { name: "close_binary", arguments: {} },
+      { timeout: 150_000 },
+    );
+    assert.notEqual(closed.isError, true, JSON.stringify(closed));
+    const empty = await client.callTool(
+      { name: "binary_session", arguments: {} },
+      { timeout: 150_000 },
+    );
+    assert.notEqual(empty.isError, true, JSON.stringify(empty));
+    assert.equal(empty.structuredContent?.result?.open, false);
+    assert.equal(
+      await hashFile(path),
+      fixture.sha256,
+      "MCP workflow must preserve source bytes",
+    );
+    console.log("PASS MCP close and unchanged source bytes");
   } catch (cause) {
     process.stderr.write(stderr);
     throw cause;

@@ -3,7 +3,10 @@ import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
-import { completeReconstructionCoverageData } from "../../../src/domain/reconstructionCoverage.fixture.js";
+import {
+  completeReconstructionCoverageData,
+  reconstructionCoverageEvidenceId,
+} from "../../../src/domain/reconstructionCoverage.fixture.js";
 import { createReconstructionCoverageData } from "../../../src/domain/reconstructionCoverage.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -35,6 +38,42 @@ describe("reconstruction coverage MCP", () => {
         status: "ready",
         boundary_id: boundaryId,
         summary: { reasons: 0 },
+      });
+      const coverage = currentFixtureCoverage(boundaryId);
+      const latest = coverage.verifier_results[0];
+      if (latest === undefined)
+        throw new Error("Expected fixture verifier result");
+      const ambiguous = await client.callTool({
+        name: "evaluate_reconstruction_coverage",
+        arguments: {
+          coverage: createReconstructionCoverageData({
+            ...coverage,
+            verifier_results: [
+              latest,
+              {
+                ...latest,
+                status: "fail",
+                evidence_ids: [reconstructionCoverageEvidenceId("1")],
+              },
+            ],
+          }),
+          boundary_id: boundaryId,
+        },
+      });
+      expect(ambiguous.isError).not.toBe(true);
+      expect(ambiguous.structuredContent).toMatchObject({
+        status: "unknown",
+        boundary_id: boundaryId,
+        reasons: [
+          expect.objectContaining({
+            code: "verifier-result-ambiguous",
+            subject_id: "claim.cli.help",
+          }),
+        ],
+        evidence_ids: expect.arrayContaining([
+          reconstructionCoverageEvidenceId("3"),
+          reconstructionCoverageEvidenceId("1"),
+        ]),
       });
       const unknown = await client.callTool({
         name: "evaluate_reconstruction_coverage",

@@ -96,6 +96,7 @@ const decodeStub = (
     readonly withStrings?: boolean;
     readonly withGerman?: boolean;
     readonly failDecode?: boolean;
+    readonly ymlFile?: string;
     readonly manifestFile?: string;
     readonly stringsFile?: string;
     readonly stringsXml?: string;
@@ -104,6 +105,10 @@ const decodeStub = (
   const withStrings = options.withStrings ?? true;
   const withGerman = options.withGerman ?? true;
   const stringsXml = options.stringsXml ?? REAL_STRINGS;
+  const ymlWrite =
+    options.ymlFile === undefined
+      ? `printf '%s\\n' '${REAL_YML.replace(/'/gu, "'\\''")}' > "$5/apktool.yml"`
+      : `cp '${options.ymlFile}' "$5/apktool.yml"`;
   const manifestWrite =
     options.manifestFile === undefined
       ? `printf '%s\\n' '${REAL_MANIFEST.replace(/'/gu, "'\\''")}' > "$5/AndroidManifest.xml"`
@@ -117,7 +122,7 @@ if [ "$1" = "d" ]; then
   ${
     options.failDecode === true
       ? `printf 'Exception in thread "main" brut.androlib.AndrolibException: Could not decode the APK\\n' >&2; exit 1;`
-      : `printf '%s\\n' '${REAL_YML.replace(/'/gu, "'\\''")}' > "$5/apktool.yml"
+      : `${ymlWrite}
   ${manifestWrite}
   mkdir -p "$5/res/values"${withGerman ? ' "$5/res/values-de"' : ""}
   ${withStrings ? stringsWrite : ""}
@@ -190,6 +195,47 @@ it("decodes resources with target identity, metadata, and strings", async () => 
   expect(result.locale).toBeNull();
   expect(result.decoded_file_count).toBeGreaterThan(2);
   expect(result.coverage).toBe("complete");
+});
+
+it.each([
+  {
+    name: "malformed UTF-8",
+    bytes: Buffer.concat([
+      Buffer.from("versionInfo:\n  versionName: com."),
+      Buffer.from([0xff]),
+      Buffer.from(".app\n"),
+    ]),
+    valid: false,
+  },
+  {
+    name: "a literal replacement character",
+    bytes: Buffer.from("versionInfo:\n  versionName: com.�.app\n", "utf8"),
+    valid: true,
+  },
+])("handles $name in producer metadata", async ({ bytes, valid }) => {
+  const { command, root } = await writeApktoolStub((root) =>
+    decodeStub({ ymlFile: join(root, "malformed-apktool.yml") })(root),
+  );
+  await writeFile(join(root, "malformed-apktool.yml"), bytes);
+  const apk = await apkFixture(root);
+  if (valid) {
+    const result = await evidenceResult(providerOver(command), {
+      operation: "decode_android_resources",
+      input: { path: apk.path, include_strings: false },
+    });
+    expect(result.metadata).toMatchObject({ version_name: "com.�.app" });
+    expect(result.coverage).toBe("complete");
+    return;
+  }
+  const result = await providerOver(command).execute({
+    operation: "decode_android_resources",
+    input: { path: apk.path, include_strings: false },
+  });
+  if (result.ok) throw new Error("expected invalid producer output");
+  const projected = projectAnalysisError(result.error);
+  expect(projected).toMatchObject({ code: "unreadable_output" });
+  expect(result.error.message).toContain("invalid UTF-8");
+  expect(result.error.message).toContain("apktool.yml");
 });
 
 it("preserves empty resource strings and reports markup omissions as partial", async () => {

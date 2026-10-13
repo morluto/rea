@@ -171,7 +171,6 @@ try {
     const call = async (name, args = {}) => {
       const reply = await client.callTool(
         { name, arguments: args },
-        undefined,
         { timeout: 180000 },
       );
       return requireMcpOperationResult(reply, name);
@@ -184,7 +183,6 @@ try {
             name: "open_binary",
             arguments: { path: fixture.path, provider_id: "ghidra" },
           },
-          undefined,
           { timeout: 60000 },
         );
         const error = requireMcpToolError(rejected);
@@ -423,7 +421,6 @@ try {
               snapshot_path: snapshotPath,
             },
           },
-          undefined,
           { timeout: 180000 },
         );
         requireMcpToolError(wrongSnapshot);

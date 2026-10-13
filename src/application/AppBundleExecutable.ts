@@ -12,6 +12,7 @@ import {
   parseXmlPropertyList,
 } from "../domain/propertyListKeys.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
+import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Decoded representation bound for one binary Info.plist. */
@@ -195,11 +196,10 @@ const resolveLayoutExecutable = async (
 
   let name: string;
   try {
-    name =
-      plist.subarray(0, 6).toString("ascii") === "bplist"
-        ? await (fileSystem.decodeBinaryPlist?.(plistPath) ??
-            parseBinaryPlistExecutable(plist))
-        : parseXmlPlistExecutable(decodeXmlPlistText(plist));
+    name = hasBinaryPlistSignature(plist)
+      ? await (fileSystem.decodeBinaryPlist?.(plistPath) ??
+          parseBinaryPlistExecutable(plist))
+      : parseXmlPlistExecutable(decodeXmlPlistText(plist));
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(

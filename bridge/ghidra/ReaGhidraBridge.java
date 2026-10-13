@@ -106,6 +106,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int MAX_HIGH_PCODE_INPUTS_PER_OP = 64;
     private static final int MAX_HIGH_PCODE_DEF_USE_EDGES = 12000;
     private static final Gson GSON = new GsonBuilder().serializeNulls().create();
+    private final Map<FileBytes, Boolean> targetSourceIdentity = new IdentityHashMap<>();
+    private String admittedTargetSha256;
     private static final Set<String> DESCRIPTOR_KEYS = Set.of(
         "transport",
         "endpoint_path",
@@ -207,6 +209,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Ghidra imported-byte digest does not match the admitted target"
             );
         }
+        admittedTargetSha256 = descriptor.targetSha256;
         // GhidraScript wraps run() in a transaction. End it before serving so
         // each edit owns a real outer transaction and can roll back immediately.
         end(true);
@@ -633,7 +636,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonObject addressToFileOffset(JsonObject params) {
+    private JsonObject addressToFileOffset(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address address = requireAddress(params, "address");
@@ -643,14 +646,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Long fileOffset = null;
         int mappings = 0;
         for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
-            if (!source.contains(address) || source.getFileBytes().isEmpty()) continue;
+            if (!source.contains(address) || source.getFileBytes().isEmpty() ||
+                !isTargetSource(source.getFileBytes().get())) continue;
             long offset = source.getFileBytesOffset(address);
             if (offset < 0) continue;
             fileOffset = offset;
             mappings++;
         }
         if (mappings != 1)
-            throw new RequestFailure("invalid_request", "Address has " + mappings + " authoritative source mappings: " + canonicalAddress(address));
+            throw new RequestFailure("invalid_request", "Address has " + mappings + " authoritative target-file mappings: " + canonicalAddress(address));
         JsonObject result = new JsonObject();
         result.addProperty("address", canonicalAddress(address));
         result.addProperty("file_offset", fileOffset);
@@ -673,14 +677,96 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private JsonElement procedurePseudocode(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "procedure"));
         requireDocument(params);
-        Function function = resolveProcedure(requireString(params, "procedure"));
-        String value = decompiledText(decompile(function));
-        return functionObservation(
-            value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
-            noReturnCallLimitations(
-                currentProgram.getListing().getInstructions(function.getBody(), true)
-            )
-        );
+        String selector = requireString(params, "procedure");
+        JsonObject selection = new JsonObject();
+        Function function = resolveDecompileProcedure(selector, selection);
+        try {
+            String value = decompiledText(decompile(function));
+            JsonObject result = functionObservation(
+                value == null ? JsonNull.INSTANCE : GSON.toJsonTree(value),
+                noReturnCallLimitations(
+                    currentProgram.getListing().getInstructions(function.getBody(), true)
+                )
+            );
+            if (selection.size() > 0) result.add("selection", selection);
+            return result;
+        } catch (RequestFailure failure) {
+            if (selection.size() == 0) throw failure;
+            // Preserve completed resolution facts without changing the backend's
+            // failure code or suggesting that the successful mapping was invalid.
+            throw new RequestFailure(failure.code, "Selector " + selector +
+                " mapped to analysis address " + selection.get("mapped_address").getAsString() +
+                " and procedure " + canonicalAddress(function.getEntryPoint()) +
+                "; " + failure.getMessage());
+        }
+    }
+
+    private Function resolveDecompileProcedure(String selector, JsonObject selection) throws Exception {
+        String prefix = "file-offset:";
+        boolean explicitOffset = selector.startsWith(prefix);
+        if (!explicitOffset) {
+            try {
+                return resolveProcedure(selector);
+            } catch (RequestFailure failure) {
+                // Existing names/addresses win. Only an unresolved numeric input
+                // can fall back to source coordinates; ambiguity never falls back.
+                if (!failure.code.equals("not_found") || !selector.matches("0x[0-9a-fA-F]+"))
+                    throw failure;
+            }
+        }
+        String coordinate = explicitOffset ? selector.substring(prefix.length()) : selector;
+        if (!coordinate.matches("0x[0-9a-fA-F]+"))
+            throw new RequestFailure("invalid_request", "File offsets require hexadecimal file-offset:0x... syntax");
+        BigInteger parsed = new BigInteger(coordinate.substring(2), 16);
+        if (parsed.compareTo(BigInteger.valueOf(9007199254740991L)) > 0)
+            throw new RequestFailure("invalid_request", "File offset exceeds the exact JSON integer range");
+        long offset = parsed.longValueExact();
+        monitor.checkCancelled();
+        // Ghidra's convenience lookup spans every FileBytes and uses coordinates
+        // local to each object. Only a complete, digest-matched target source
+        // establishes that the caller's offset belongs to the admitted file.
+        Set<Address> mappedAddresses = new java.util.LinkedHashSet<>();
+        for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
+            for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
+                monitor.checkCancelled();
+                FileBytes backing = source.getFileBytes().orElse(null);
+                if (backing == null || !isTargetSource(backing)) continue;
+                Address mapped = source.locateAddressForFileOffset(offset);
+                if (mapped != null) mappedAddresses.add(mapped);
+            }
+        }
+        List<Address> candidates = new ArrayList<>(mappedAddresses);
+        if (candidates.size() > 1)
+            throw new RequestFailure("ambiguous", "File offset " + coordinate +
+                " has multiple loaded mappings: " + candidates.stream().map(ReaGhidraBridge::canonicalAddress).toList() +
+                "; select an explicit analysis address");
+        if (candidates.isEmpty())
+            throw new RequestFailure("not_found", "File offset " + coordinate +
+                " has no loaded source mapping for the admitted target file; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
+                ". Inspect mappings with rea inspect-native-load-image <path> --provider ghidra --json or MCP inspect_native_load_image.");
+        Address mapped = candidates.get(0);
+        Function function = functionAtOrContaining(mapped);
+        if (function == null)
+            throw new RequestFailure("not_found", "File offset " + coordinate +
+                " maps to analysis address " + canonicalAddress(mapped) +
+                ", but no procedure starts at or contains that address in the current Ghidra analysis. " +
+                "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.");
+        selection.addProperty("file_offset", offset);
+        selection.addProperty("mapped_address", canonicalAddress(mapped));
+        selection.addProperty("procedure_address", canonicalAddress(function.getEntryPoint()));
+        return function;
+    }
+
+    private boolean isTargetSource(FileBytes source) throws Exception {
+        Boolean observed = targetSourceIdentity.get(source);
+        if (observed != null) return observed;
+        // Original FileBytes are immutable even when analysis memory is edited.
+        // Partial/auxiliary sources remain inspectable but cannot establish an
+        // original-target offset from their object-local coordinates alone.
+        boolean matched = source.getFileOffset() == 0 &&
+            constantTimeEquals(hashFileBytes(source, false), admittedTargetSha256);
+        targetSourceIdentity.put(source, matched);
+        return matched;
     }
 
     private JsonElement procedureAssembly(JsonObject params) throws Exception {
@@ -1833,12 +1919,23 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Address address = explicitAddress ? parseReaAddress(value) : tryParseAddress(value);
         if (address == null)
             throw new RequestFailure("not_found", "Unknown Ghidra procedure name or address: " + value);
-        Function function = currentProgram.getFunctionManager().getFunctionAt(address);
-        if (function == null && address.isMemoryAddress())
-            function = currentProgram.getFunctionManager().getFunctionContaining(address);
+        Function function = functionAtOrContaining(address);
         if (function == null)
-            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value);
+            // Other procedure operations retain their analysis-address semantics.
+            throw new RequestFailure("not_found", "No procedure exists at the requested address: " + value +
+                "; Ghidra image base: " + canonicalAddress(currentProgram.getImageBase()) +
+                ". Choose an observed analysis address. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra --json; " +
+                "MCP: list_procedures. Inspect the loaded base and source mappings with CLI rea analyze <path> --provider ghidra --json " +
+                "and rea inspect-native-load-image <path> --provider ghidra --json, or MCP binary_overview and inspect_native_load_image. " +
+                "Repeat the original target options. For decompile, select source coordinates explicitly with --file-offset=0x... or MCP procedure file-offset:0x....");
         return function;
+    }
+
+    private Function functionAtOrContaining(Address address) {
+        Function function = currentProgram.getFunctionManager().getFunctionAt(address);
+        return function == null && address.isMemoryAddress()
+            ? currentProgram.getFunctionManager().getFunctionContaining(address)
+            : function;
     }
 
     private JsonObject nativeApiBoundary(

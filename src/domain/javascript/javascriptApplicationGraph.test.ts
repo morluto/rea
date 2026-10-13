@@ -20,10 +20,9 @@ import {
   inferredArtifactEvidence,
   nodeByLabel,
   runtimeEvidence,
+  sourceMapReference,
   unknownEvidence,
 } from "./javascriptApplicationGraph.fixture.js";
-
-import { resolveJavaScriptSourceMapReference } from "./javascriptSourceMapPaths.js";
 const createLargeNativeExportGraph = (): JavaScriptApplicationGraph => {
   const properties = Object.fromEntries(
     Array.from({ length: 1_001 }, (_, index) => [
@@ -438,7 +437,7 @@ describe("JavaScript Application Graph: source maps and observations", () => {
       observations: [
         {
           label: "src/editor.ts",
-          source_map_reference: resolveJavaScriptSourceMapReference(
+          source_map_reference: sourceMapReference(
             "webpack:///src/editor.ts",
             null,
             "dist/app.js.map",
@@ -535,7 +534,7 @@ describe("JavaScript Application Graph: source-map digest consistency", () => {
         observations: [
           {
             label: null,
-            source_map_reference: resolveJavaScriptSourceMapReference(
+            source_map_reference: sourceMapReference(
               "src/editor.ts",
               null,
               "dist/app.js.map",

@@ -16,7 +16,10 @@ import type {
 } from "../application/AnalysisProvider.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { AppConfig } from "../config/types.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import {
+  isElfMetadataArchitecture,
+  type BinaryTarget,
+} from "../domain/binaryTargetTypes.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
@@ -118,11 +121,13 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
-    if (target.architecture === "mips")
+    if (isElfMetadataArchitecture(target.architecture))
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: "REA's Hopper adapter does not admit MIPS targets.",
+        reason: `REA's Hopper adapter does not admit ${
+          target.architecture === "mips" ? "MIPS" : "RISC-V"
+        } targets.`,
         diagnostics,
       };
     if (target.format === "raw-binary")

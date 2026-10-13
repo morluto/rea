@@ -6,7 +6,10 @@ checks to pass. Merging that PR into main starts publication automatically.
 
 The Release workflow validates the merged release metadata and ancestry before
 creating a tag. npm and MCP Registry publication use the exact reviewed merge
-SHA returned by Release Please. Later main commits cannot change that source.
+SHA returned by Release Please. Before either registry is published, the release
+run calls full CI qualification at that exact revision, including coverage,
+portable providers, and every native package host. Later main commits cannot
+change or cancel that proof.
 Ordinary main pushes and closed, unmerged PRs cannot publish packages. Check
 both publication jobs and the published-package canary; a merged PR or GitHub
 tag alone does not establish that publication finished. Retry failed jobs in
@@ -196,8 +199,14 @@ both registry publishes.
 See [npm's provenance implementation](https://github.com/npm/cli/blob/v11.16.0/workspaces/libnpmpublish/lib/provenance.js)
 for the use of GitHub's workflow ref and commit SHA.
 
-The workflow builds the bundled Windows controls and verifies the packaged
-artifact before npm publication. It then verifies the published CLI, the
+Full qualification builds the bundled Windows controls and verifies the packaged
+artifact on its native hosts. The Linux x64 verifier retains the exact tarball
+it installed and tested, after its workspace cleanup completes. The npm job
+downloads that archive from the same workflow run and checks its source SHA,
+run identity/attempt, package and Node versions, host identity, and SHA-256.
+It publishes that archive without rebuilding or repacking it. Re-running failed
+publisher jobs can reuse a prior successful attempt from the same run.
+The workflow then verifies the published CLI, the
 capability-scoped MCP catalog, and the isolated package update path before
 publishing MCP Registry metadata.
 
@@ -218,6 +227,15 @@ release baseline and can propose an already-published version again.
 After publication, open a PR from the release branch back to main. Preserve
 main's later implementation changes and regenerate ignored build outputs from
 the combined contracts with the released package version.
+Before merging, check whether GitHub permits merge commits:
+
+```bash
+gh api repos/morluto/rea --jq .allow_merge_commit
+```
+
+If disabled, a maintainer must arrange an approved ancestry-preserving merge
+path before synchronization can finish. Squash and rebase merges do not put the
+released tag in main's ancestry. Do not substitute them for this step.
 Review and test this synchronization PR, then use a merge commit so the release
 tag remains in main's ancestry. Keep the released tag unchanged.
 

@@ -181,6 +181,68 @@ describe("readiness obligation ledger integrity", () => {
   );
 });
 
+describe("readiness missing Evidence references", () => {
+  it("reports each absent Evidence ID once per stage across stage and check references", () => {
+    const value = input();
+    const stage = value.stages[0]!;
+    const missing = [`ev_${"0".repeat(64)}`, `ev_${"1".repeat(64)}`];
+    stage.evidence_ids.push(...missing);
+    for (const check of stage.checks) check.evidence_ids.push(...missing);
+
+    const report = createReconstructionReadinessReport(value);
+    expect(report.status).toBe("unknown");
+    expect(report.findings).toEqual(
+      missing.map((id) => ({
+        code: "referenced-evidence-missing",
+        stage_id: stage.stage_id,
+        status: "unknown",
+        detail: `Referenced Evidence is absent from the bundle: ${id}.`,
+        evidence_ids: [],
+      })),
+    );
+    expect(report.summary).toMatchObject({ findings: 2, unknown_findings: 2 });
+  });
+
+  it("keeps absent references distinct across stages and preserves failed checks", () => {
+    const value = input();
+    const [first, second] = value.stages;
+    if (first === undefined || second === undefined)
+      throw new TypeError("Missing conformance stages");
+    const missing = `ev_${"0".repeat(64)}`;
+    first.evidence_ids.push(missing);
+    second.checks[0]!.evidence_ids.push(missing);
+    first.checks[0]!.status = "fail";
+
+    const report = createReconstructionReadinessReport(value);
+    expect(report.status).toBe("fail");
+    expect(
+      report.findings
+        .filter(({ code }) => code === "referenced-evidence-missing")
+        .map(({ stage_id }) => stage_id)
+        .sort(),
+    ).toEqual([first.stage_id, second.stage_id].sort());
+    expect(report.summary).toMatchObject({
+      findings: 3,
+      unknown_findings: 2,
+      failed_findings: 1,
+    });
+  });
+
+  it("checks stage Evidence even when every required check is absent", () => {
+    const value = input();
+    const stage = value.stages[0]!;
+    stage.checks = [];
+    stage.evidence_ids.push(`ev_${"0".repeat(64)}`);
+
+    const report = createReconstructionReadinessReport(value);
+    expect(report.status).toBe("fail");
+    expect(report.summary).toMatchObject({ unknown_findings: 1 });
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ code: "referenced-evidence-missing" }),
+    );
+  });
+});
+
 describe("readiness failure semantics", () => {
   it("rejects equivalence over truncated concurrent evidence", () => {
     const value = input();

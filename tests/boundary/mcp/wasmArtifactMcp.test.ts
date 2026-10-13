@@ -213,6 +213,31 @@ it("advertises exact valid schemas and records inline WASM interface evidence wi
   expect(close).toHaveBeenCalled();
 });
 
+it("rejects a WASM provider response with a non-file subject before recording Evidence", async () => {
+  const value = wasmArtifactFixture();
+  const execution = wasmArtifactExecution(value);
+  const malformed = {
+    ...execution,
+    subject: { ...execution.subject, format: "elf" },
+  } as unknown as typeof execution;
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      wasmArtifact: new WasmArtifactService({
+        close: () => Promise.resolve(),
+        inspect: () => Promise.resolve(ok(malformed)),
+      }),
+    },
+  });
+  onTestFinished(harness.close);
+  const before = harness.session.exportEvidenceBundle().records.length;
+  const response = await harness.client.callTool({
+    name: "inspect_wasm_artifact",
+    arguments: { path: value.artifact.path },
+  });
+  expect(parseMcpToolError(response).error.code).toBe("unreadable_output");
+  expect(harness.session.exportEvidenceBundle().records).toHaveLength(before);
+});
+
 it("reads an oversized completed WASM result through its reported retained reference", async () => {
   const text = "(module)\n" + ";;😀\n" + " ".repeat(6 * 1024 * 1024);
   const value = {

@@ -85,6 +85,7 @@ const captureFor = (scenario: BrowserScenario): BrowserScenarioCapture => {
       action_count: scenario.actions.length,
       secret_references: scenario.secrets.map(({ secret_id: id }) => id),
       network_content: scenario.capture.network,
+      event_families: scenario.capture.events,
     },
     duration_ms: 2,
     steps: [

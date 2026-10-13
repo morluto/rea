@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { readFile, utimes, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -116,6 +116,66 @@ it("does not treat an old database timestamp as permission to replace a live own
   }
 });
 
+it("preserves executable arguments through the public runner", async () => {
+  const directory = await createTestTempDirectory("rea-runner-argv-");
+  const payload = 'spaces, "quotes", & ^ % ! (parens)';
+  const code = "process.stdout.write(JSON.stringify(process.argv.slice(1)))";
+  expect(
+    await execute(directory, process.execPath, ["-e", code, payload]),
+  ).toMatchObject({
+    code: 0,
+    stdout: JSON.stringify([payload]),
+    stderr: "",
+  });
+});
+
+it.runIf(process.platform === "win32")(
+  "launches an executable from a path containing spaces",
+  async () => {
+    const directory = await createTestTempDirectory("rea-runner-spaced-exe-");
+    const executable = join(directory, "node runtime", "node.exe");
+    await mkdir(join(directory, "node runtime"), { recursive: true });
+    await copyFile(process.execPath, executable);
+    const payload = 'argument with spaces and "quotes" & ^ % !';
+    const code = "process.stdout.write(JSON.stringify(process.argv.slice(1)))";
+    expect(
+      await execute(directory, executable, ["-e", code, payload]),
+    ).toMatchObject({
+      code: 0,
+      stdout: JSON.stringify([payload]),
+      stderr: "",
+    });
+  },
+);
+
+it.runIf(process.platform === "win32")(
+  "resolves bare node and Windows command shims without losing arguments",
+  async () => {
+    const directory = await createTestTempDirectory("rea-runner-shims-");
+    const payload = 'argument with spaces and "quotes" & ^ % !';
+    const code = "process.stdout.write(JSON.stringify(process.argv.slice(1)))";
+    expect(
+      await execute(directory, "node", ["-e", code, payload]),
+    ).toMatchObject({
+      code: 0,
+      stdout: JSON.stringify([payload]),
+      stderr: "",
+    });
+
+    const npm = await execute(directory, "npm", ["--version"]);
+    expect(npm).toMatchObject({ code: 0, stderr: "" });
+    expect(npm.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+
+    const turbo = await execute(
+      directory,
+      join(process.cwd(), "node_modules", ".bin", "turbo"),
+      ["--version"],
+    );
+    expect(turbo).toMatchObject({ code: 0, stderr: "" });
+    expect(turbo.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+  },
+);
+
 it.runIf(process.platform !== "win32")(
   "recovers after abrupt owner death and keeps simultaneous contenders exclusive",
   async () => {
@@ -217,6 +277,30 @@ function launch(directory: string, command: string) {
     "runner did not finish",
   );
   return { child, ready, closed };
+}
+
+function execute(
+  directory: string,
+  command: string,
+  arguments_: string[] = [],
+) {
+  return new Promise<{
+    code: number | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [runnerPath, "test", command, ...arguments_],
+      { cwd: directory, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => (stdout += chunk.toString()));
+    child.stderr.on("data", (chunk) => (stderr += chunk.toString()));
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code, stdout, stderr }));
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {

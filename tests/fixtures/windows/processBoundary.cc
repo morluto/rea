@@ -4,6 +4,7 @@
 #include <winioctl.h>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,41 @@ int wmain(int count, wchar_t** args) {
     std::printf("{\"ordinallySorted\":%s,\"lastDuplicateSelected\":%s,\"unicodeNamesPreserved\":%s}\n",
       sorted ? "true" : "false", value(L"REA_CASE") == L"last" ? "true" : "false",
       value(L"REA_\u00df") == expectedSharp && value(L"REA_SS") == L"double" ? "true" : "false");
+    return 0;
+  }
+  if ((count == 2 || count == 3) && std::wstring(args[1]) == L"affinity") {
+    // Without a process id this observes itself, which is what an owned child
+    // reports. With one it observes that process, so a caller's own affinity is
+    // read from the process that spawns the child rather than from a separate
+    // probe Windows may place in another processor group.
+    HANDLE opened = nullptr;
+    if (count == 3) {
+      opened = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
+                           static_cast<DWORD>(std::wcstoul(args[2], nullptr, 10)));
+      if (!opened) return 9;
+    }
+    const HANDLE target = opened ? opened : GetCurrentProcess();
+    DWORD_PTR affinity = 0, systemAffinity = 0;
+    USHORT groupCount = 1;
+    USHORT groups[1]{};
+    const bool read = GetProcessAffinityMask(target, &affinity, &systemAffinity) != 0;
+    const bool single = read && GetProcessGroupAffinity(target, &groupCount, groups) && groupCount == 1;
+    if (opened) CloseHandle(opened);
+    if (!read) return 8;
+    // A mask can set bits above JavaScript's safe-integer range, so masks cross
+    // as fixed-width hexadecimal strings and are compared without rounding. The
+    // group's own active set distinguishes an unconstrained process from one
+    // deliberately pinned to fewer processors.
+    auto mask = [](DWORD_PTR value, char* text) {
+      std::snprintf(text, 19, "0x%08lX%08lX", static_cast<unsigned long>(value >> 32),
+                    static_cast<unsigned long>(value & 0xFFFFFFFFu));
+      return text;
+    };
+    char affinityText[19]{}, systemText[19]{};
+    std::printf("{\"affinityMask\":\"%s\",\"systemMask\":\"%s\","
+                "\"singleProcessorGroup\":%s,\"processorGroup\":%u}\n",
+                mask(affinity, affinityText), mask(systemAffinity, systemText),
+                single ? "true" : "false", single ? static_cast<unsigned>(groups[0]) : 0u);
     return 0;
   }
   if (count == 4 && std::wstring(args[1]) == L"reparse-directory") {

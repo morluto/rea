@@ -33,14 +33,14 @@ import {
 } from "./relationshipCoverage.js";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
-export const providerSchema = z.object({
+export const providerSchema = z.strictObject({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().nullable(),
 });
-const subjectSchema = z.object({
+const subjectSchema = z.strictObject({
   name: z.string().min(1),
-  digest: z.object({ sha256: digestSchema }),
+  digest: z.strictObject({ sha256: digestSchema }),
   format: z.enum([
     "hopper",
     "analysis-database",
@@ -77,15 +77,18 @@ const subjectSchema = z.object({
 /** Source location attached to an evidence observation. */
 /** Source-location schema shared by evidence-bearing persistence formats. */
 export const evidenceLocationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("address"), address: z.string().min(1) }),
-  z.object({
+  z.strictObject({ kind: z.literal("address"), address: z.string().min(1) }),
+  z.strictObject({
     kind: z.literal("address-range"),
     start: z.string().min(1),
     end: z.string().min(1),
   }),
-  z.object({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
-  z.object({ kind: z.literal("file-offset"), offset: z.number().int().min(0) }),
-  z.object({
+  z.strictObject({ kind: z.literal("artifact-path"), path: z.string().min(1) }),
+  z.strictObject({
+    kind: z.literal("file-offset"),
+    offset: z.number().int().min(0),
+  }),
+  z.strictObject({
     kind: z.literal("file-offset-range"),
     start: z.number().int().min(0),
     end: z.number().int().min(0),
@@ -100,7 +103,7 @@ const evidenceAuthoritySchema = z.enum([
   "analyst-inference",
 ]);
 
-const executionEnvironmentSchema = z.object({
+const executionEnvironmentSchema = z.strictObject({
   id: z.string().min(1),
   platform: z.string().min(1),
   architecture: z.string().min(1),

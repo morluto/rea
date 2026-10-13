@@ -7,6 +7,7 @@ import {
 } from "./PwntoolsRelease.js";
 import { z } from "zod";
 import { PWNTOOLS_LIMITS } from "./PwntoolsRelease.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 /** Actual limits reported by the owned bridge after lowering inherited soft limits. */
 export const pwntoolsResourceLimitsSchema = z.strictObject({
@@ -42,6 +43,7 @@ export interface PwntoolsFailureEvidence {
 export const readPwntoolsFailureEvidence = async (
   cause: unknown,
   rootPath?: string,
+  resources?: ArtifactResourceScope,
 ): Promise<PwntoolsFailureEvidence> => {
   let limitReport: PwntoolsLimitReport | undefined;
   let marker: PwntoolsFailureEvidence["marker"];
@@ -56,6 +58,9 @@ export const readPwntoolsFailureEvidence = async (
       const reported = await readStableArtifact(
         join(rootPath, "resource.failure"),
         1,
+        undefined,
+        undefined,
+        resources,
       );
       const expected =
         cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ? "M" : "F";
@@ -90,6 +95,9 @@ export const readPwntoolsFailureEvidence = async (
       const reported = await readStableArtifact(
         join(rootPath, "limits.json"),
         4096,
+        undefined,
+        undefined,
+        resources,
       );
       limitReport = {
         limits: pwntoolsResourceLimitsSchema.parse(

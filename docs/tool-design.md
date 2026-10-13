@@ -48,10 +48,12 @@ satisfy. A plan without execution does not establish runtime behavior.
 - Use strict inputs with explicit target identity and required fields. Preserve
   meaningful target, action, capture, and output choices; remove ignored options
   and repeated permission declarations.
-- Return complete evidence inline, with artifact/provider identity, source
-  locations, Evidence references, and relevant confidence and limitations.
-  Missing coverage is unknown, not absence. Avoid extra lookups solely to
-  understand the answer or its provenance.
+- Return the requested facts inline with artifact/provider identity, source
+  locations, Evidence references, coverage, and relevant confidence and
+  limitations. Use supported selection, summaries or views when they answer
+  the question; preserve access to complete source Evidence and honor existing
+  contracts and requested detail. Missing coverage is unknown, not absence.
+  Avoid extra lookups solely to understand the answer or its provenance.
 - Keep observed, derived, and inferred relationships distinct. Preserve
   unresolved edges and partial provider facts instead of requiring every
   provider to supply the same metadata.

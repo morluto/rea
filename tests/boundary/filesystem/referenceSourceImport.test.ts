@@ -378,6 +378,44 @@ describe("reference source path selection", () => {
 });
 
 describe("reference source rooted module specifiers", () => {
+  it("keeps dot-prefixed bare specifiers external while resolving explicit relative paths", async () => {
+    const root = await createTestTempDirectory("rea-reference-dot-prefix-");
+    await Promise.all([
+      writeFile(
+        join(root, "main.js"),
+        'import ".hidden.js"; import "..pkg.js"; import "./.hidden.js"; require(".hidden.js");\n',
+      ),
+      writeFile(join(root, ".hidden.js"), "export {};\n"),
+      writeFile(join(root, "..pkg.js"), "export {};\n"),
+    ]);
+    const result = await importTree(root);
+    if (!result.ok) throw result.error;
+    expect(result.value.relationships).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          to: ".hidden.js",
+          kind: "imports",
+          resolution: "external",
+        }),
+        expect.objectContaining({
+          to: "..pkg.js",
+          kind: "imports",
+          resolution: "external",
+        }),
+        expect.objectContaining({
+          to: ".hidden.js",
+          kind: "imports",
+          resolution: "internal",
+        }),
+        expect.objectContaining({
+          to: ".hidden.js",
+          kind: "requires",
+          resolution: "external",
+        }),
+      ]),
+    );
+  });
+
   it("does not rebase an absolute import onto a coincidentally matching source member", async () => {
     const root = await createTestTempDirectory("rea-reference-rooted-");
     await mkdir(join(root, "src", "outside"), { recursive: true });

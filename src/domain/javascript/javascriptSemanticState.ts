@@ -1,6 +1,9 @@
 import * as t from "@babel/types";
 
-import type { JavaScriptSemanticPropertyPath } from "./javascriptSemanticPropertyPaths.js";
+import type {
+  JavaScriptSemanticPropertyPath,
+  SemanticPropertyPathCoverage,
+} from "./javascriptSemanticPropertyPaths.js";
 
 import type {
   JavaScriptModuleOrigin,
@@ -9,6 +12,7 @@ import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticScope,
 } from "./javascriptSemanticIr.js";
+import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 /** Internal initializer plus a destructuring/member projection. */
 interface JavaScriptSemanticInitializer {
@@ -43,6 +47,8 @@ export interface JavaScriptSemanticBindingState {
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
+  /** An ECMAScript import that exists at runtime, excluding type-only and import-equals syntax. */
+  runtimeImport: boolean;
 }
 
 /** Mutable lexical-scope state used only during AST recovery. */
@@ -57,6 +63,8 @@ export interface JavaScriptSemanticScopeState {
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  /** Effective loader for static imports in this source artifact. */
+  readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
@@ -73,6 +81,8 @@ export interface JavaScriptSemanticAnalysisState {
     JavaScriptSemanticBindingState
   >;
   readonly conditionalInitializers: WeakSet<t.Node>;
+  /** Source-local writes, tagged by global-object or import.meta identity. */
+  readonly ambientWrites: SemanticPropertyPathCoverage;
 }
 
 /**

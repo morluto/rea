@@ -139,6 +139,7 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 | JavaScript / Electron | 模組、匯入、source map、路由、IPC 和原生附加元件關係            | Node.js 和 npm；[應用分析](https://rea.tools/zh-TW/guides/javascript/)                                                 |
 | 網站                  | 頁面結構、腳本、網路觀察結果和按請求獲取的螢幕擷取畫面          | Chrome 系瀏覽器；[瀏覽器分析](https://rea.tools/zh-TW/guides/browser/)                                                 |
 | 已保存的網路擷取      | 請求、回應、可訪問的酬載和來源位置                              | HAR；原生 mitmproxy 擷取需要 Linux 上的 mitmdump；[擷取指南](docs/web-network-captures.md)                             |
+| 封包擷取              | 端點、DNS、TLS SNI、通訊協定分佈和 HTTP 請求                    | 呼叫端提供的 tshark 和 capinfos；[pcap 指南](docs/pcap-analysis.md)                                                    |
 | .NET 程式集           | 中繼資料、CIL 指令、聲明的原生依賴和建置對比                    | 靜態檢查；[托管程式碼指南](docs/managed-code-analysis.md)                                                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                              | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](docs/android-analysis.md)                           |
 | Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸         | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](docs/adb-device-analysis.md)                                          |
@@ -146,6 +147,8 @@ REA 需要 Node.js 22.x（>=22.19）、24.x（>=24.11）或 26+，以及 npm。�
 | Android 資源          | 解碼後的清單、字串表、語系和版本資訊                            | 呼叫端提供的 Apktool 啟動器；[資源指南](docs/apktool-resource-analysis.md)                                             |
 | Flutter 應用          | Dart 快照雜湊、依 ABI 的程式庫雜湊及引擎建置來源                | 無（靜態 APK 解析）；[Flutter 指南](docs/flutter-analysis.md)                                                          |
 | 韌體                  | 區域、提取結果和轉交原生分析的內容                              | Linux 上的 Binwalk / Unblob；[韌體指南](docs/firmware-analysis.md)                                                     |
+| 封包記錄              | 指定欄位、重複值、篩選條件與解碼規則                            | Linux: TShark 4.x + prlimit; [封包分析指南](docs/packet-captures.md)                                                   |
+| 錄製的邏輯訊號        | 解碼註解、樣本範圍與診斷資訊                                    | Linux: sigrok-cli 0.7.2 + prlimit; [訊號記錄指南](docs/signal-recordings.md)                                           |
 | 軟體包與資源          | 檔案清單、摘要、plist、Apple bundle 結構和提取的資源            | [製品與 JavaScript 指南](docs/javascript-artifact-reconstruction.md)、[Apple 應用](docs/apple-application-analysis.md) |
 | 處理程序行為          | 終端輸出、互動、退出和檔案系統觀察結果，以及執行對比            | 支援原生 PTY 的 Linux/macOS；[處理程序擷取](docs/process-capture.md)                                                   |
 
@@ -261,7 +264,7 @@ npx rea-agents@latest setup
 
 ## Star 歷史
 
-🎉 **GitHub Star 達到 110,000 個，感謝大家！**
+🎉 **GitHub Star 達到 170,000 個，感謝大家！**
 
 感謝每一位使用 REA、報告錯誤、提出功能需求、測試建置和貢獻修復的朋友。
 

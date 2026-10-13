@@ -1,6 +1,7 @@
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 
 /** Default JEB MCP endpoint documented by the engine's headless client. */
 export const DEFAULT_JEB_MCP_ENDPOINT = "http://127.0.0.1:8425/mcp";
@@ -46,7 +47,7 @@ export const parseJebMcpEndpoint = (
           "Embedding credentials in the JEB MCP endpoint is not supported; configure authentication with the engine",
       }),
     );
-  if (url.search !== "" || url.hash !== "")
+  if (urlDeclaresQueryOrFragment(url))
     return err(
       new AnalysisInputError("jeb_mcp_endpoint", {
         cause: "JEB MCP endpoint query strings and fragments are not supported",

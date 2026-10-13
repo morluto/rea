@@ -192,6 +192,8 @@ interface GhidraInstallationObservation {
   readonly applicationPropertiesPath: string | null;
   readonly nativeDecompilerPath: string | null;
   readonly javaCommand: string;
+  /** Observed java.vm.name; omitted when the probe cannot establish VM identity. */
+  readonly javaVmName?: string;
   readonly checks: readonly GhidraInstallationCheck[];
 }
 
@@ -232,6 +234,7 @@ export interface GhidraJavaObservation {
   readonly home: string;
   readonly bits: number;
   readonly runtime: "jdk" | "jre";
+  readonly vmName?: string;
 }
 
 /** A bounded executable-header probe: a small prefix plus the whole file size. */
@@ -309,6 +312,9 @@ export const inspectGhidraInstallation = (
     applicationPropertiesPath: coordinates.applicationPropertiesPath,
     nativeDecompilerPath: coordinates.nativeDecompilerPath,
     javaCommand: coordinates.javaCommand,
+    ...(coordinates.java?.vmName === undefined
+      ? {}
+      : { javaVmName: coordinates.java.vmName }),
     checks,
   };
   if (failed !== undefined)
@@ -539,6 +545,7 @@ export const ghidraInstallationDiagnostics = (
   java_command: inspection.javaCommand,
   java_home: inspection.javaHome,
   java_version: inspection.javaVersion,
+  java_vm_name: inspection.javaVmName ?? null,
   platform: inspection.platform,
   architecture: inspection.architecture,
   checks: inspection.checks.map((check) => ({
@@ -634,14 +641,20 @@ const versionCheck = (
   properties: GhidraApplicationProperties | undefined,
 ): GhidraInstallationCheck => {
   const raw = properties?.providerVersion;
+  const parseError = properties?.parseError;
   return installationCheck({
     name: "version",
-    passed: ghidraReleaseAccepted(raw),
+    passed: parseError == null && ghidraReleaseAccepted(raw),
     code:
-      ghidraReleaseCompatibility(raw).status === "unsupported"
-        ? "unsupported_version"
-        : "version_unresolved",
-    detail: ghidraVersionDetail(raw),
+      parseError != null
+        ? "version_unresolved"
+        : ghidraReleaseCompatibility(raw).status === "unsupported"
+          ? "unsupported_version"
+          : "version_unresolved",
+    detail:
+      parseError == null
+        ? ghidraVersionDetail(raw)
+        : `application.properties could not be parsed: ${parseError}`,
     remediation: `Install a Ghidra ${ghidraReleaseLine()} release (verified with ${SUPPORTED_GHIDRA_VERSION}), or update REA for another Ghidra line.`,
   });
 };
@@ -694,7 +707,9 @@ const javaRemediation = (
 const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   readText(path) {
     try {
-      return readFileSync(path, "utf8");
+      // Ghidra loads this file with Properties.load(InputStream), which maps
+      // bytes as ISO-8859-1 rather than decoding UTF-8.
+      return readFileSync(path).toString("latin1");
     } catch (cause: unknown) {
       // best-effort cleanup: optional install probing; unreadable means unknown.
       void cause;
@@ -734,7 +749,16 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
   probeJava(command, environment) {
     const observed = spawnSync(
       command,
-      ["-XX:-UsePerfData", "-XshowSettings:properties", "-version"],
+      [
+        "-Dstdout.encoding=UTF-8",
+        "-Dstderr.encoding=UTF-8",
+        // JDK 17/18 use the legacy names; JDK 19+ use the names above.
+        "-Dsun.stdout.encoding=UTF-8",
+        "-Dsun.stderr.encoding=UTF-8",
+        "-XX:-UsePerfData",
+        "-XshowSettings:properties",
+        "-version",
+      ],
       {
         encoding: "utf8",
         env: environment,
@@ -747,6 +771,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
     const output = `${observed.stdout ?? ""}\n${observed.stderr ?? ""}`;
     const version = javaProperty(output, "java.version");
     const home = javaProperty(output, "java.home");
+    const vmName = javaProperty(output, "java.vm.name");
     const bits = Number.parseInt(
       javaProperty(output, "sun.arch.data.model") ?? "0",
       10,
@@ -756,6 +781,7 @@ const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
       version,
       major: javaMajor(version),
       home,
+      ...(vmName === null ? {} : { vmName }),
       bits,
       runtime: executablePath(
         (process.platform === "win32" ? win32 : posix).join(

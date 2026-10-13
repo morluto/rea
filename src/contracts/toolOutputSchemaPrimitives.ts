@@ -24,6 +24,7 @@ import {
 } from "../domain/providerOperationHealth.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
+import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
 export const evidenceResultOf = <Schema extends z.ZodType>(schema: Schema) =>
@@ -59,11 +60,7 @@ export const targetFormatSchema = z.enum([
   "dos-mz",
   "dos-com",
   "raw-binary",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
+  ...ZIP_PACKAGE_FORMATS,
   "asar",
   "dmg",
   "pkg",

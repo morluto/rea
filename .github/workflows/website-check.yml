@@ -7,10 +7,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: website-check-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   check:
     name: Website checks

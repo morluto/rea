@@ -85,11 +85,13 @@ it("pages groups independently of record completeness and preserves null digests
 });
 it("rejects native captures and malformed parents with typed errors", () => {
   const capture = analysisViewCaptureFixture();
-  capture.format = "mitmproxy";
-  expect(project(capture)).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisUnsupportedTargetError" },
-  });
+  for (const format of ["mitmproxy", "saz"] as const) {
+    capture.format = format;
+    expect(project(capture)).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisUnsupportedTargetError" },
+    });
+  }
   expect(
     projectAnalysisView(
       {

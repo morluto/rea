@@ -1,3 +1,5 @@
+import { HOPPER_PUBLISHER } from "./MacHopper.js";
+
 export type SetupFailureCode =
   | "unsupported_host"
   | "download_failed"
@@ -10,6 +12,7 @@ export type SetupFailureCode =
   | "destination_exists"
   | "mount_failed"
   | "bundle_invalid"
+  | "publisher_verification_failed"
   | "copy_failed"
   | "skill_install_failed"
   | "cleanup_failed";
@@ -39,6 +42,7 @@ export type HopperInstallFailureReason =
   | "destination_exists"
   | "mount"
   | "bundle"
+  | "publisher_verification_failed"
   | "copy";
 
 /** Map provider installer failures to stable setup codes and safe recovery. */
@@ -114,6 +118,12 @@ export const setupInstallFailure = (
         code: "bundle_invalid",
         remediation:
           "The mounted package did not contain the expected Hopper application bundle. Retry setup; if it repeats, update REA before installing.",
+      };
+    case "publisher_verification_failed":
+      return {
+        status: "failed",
+        code: "publisher_verification_failed",
+        remediation: `The mounted Hopper application is not signed by the publisher REA pins (${HOPPER_PUBLISHER.bundleIdentifier}, Apple team ${HOPPER_PUBLISHER.teamIdentifier}); nothing was copied or launched. Install Hopper yourself and set HOPPER_LAUNCHER_PATH to its launcher, then rerun rea setup.`,
       };
     case "copy":
       return {

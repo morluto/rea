@@ -1,3 +1,4 @@
+import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
@@ -71,7 +72,13 @@ export class WebSourceLocationService {
   ) {}
 
   close(): Promise<void> {
-    return this.decoder.close?.() ?? Promise.resolve();
+    return closeOwnedWebResources(
+      [
+        this.artifacts.close?.bind(this.artifacts),
+        this.decoder.close?.bind(this.decoder),
+      ],
+      "Web source-location cleanup failed",
+    );
   }
 
   /** Shared CLI/MCP workflow preserves raw declarations and every equal-position match. */
@@ -174,6 +181,7 @@ export class WebSourceLocationService {
     );
   }
 }
+
 const invalidOutput = (message: string): Result<never, AnalysisError> =>
   err(new AnalysisOutputError(OPERATION, message));
 const invalid = (

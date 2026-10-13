@@ -4,7 +4,7 @@ import { digestSchema } from "./../domain/digests.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const comparisonStatusSchema = z.enum(["unchanged", "changed", "unknown"]);
-const dimensionNameSchema = z.enum([
+export const functionComparisonDimensionNameSchema = z.enum([
   "identity",
   "pseudocode",
   "assembly",
@@ -29,7 +29,7 @@ const textDeltaSchema = z.object({
 });
 
 const functionDimensionContextShape = {
-  dimension: dimensionNameSchema,
+  dimension: functionComparisonDimensionNameSchema,
   left_count: z.number().int().min(0).nullable(),
   right_count: z.number().int().min(0).nullable(),
   evidence_links: z.array(evidenceIdSchema).min(2),
@@ -98,4 +98,6 @@ export type FunctionComparisonResult = z.infer<
   typeof functionComparisonResultSchema
 >;
 export type FunctionDimension = z.infer<typeof functionDimensionSchema>;
-export type DimensionName = z.infer<typeof dimensionNameSchema>;
+export type DimensionName = z.infer<
+  typeof functionComparisonDimensionNameSchema
+>;

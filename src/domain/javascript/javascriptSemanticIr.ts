@@ -4,14 +4,19 @@ import type {
   JavaScriptSemanticCoverage,
   JavaScriptSemanticReturnCoverage,
 } from "./javascriptSemanticCoverage.js";
+import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
 
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
+  readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly specifier: string;
   readonly importedPath: readonly string[];
 }
 
-/** Fail-closed provenance classification for one binding. */
+/**
+ * Fail-closed module-alias provenance for one binding, not transitive data flow.
+ * Locally constructed values may contain or derive from imported values.
+ */
 export type JavaScriptBindingProvenance =
   | {
       readonly status: "module";
@@ -392,8 +397,10 @@ export interface JavaScriptSemanticFrontier {
 
 /** Static import/export relationship retained for cross-file composition. */
 export interface JavaScriptSemanticModuleLink {
+  readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly kind:
     | "import"
+    | "type-import"
     | "require"
     | "export"
     | "re-export"

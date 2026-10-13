@@ -35,7 +35,7 @@ license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) 
   and whitespace. Decoded-byte SHA-256 identifies actual selected EVM bytes.
   Neither digest is the Ethereum Keccak code hash.
 - Full bytecode, upstream function offsets and original producer representation
-  are returned inline. Offsets are byte positions in decoded bytecode.
+  are returned inline by default. Offsets are byte positions in decoded bytecode.
 - Upstream also returns terminal metadata during selector recovery. Its reported
   values remain in `raw_result`; integer precision and non-text-key coverage are
   unknown in the JS binding. Full bytecode retains the original encoded metadata.
@@ -46,6 +46,49 @@ license](https://github.com/morluto/rea/blob/main/third_party/evmole/README.md) 
   completeness remain unknown. Empty candidates do not prove no callable interface.
 - Analysis is offline: no target runtime execution, implicit chain/RPC/explorer
   lookup, wallet action, transaction broadcast or network request.
+
+## Selected interface delivery and retained views
+
+Existing CLI calls and MCP calls with omitted or `complete` detail keep the
+complete inline result. On a retaining MCP server, select `detail: "summary"`
+when the question needs every inferred function and its identity/uncertainty,
+without bytecode text or duplicated raw stdout:
+
+```json
+{
+  "name": "inspect_evm_interface",
+  "arguments": {
+    "path": "/artifacts/runtime.hex",
+    "encoding": "hex",
+    "detail": "summary"
+  }
+}
+```
+
+The result is distinct derived Evidence linked to its complete parent. Its
+`normalized_result.summary` preserves every producer-returned selector, decoded
+byte offset, dispatch, argument/mutability string including null, carrier/decoded
+identities, original limitations and explicit unknowns. Payload `evidence_kind`
+remains `inferred`. It preserves stderr/truncation and records stdout text length.
+Complete-within-view coverage covers returned candidates; discovery completeness
+remains unknown even for an empty or exhausted collection. Analysis still runs;
+delivery selection does not save interpreter work or change source parameters.
+
+Use `normalized_result.parent_evidence_id` with `inspect_analysis_view` source
+kind `retained-evidence`. EVM view kind `evm` pages `functions` by original row
+order, or `bytecode_hex`, `stdout`, `stderr` by UTF-16 code units. Hex pages preserve
+the original lowercase text without a prefix; two characters represent one decoded
+byte. A text-page offset differs from a function's decoded-byte offset. Complete
+parent Evidence remains accessible through the normal ledger/export workflow;
+reading views does not rerun analysis or change its identity. Existing record
+retention and close semantics are unchanged.
+
+Portable historical complete EVM Evidence can use source kind `inline` without
+a provider. A fixed server without Evidence retention rejects selected summary
+delivery before starting analysis and continues to support complete delivery.
+Discover the actual advertised schema before sending `detail` to an older server;
+use its complete operation when an equivalent workflow is required. The one-shot
+CLI keeps its existing complete result.
 
 ## Resource and lifecycle limits
 

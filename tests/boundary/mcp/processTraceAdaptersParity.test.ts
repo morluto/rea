@@ -9,76 +9,16 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
 import { compareProcessEvidenceFiles } from "../../../src/application/process/ProcessCli.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
-import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { processTraceCaptureFixture } from "../../../src/domain/process/processCapture.fixture.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
-import type { ProcessTraceSpecification } from "../../../src/domain/process/processTraceSpecification.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const resources: Array<{ close(): Promise<void> }> = [];
 const temporaryRoots: string[] = [];
-const beforeCheckpoint = {
-  name: "before",
-  at_ms: 0,
-  files: [],
-  effects: [],
-  truncated: false,
-};
-const afterCheckpoint = {
-  name: "after_settlement",
-  at_ms: 50,
-  files: [],
-  effects: [],
-  truncated: false,
-};
-const capture = {
-  ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
-  event_journal: [
-    { capture_order: 0, collection: "filesystem_checkpoints", index: 0 },
-    { capture_order: 1, collection: "lifecycle", index: 0 },
-    { capture_order: 2, collection: "lifecycle", index: 1 },
-    { capture_order: 3, collection: "filesystem_checkpoints", index: 1 },
-  ],
-} as const;
-const traceSpecification: ProcessTraceSpecification = {
-  events: [
-    {
-      id: "before",
-      source: "filesystem",
-      exact: beforeCheckpoint,
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "exit",
-      source: "lifecycle",
-      exact: { event: "exit", ...capture.exit },
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "settlement",
-      source: "lifecycle",
-      exact: { event: "settlement", ...capture.settlement },
-      cardinality: { kind: "required" },
-    },
-    {
-      id: "after",
-      source: "filesystem",
-      exact: afterCheckpoint,
-      cardinality: { kind: "required" },
-    },
-  ],
-  language: {
-    kind: "finite_traces",
-    variants: [
-      {
-        id: "normal",
-        trace: ["before", "exit", "settlement", "after"],
-      },
-    ],
-  },
-};
+const { capture, traceSpecification } = processTraceCaptureFixture();
 
 const captureEvidence = (side: "left" | "right") =>
   createEvidence(undefined, PROCESS_PROVIDER, {
