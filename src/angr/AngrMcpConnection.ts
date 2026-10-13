@@ -93,8 +93,17 @@ export const createAngrMcpConnection = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): AngrMcpConnection => {
   const client = new Client({ name: "rea-angr-provider", version: "1" });
+  let stderrTail = "";
   const transportFailure = (cause: unknown): never => {
-    throw redactAngrTransportFailure(cause, config);
+    const failure = redactAngrTransportFailure(cause, config);
+    if (stderrTail.length === 0) throw failure;
+    const safeTail = redactAngrTransportFailure(
+      new Error(stderrTail),
+      config,
+    ).message;
+    throw new Error(`${failure.message}\nangr MCP stderr tail:\n${safeTail}`, {
+      cause: failure,
+    });
   };
   const transport =
     "command" in config
@@ -123,9 +132,11 @@ export const createAngrMcpConnection = (
       : new StreamableHTTPClientTransport(new URL(config.url), {
           requestInit: { headers: config.headers, redirect: "error" },
         });
-  // Drain angr's logging without persisting ambient environment or credentials.
+  // Keep only a bounded diagnostic tail for startup failures.
   if (transport instanceof StdioClientTransport)
-    transport.stderr?.on("data", () => undefined);
+    transport.stderr?.on("data", (chunk) => {
+      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-16_384);
+    });
   return {
     async connect() {
       await client

@@ -85,6 +85,7 @@ export class AngrEditRunner {
   private async batch(
     tool: "rename" | "set_type" | "set_comments",
     args: Readonly<Record<string, JsonValue>>,
+    onSettled?: (batch: AngrEditBatch) => void,
   ): Promise<AngrEditBatch> {
     // Caches derived from names are dropped before dispatch: the server may
     // apply the edit even when the caller cancels before the reply.
@@ -92,6 +93,7 @@ export class AngrEditRunner {
     const batch = editBatchSchema.parse(
       await this.runner.callSettled(tool, args),
     );
+    onSettled?.(batch);
     if (this.runner.cancelled) throw new AnalysisCancelledError(tool);
     if (batch.results.length !== batch.total)
       throw new AnalysisProtocolError(
@@ -204,12 +206,21 @@ export class AngrEditRunner {
     try {
       if (input.comment !== undefined) {
         rollback.commentUnknown = true;
-        const entry = await this.applyOne("set_comments", {
-          kind: "function",
-          address: fn.address,
-          comment: input.comment,
-        });
-        delete rollback.commentUnknown;
+        const entry = await this.applyOne(
+          "set_comments",
+          {
+            kind: "function",
+            address: fn.address,
+            comment: input.comment,
+          },
+          (settled) => {
+            const appliedEntry = settled.results[0];
+            delete rollback.commentUnknown;
+            if (appliedEntry?.status === "ok")
+              rollback.comment = appliedEntry.old ?? "";
+            comment = appliedEntry?.new ?? "";
+          },
+        );
         if (entry === undefined || !applied(entry.status))
           throw new AnalysisProtocolError(
             `angr rejected the entry comment: ${entry?.error ?? "no result"}`,
@@ -267,11 +278,16 @@ export class AngrEditRunner {
   private async applyOne(
     tool: "rename" | "set_comments",
     item: Readonly<Record<string, JsonValue>>,
+    onSettled?: (batch: AngrEditBatch) => void,
   ) {
-    const batch = await this.batch(tool, {
-      items: [item],
-      ...(tool === "rename" ? { allow_overwrite: false } : {}),
-    });
+    const batch = await this.batch(
+      tool,
+      {
+        items: [item],
+        ...(tool === "rename" ? { allow_overwrite: false } : {}),
+      },
+      onSettled,
+    );
     return batch.results[0];
   }
 

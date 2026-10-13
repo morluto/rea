@@ -46,6 +46,28 @@ export const parseAngrInput = (
       ]),
     );
   if (
+    operation === "set_native_variable_types" &&
+    Array.isArray(parameters.items)
+  ) {
+    const invalidItem = parameters.items.findIndex(
+      (item) =>
+        item !== null &&
+        typeof item === "object" &&
+        "address" in item &&
+        !angrAddressSchema.safeParse(item.address).success,
+    );
+    if (invalidItem >= 0)
+      return err(
+        new AnalysisInputError(operation, undefined, [
+          {
+            path: ["items", invalidItem, "address"],
+            reason: "invalid_format",
+            message: "angr requires a hexadecimal address.",
+          },
+        ]),
+      );
+  }
+  if (
     typeof parameters.procedure === "string" &&
     parameters.procedure.length === 0
   )

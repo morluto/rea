@@ -180,7 +180,8 @@ export class AngrSessionClient implements AnalysisClient {
           rawResult: {
             upstream: this.connection.serverInfo(),
             project: jsonValueSchema.parse(this.#loaded ?? null),
-            decompilation_flavor: this.#flavor,
+            decompilation_flavor:
+              this.config.mode === "attached" ? null : this.#flavor,
             observations: jsonValueSchema.parse(runner.raw),
           },
           limitations: [
@@ -212,12 +213,16 @@ export class AngrSessionClient implements AnalysisClient {
       signal: options?.signal,
       selectorOrigin: options?.selectorOrigin,
       callGraph: async (runner) => {
-        if (this.#callGraph === undefined) {
+        if (this.config.mode === "attached" || this.#callGraph === undefined) {
+          // Attached projects are shared; another client can change names or
+          // graph facts between requests, so only owned sessions may cache.
           this.#callGraph = runner.loadCallGraph().catch((cause: unknown) => {
             this.#callGraph = undefined;
             throw cause;
           });
-          return (await this.#callGraph).graph;
+          const loaded = await this.#callGraph;
+          if (this.config.mode === "attached") this.#callGraph = undefined;
+          return loaded.graph;
         }
         // A cache hit replays the reply so this result's Evidence explains its relationships.
         const cached = await this.#callGraph;
@@ -244,7 +249,8 @@ export class AngrSessionClient implements AnalysisClient {
           mode: this.config.mode,
           project: jsonValueSchema.parse(this.#loaded ?? null),
           cfg: this.#cfg,
-          decompilation_flavor: this.#flavor,
+          decompilation_flavor:
+            this.config.mode === "attached" ? null : this.#flavor,
           upstream: this.connection.serverInfo(),
         },
         ANGR_PROVIDER_IDENTITY,

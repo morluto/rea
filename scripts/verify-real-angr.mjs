@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { chmod, lstat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
@@ -369,12 +369,20 @@ try {
   };
   process.exitCode = 1;
 } finally {
-  if (values.report !== undefined)
-    await writeFile(
-      resolve(values.report),
-      `${JSON.stringify(report, null, 2)}\n`,
-      { mode: 0o600 },
-    );
+  if (values.report !== undefined) {
+    const reportPath = resolve(values.report);
+    try {
+      const info = await lstat(reportPath);
+      if (!info.isFile())
+        throw new Error("angr report path must be a regular file");
+      await chmod(reportPath, 0o600);
+    } catch (cause) {
+      if (cause?.code !== "ENOENT") throw cause;
+    }
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, {
+      mode: 0o600,
+    });
+  }
   console.log(
     JSON.stringify(
       {
