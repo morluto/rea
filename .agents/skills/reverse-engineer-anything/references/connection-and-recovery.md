@@ -53,7 +53,10 @@ missing tools. Instead:
 - Check analysis engines through the connected server's
   `binary_session.result.tool_availability`. `rea doctor --provider <id> --json`
   from a shell reports that shell's environment, which can differ from the
-  environment the client gave the plugin server.
+  environment the client gave the plugin server. If you still run it through
+  the package runner, use the version pinned in the plugin manifest's server
+  entry (`rea-agents@<version>`), not `@latest`, so it matches the server the
+  plugin starts.
 
 Use the setup repair below only when the user wants a setup-owned registration
 instead of the plugin, and remove or disable the plugin first.
