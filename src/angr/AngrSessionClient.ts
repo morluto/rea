@@ -209,19 +209,30 @@ export class AngrSessionClient implements AnalysisClient {
   #runner(options: ExecutionOptions | undefined): AngrOperationRunner {
     if (this.#loaded === undefined)
       throw new AnalysisProtocolError("angr session has no loaded project.");
+    // Attached projects are shared, so refresh for each operation while
+    // allowing all graph consumers within that operation to share one load.
+    let operationCallGraph:
+      | Promise<{ graph: AngrCallGraph; observation: AngrRawObservation }>
+      | undefined;
     return new AngrOperationRunner(this.connection, this.#loaded.project_id, {
       signal: options?.signal,
       selectorOrigin: options?.selectorOrigin,
       callGraph: async (runner) => {
-        if (this.config.mode === "attached" || this.#callGraph === undefined) {
-          // Attached projects are shared; another client can change names or
-          // graph facts between requests, so only owned sessions may cache.
+        if (this.config.mode === "attached") {
+          operationCallGraph ??= runner
+            .loadCallGraph()
+            .catch((cause: unknown) => {
+              operationCallGraph = undefined;
+              throw cause;
+            });
+          return (await operationCallGraph).graph;
+        }
+        if (this.#callGraph === undefined) {
           this.#callGraph = runner.loadCallGraph().catch((cause: unknown) => {
             this.#callGraph = undefined;
             throw cause;
           });
           const loaded = await this.#callGraph;
-          if (this.config.mode === "attached") this.#callGraph = undefined;
           return loaded.graph;
         }
         // A cache hit replays the reply so this result's Evidence explains its relationships.
@@ -234,6 +245,7 @@ export class AngrSessionClient implements AnalysisClient {
       // Call-graph nodes carry function names, so any applied edit invalidates it.
       onMutation: () => {
         this.#callGraph = undefined;
+        operationCallGraph = undefined;
       },
       onFlavor: (flavor) => {
         this.#flavor = flavor;
