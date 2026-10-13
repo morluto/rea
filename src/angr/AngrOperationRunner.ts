@@ -200,6 +200,20 @@ export class AngrOperationRunner {
     return result;
   }
 
+  /**
+   * A call that ignores cancellation entirely, for restoring state after a
+   * failed edit: the caller's abort must not leave the knowledge base changed.
+   */
+  async callIgnoringCancellation(
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): Promise<JsonValue> {
+    const scoped = { ...args, project_id: this.projectId };
+    const result = await this.connection.call(tool, scoped);
+    this.raw.push({ tool, arguments: scoped, result });
+    return result;
+  }
+
   /** Fetch the call graph, returning the raw reply so a session cache can replay it. */
   async loadCallGraph(): Promise<{
     graph: AngrCallGraph;

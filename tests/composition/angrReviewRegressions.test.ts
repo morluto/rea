@@ -224,3 +224,87 @@ describe("ownership, startup, and evidence provenance", () => {
     }
   });
 });
+
+describe("annotation rollback under lost replies", () => {
+  it("restores a name the server applied before the caller cancelled", async () => {
+    const { producer, client } = await open();
+    try {
+      const controller = new AbortController();
+      producer.beforeCall = async (name) => {
+        if (name === "rename") controller.abort();
+      };
+      const result = await client.execute(
+        "annotate_native_function",
+        { procedure: "main", name: "entry" },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(producer.names.get("0x1000")).toBe("main");
+      const renames = producer.calls.filter(({ name }) => name === "rename");
+      expect(
+        renames.map(
+          ({ args }) => (args.items as { new_name: string }[])[0]?.new_name,
+        ),
+      ).toEqual(["entry", "main"]);
+    } finally {
+      await client.close();
+    }
+  });
+  it("restores a name when the rename reply cannot be decoded", async () => {
+    const { producer, client } = await open();
+    try {
+      let first = true;
+      producer.overrideCall = (name, args) => {
+        if (name !== "rename" || !first) return undefined;
+        first = false;
+        producer.names.set(
+          "0x1000",
+          String((args.items as { new_name: string }[])[0]?.new_name),
+        );
+        return {
+          project_id: "p1",
+          dry_run: false,
+          total: 1,
+          succeeded: 1,
+          unchanged: 0,
+          failed: 0,
+          skipped: 0,
+          results: [],
+          functions_affected: [],
+        };
+      };
+      const result = await client.execute("annotate_native_function", {
+        procedure: "main",
+        name: "entry",
+      });
+      expect(result.ok).toBe(false);
+      expect(producer.names.get("0x1000")).toBe("main");
+    } finally {
+      await client.close();
+    }
+  });
+  it("reports an unrestorable comment when its call never returned", async () => {
+    const { producer, client } = await open();
+    try {
+      const controller = new AbortController();
+      producer.beforeCall = async (name) => {
+        if (name === "set_comments") controller.abort();
+      };
+      const result = await client.execute(
+        "annotate_native_function",
+        { procedure: "main", comment: "entry point" },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(JSON.stringify(result.error.partialObservation)).toContain(
+          "previous value and whether it was applied are unknown",
+        );
+      }
+    } finally {
+      await client.close();
+    }
+  });
+});

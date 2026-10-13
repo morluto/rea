@@ -192,16 +192,23 @@ export class AngrEditRunner {
       input.procedure,
       "annotate_native_function",
     );
-    const rollback: { name?: string; comment?: string } = {};
+    const rollback: {
+      name?: string;
+      comment?: string;
+      /** The comment call did not return, so its previous value is unknown. */
+      commentUnknown?: true;
+    } = {};
     let comment: string | null = null;
     let refreshed: AngrFunction;
     try {
       if (input.comment !== undefined) {
+        rollback.commentUnknown = true;
         const entry = await this.applyOne("set_comments", {
           kind: "function",
           address: fn.address,
           comment: input.comment,
         });
+        delete rollback.commentUnknown;
         if (entry === undefined || !applied(entry.status))
           throw new AnalysisProtocolError(
             `angr rejected the entry comment: ${entry?.error ?? "no result"}`,
@@ -213,6 +220,9 @@ export class AngrEditRunner {
           "The existing entry comment was not read back because it was not changed; angr's MCP server has no comment read.",
         );
       if (input.name !== undefined) {
+        // Recorded before dispatch: the server may apply the rename even when
+        // the reply is lost to cancellation or fails to decode.
+        rollback.name = fn.name;
         const entry = await this.applyOne("rename", {
           kind: "function",
           address: fn.address,
@@ -226,7 +236,7 @@ export class AngrEditRunner {
               message: entry?.error ?? "angr rejected the function name.",
             },
           ]);
-        if (entry.status === "ok") rollback.name = fn.name;
+        if (entry.status !== "ok") delete rollback.name;
       }
       refreshed = await this.runner.resolve(fn.address);
       if (input.name !== undefined && refreshed.name !== input.name)
@@ -264,37 +274,63 @@ export class AngrEditRunner {
   /** Restore the values an annotation changed before it failed; an unrestorable edit is reported. */
   private async rollbackAnnotations(
     address: string,
-    rollback: { name?: string; comment?: string },
+    rollback: { name?: string; comment?: string; commentUnknown?: true },
     cause: unknown,
   ): Promise<void> {
     const remaining: string[] = [];
-    if (rollback.name !== undefined) {
-      const entry = await this.applyOne("rename", {
+    // Restores ignore the caller's cancellation: an abort must not leave the
+    // knowledge base holding half of the requested annotation.
+    const restore = async (
+      tool: "rename" | "set_comments",
+      item: Readonly<Record<string, JsonValue>>,
+    ): Promise<boolean> => {
+      try {
+        const batch = editBatchSchema.parse(
+          await this.runner.callIgnoringCancellation(tool, {
+            items: [item],
+            ...(tool === "rename" ? { allow_overwrite: false } : {}),
+          }),
+        );
+        const entry = batch.results[0];
+        return entry !== undefined && applied(entry.status);
+      } catch {
+        return false;
+      }
+    };
+    if (
+      rollback.name !== undefined &&
+      !(await restore("rename", {
         kind: "function",
         address,
         new_name: rollback.name,
-      }).catch(() => undefined);
-      if (entry === undefined || !applied(entry.status))
-        remaining.push(
-          `function name (previously ${JSON.stringify(rollback.name)})`,
-        );
-    }
-    if (rollback.comment !== undefined) {
-      const entry = await this.applyOne("set_comments", {
+      }))
+    )
+      remaining.push(
+        `function name (previously ${JSON.stringify(rollback.name)})`,
+      );
+    if (rollback.commentUnknown === true)
+      remaining.push(
+        "entry comment (the comment call did not return, so its previous value and whether it was applied are unknown)",
+      );
+    else if (
+      rollback.comment !== undefined &&
+      !(await restore("set_comments", {
         kind: "function",
         address,
         comment: rollback.comment,
-      }).catch(() => undefined);
-      if (entry === undefined || !applied(entry.status))
-        remaining.push("entry comment");
-    }
-    if (remaining.length > 0)
+      }))
+    )
+      remaining.push("entry comment");
+    if (remaining.length > 0) {
+      const summary = `The annotation failed and its applied edits could not be restored: ${remaining.join(", ")}.`;
+      // Recorded on the partial Evidence as well, since a cancelled request
+      // reports only the cancellation.
+      this.runner.limitations.push(summary);
       throw new AnalysisProtocolError(
-        `The annotation failed and its applied edits could not be restored: ${remaining.join(", ")}. ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
+        `${summary} ${cause instanceof Error ? cause.message : String(cause)}`,
         { cause },
       );
+    }
   }
 
   async renameVariables(
