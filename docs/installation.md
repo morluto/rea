@@ -824,9 +824,15 @@ only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
-Code, `codex plugin list` in Codex). A plugin does not put `rea` on your
-`PATH`, so check analysis engines through the package runner, at the version
-the plugin pins so the report describes the server it starts:
+Code, `codex plugin list` in Codex).
+
+For analysis engines, ask the connected server: have the agent call
+`binary_session` and read `result.tool_availability`, which reports what the
+server the plugin started can use, with reasons and remediation. See
+[MCP contracts](mcp-contracts.md).
+
+A plugin does not put `rea` on your `PATH`. To check an engine from a
+terminal, use the package runner at the version the plugin pins:
 
 <!-- x-release-please-start-version -->
 
@@ -837,6 +843,9 @@ npx -y rea-agents@6.4.0 doctor --provider ghidra --json
 <!-- x-release-please-end -->
 
 If your installed plugin is older, use the version in its manifest instead.
+That report describes the terminal's environment, not the plugin server's.
+The server inherits the client's environment, so a setting such as
+`GHIDRA_INSTALL_DIR` that exists only in your terminal does not reach it.
 
 ## MCP Registry
 
