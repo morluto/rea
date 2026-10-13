@@ -283,7 +283,7 @@ describe("angr session client degradation and teardown", () => {
 });
 
 describe("angr loader options and regex search", () => {
-  it("carries a universal slice or raw image selection to load_binary", async () => {
+  it("forwards supported raw-image options without guessing universal slices", async () => {
     const { root, target } = await createAngrTarget();
     roots.push(root);
     expect(angrLoadOptions(target)).toEqual({});
@@ -294,7 +294,7 @@ describe("angr loader options and regex search", () => {
       availableArchitectures: ["arm64", "x86_64"],
       universalSlice: { offset: 0x4000, size: 0x1000 },
     };
-    expect(angrLoadOptions(universal)).toEqual({ arch: "aarch64" });
+    expect(angrLoadOptions(universal)).toEqual({});
     const raw: BinaryTarget = {
       ...target,
       format: "raw-binary",
