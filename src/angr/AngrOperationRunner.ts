@@ -405,8 +405,9 @@ export class AngrOperationRunner {
   async relationships(
     fn: AngrFunction,
     direction: "callers" | "callees",
+    graph?: AngrCallGraph,
   ): Promise<{ items: ProcedureIdentity[]; coverage: RelationshipCoverage }> {
-    const graph = await this.options.callGraph(this);
+    graph ??= await this.options.callGraph(this);
     const nodes = new Map(graph.nodes.map((node) => [node.address, node]));
     const related = new Set<string>();
     for (const edge of graph.edges) {
@@ -585,8 +586,11 @@ export class AngrOperationRunner {
       pseudocodeFailure = cause.message;
       this.limitations.push(`Pseudocode is unavailable: ${cause.message}`);
     }
-    const callers = await this.relationships(fn, "callers");
-    const callees = await this.relationships(fn, "callees");
+    // Both directions describe one dossier snapshot, including for an attached
+    // project whose graph cache is intentionally refreshed between requests.
+    const graph = await this.options.callGraph(this);
+    const callers = await this.relationships(fn, "callers", graph);
+    const callees = await this.relationships(fn, "callees", graph);
     this.relationshipCoverage = combineFunctionRelationshipCoverage(
       callers.coverage,
       callees.coverage,

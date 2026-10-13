@@ -213,6 +213,25 @@ describe("ownership, startup, and evidence provenance", () => {
       await client.close();
     }
   });
+  it("fetches one call graph for both relationship directions in an attached dossier", async () => {
+    const { target, producer } = await open();
+    const client = new AngrSessionClient(
+      { ...configuration(), mode: "attached" },
+      target,
+      producer,
+    );
+    try {
+      const dossier = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!dossier.ok) throw dossier.error;
+      expect(
+        producer.calls.filter(({ name }) => name === "get_callgraph"),
+      ).toHaveLength(1);
+    } finally {
+      await client.close();
+    }
+  });
   it("keeps the analysis profile on partial Evidence from a failed request", async () => {
     const { target, producer } = await open();
     const profile = createAnalysisProfile(ANGR_PROVIDER_IDENTITY, {
@@ -319,10 +338,11 @@ describe("annotation rollback under lost replies", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisCancelledError");
-        expect(JSON.stringify(result.error.partialObservation)).toContain(
+        expect(JSON.stringify(result.error.partialObservation)).not.toContain(
           "previous value and whether it was applied are unknown",
         );
       }
+      expect(producer.comments.has("0x1000")).toBe(false);
     } finally {
       await client.close();
     }
