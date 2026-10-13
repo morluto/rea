@@ -789,11 +789,18 @@ plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
 `missing` and recommend `rea setup`. Do not follow that remediation. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
 Code, `codex plugin list` in Codex). A plugin does not put `rea` on your
-`PATH`, so check analysis engines through the package runner:
+`PATH`, so check analysis engines through the package runner, at the version
+the plugin pins so the report describes the server it starts:
+
+<!-- x-release-please-start-version -->
 
 ```bash
-npx -y rea-agents@latest doctor --provider ghidra --json
+npx -y rea-agents@6.4.0 doctor --provider ghidra --json
 ```
+
+<!-- x-release-please-end -->
+
+If your installed plugin is older, use the version in its manifest instead.
 
 ## MCP Registry
 

@@ -378,7 +378,10 @@ function pluginManifestWithoutVersions(text) {
   if (manifest === null || typeof manifest !== "object") return text;
   if ("version" in manifest) manifest.version = "";
   const launch = manifest.mcpServers?.rea?.args;
-  if (Array.isArray(launch) && launch.length > 1) launch[1] = "";
+  // Only the version after the last "@" is release-owned; a different package
+  // name changes what the plugin runs.
+  if (Array.isArray(launch) && typeof launch[1] === "string")
+    launch[1] = launch[1].replace(/@[^@/]*$/u, "@");
   return JSON.stringify(manifest);
 }
 

@@ -50,10 +50,13 @@ const pluginManifests = [
   ".cursor-plugin/mcp.json",
 ] as const;
 
-const pluginManifest = (version: string, skills = ["./skill"]) => ({
+const pluginManifest = (
+  version: string,
+  { skills = ["./skill"], packageName = "rea-agents" } = {},
+) => ({
   version,
   skills,
-  mcpServers: { rea: { args: ["-y", `rea-agents@${version}`, "mcp"] } },
+  mcpServers: { rea: { args: ["-y", `${packageName}@${version}`, "mcp"] } },
 });
 
 beforeAll(async () => {
@@ -417,13 +420,22 @@ it("binds publication to complete recorded history and the reviewed base", async
   });
 });
 
-it.each(pluginManifests)(
-  "treats a release that changes plugin behavior in %s as a product change",
-  async (path) => {
+it.each(
+  pluginManifests.flatMap((path) => [
+    { path, change: "the skill path", edit: { skills: ["./another-skill"] } },
+    {
+      path,
+      change: "the launched package",
+      edit: { packageName: "another-package" },
+    },
+  ]),
+)(
+  "treats a release that changes $change in $path as a product change",
+  async ({ path, edit }) => {
     const f = await fixture();
     await writeFile(
       join(f.directory, path),
-      JSON.stringify(pluginManifest("6.4.0", ["./another-skill"])),
+      JSON.stringify(pluginManifest("6.4.0", edit)),
     );
     await git(f.directory, ["add", "CHANGELOG.md", path]);
     await git(f.directory, ["commit", "-m", "chore: release notes"]);
