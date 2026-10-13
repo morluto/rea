@@ -200,6 +200,7 @@ export class AngrEditRunner {
     } = {};
     let comment: string | null = null;
     let refreshed: AngrFunction;
+    let dossier: JsonValue;
     try {
       if (input.comment !== undefined) {
         rollback.commentUnknown = true;
@@ -243,6 +244,9 @@ export class AngrEditRunner {
         throw new AnalysisProtocolError(
           "angr function name readback disagrees with the requested name.",
         );
+      // The refreshed analysis is part of the operation: if it cannot be
+      // produced, the edits are rolled back with everything else.
+      dossier = await this.runner.dossier(refreshed);
     } catch (cause: unknown) {
       await this.rollbackAnnotations(fn.address, rollback, cause);
       throw cause;
@@ -254,7 +258,7 @@ export class AngrEditRunner {
         comment,
         inline_comment: null,
       },
-      dossier: await this.runner.dossier(refreshed),
+      dossier,
       effects: SESSION_EFFECTS,
     };
   }

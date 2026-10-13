@@ -308,3 +308,48 @@ describe("annotation rollback under lost replies", () => {
     }
   });
 });
+
+describe("annotation rollback when the refreshed analysis fails", () => {
+  it("restores the name and comment when the dossier cannot be produced", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.comments.set("0x1000", "original");
+      producer.overrideCall = (name) => {
+        if (name === "get_basic_blocks")
+          throw new AnalysisProtocolError(
+            "angr MCP tool failed: Failed to disassemble",
+          );
+        return undefined;
+      };
+      const result = await client.execute("annotate_native_function", {
+        procedure: "main",
+        name: "entry",
+        comment: "replacement",
+      });
+      expect(result.ok).toBe(false);
+      expect(producer.names.get("0x1000")).toBe("main");
+      expect(producer.comments.get("0x1000")).toBe("original");
+    } finally {
+      await client.close();
+    }
+  });
+  it("restores the name when the caller cancels during the refreshed analysis", async () => {
+    const { producer, client } = await open();
+    try {
+      const controller = new AbortController();
+      producer.beforeCall = async (name) => {
+        if (name === "decompile_function") controller.abort();
+      };
+      const result = await client.execute(
+        "annotate_native_function",
+        { procedure: "main", name: "entry" },
+        { signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(producer.names.get("0x1000")).toBe("main");
+    } finally {
+      await client.close();
+    }
+  });
+});
