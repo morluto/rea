@@ -67,12 +67,15 @@ describe("release configuration", () => {
       const packageJson = (await readJson("package.json")) as {
         version: string;
       };
-      const versionBlock =
-        /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/u.exec(
-          content,
-        )?.[0];
-
-      expect(versionBlock).toContain(`rea-agents@${packageJson.version}`);
+      const versionBlocks = [
+        ...content.matchAll(
+          /<!-- x-release-please-start-version -->[\s\S]*?<!-- x-release-please-end -->/gu,
+        ),
+      ];
+      // Both the plugin and registry examples must remain release-owned.
+      expect(versionBlocks).toHaveLength(2);
+      for (const [block] of versionBlocks)
+        expect(block).toContain(`rea-agents@${packageJson.version}`);
     },
   );
 
