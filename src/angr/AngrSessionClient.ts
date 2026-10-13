@@ -503,7 +503,15 @@ export class AngrSessionClient implements AnalysisClient {
       // A shared (attached) server keeps the project for a later retry, even
       // behind a stdio proxy. An owned headless server holds it only in
       // memory, so ending the process releases it.
-      if (this.config.mode === "attached") throw cause;
+      if (this.config.mode === "attached") {
+        const detached = this.connection.detach?.();
+        if (detached === undefined || !detached.ok)
+          throw new AggregateError(
+            [cause, ...(detached === undefined ? [] : [detached.error])],
+            "angr project close failed and its retained transport could not be detached.",
+          );
+        throw cause;
+      }
       await this.connection.close();
       this.#loaded = undefined;
       this.#projectId = undefined;

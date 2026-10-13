@@ -11,6 +11,11 @@ import { z } from "zod";
 import type { AngrConfiguration } from "./AngrConfiguration.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { ChildProcess } from "node:child_process";
+import { detachOwnedProcessHandles } from "../process/OwnedProcessDetach.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ANGR_PROVIDER_IDENTITY } from "./AngrProviderCapabilities.js";
 
 /** Injectable MCP boundary used by the provider and its conformance tests. */
 export interface AngrMcpConnection {
@@ -21,6 +26,8 @@ export interface AngrMcpConnection {
     options?: { readonly timeoutMs?: number },
   ): Promise<JsonValue>;
   serverInfo(): JsonValue;
+  /** Unref an owned stdio child and its pipes while retaining the live connection for retry. */
+  detach?(): Result<null, ProviderAdapterError>;
   close(): Promise<void>;
 }
 
@@ -137,6 +144,28 @@ export const createAngrMcpConnection = (
     transport.stderr?.on("data", (chunk) => {
       stderrTail = (stderrTail + chunk.toString("utf8")).slice(-16_384);
     });
+  const detach = (): Result<null, ProviderAdapterError> => {
+    if (!(transport instanceof StdioClientTransport)) return ok(null);
+    // The pinned SDK transport owns this exact ChildProcess. Keep this private
+    // SDK representation isolated here; never reconstruct ownership from PID.
+    const child = (transport as unknown as { _process?: ChildProcess })
+      ._process;
+    if (child === undefined)
+      return err(
+        new ProviderAdapterError(ANGR_PROVIDER_IDENTITY.id, "cleanup", {
+          diagnostics: { reason: "owned stdio process handle is unavailable" },
+        }),
+      );
+    const detached = detachOwnedProcessHandles(child);
+    return detached.ok
+      ? ok(null)
+      : err(
+          new ProviderAdapterError(ANGR_PROVIDER_IDENTITY.id, "cleanup", {
+            cause: detached.error,
+            diagnostics: { reason: detached.error.message },
+          }),
+        );
+  };
   return {
     async connect() {
       await client
@@ -158,6 +187,7 @@ export const createAngrMcpConnection = (
       );
     },
     serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
+    detach,
     close: () => client.close().catch(transportFailure),
   };
 };
