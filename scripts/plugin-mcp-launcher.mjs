@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { packageRunnerCommand } from "../src/process/packageRunnerCommand.mjs";
+import { packageRunnerCommand } from "./lib/packageRunnerCommand.mjs";
 
 // The manifest owns this exact package pin; args[1] remains release-managed.
 // No build, dependency installation or ambient latest-version lookup is needed

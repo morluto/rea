@@ -2,7 +2,7 @@ import { basename, isAbsolute, resolve } from "node:path";
 import { valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { packageRunnerCommand } from "../process/packageRunnerCommand.mjs";
+import { packageRunnerCommand } from "../../scripts/lib/packageRunnerCommand.mjs";
 
 /** Package runners whose pinned launcher setup can register. */
 export type PackageRunner = "npx" | "bunx";
