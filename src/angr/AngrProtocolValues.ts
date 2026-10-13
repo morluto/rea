@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 
 /** Canonical lowercase `0x` hexadecimal address as angr reports it. */
 export const angrAddressSchema = z
@@ -8,6 +9,33 @@ export const angrAddressSchema = z
     (value) =>
       `0x${BigInt(value.startsWith("0x") || value.startsWith("0X") ? value : `0x${value}`).toString(16)}`,
   );
+
+/** REA header architectures as archinfo identifiers; raw images are little-endian like Ghidra's import. */
+const ARCHINFO_IDS: Readonly<Record<string, string>> = {
+  x86: "x86",
+  x86_64: "x86_64",
+  arm: "armel",
+  arm64: "aarch64",
+};
+
+/** Loader options for targets angr cannot identify unaided; empty for headered files. */
+export const angrLoadOptions = (
+  target: BinaryTarget,
+): Readonly<Record<string, string>> => {
+  if (target.kind !== "executable") return {};
+  const arch = ARCHINFO_IDS[target.architecture];
+  if (target.format === "mach-o-universal")
+    return arch === undefined ? {} : { arch };
+  if (target.format === "raw-binary" && arch !== undefined)
+    // REA maps the whole file from the entry point, so the image base is the entry.
+    return {
+      backend: "blob",
+      arch,
+      base_address: target.entryPoint,
+      entry_point: target.entryPoint,
+    };
+  return {};
+};
 
 export const loadBinarySchema = z
   .object({

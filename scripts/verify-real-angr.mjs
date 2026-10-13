@@ -327,8 +327,11 @@ const mcp = async (cliDossier) => {
     );
   } finally {
     const completedPhase = phase;
-    if (opened) await call("close_binary", {});
-    await client.close();
+    try {
+      if (opened) await call("close_binary", {}).catch(() => undefined);
+    } finally {
+      await client.close();
+    }
     phase = completedPhase;
   }
 };

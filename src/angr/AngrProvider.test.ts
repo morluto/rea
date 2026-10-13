@@ -76,6 +76,41 @@ describe("angr provider discovery", () => {
       }),
     ).toMatchObject({ status: "unsupported", code: "target_kind_unsupported" });
   });
+  it("derives process and network effects from the transport, not the mode", async () => {
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "rea-angr-provider-"));
+    try {
+      const path = join(root, "mcp.json");
+      await writeFile(
+        path,
+        JSON.stringify({ command: "proxy", args: [], mode: "attached" }),
+      );
+      const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
+      if (!config.ok) throw config.error;
+      const [capability] = new AngrProvider(config.value, {}).capabilities();
+      expect(capability?.effects).toMatchObject({
+        launchesProcess: true,
+        mayWriteFilesystem: true,
+        mayAccessNetwork: true,
+      });
+      await writeFile(
+        path,
+        JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }),
+      );
+      const http = parseConfig({ REA_ANGR_MCP_CONFIG: path });
+      if (!http.ok) throw http.error;
+      const [remote] = new AngrProvider(http.value, {}).capabilities();
+      expect(remote?.effects).toMatchObject({
+        launchesProcess: false,
+        mayWriteFilesystem: false,
+        mayAccessNetwork: true,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it("commits a live profile that never persists the registration itself", async () => {
     const resolution = await configured().resolveAnalysisProfile({
       ...identity,

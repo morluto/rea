@@ -56,16 +56,19 @@ const parametersFor = (
 };
 
 describe("angr caller-visible contracts", () => {
-  it("advertises every operation without UI effects and marks edits as mutations", () => {
+  it("advertises every operation without UI effects, marks edits as mutations, and derives process effects from the transport", () => {
     for (const mode of ["attached", "headless"] as const)
-      for (const capability of angrCapabilities(mode)) {
-        expect(capability.available).toBe(true);
-        expect(capability.effects).toMatchObject({
-          mutatesArtifact: ANGR_MUTATING_OPERATIONS.has(capability.operation),
-          mayShowUi: false,
-          launchesProcess: mode === "headless",
-        });
-      }
+      for (const transport of ["stdio", "http"] as const)
+        for (const capability of angrCapabilities(mode, transport)) {
+          expect(capability.available).toBe(true);
+          expect(capability.effects).toMatchObject({
+            mutatesArtifact: ANGR_MUTATING_OPERATIONS.has(capability.operation),
+            mayShowUi: false,
+            launchesProcess: transport === "stdio",
+            mayWriteFilesystem: transport === "stdio",
+            mayAccessNetwork: transport === "http" || mode === "attached",
+          });
+        }
   });
   it.each(ANGR_OPERATIONS)(
     "serializes %s against its named advertised output contract",

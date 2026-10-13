@@ -52,13 +52,14 @@ In attached mode the server is shared with other clients. Results reflect its cu
 
 ## Supported targets and operations
 
-REA passes every executable kind to angr and reports angr's loader errors unchanged. angr admits ELF, PE, and Mach-O executables and shared libraries on every architecture its loader and lifter support. Universal Mach-O containers, headerless raw binaries, and 16-bit DOS inputs are not declined by REA, but angr's MCP `load_binary` currently has no way to receive REA's slice selection, architecture, or entry point for them, so they load only when angr's loader can identify them on its own.
+REA passes every executable kind to angr and reports angr's loader errors unchanged. angr admits ELF, PE, and Mach-O executables and shared libraries on every architecture its loader and lifter support. For a universal Mach-O, REA passes the selected slice's architecture so angr loads that slice; for a headerless raw binary it passes `backend: blob`, the architecture, and the entry point as both image base and entry, matching REA's raw-image mapping. These loader options need an angr whose `load_binary` accepts them; an older angr fails with a message naming the needed upgrade. 16-bit DOS inputs are passed through and rejected by angr, which has no 16-bit lifter.
 
 This adapter provides function and string inventory and search, function lookup, assembly, pseudocode, callers, callees, data xrefs, instruction windows, function dossiers, knowledge-base edits, and the decompilation flavor. Observed facts have these boundaries:
 
 - Function bodies come from angr's recovered basic blocks and are reported as merged inclusive ranges.
 - Callers and callees come from angr's call graph, fetched once per session. Unresolved indirect calls are absent, so relationship coverage is reported as partial. An edge whose endpoint angr lists no function for is omitted and named in the coverage limitations rather than failing the query.
 - `xrefs` returns the instruction addresses of data references recorded during CFG recovery. Call and jump references are not included; use `procedure_callers`.
+- Regex searches over the function and string inventories run in a cancellable worker thread with a five-second deadline, using ECMAScript Unicode syntax; a pathological pattern fails with a resource-constraint error and leaves the session usable.
 - Pseudocode is angr's decompiler output. Functions above angr's complexity limits fail with the upstream reason; a function dossier retains assembly and relationships and reports the missing pseudocode as a limitation.
 - Signatures are angr's recovered prototypes when present. Locals, comments, typed reference flags, referenced strings and names, and basic-block successors are not reported.
 - Symbolic execution and emulation are not exposed.

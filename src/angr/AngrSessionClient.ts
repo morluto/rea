@@ -36,6 +36,7 @@ import {
   type AngrOperation,
 } from "./AngrProviderCapabilities.js";
 import {
+  angrLoadOptions,
   cfgStatsSchema,
   closeProjectSchema,
   flavorSchema,
@@ -327,16 +328,7 @@ export class AngrSessionClient implements AnalysisClient {
       throw new AnalysisProtocolError(
         `angr MCP server is missing tools: ${missing.join(", ")}. Install a current angr release with its MCP extra; see docs/angr-provider.md.`,
       );
-    const loaded = loadBinarySchema.parse(
-      await this.connection.call(
-        "load_binary",
-        {
-          binary_path: this.target.path,
-          auto_load_libs: this.config.autoLoadLibs,
-        },
-        { timeoutMs: this.config.startupTimeoutMs },
-      ),
-    );
+    const loaded = loadBinarySchema.parse(await this.#loadBinary());
     this.#loaded = loaded;
     await this.#verifyLoadedTarget(loaded);
     const cfg = cfgStatsSchema.parse(
@@ -378,6 +370,33 @@ export class AngrSessionClient implements AnalysisClient {
         }),
       );
       this.#flavor = changed.flavor;
+    }
+  }
+
+  /** Headered files load as-is; a universal slice or raw image carries REA's selection to angr. */
+  async #loadBinary(): Promise<JsonValue> {
+    const options = angrLoadOptions(this.target);
+    try {
+      return await this.connection.call(
+        "load_binary",
+        {
+          binary_path: this.target.path,
+          auto_load_libs: this.config.autoLoadLibs,
+          ...options,
+        },
+        { timeoutMs: this.config.startupTimeoutMs },
+      );
+    } catch (cause: unknown) {
+      if (
+        Object.keys(options).length > 0 &&
+        cause instanceof AnalysisProtocolError &&
+        /Unexpected keyword argument/u.test(cause.message)
+      )
+        throw new AnalysisProtocolError(
+          `The connected angr MCP server does not accept loader options (${Object.keys(options).join(", ")}); upgrade angr to load ${this.target.format} targets.`,
+          { cause },
+        );
+      throw cause;
     }
   }
 

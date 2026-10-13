@@ -91,6 +91,7 @@ export const ANGR_EDIT_LIMITATIONS = Object.freeze([
 /** Advertise static observations and configured lifecycle effects truthfully. */
 export const angrCapabilities = (
   mode: "attached" | "headless",
+  transport: "stdio" | "http",
 ): readonly CapabilityDescriptor[] =>
   ANGR_OPERATIONS.map((operation) => ({
     provider: ANGR_PROVIDER_IDENTITY,
@@ -100,10 +101,10 @@ export const angrCapabilities = (
     cachePolicy: "live",
     effects: {
       mutatesArtifact: ANGR_MUTATING_OPERATIONS.has(operation),
-      launchesProcess: mode === "headless",
+      launchesProcess: transport === "stdio",
       mayShowUi: false,
-      mayAccessNetwork: mode === "attached",
-      mayWriteFilesystem: mode === "headless",
+      mayAccessNetwork: transport === "http" || mode === "attached",
+      mayWriteFilesystem: transport === "stdio",
       changesPermissions: false,
       requiresRoot: false,
     },

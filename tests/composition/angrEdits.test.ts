@@ -281,11 +281,14 @@ describe("angr without decompilation-flavor tools", () => {
       target,
       producer,
     );
-    const startup = await configured.execute("procedure_address", {
-      procedure: "main",
-    });
-    expect(startup.ok).toBe(false);
-    if (!startup.ok) expect(startup.error.message).toContain("flavor");
-    await configured.close();
+    try {
+      const startup = await configured.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(startup.ok).toBe(false);
+      if (!startup.ok) expect(startup.error.message).toContain("flavor");
+    } finally {
+      await configured.close();
+    }
   });
 });

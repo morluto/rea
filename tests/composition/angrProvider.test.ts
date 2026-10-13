@@ -2,11 +2,14 @@ import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { AngrProvider } from "../../src/angr/AngrProvider.js";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
+import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
 import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { parseConfig } from "../../src/config/parseConfig.js";
 import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import { angrLoadOptions } from "../../src/angr/AngrProtocolValues.js";
+import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -276,5 +279,103 @@ describe("angr session client degradation and teardown", () => {
     expect((await client2.close()).ok).toBe(true);
     expect(attached.openProjects.size).toBe(0);
     expect(attached.closes).toBe(1);
+  });
+});
+
+describe("angr loader options and regex search", () => {
+  it("carries a universal slice or raw image selection to load_binary", async () => {
+    const { root, target } = await createAngrTarget();
+    roots.push(root);
+    expect(angrLoadOptions(target)).toEqual({});
+    const universal: BinaryTarget = {
+      ...target,
+      format: "mach-o-universal",
+      architecture: "arm64",
+      availableArchitectures: ["arm64", "x86_64"],
+      universalSlice: { offset: 0x4000, size: 0x1000 },
+    };
+    expect(angrLoadOptions(universal)).toEqual({ arch: "aarch64" });
+    const raw: BinaryTarget = {
+      ...target,
+      format: "raw-binary",
+      architecture: "arm",
+      availableArchitectures: ["arm"],
+      entryPoint: "0x8000000",
+      entryPointSource: "0x8000000",
+    };
+    expect(angrLoadOptions(raw)).toEqual({
+      backend: "blob",
+      arch: "armel",
+      base_address: "0x8000000",
+      entry_point: "0x8000000",
+    });
+    const producer = new RecordingAngrMcp(raw);
+    const client = new AngrSessionClient(configuration(), raw, producer);
+    try {
+      expect((await client.execute("list_procedures", {})).ok).toBe(true);
+      expect(producer.calls[0]).toMatchObject({
+        name: "load_binary",
+        args: { binary_path: raw.path, backend: "blob", arch: "armel" },
+      });
+    } finally {
+      await client.close();
+    }
+    const legacy = new RecordingAngrMcp(raw);
+    legacy.overrideCall = (name) => {
+      if (name === "load_binary")
+        throw new AnalysisProtocolError(
+          "angr MCP tool failed: 1 validation error for call[load_binary]\nbackend\n  Unexpected keyword argument",
+        );
+      return undefined;
+    };
+    const client2 = new AngrSessionClient(configuration(), raw, legacy);
+    const result = await client2.execute("list_procedures", {});
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error.message).toContain("does not accept loader options");
+    await client2.close();
+  });
+  it("matches regex searches in a cancellable worker and rejects bad patterns as input", async () => {
+    const { root, target } = await createAngrTarget();
+    roots.push(root);
+    const client = new AngrSessionClient(
+      configuration(),
+      target,
+      new RecordingAngrMcp(target),
+    );
+    try {
+      const names = await client.execute("search_procedures", {
+        pattern: "^(main|helper)$",
+        mode: "regex",
+      });
+      if (!names.ok) throw names.error;
+      expect(names.value.result).toEqual([
+        { address: "0x1000", value: "main" },
+        { address: "0x1040", value: "helper" },
+      ]);
+      const strings = await client.execute("search_strings", {
+        pattern: "user\\w+:",
+        mode: "regex",
+        case_sensitive: true,
+      });
+      if (!strings.ok) throw strings.error;
+      expect(strings.value.result).toEqual([]);
+      const insensitive = await client.execute("search_strings", {
+        pattern: "user\\w+:",
+        mode: "regex",
+      });
+      if (!insensitive.ok) throw insensitive.error;
+      expect(insensitive.value.result).toEqual([
+        { address: "0x3000", value: "Username: " },
+      ]);
+      const invalid = await client.execute("search_procedures", {
+        pattern: "(",
+        mode: "regex",
+      });
+      expect(invalid.ok).toBe(false);
+      if (!invalid.ok) expect(invalid.error._tag).toBe("AnalysisInputError");
+    } finally {
+      await client.close();
+    }
   });
 });

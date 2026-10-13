@@ -50,7 +50,10 @@ export class AngrProvider implements AnalysisProviderCandidate {
   }
   capabilities() {
     const config = this.#configuration();
-    return angrCapabilities(config.ok ? config.value.mode : "headless");
+    return angrCapabilities(
+      config.ok ? config.value.mode : "headless",
+      config.ok && "url" in config.value ? "http" : "stdio",
+    );
   }
   inspectAvailability(): ProviderAvailability {
     const config = this.#configuration();

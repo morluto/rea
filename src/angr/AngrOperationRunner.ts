@@ -22,6 +22,7 @@ import {
   ANGR_MUTATING_OPERATIONS,
 } from "./AngrProviderCapabilities.js";
 import { AngrEditRunner } from "./AngrEditRunner.js";
+import { matchRegexValues } from "../process/RegexMatcher.js";
 import {
   angrAddressSchema,
   basicBlocksSchema,
@@ -445,15 +446,37 @@ export class AngrOperationRunner {
       | "search_strings",
     parameters: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
-    const matches = operation.startsWith("search_")
-      ? this.searchPredicate(searchQuerySchema.parse(parameters))
+    const query = operation.startsWith("search_")
+      ? searchQuerySchema.parse(parameters)
       : undefined;
     const items =
       operation === "list_procedures" || operation === "search_procedures"
         ? await this.functions()
         : await this.strings();
-    if (matches !== undefined)
+    if (query?.mode === "regex") {
+      const matched = await matchRegexValues({
+        operation,
+        values: items.map(({ value }) => value),
+        pattern: query.pattern,
+        caseSensitive: query.case_sensitive,
+        signal: this.options.signal,
+        invalidPattern: (reason) =>
+          new AnalysisInputError(operation, undefined, [
+            {
+              path: ["pattern"],
+              reason: "invalid_format",
+              message: `Supply a valid ECMAScript Unicode regex: ${reason}`,
+            },
+          ]),
+      });
+      if (!matched.ok) throw matched.error;
+      const selected = new Set(matched.value);
+      return items.filter((_, index) => selected.has(index));
+    }
+    if (query !== undefined) {
+      const matches = this.searchPredicate(query);
       return items.filter(({ value }) => matches(value));
+    }
     if (operation === "list_strings" && parameters.address !== undefined) {
       const address = angrAddressSchema.parse(parameters.address);
       return items.filter((item) => item.address === address);
@@ -464,15 +487,6 @@ export class AngrOperationRunner {
   private searchPredicate(
     query: z.infer<typeof searchQuerySchema>,
   ): (value: string) => boolean {
-    if (query.mode === "regex") {
-      let regex: RegExp;
-      try {
-        regex = new RegExp(query.pattern, query.case_sensitive ? "u" : "iu");
-      } catch (cause: unknown) {
-        throw new AnalysisInputError("search", { cause });
-      }
-      return (value) => regex.test(value);
-    }
     const needle = query.case_sensitive
       ? query.pattern
       : query.pattern.toLowerCase();
