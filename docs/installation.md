@@ -813,6 +813,17 @@ skill folders, and `.agents/skills/` also holds maintainer-only skills. Run
 `rea setup --client cursor` instead when you want the workflow instructions
 installed with the server.
 
+All three clients start a bundled plain Node launcher. It preserves the MCP
+standard streams and forwards termination signals to the package-runner child;
+on Windows it applies the same `cmd.exe /d /c` shim handling as setup-owned
+registrations. Claude Code and Cursor resolve their documented plugin-root
+argument. Codex resolves `cwd: "."` from the plugin root and uses a relative
+launcher path. The launcher needs Node.js and npm on the client's PATH, but no
+REA build or repository dependencies. The package runner uses an empty temporary
+working directory so a local REA checkout cannot shadow the pinned registry
+package. That directory is removed after the runner closes. Windows client
+plugin startup is not yet runtime-verified.
+
 Each release updates both manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider
