@@ -704,11 +704,25 @@ const clientConfigurationDesired = (
     launcher,
     environment.value,
   );
+  const previous = parsed?.servers[PRODUCT_IDENTITY.mcpServerKey];
+  if (
+    client.name === "kimi" &&
+    typeof previous === "object" &&
+    previous !== null &&
+    "enabledTools" in previous
+  )
+    registration.enabledTools = previous.enabledTools;
   return {
     ...registration,
     ...(client.name === "codex" || client.name === "grok_build"
       ? {
           startup_timeout_sec: MCP_STARTUP_POLICY.codexStartupTimeoutSeconds,
+        }
+      : {}),
+    ...(client.name === "kimi"
+      ? {
+          startupTimeoutMs: MCP_STARTUP_POLICY.kimiStartupTimeoutMs,
+          toolTimeoutMs: MCP_STARTUP_POLICY.kimiToolTimeoutMs,
         }
       : {}),
   };

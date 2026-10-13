@@ -107,6 +107,47 @@ first navigation. For a dedicated investigation profile, add
 then describe an unloaded page; REA continues to require an allowed, committed
 URL. See [the startup investigation](https://github.com/morluto/rea/issues/1384#issuecomment-6093781686).
 
+### Browsers without HTTP discovery
+
+Some browsers expose a loopback browser WebSocket but no `/json/version` or
+`/json/list`. Chrome 144 and later can enable remote debugging on a running
+browser from `chrome://inspect/#remote-debugging`; this mode is reported to
+serve only the browser socket. Since Chrome 136, `--remote-debugging-port` is
+ignored for the default profile, so this is the remaining way to inspect a page
+in an existing profile.
+
+For such a browser, pass the browser socket instead of the HTTP endpoint:
+
+```bash
+rea list-browser-targets ws://127.0.0.1:9222/devtools/browser/<id>
+```
+
+Chrome writes the port and the `/devtools/browser/<id>` path to the
+`DevToolsActivePort` file in its user data directory. REA does not read that
+file for you.
+
+- Only `list_browser_targets`, `inspect_web_page`, `analyze_web_bundle`,
+  `observe_web_session`, `discover_webmcp_tools`, and `capture_web_screenshot`
+  accept a browser socket. Website runtime attribution, Electron inspection,
+  and scenario attach mode still require HTTP discovery.
+- Each call opens one WebSocket and uses it for discovery
+  (`Browser.getVersion`, `Target.getTargets`) and for the selected page.
+  Discovery must finish within the same 10-second deadline as HTTP discovery.
+  Chrome may ask you to approve each connection.
+- The browser identifier controls access to the socket. Evidence records the
+  endpoint as `ws://127.0.0.1:9222/devtools/browser/[REDACTED]`.
+- `browser.revision` is the socket's `Browser.getVersion` value, such as
+  `@e533e98…`. HTTP discovery reports `WebKit-Version`, such as
+  `537.36 (@e533e98…)`.
+- `Target.getTargets` reports whether each target is attached. Chrome's
+  `/json/list` can omit it, so HTTP discovery may report `attached` as `null`.
+- An existing profile can hold many unrelated pages. Target listing returns
+  each eligible page's URL and title, so pass `--allowed-origins` to list only
+  the origins you are investigating.
+
+A browser driven only through `--remote-debugging-pipe` or a vendor's private
+automation channel has neither endpoint, and REA cannot attach to it.
+
 ## Request boundary
 
 CDP connections enforce the shared 64 MiB limit per WebSocket message. A larger
@@ -116,9 +157,13 @@ decoded strings or JSON objects.
 
 Discovery supplies a literal loopback CDP endpoint and returns all eligible
 page targets unless an exact HTTP(S) origin filter narrows the result. Follow-up
-inspection requests select one target; their default scope is its current origin. `localhost`, private-LAN
-addresses, HTTPS CDP endpoints, credentials, paths, queries, fragments, and
-implicit ports are not valid CDP endpoints. Origin filters contain only scheme,
+inspection requests select one target; their default scope is its current origin.
+The endpoint is either `http://127.0.0.1:PORT` or a
+[browser socket](#browsers-without-http-discovery),
+`ws://127.0.0.1:PORT/devtools/browser/ID`; `[::1]` may replace `127.0.0.1`.
+`localhost`, private-LAN addresses, HTTPS and `wss:` endpoints, credentials,
+queries, fragments, implicit ports, and any other path are not valid CDP
+endpoints. Origin filters contain only scheme,
 host, and port; paths, credentials, queries, fragments, and wildcards are not
 valid origins.
 

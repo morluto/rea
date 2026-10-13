@@ -417,6 +417,34 @@ describe("Apple bundle layouts and containers", () => {
   });
 });
 
+describe("Apple IPA components", () => {
+  it("excludes AppleDouble sidecars from IPA components", () => {
+    const result = project(
+      inventoryEvidence("ipa", "Fixture.ipa", [
+        { path: "Payload/Fixture.app/Info.plist" },
+        macho("Payload/Fixture.app/Fixture"),
+        { path: "Payload/Fixture.app/Contents/Resources/._libfoo.dylib" },
+        { path: "Payload/Fixture.app/Frameworks/Foo.framework/._Foo" },
+        { path: "__MACOSX/Payload/Fixture.app/libghost.dylib" },
+        macho("Payload/Fixture.app/Contents/Resources/libreal.dylib"),
+        macho("SwiftSupport/iphoneos/libswiftCore.dylib"),
+      ]),
+    );
+    expect(result.components.native_libraries.map(({ path }) => path)).toEqual([
+      "Payload/Fixture.app/Contents/Resources/libreal.dylib",
+      "SwiftSupport/iphoneos/libswiftCore.dylib",
+    ]);
+    expect(result.components.frameworks).toEqual([]);
+    expect(result.components.executables.map(({ path }) => path)).toEqual([
+      "Payload/Fixture.app/Contents/Resources/libreal.dylib",
+      "Payload/Fixture.app/Fixture",
+    ]);
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("AppleDouble sidecar entries"),
+    );
+  });
+});
+
 describe("macOS application scope", () => {
   it("attributes only components inside the application roots", () => {
     const result = project(

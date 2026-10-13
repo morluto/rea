@@ -283,7 +283,9 @@ export class BinarySession
           previous.route.identity.id,
         );
         if (!closed.ok) {
-          this.clearSessionRecords();
+          // A failed open retires the provider cache, not the investigation.
+          // Preserve Evidence and Unknown history for export and recovery.
+          this.clearSnapshot();
           this.#clearRuntimeAvailability();
           return closed;
         }

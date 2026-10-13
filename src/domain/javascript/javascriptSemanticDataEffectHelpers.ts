@@ -275,12 +275,3 @@ export const dataEffectMemberCallee = (
   t.isMemberExpression(node.callee) || t.isOptionalMemberExpression(node.callee)
     ? node.callee
     : null;
-
-/** Read a parent member's object when present. */
-export const dataEffectMemberObject = (
-  node: t.Node | null,
-): t.Expression | t.Super | null =>
-  node !== null &&
-  (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
-    ? node.object
-    : null;

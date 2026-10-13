@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { BinaryArchitecture } from "../binaryTargetTypes.js";
 import { localPathStringSchema } from "../localPath.js";
 import { CANONICAL_BASE64_PATTERN } from "../stringPatterns.js";
 import { recordedNoteCoverageIssues } from "./recordedCrashNoteCoverage.js";
@@ -18,7 +19,7 @@ const diagnostics = z.strictObject({
 const LINUX_CORE_OWNER_BASE64 = "Q09SRQA=";
 
 /** Complete register identities in the supported Linux amd64 PRSTATUS ABI order. */
-export const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
+const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
   "r15",
   "r14",
   "r13",
@@ -47,7 +48,95 @@ export const RECORDED_LINUX_AMD64_REGISTERS: readonly string[] = [
   "fs",
   "gs",
 ];
-const supportedRegisters = new Set(RECORDED_LINUX_AMD64_REGISTERS);
+const RECORDED_LINUX_AARCH64_REGISTERS: readonly string[] = [
+  "x0",
+  "x1",
+  "x2",
+  "x3",
+  "x4",
+  "x5",
+  "x6",
+  "x7",
+  "x8",
+  "x9",
+  "x10",
+  "x11",
+  "x12",
+  "x13",
+  "x14",
+  "x15",
+  "x16",
+  "x17",
+  "x18",
+  "x19",
+  "x20",
+  "x21",
+  "x22",
+  "x23",
+  "x24",
+  "x25",
+  "x26",
+  "x27",
+  "x28",
+  "x29",
+  "x30",
+  "sp",
+  "pc",
+  "pstate",
+];
+
+/** Recorded-core architectures whose Linux note ABI is interpreted. */
+export const RECORDED_LINUX_CORE_ARCHITECTURES = [
+  "x86_64-little-endian",
+  "aarch64-little-endian",
+] as const;
+
+export type RecordedCrashArchitecture =
+  (typeof RECORDED_LINUX_CORE_ARCHITECTURES)[number];
+
+/**
+ * ABI facts for one recorded-core architecture, measured from unchanged pwntools
+ * 4.15.0 `elf_prstatus_*` and `user_regs_struct_*` structures and mirrored by
+ * `bridge/pwntools/recorded_crash_impl.py`. Both profiles place `pr_cursig` at
+ * 12, `pr_pid` at 32 and the register window at 112; the ELF machine, the window
+ * contents and the Evidence CPU family differ per profile.
+ */
+export const RECORDED_LINUX_CORE_PROFILES: Record<
+  RecordedCrashArchitecture,
+  {
+    readonly machine: number;
+    readonly evidenceArchitecture: BinaryArchitecture;
+    readonly registers: readonly string[];
+    readonly registerBytes: number;
+    readonly registerOffset: number;
+    readonly prstatusBytes: number;
+  }
+> = {
+  "x86_64-little-endian": {
+    machine: 62,
+    evidenceArchitecture: "x86_64",
+    registers: RECORDED_LINUX_AMD64_REGISTERS,
+    registerBytes: 8,
+    registerOffset: 112,
+    prstatusBytes: 336,
+  },
+  "aarch64-little-endian": {
+    machine: 183,
+    evidenceArchitecture: "arm64",
+    registers: RECORDED_LINUX_AARCH64_REGISTERS,
+    registerBytes: 8,
+    registerOffset: 112,
+    prstatusBytes: 392,
+  },
+};
+
+const recordedCoreRegisterSets: Record<
+  RecordedCrashArchitecture,
+  ReadonlySet<string>
+> = {
+  "x86_64-little-endian": new Set(RECORDED_LINUX_AMD64_REGISTERS),
+  "aarch64-little-endian": new Set(RECORDED_LINUX_AARCH64_REGISTERS),
+};
 
 /** Select an explicit recording and optionally request debugger-derived mapping context. */
 export const inspectRecordedCrashInputSchema = z.strictObject({
@@ -108,7 +197,7 @@ const recordedCrashObjectSchema = z.strictObject({
     bytes: index,
   }),
   format: z.literal("elf-core"),
-  architecture: z.literal("x86_64-little-endian"),
+  architecture: z.enum(RECORDED_LINUX_CORE_ARCHITECTURES),
   target_execution: z.literal("not-performed"),
   live_process_identity: z.literal("unknown"),
   segments: z.array(
@@ -284,6 +373,8 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
           "Each supported raw note requires exactly one corresponding interpretation.",
         );
     }
+    const profile = RECORDED_LINUX_CORE_PROFILES[value.architecture];
+    const profileRegisters = recordedCoreRegisterSets[value.architecture];
     for (const thread of value.threads) {
       const note = value.notes[thread.note_index];
       if (
@@ -295,8 +386,8 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         continue;
       }
       if (
-        thread.registers.length !== RECORDED_LINUX_AMD64_REGISTERS.length ||
-        !thread.registers.every(({ name }) => supportedRegisters.has(name)) ||
+        thread.registers.length !== profile.registers.length ||
+        !thread.registers.every(({ name }) => profileRegisters.has(name)) ||
         new Set(thread.registers.map(({ name }) => name)).size !==
           thread.registers.length
       )
@@ -305,7 +396,7 @@ export const recordedCrashSchema = recordedCrashObjectSchema.superRefine(
         );
       for (const register of thread.registers)
         if (
-          BigInt(register.location.bytes) !== 8n ||
+          BigInt(register.location.bytes) !== BigInt(profile.registerBytes) ||
           !within(
             register.location,
             BigInt(note.descriptor_location.offset),

@@ -278,8 +278,13 @@ class ErrorEvidenceTransport implements Transport {
     // Count the provenance marker exactly as the projected error did, and keep
     // it on the replacement: the retained original may hold target content.
     const targetContent = carriesTargetContentMarker(message.result);
-    // The delivered error omits structuredContent, so only its text counts.
-    const encoded = encodeToolResult(structured, budget, "text", targetContent);
+    // The delivered error omits structuredContent, so its text and error flag count.
+    const encoded = encodeToolResult(
+      structured,
+      budget,
+      "error-text",
+      targetContent,
+    );
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
     const originalError = analysisErrorProjectionSchema.safeParse(

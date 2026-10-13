@@ -198,3 +198,32 @@ It accepts the same architecture and DLL flags and verifies the selected PE role
 in the analysis profile.
 All lanes require matching native controls; package startup alone establishes
 only package compatibility.
+
+## Masked byte search
+
+`search_bytes` (`rea search-bytes PATH '48 8B ?? ?? 89' --provider ghidra`)
+searches initialized analyzed memory, including loader fixups. Supply hexadecimal
+byte pairs, with `??` for any byte. An optional equal-length hexadecimal `mask`
+selects bits: `pattern: "a0"`, `mask: "f0"` matches bytes from `a0` through `af`.
+Wildcards remain unconstrained even with an explicit mask. At least one bit
+must be constrained.
+
+Optional `start` and `end` addresses are inclusive and select one address space.
+A match must end at or before `end`, so `end` set inside a match excludes it.
+Without bounds, loaded memory blocks are eligible, in Ghidra address order.
+Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
+listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
+`end` in their address space to search them.
+Overlapping matches are included; matches never cross block boundaries.
+Each match reports its address, segment, unique source file offset (or null),
+and containing procedure (or null).
+
+Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
+with the same target, profile, pattern, mask and bounds to continue. `complete`
+means no further matches remain. `searched.blocks` and `searched.bytes` describe
+the inclusive memory ranges examined for this page, including lookahead for the
+next match. Coverage can overlap between pages; do not sum it as unique memory.
+`searched.skipped_uninitialized` lists eligible uninitialized blocks on every
+page. These blocks are never searched. Cancellation returns a typed error,
+discards the active Ghidra database, and does not return a successful partial page.
+Hopper byte search remains unavailable until its implementation is verified.

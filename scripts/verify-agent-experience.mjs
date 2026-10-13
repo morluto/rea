@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   copyFile,
@@ -259,7 +260,7 @@ try {
     const execution = await runCodex(
       answerInstructions.length === 0
         ? scenario.prompt
-        : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial application analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
+        : `${scenario.prompt}\n\nThis closed factual rubric needs complete producer Evidence in the transcript. Request complete detail on each initial inspection or analysis when supported; summary or view records alone are not accepted by this rubric.\n\n${answerInstructions}`,
       scenario.approvedTools ?? [],
     );
     const transcriptDirectory = process.env.REA_AGENT_EVAL_TRANSCRIPT_DIR;
@@ -440,6 +441,13 @@ async function createTargets(root, includeManaged) {
     ...fixtures,
     largeJavascript,
     managed: join(managedOutput, "AgentEval.dll"),
+    ...(includeManaged
+      ? {
+          managedSha256: createHash("sha256")
+            .update(await readFile(join(managedOutput, "AgentEval.dll")))
+            .digest("hex"),
+        }
+      : {}),
   };
 }
 

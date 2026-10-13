@@ -62,12 +62,16 @@ const MUTATING_OPERATIONS = new Set<string>([
 
 /** Source-owned capabilities without acquiring or probing a Hopper session. */
 export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
-  HOPPER_OPERATIONS.map((operation) =>
+  [...HOPPER_OPERATIONS, "search_bytes" as const].map((operation) =>
     Object.freeze({
       provider: HOPPER_PROVIDER_IDENTITY,
       operation,
-      available: true,
-      reason: null,
+      ...(operation === "search_bytes"
+        ? {
+            available: false as const,
+            reason: "Masked byte search has not been verified for Hopper.",
+          }
+        : { available: true as const, reason: null }),
       effects: Object.freeze({
         mutatesArtifact: MUTATING_OPERATIONS.has(operation),
         launchesProcess: true,

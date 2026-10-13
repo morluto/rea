@@ -175,7 +175,9 @@ describe("function comparison normalized identity", () => {
   it("retains unresolved call details alongside missing facet coverage", () => {
     const value: Record<string, unknown> = {
       ...dossier("return 0;", "0x1000"),
-      unresolved_calls: [{ address: "0x1010", reason: "Unknown indirect target" }],
+      unresolved_calls: [
+        { address: "0x1010", reason: "Unknown indirect target" },
+      ],
     };
     delete value.facet_availability;
     const legacy = observe("a", functionDossierSchema.parse(value), "ida");

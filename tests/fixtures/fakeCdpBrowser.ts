@@ -28,6 +28,7 @@ export const startFakeCdpBrowser = async (
     referer: string | undefined;
   }[] = [];
   const sockets = new Set<WebSocket>();
+  let openedConnections = 0;
   let frameTreeReads = 0;
   let port = 0;
   const http = createServer((request, response) => {
@@ -85,6 +86,7 @@ export const startFakeCdpBrowser = async (
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
+    openedConnections += 1;
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("message", (raw) => {
@@ -142,6 +144,7 @@ export const startFakeCdpBrowser = async (
     allowedOrigin: endpoint,
     commands,
     activeConnectionCount: () => sockets.size,
+    openedConnectionCount: () => openedConnections,
     emitRawMessage(message) {
       for (const socket of sockets) socket.send(message);
     },

@@ -92,7 +92,10 @@ export type PinvokeVerification = z.infer<typeof pinvokeVerificationSchema>;
 export const managedNativeVerificationInputSchema = z
   .strictObject({
     managed_boundaries: evidenceSchema,
-    native_observations: z.array(evidenceSchema).min(1),
+    native_observations: z
+      .array(evidenceSchema)
+      .min(1)
+      .describe("Native function or export Evidence records"),
   })
   .superRefine((input, context) => {
     const ids = new Set<string>();

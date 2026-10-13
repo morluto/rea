@@ -46,7 +46,9 @@ const registerWebMcp = (
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
@@ -150,7 +152,9 @@ const registerScreenshot = (
     description:
       "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({

@@ -1,3 +1,4 @@
+import { wasmInterfaceSchema } from "./wasmInterface.js";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import type { EvidenceSubjectTarget } from "../evidence.js";
@@ -32,6 +33,7 @@ export const wasmArtifactSchema = z
         description: z.string(),
       }),
     ),
+    interface: wasmInterfaceSchema.exactOptional(),
     imports: z.array(z.string()),
     exports: z.array(z.string()),
     headers: z.string(),

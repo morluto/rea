@@ -3,7 +3,7 @@ import { z } from "zod";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   browserAllowedOriginsSchema,
-  browserEndpointSchema,
+  browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -11,7 +11,7 @@ import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 
 /** Input for passive discovery of page-registered WebMCP tools. */
 export const discoverWebMcpToolsInputSchema = z.strictObject({
-  cdp_endpoint: browserEndpointSchema,
+  cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
   target_id: z.string().trim().min(1),
   observation_ms: z.number().int().min(0).default(100),

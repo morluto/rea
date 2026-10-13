@@ -10,6 +10,7 @@ import {
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectRecordedCrashInputSchema,
+  RECORDED_LINUX_CORE_PROFILES,
   recordedCrashSchema,
 } from "../../domain/native/recordedCrash.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
@@ -101,7 +102,9 @@ export class RecordedCrashService {
         {
           path: value.artifact.path,
           format: "elf",
-          architecture: "x86_64",
+          architecture:
+            RECORDED_LINUX_CORE_PROFILES[value.architecture]
+              .evidenceArchitecture,
           sha256: value.artifact.sha256,
         },
         this.provider.identity,

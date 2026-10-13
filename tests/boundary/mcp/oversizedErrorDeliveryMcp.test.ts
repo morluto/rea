@@ -257,3 +257,72 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
     await Promise.all([client.close(), server.close()]);
   }
 });
+
+// The delivered error wire omits only the private structured carrier; its
+// `isError` flag and any provenance marker count against the result budget.
+const deliveredErrorBytes = (nameBytes: number, targetContent: boolean) => {
+  const { structuredContent: _carrier, ...wire } = failureWithName(
+    nameBytes,
+    targetContent,
+  );
+  return Buffer.byteLength(JSON.stringify(wire));
+};
+
+it.each([false, true])(
+  "applies the result budget to the complete delivered error (target content: %s)",
+  async (targetContent) => {
+    const fittingName =
+      delivery.resultBudgetBytes - deliveredErrorBytes(0, targetContent);
+    expect(deliveredErrorBytes(fittingName, targetContent)).toBe(
+      delivery.resultBudgetBytes,
+    );
+    const server = new EvidenceMcpServer(
+      { name: "error-budget-test", version: "1" },
+      { capabilities: {} },
+      undefined,
+      delivery,
+    );
+    server.registerTool(
+      "fitting_failure",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(fittingName, targetContent),
+    );
+    server.registerTool(
+      "one_byte_over_failure",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(fittingName + 1, targetContent),
+    );
+    const client = new Client({ name: "error-budget-client", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const fitting = await client.callTool({
+        name: "fitting_failure",
+        arguments: {},
+      });
+      expect(fitting.isError).toBe(true);
+      expect(parseMcpToolError(fitting)).toEqual(
+        failureWithName(fittingName, targetContent).structuredContent,
+      );
+      const over = await client.callTool({
+        name: "one_byte_over_failure",
+        arguments: {},
+      });
+      expect(over.isError).toBe(true);
+      expect(over.structuredContent).toBeUndefined();
+      expect(parseMcpToolError(over)).toMatchObject({
+        error: {
+          code: "resource_constraint",
+          details: {
+            reported_limits: { original_error_code: "invalid_request" },
+          },
+        },
+      });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
+    }
+  },
+  20000,
+);

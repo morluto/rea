@@ -2,14 +2,14 @@ import { z } from "zod";
 
 import {
   browserAllowedOriginsSchema,
-  browserEndpointSchema,
+  browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 
 /** Input for a navigation-aware browser observation window. */
 export const observeWebSessionInputSchema = z.strictObject({
-  cdp_endpoint: browserEndpointSchema,
+  cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
   target_id: z.string().trim().min(1),
   observation_ms: z.number().int().min(1).default(10_000),

@@ -131,7 +131,7 @@ const browserParameters = (
   }
   const observedOrigin = browserResultTargetOrigin(result);
   const scope = {
-    cdp_endpoint: input.cdp_endpoint,
+    cdp_endpoint: input.cdp_endpoint.recorded,
     allowed_origins:
       input.allowed_origins.length > 0
         ? input.allowed_origins

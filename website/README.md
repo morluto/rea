@@ -33,8 +33,43 @@ After editing source HTML or a catalog, run `python3 scripts/prepare-website.py`
 to rebuild the preview. `serve` prepares the site once when it starts.
 Keep the virtual environment active when preparing assets. CairoSVG needs the
 native Cairo library; the sharing card uses DejaVu Sans. On Debian or Ubuntu,
-install them with `sudo apt-get install libcairo2 fonts-dejavu-core`. For other
-systems, see [CairoSVG's installation instructions](https://cairosvg.org/documentation/#installation).
+install them with `sudo apt-get install libcairo2 fonts-dejavu-core`. On an
+Apple Silicon Mac, enter an ARM shell first with `/usr/bin/arch -arm64 /bin/zsh`. Install
+the ARM build with `/opt/homebrew/bin/brew install cairo pkg-config`. Install
+the sharing-card font with `/opt/homebrew/bin/brew install --cask font-dejavu`.
+The card in `public/assets/social-card.svg` requests DejaVu Sans, so Cairo output
+uses a fallback font without it. Verify with `fc-match "DejaVu Sans"`. The result
+should name DejaVu. A plain
+`brew` call can select the Intel brew when `/usr/local/bin` comes first or the
+terminal runs under Rosetta. Check that
+`/opt/homebrew/lib/libcairo.dylib` reports `arm64`. An old Intel build in
+`/usr/local/lib` shadows the ARM build. The preview then fails with
+`incompatible architecture (have 'x86_64', need 'arm64')`. Keep
+`/usr/local/lib` intact. Do not move its files and do not link ARM files into
+it. That breaks Intel programs that use the same names. Use an unprotected ARM
+Python, not Apple `/usr/bin/python3`. A venv from the Apple interpreter stays
+protected and purges `DYLD` at launch. Deactivate any active venv, confirm the
+shell reports `arm64`, then recreate the venv with the ARM interpreter by its
+full path:
+
+```sh
+deactivate || true
+/usr/bin/arch
+/opt/homebrew/bin/brew install python3
+/opt/homebrew/bin/python3 -m venv website/.venv --clear
+source website/.venv/bin/activate
+python3 -m pip install -r website/requirements.txt
+```
+
+A rebuilt venv is empty
+without this step. Export `DYLD_LIBRARY_PATH=/opt/homebrew/lib` and
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib` inside the ARM shell. Verify
+with `python3 -c "import ctypes.util;
+print(ctypes.util.find_library('cairo'))"`. The result should point at
+`/opt/homebrew`. Run the preview from that same shell with
+`python3 scripts/website.py serve` and no `arch` prefix. A `DYLD` export
+before `arch` gets purged and the preview fails again. For other systems, see
+[CairoSVG's installation instructions](https://cairosvg.org/documentation/#installation).
 CI installs both packages explicitly before rendering the card.
 
 To test the GitHub Pages prefix, use

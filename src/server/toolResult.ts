@@ -139,7 +139,7 @@ export class ToolResultDelivery {
     const encoded = encodeToolResult(
       structuredContent,
       this.resultBudgetBytes,
-      "text",
+      "error-text",
       targetContent,
     );
     // The transport retains an oversized projected error before replacing it

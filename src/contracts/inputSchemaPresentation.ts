@@ -30,6 +30,7 @@ const resolveReference = (
   root: Readonly<Record<string, unknown>>,
   reference: string,
 ): unknown => {
+  if (reference === "#") return root;
   if (!reference.startsWith("#/")) return undefined;
   let value: unknown = root;
   for (const token of reference.slice(2).split("/")) {
@@ -229,3 +230,76 @@ export const presentInputJsonSchema = (
   const described = describeSchema(flattened, flattened, describeProperty);
   return isObject(described) ? described : flattened;
 };
+
+/**
+ * Clients that render advertised inputs into SDK declarations expand
+ * schema-local references with a shared per-input budget: Pi 1.1.0 code-mode
+ * allows 32 expansions and degrades every later reference to `unknown`
+ * (morluto/rea#1632), hiding the fields those references describe. The budget
+ * counts conservatively — every resolvable, non-cyclic reference occurrence
+ * in every schema position — so any reference-resolving client stays within
+ * its measured limit.
+ */
+export const advertisedReferenceExpansionBudget = 32;
+
+const definitionKeys = new Set(["$defs", "definitions"]);
+
+const countReferenceExpansions = (
+  node: unknown,
+  root: Readonly<Record<string, unknown>>,
+  active: ReadonlySet<string>,
+  count: { value: number },
+): void => {
+  if (Array.isArray(node)) {
+    node.forEach((child) =>
+      countReferenceExpansions(child, root, active, count),
+    );
+    return;
+  }
+  if (!isObject(node)) return;
+  if (typeof node.$ref === "string" && !active.has(node.$ref)) {
+    const target = resolveReference(root, node.$ref);
+    if (target !== undefined) {
+      count.value += 1;
+      countReferenceExpansions(
+        target,
+        root,
+        new Set([...active, node.$ref]),
+        count,
+      );
+      return;
+    }
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (definitionKeys.has(key)) continue;
+    if (schemaMaps.has(key) && isObject(value)) {
+      for (const child of Object.values(value))
+        countReferenceExpansions(child, root, active, count);
+    } else if (schemaArrays.has(key) || schemaChildren.has(key)) {
+      countReferenceExpansions(value, root, active, count);
+    }
+  }
+};
+
+/** Conservative client expansion count over every schema position. */
+export const countLocalReferenceExpansions = (
+  schema: Record<string, unknown>,
+): number => {
+  const count = { value: 0 };
+  countReferenceExpansions(schema, schema, new Set(), count);
+  return count.value;
+};
+
+/**
+ * Keep the shared-definition form of an advertised input while clients can
+ * still resolve it. Once rendering would exhaust the reference budget, fall
+ * back to the inline projection, which carries no shared definitions for the
+ * nonrecursive schemas this repository advertises, so every field renders
+ * with complete structure in every reference-resolving client.
+ */
+export const inputSchemaWithinReferenceExpansionBudget = (
+  shared: Record<string, unknown>,
+  inline: () => Record<string, unknown>,
+  budget: number,
+): Record<string, unknown> =>
+  countLocalReferenceExpansions(shared) <= budget ? shared : inline();

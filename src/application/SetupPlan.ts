@@ -56,7 +56,8 @@ export const discoverSetupState = async (input: {
   const hopperInstallSupported =
     (input.host.platform === "darwin" &&
       majorVersion((await input.host.macosVersion()) ?? "0") >= 12) ||
-    (input.host.platform === "linux" && linuxDistribution?.supported === true);
+    (input.host.platform === "linux" &&
+      linuxDistribution?.hopperSetupSupported === true);
   const installHopper =
     input.forceHopperInstall ||
     (hopperInstallSupported &&

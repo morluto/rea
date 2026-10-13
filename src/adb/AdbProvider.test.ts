@@ -1127,6 +1127,68 @@ exit 1`,
   expect(projected.message).toContain("not installed for 0");
 });
 
+// adb exits 1 on a refused package change: `adb install` after printing the
+// status line to stderr, `cmd package uninstall` after printing it to stdout.
+it("preserves the device's install refusal when adb exits nonzero", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "install" ]; then
+  printf 'Performing Streamed Install\\n'
+  printf 'adb: failed to install app.apk: Failure [INSTALL_FAILED_ALREADY_EXISTS: Attempt to re-install com.example without first uninstalling.]\\n' >&2
+  exit 1
+fi
+exit 1`,
+  );
+  const apk = join(root, "app.apk");
+  await writeFile(apk, "apk");
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "install_adb_package",
+    input: { serial: "emulator-5554", apk_path: apk, replace: false },
+  });
+  expect(projected).toMatchObject({
+    code: "unsupported_target",
+    details: {
+      reason:
+        "INSTALL_FAILED_ALREADY_EXISTS: Attempt to re-install com.example without first uninstalling.",
+    },
+  });
+  expect(projected.message).toContain(
+    "INSTALL_FAILED_ALREADY_EXISTS: Attempt to re-install com.example without first uninstalling.",
+  );
+});
+
+it("preserves the device's uninstall refusal when adb exits nonzero", async () => {
+  const { binary } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "uninstall" ]; then printf 'Failure [not installed for 0]\\n'; exit 1; fi
+exit 1`,
+  );
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "uninstall_adb_package",
+    input: { serial: "emulator-5554", package: "com.absent" },
+  });
+  expect(projected).toMatchObject({
+    code: "unsupported_target",
+    details: { reason: "not installed for 0" },
+  });
+  expect(projected.message).toContain("not installed for 0");
+});
+
+it("keeps a nonzero install without a device verdict as an unreadable result", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "install" ]; then printf 'adb: failed to install app.apk: closed\\n' >&2; exit 1; fi
+exit 1`,
+  );
+  const apk = join(root, "app.apk");
+  await writeFile(apk, "apk");
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "install_adb_package",
+    input: { serial: "emulator-5554", apk_path: apk, replace: false },
+  });
+  expect(projected).toMatchObject({ code: "unreadable_output" });
+});
+
 it("starts an app through resolved launcher component and force-stops it", async () => {
   const { binary } = await writeAdbStub(
     shellStub({

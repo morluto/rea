@@ -213,7 +213,9 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.wasmProvider.WABT_PROVIDER_IDENTITY,
-      contracts: sources.wasmContracts.WASM_TOOL_CONTRACTS,
+      contracts: sources.wasmContracts.WASM_TOOL_CONTRACTS.filter(
+        ({ kind }) => kind === "artifact-provider",
+      ),
     },
     {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,

@@ -414,9 +414,44 @@ const addDirectCallees = async (input: {
       "provider",
     );
     examined += 1;
+    if (!execution.ok && execution.error._tag === "AnalysisCancelledError")
+      return { error: execution.error };
+    const unknowns = execution.ok
+      ? execution.value.unknowns
+      : execution.unknowns;
+    for (const [index, unknown] of unknowns.entries()) {
+      if (edges.size >= input.input.max_edges) {
+        truncated = true;
+        omitted += unknowns.length - index;
+        break;
+      }
+      const id = `unknown-dispatch:${current.address}:${unknown.address}`;
+      edges.set(id, {
+        id,
+        from: current.node.id,
+        to: null,
+        relation: "indirect_call",
+        resolution: "unresolved",
+        reason: unknown.reason,
+        evidence: [
+          {
+            kind: "reference",
+            provider: unknown.provider,
+            description: `${unknown.provider.name} reported an unresolved call: ${unknown.reason}`,
+            location: { address: unknown.address, file_offset: null },
+            artifact_path: null,
+            artifact_sha256: input.targetSha256,
+          },
+        ],
+        limitations: [],
+      });
+    }
     if (!execution.ok) {
-      if (execution.error._tag === "AnalysisCancelledError")
-        return { error: execution.error };
+      if (edges.size >= input.input.max_edges) {
+        truncated = true;
+        omitted += 1;
+        continue;
+      }
       const id = `unknown-callees:${current.address}`;
       edges.set(id, {
         id,
@@ -432,32 +467,6 @@ const addDirectCallees = async (input: {
       });
       continue;
     }
-    for (const unknown of execution.value.unknowns) {
-      if (edges.size >= input.input.max_edges) {
-        truncated = true;
-        omitted++;
-        break;
-      }
-      const id = `unknown-dispatch:${current.address}:${unknown.address}`;
-      edges.set(id, {
-        id,
-        from: current.node.id,
-        to: null,
-        relation: "indirect_call",
-        resolution: "unresolved",
-        reason: unknown.reason,
-        evidence: [
-          {
-            kind: "reference",
-            description: unknown.reason,
-            location: { address: unknown.address, file_offset: null },
-            artifact_path: null,
-            artifact_sha256: input.targetSha256,
-          },
-        ],
-        limitations: [],
-      });
-    }
     for (const [index, route] of execution.value.routes.entries()) {
       const address = route.address;
       if (edges.size >= input.input.max_edges) {
@@ -469,6 +478,7 @@ const addDirectCallees = async (input: {
       const evidence = [
         {
           kind: "reference" as const,
+          provider: execution.value.provider,
           description: `${execution.value.provider.name} reported ${route.relation} from ${current.address} to ${address}`,
           location: { address: route.site, file_offset: null },
           artifact_path: null,

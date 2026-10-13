@@ -24,7 +24,6 @@ import {
   dataEffectArgumentBindingId as argumentBindingId,
   dataEffectLiteralString as literalString,
   dataEffectMemberCallee as memberCallee,
-  dataEffectMemberObject as memberObject,
   dataEffectPrimitive as primitiveValue,
   isSemanticProcessObject as isProcessObject,
   outerDataEffectBinding as outerAssignedBinding,
@@ -83,8 +82,8 @@ const collectConfigurations = (
   context: TraversalContext,
 ): ConfigurationCandidate[] => {
   const output: ConfigurationCandidate[] = [];
-  traverseWithContext(program, context, (node, parent) => {
-    const details = configurationDetails(node, parent, context);
+  traverseWithContext(program, context, (node) => {
+    const details = configurationDetails(node, context);
     if (details === null) return;
     const operation: JavaScriptSemanticConfigurationOperation = {
       configId: `config:${details.kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
@@ -104,17 +103,13 @@ const collectConfigurations = (
 
 const configurationDetails = (
   node: t.Node,
-  parent: t.Node | null,
   context: TraversalContext,
 ): {
   readonly kind: "environment" | "argv" | "file";
   readonly key: string | null;
   readonly resolution: "complete" | "partial";
 } | null => {
-  if (
-    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-    !(memberObject(parent) === node)
-  ) {
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
     const processMember = processConfigurationMember(node, context.state);
     if (processMember !== null) return processMember;
   }

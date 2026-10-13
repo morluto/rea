@@ -218,8 +218,9 @@ export const appleProjectionId = (projection: unknown): string =>
   `aap_${digest(projection)}`;
 
 /**
- * IPA projection keeps every archive component, as before. Directory, ZIP,
- * and DMG inventories can hold installers and other siblings, so only
+ * AppleDouble sidecars describe neighbouring files and are never components.
+ * IPA projection keeps every other archive component, as before. Directory,
+ * ZIP, and DMG inventories can hold installers and other siblings, so only
  * components inside an application root are attributed to it.
  */
 const attributeComponents = (
@@ -227,8 +228,8 @@ const attributeComponents = (
   roots: readonly string[],
   rootFormat: RootFormat,
 ): { readonly all: Component[]; readonly unattributed: number } => {
-  if (rootFormat === "ipa") return { all: [...inventoried], unattributed: 0 };
   const visible = inventoried.filter(({ path }) => !isSidecar(path));
+  if (rootFormat === "ipa") return { all: visible, unattributed: 0 };
   const all = visible.filter(({ path }) =>
     roots.some((root) => isWithin(path, root)),
   );

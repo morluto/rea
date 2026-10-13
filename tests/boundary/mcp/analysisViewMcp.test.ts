@@ -1,3 +1,4 @@
+import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { API_SURFACE_EXAMPLE } from "../../../src/contracts/analysisViewApiSurfaceExample.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
@@ -212,16 +213,10 @@ it("advertises exact schemas and projects one layout section from retained Evide
     inspect: () => Promise.resolve(ok(layout)),
   });
   const { client, session } = await connect(service);
-  const advertised = (await client.listTools()).tools.find(
-    (tool) => tool.name === "inspect_analysis_view",
+  const { ajv, inputSchema, outputSchema } = await advertisedMcpToolSchemas(
+    client,
+    "inspect_analysis_view",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("inspect_analysis_view must publish both schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(ajv.validateSchema(inputSchema)).toBe(true);
-  expect(ajv.validateSchema(outputSchema)).toBe(true);
   expect(
     ajv.validate(inputSchema, {
       source: { kind: "inline", evidence: analysisViewLayoutEvidence() },

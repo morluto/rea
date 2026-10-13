@@ -8,6 +8,48 @@ import { createWebTextArtifact } from "./webContentArtifact.js";
 
 const origin = "https://app.example.test";
 
+it.each([
+  {
+    kind: "recovered",
+    source: "function legacy(a, a) { return a; } fetch('/partial');",
+    parsed: 2,
+    failures: 0,
+    reason: "recovered",
+    endpoints: ["/partial", "/complete"],
+  },
+  {
+    kind: "failed",
+    source: "function broken( {",
+    parsed: 1,
+    failures: 1,
+    reason: "could not be parsed",
+    endpoints: ["/complete"],
+  },
+])(
+  "attributes $kind parse uncertainty only to its affected source",
+  ({ source, parsed, failures, reason, endpoints }) => {
+    const captured = inspection(source);
+    const good = inspection("fetch('/complete');").scripts.items[0];
+    if (good === undefined) throw new Error("Missing valid script fixture");
+    captured.scripts.items.push({ ...good, script_key: "valid-script" });
+    captured.scripts.total += 1;
+    const result = analyzeCapturedWebBundle(captured);
+    expect(result.completeness).toMatchObject({
+      status: "partial",
+      parsed_scripts: parsed,
+      parse_failures: failures,
+    });
+    expect(result.unknowns).toContainEqual({
+      dimension: "javascript_ast",
+      reason: expect.stringContaining(reason),
+      affected_script_keys: [captured.scripts.items[0]?.script_key],
+    });
+    expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
+      endpoints,
+    );
+  },
+);
+
 describe("web bundle analyzer", () => {
   it("extracts graph, route, endpoint, vendor, and WebMCP evidence", () => {
     const source = `
@@ -713,4 +755,55 @@ it("keeps RPC lexical identity and bundled factory recognition in captured scrip
     { value: longOperation, mechanism: "graphql:query" },
   ]);
   expect(result.completeness.status).toBe("complete");
+});
+
+it("retains distinct WebMCP descriptions and names while deduplicating equivalent properties", () => {
+  const result = analyzeCapturedWebBundle(
+    inspection(`
+      document.modelContext.registerTool({ name: "lookup", description: "first", inputSchema: { properties: { alpha: {} } } });
+      document.modelContext.registerTool({ name: "lookup", description: "second", inputSchema: { properties: { alpha: {} } } });
+      document.modelContext.registerTool({ name: "equivalent", inputSchema: { properties: { alpha: {}, beta: {} } } });
+      document.modelContext.registerTool({ name: "equivalent", inputSchema: { properties: { beta: {}, alpha: {}, alpha: {} } } });
+      document.modelContext.registerTool({ description: "unnamed" });
+      document.modelContext.registerTool({ name: "", description: "unnamed" });
+    `),
+  );
+
+  expect(
+    result.observations.webmcp_declarations.map(
+      ({ name, description, schema_property_names }) => ({
+        name,
+        description,
+        schema_property_names,
+      }),
+    ),
+  ).toEqual([
+    {
+      name: "lookup",
+      description: "first",
+      schema_property_names: ["alpha"],
+    },
+    {
+      name: "lookup",
+      description: "second",
+      schema_property_names: ["alpha"],
+    },
+    {
+      name: "equivalent",
+      description: null,
+      schema_property_names: ["alpha", "beta"],
+    },
+    { name: null, description: "unnamed", schema_property_names: [] },
+    { name: "", description: "unnamed", schema_property_names: [] },
+  ]);
+  expect(result.observations.webmcp_declarations[2]?.location).toEqual({
+    script_key: `scr_${"1".repeat(64)}`,
+    line: 4,
+    column: 6,
+  });
+  expect(
+    result.observations.webmcp_declarations.every(
+      ({ trust }) => trust === "page-declared-untrusted",
+    ),
+  ).toBe(true);
 });

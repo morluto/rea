@@ -70,7 +70,7 @@ describe("setup workflow", () => {
       id: "ubuntu",
       versionId: "24.04",
       packageFamily: "deb",
-      supported: true,
+      hopperSetupSupported: true,
     };
     const result = await runSetup(
       { ...options(false), structured: false },
@@ -162,7 +162,7 @@ describe("setup workflow", () => {
       id: "ubuntu",
       versionId: "24.04",
       packageFamily: "deb",
-      supported: true,
+      hopperSetupSupported: true,
     };
     const result = await runSetup(options(true, true), host);
     expect(result.appliedActions).toEqual(["installed_hopper"]);
@@ -236,7 +236,7 @@ describe("setup workflow lifecycle and provider planning", () => {
       id: "ubuntu",
       versionId: "24.04",
       packageFamily: "deb",
-      supported: true,
+      hopperSetupSupported: true,
     };
     host.ghidra = "/opt/ghidra_12.1.4_PUBLIC";
     host.javaHome = "/usr/lib/jvm/jdk-21";

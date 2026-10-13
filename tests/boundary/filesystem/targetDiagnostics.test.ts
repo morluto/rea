@@ -1,4 +1,4 @@
-import { chmod, realpath, writeFile } from "node:fs/promises";
+import { chmod, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { systemDoctorHost } from "../../../src/application/Doctor.js";
@@ -78,7 +78,7 @@ describe("executable format refusal diagnostics", () => {
 });
 
 describe("target route diagnostics", () => {
-  it.each(["module.wasm", "module.bin", "misleading.js"])(
+  it.each(["module.wasm", "module.bin", "misleading.js", "misleading.hop"])(
     "identifies a WASM v1 header in %s without suggesting native provider installation",
     async (name) => {
       const directory = await createTestTempDirectory("rea-wasm-target-");
@@ -345,4 +345,69 @@ describe("raw-binary load rejection diagnostics", () => {
       },
     });
   });
+});
+
+describe("caller-selected and inferred target interpretation", () => {
+  it.each(["archive.hop", "archive.HOP"])(
+    "preserves inferred database routing for ZIP content named %s",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-zip-database-");
+      const bytes = Buffer.alloc(22);
+      bytes.writeUInt32LE(0x06054b50, 0);
+      const zipPath = join(directory, "archive.zip");
+      const databasePath = join(directory, name);
+      await writeFile(zipPath, bytes);
+      await writeFile(databasePath, bytes);
+      expect(await parseBinaryTarget(zipPath)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format: "zip" },
+      });
+      expect(await parseBinaryTarget(databasePath)).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+      expect(await readFile(databasePath)).toEqual(bytes);
+    },
+  );
+
+  it("preserves explicit DOS COM interpretation for bytes with a WASM header", async () => {
+    const directory = await createTestTempDirectory("rea-wasm-explicit-com-");
+    const path = join(directory, "module.hop");
+    await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+    expect(
+      await parseBinaryTarget(path, { formatHint: "dos-com" }),
+    ).toMatchObject({
+      ok: true,
+      value: { kind: "executable", format: "dos-com", architecture: "x86" },
+    });
+  });
+  it.each(["module.wasm", "misleading.hop"])(
+    "preserves explicitly selected database routing for %s",
+    async (name) => {
+      const directory = await createTestTempDirectory(
+        "rea-wasm-explicit-database-",
+      );
+      const path = join(directory, name);
+      await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
+      expect(
+        await parseBinaryTarget(path, { targetKind: "database" }),
+      ).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+    },
+  );
+
+  it.each(["ordinary.hop", "ordinary.HOP"])(
+    "retains automatic database routing for non-WASM %s",
+    async (name) => {
+      const directory = await createTestTempDirectory("rea-ordinary-database-");
+      const path = join(directory, name);
+      await writeFile(path, "existing database content");
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "database", format: "analysis-database" },
+      });
+    },
+  );
 });

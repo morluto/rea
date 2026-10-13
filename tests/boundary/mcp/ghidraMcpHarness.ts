@@ -54,7 +54,7 @@ export const connectGhidraMcp = async (
     config.value,
     silentLogger,
     {},
-    installationHost(),
+    ghidraInstallationHost(),
     factory,
   );
   const session = composeBinarySession(
@@ -100,7 +100,7 @@ export const sessionEvidence = (session: BinarySession, value: unknown) => {
   return evidence;
 };
 
-const installationHost = (): GhidraInstallationHost => ({
+export const ghidraInstallationHost = (): GhidraInstallationHost => ({
   platform: "linux",
   architecture: "x64",
   readText: () => "application.version=12.1.4\napplication.java.min=21\n",

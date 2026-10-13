@@ -43,7 +43,7 @@ export const executeProviderOperation = async <
   provider: ProviderOperationPort<TRequest>,
   confidence: "observed" | "derived",
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (options?.signal?.aborted === true)
+  if (options?.signal?.aborted)
     return err(new AnalysisCancelledError(operation));
   const request = schema.safeParse({ operation, input });
   if (!request.success)
@@ -51,8 +51,10 @@ export const executeProviderOperation = async <
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
   const execution = executed.value;
-  return ok(
-    createEvidence(execution.subject ?? undefined, execution.provider, {
+  const evidence = createEvidence(
+    execution.subject ?? undefined,
+    execution.provider,
+    {
       operation,
       parameters: jsonObjectSchema.parse(request.data.input),
       result: execution.result,
@@ -60,6 +62,16 @@ export const executeProviderOperation = async <
       limitations: execution.limitations,
       locations: execution.locations,
       confidence,
-    }),
+    },
   );
+  // A provider that cannot observe the signal may finish its work after the
+  // caller cancelled, so re-check rather than reporting a completed operation
+  // the caller no longer wants. The observation it completed is still this
+  // provider's Evidence, so the cancellation carries it as the partial
+  // observation instead of discarding a finished result.
+  if (options?.signal?.aborted)
+    return err(
+      new AnalysisCancelledError(operation, { partialObservation: evidence }),
+    );
+  return ok(evidence);
 };

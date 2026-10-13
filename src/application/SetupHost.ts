@@ -124,7 +124,8 @@ export const hostRemediation = async (
       ? "Upgrade to macOS 12 or newer."
       : undefined;
   }
-  if ((await host.linuxDistribution())?.supported === true) return undefined;
+  if ((await host.linuxDistribution())?.hopperSetupSupported === true)
+    return undefined;
   return "Automated Hopper setup supports Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, and Omarchy; configure an existing supported provider instead.";
 };
 

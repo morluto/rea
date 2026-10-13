@@ -114,6 +114,22 @@ try {
       length: bytes.length,
     });
     assert.equal(memory.normalized_result.bytes_hex, bytes.toString("hex"));
+    const signature = await call("search_bytes", {
+      pattern: "1e ?? 2f e1",
+      limit: 1000,
+    });
+    assert.equal(signature.normalized_result.complete, true);
+    assert.equal(signature.normalized_result.next_cursor, null);
+    assert.equal(signature.normalized_result.searched.bytes, bytes.length);
+    assert.deepEqual(
+      signature.normalized_result.matches.map((match) => match.address),
+      [entry],
+    );
+    assert.equal(signature.normalized_result.matches[0].file_offset, 0);
+    assert.equal(
+      signature.normalized_result.matches[0].procedure.address,
+      entry,
+    );
     const procedures = await call("list_procedures");
     assert.ok(
       procedures.normalized_result.some(
@@ -211,6 +227,69 @@ try {
       return_42: true,
     });
   }
+  const repeatedPath = join(workspace, "signatures.bin");
+  const repeatedBytes = Buffer.from("b82a000000c3".repeat(1005), "hex");
+  const repeatedSha256 = createHash("sha256")
+    .update(repeatedBytes)
+    .digest("hex");
+  await writeFile(repeatedPath, repeatedBytes);
+  await call("open_binary", {
+    path: repeatedPath,
+    format: "raw-binary",
+    architecture: "x86_64",
+    entry_point: "0x1000",
+  });
+  // Import/analysis is complete before timing the first uncached search.
+  await call("read_bytes", { address: "0x1000", length: 6 }, repeatedSha256);
+  const started = performance.now();
+  const page = await call(
+    "search_bytes",
+    { pattern: "b8 ?? 00 00 00 c3", limit: 1000 },
+    repeatedSha256,
+  );
+  const searchElapsedMs = performance.now() - started;
+  assert.equal(page.normalized_result.matches.length, 1000);
+  assert.equal(page.normalized_result.complete, false);
+  const rest = await call(
+    "search_bytes",
+    {
+      pattern: "b8 ?? 00 00 00 c3",
+      limit: 1000,
+      cursor: page.normalized_result.next_cursor,
+    },
+    repeatedSha256,
+  );
+  assert.equal(rest.normalized_result.matches.length, 5);
+  assert.equal(
+    rest.normalized_result.matches[0].address,
+    `0x${(0x1000 + 6000).toString(16)}`,
+  );
+  assert.equal(rest.normalized_result.complete, true);
+  const masked = await call(
+    "search_bytes",
+    { pattern: "bf", mask: "f0", start: "0x1000", end: "0x1005" },
+    repeatedSha256,
+  );
+  assert.deepEqual(
+    masked.normalized_result.matches.map((match) => match.address),
+    ["0x1000"],
+  );
+  const overlapping = await call(
+    "search_bytes",
+    { pattern: "00 00", start: "0x1000", end: "0x1005" },
+    repeatedSha256,
+  );
+  assert.deepEqual(
+    overlapping.normalized_result.matches.map((match) => match.address),
+    ["0x1002", "0x1003"],
+  );
+  const wrongCursor = await client.callTool({
+    name: "search_bytes",
+    arguments: { pattern: "c3", cursor: page.normalized_result.next_cursor },
+  });
+  assert.equal(wrongCursor.isError, true);
+  await call("close_binary");
+  assert.deepEqual(await readFile(repeatedPath), repeatedBytes);
   report = {
     ok: true,
     mocked: false,
@@ -231,6 +310,15 @@ try {
     load_images_verified: true,
     original_unchanged: true,
     x86_targets: x86Targets,
+    byte_search: {
+      matches: 1005,
+      page_size: 1000,
+      first_search_elapsed_ms: searchElapsedMs,
+      timing_scope: "MCP request after import; first uncached search",
+      token_usage: "unmeasured",
+      process_family_cpu_time: "unmeasured",
+      peak_process_family_memory: "unmeasured",
+    },
   };
 } catch (error) {
   if (stderr.trim()) process.stderr.write(stderr);

@@ -9,6 +9,7 @@ import type { BrowserObservationOperation } from "../domain/browserObservationEr
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { safeParseJson } from "../domain/safeJson.js";
+import type { CdpConnection } from "./CdpConnection.js";
 
 const endpointVersionSchema = z.object({
   Browser: z.string().min(1),
@@ -39,6 +40,26 @@ interface CdpDiscoveryResponseLimits {
   readonly bytes: number;
   readonly timeoutMs: number;
 }
+
+const browserSocketVersionSchema = z.object({
+  protocolVersion: z.string().min(1),
+  product: z.string().min(1),
+  revision: z.string(),
+  userAgent: z.string(),
+  jsVersion: z.string(),
+});
+
+const browserSocketTargetsSchema = z.object({
+  targetInfos: z.array(
+    z.object({
+      targetId: z.string().min(1),
+      type: z.string().min(1),
+      title: z.string().default(""),
+      url: z.string(),
+      attached: z.boolean().optional(),
+    }),
+  ),
+});
 
 /** Validated direct CDP WebSocket bound to one discovered page target. */
 interface CdpPageWebSocketEndpoint {
@@ -120,6 +141,88 @@ export const discoverCdpEndpoint = async (
       url: target.url,
       attached: target.attached ?? null,
       ...targetWebSocket(endpoint, target, operation),
+    })),
+  };
+};
+
+/**
+ * Run browser-socket discovery work, including its WebSocket handshake, under
+ * the HTTP discovery deadline. Reaching the deadline is a timeout, not a
+ * caller cancellation, so the internal abort is not carried as its cause.
+ */
+export const withCdpDiscoveryDeadline = async <T>(
+  operation: BrowserObservationOperation,
+  signal: AbortSignal | undefined,
+  work: (deadlineSignal: AbortSignal) => Promise<T>,
+  timeoutMs: number = CDP_DISCOVERY_RESPONSE_LIMITS.timeoutMs,
+): Promise<T> => {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), timeoutMs);
+  try {
+    return await work(
+      signal === undefined
+        ? deadline.signal
+        : AbortSignal.any([signal, deadline.signal]),
+    );
+  } catch (cause: unknown) {
+    if (deadline.signal.aborted && signal?.aborted !== true)
+      throw new BrowserObservationError(operation, "timeout", {
+        detail: `CDP browser-socket discovery exceeded its ${String(timeoutMs)} ms deadline.`,
+      });
+    throw cause;
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Read discovery facts over a browser socket that has no HTTP discovery.
+ * Each reply is bounded by the connection's protocol message limit; callers
+ * apply the discovery deadline through `signal`.
+ */
+export const discoverCdpBrowserSocket = async (
+  connection: CdpConnection,
+  url: string,
+  operation: BrowserObservationOperation,
+  signal?: AbortSignal,
+): Promise<CdpEndpointDiscovery> => {
+  const versionInput = await connection.send(
+    "Browser.getVersion",
+    {},
+    undefined,
+    signal,
+  );
+  const targetsInput = await connection.send(
+    "Target.getTargets",
+    {},
+    undefined,
+    signal,
+  );
+  const version = parseCdpEndpointValue(
+    browserSocketVersionSchema,
+    versionInput,
+    operation,
+  );
+  const targets = parseCdpEndpointValue(
+    browserSocketTargetsSchema,
+    targetsInput,
+    operation,
+  );
+  return {
+    webSocket: { scope: "browser", url },
+    version: {
+      product: version.product,
+      protocol_version: version.protocolVersion,
+      revision: version.revision,
+      user_agent: version.userAgent,
+      js_version: version.jsVersion,
+    },
+    targets: targets.targetInfos.map((target) => ({
+      id: target.targetId,
+      type: target.type,
+      title: sanitizeTargetTitle(target.title, target.url),
+      url: target.url,
+      attached: target.attached ?? null,
     })),
   };
 };

@@ -1,17 +1,41 @@
-import type { RecordedCrash } from "../../../src/domain/native/recordedCrash.js";
+import {
+  RECORDED_LINUX_CORE_PROFILES,
+  type RecordedCrash,
+  type RecordedCrashArchitecture,
+} from "../../../src/domain/native/recordedCrash.js";
+
+// One note is a 12-byte header, the "CORE\0" owner padded to 8 bytes, then the
+// descriptor. The first note starts at the end of the owned header and phdr.
+const NOTE_START = 0x80;
+const OWNER_START = NOTE_START + 12;
+const DESCRIPTOR_START = OWNER_START + 8;
+const NOTE_HEADER_BYTES = 20;
+
+const hex = (value: number): string => `0x${value.toString(16)}`;
 
 /** Source-owned observation seam; these bytes do not simulate a verified ELF engine. */
 export const recordedCrashFixture = (
   path = "/artifacts/source-owned.core",
+  architecture: RecordedCrashArchitecture = "x86_64-little-endian",
 ): RecordedCrash => {
-  const descriptor = Buffer.alloc(336);
+  const profile = RECORDED_LINUX_CORE_PROFILES[architecture];
+  const noteBytes = NOTE_HEADER_BYTES + profile.prstatusBytes;
+  const descriptor = Buffer.alloc(profile.prstatusBytes);
   descriptor.writeInt32LE(123, 32);
   descriptor.writeInt16LE(11, 12);
-  descriptor.writeBigUInt64LE(0x1122334455667788n, 224);
+  // One distinguishable register carries a full uint64 so retention is asserted.
+  descriptor.writeBigUInt64LE(
+    0x1122334455667788n,
+    profile.registerOffset + 14 * profile.registerBytes,
+  );
   return {
-    artifact: { path, sha256: "a".repeat(64), bytes: 512 },
+    artifact: {
+      path,
+      sha256: "a".repeat(64),
+      bytes: Math.max(512, DESCRIPTOR_START + profile.prstatusBytes),
+    },
     format: "elf-core",
-    architecture: "x86_64-little-endian",
+    architecture,
     target_execution: "not-performed",
     live_process_identity: "unknown",
     segments: [
@@ -20,7 +44,7 @@ export const recordedCrashFixture = (
         type: "PT_NOTE",
         header_location: { offset: "0x40", bytes: "0x38" },
         offset: "0x80",
-        file_size: "0x164",
+        file_size: hex(noteBytes),
         memory_size: "0x0",
         virtual_address: "0x0",
         physical_address: "0x0",
@@ -34,11 +58,14 @@ export const recordedCrashFixture = (
         index: 0,
         segment_index: 0,
         type: "NT_PRSTATUS",
-        location: { offset: "0x80", bytes: "0x164" },
-        owner_location: { offset: "0x8c", bytes: "0x5" },
+        location: { offset: hex(NOTE_START), bytes: hex(noteBytes) },
+        owner_location: { offset: hex(OWNER_START), bytes: "0x5" },
         owner_bytes_base64: Buffer.from("CORE\0").toString("base64"),
         owner_display: "CORE",
-        descriptor_location: { offset: "0x94", bytes: "0x150" },
+        descriptor_location: {
+          offset: hex(DESCRIPTOR_START),
+          bytes: hex(profile.prstatusBytes),
+        },
         descriptor_bytes_base64: descriptor.toString("base64"),
       },
     ],
@@ -48,40 +75,16 @@ export const recordedCrashFixture = (
         note_index: 0,
         historical_pid: 123,
         recorded_current_signal: 11,
-        registers: [
-          "r15",
-          "r14",
-          "r13",
-          "r12",
-          "rbp",
-          "rbx",
-          "r11",
-          "r10",
-          "r9",
-          "r8",
-          "rax",
-          "rcx",
-          "rdx",
-          "rsi",
-          "rdi",
-          "orig_rax",
-          "rip",
-          "cs",
-          "eflags",
-          "rsp",
-          "ss",
-          "fs_base",
-          "gs_base",
-          "ds",
-          "es",
-          "fs",
-          "gs",
-        ].map((name, index) => ({
+        registers: profile.registers.map((name, index) => ({
           name,
-          value: name === "rdi" ? "0x1122334455667788" : "0x0",
+          value: index === 14 ? "0x1122334455667788" : "0x0",
           location: {
-            offset: `0x${(148 + 112 + index * 8).toString(16)}`,
-            bytes: "0x8",
+            offset: hex(
+              DESCRIPTOR_START +
+                profile.registerOffset +
+                index * profile.registerBytes,
+            ),
+            bytes: hex(profile.registerBytes),
           },
         })),
       },
@@ -100,27 +103,38 @@ export const recordedCrashFixture = (
 };
 
 /** Source-owned SIGSEGV descriptor for scalar/source binding regressions. */
-export const recordedCrashSignalFixture = (path?: string): RecordedCrash => {
-  const value = recordedCrashFixture(path);
+export const recordedCrashSignalFixture = (
+  path?: string,
+  architecture: RecordedCrashArchitecture = "x86_64-little-endian",
+): RecordedCrash => {
+  const value = recordedCrashFixture(path, architecture);
+  const profile = RECORDED_LINUX_CORE_PROFILES[architecture];
   const descriptor = Buffer.alloc(32);
   descriptor.writeInt32LE(11, 0);
   descriptor.writeInt32LE(-2, 4);
   descriptor.writeInt32LE(1, 8);
   descriptor.writeBigUInt64LE(0x1122334455667788n, 16);
-  value.artifact.bytes = 640;
+  const prstatusNoteBytes = NOTE_HEADER_BYTES + profile.prstatusBytes;
+  const signalNoteStart = NOTE_START + prstatusNoteBytes;
+  const signalDescriptorStart = signalNoteStart + NOTE_HEADER_BYTES;
+  const signalNoteBytes = NOTE_HEADER_BYTES + 32;
+  value.artifact.bytes = Math.max(640, signalDescriptorStart + 32);
   value.segments = value.segments.map((segment) => ({
     ...segment,
-    file_size: "0x198",
+    file_size: hex(prstatusNoteBytes + signalNoteBytes),
   }));
   value.notes.push({
     index: 1,
     segment_index: 0,
     type: "NT_SIGINFO",
-    location: { offset: "0x1e4", bytes: "0x34" },
-    owner_location: { offset: "0x1f0", bytes: "0x5" },
+    location: { offset: hex(signalNoteStart), bytes: hex(signalNoteBytes) },
+    owner_location: { offset: hex(signalNoteStart + 12), bytes: "0x5" },
     owner_bytes_base64: Buffer.from("CORE\0").toString("base64"),
     owner_display: "CORE",
-    descriptor_location: { offset: "0x1f8", bytes: "0x20" },
+    descriptor_location: {
+      offset: hex(signalDescriptorStart),
+      bytes: "0x20",
+    },
     descriptor_bytes_base64: descriptor.toString("base64"),
   });
   value.signals.push({
@@ -141,7 +155,10 @@ export const recordedCrashFixtureBytes = (value: RecordedCrash): Buffer => {
   bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
   bytes.writeUInt32LE(1, 20);
   bytes.writeUInt16LE(4, 16);
-  bytes.writeUInt16LE(62, 18);
+  bytes.writeUInt16LE(
+    RECORDED_LINUX_CORE_PROFILES[value.architecture].machine,
+    18,
+  );
   bytes.writeBigUInt64LE(64n, 32);
   bytes.writeUInt16LE(56, 54);
   bytes.writeUInt16LE(value.segments.length, 56);

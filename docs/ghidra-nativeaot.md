@@ -17,10 +17,14 @@ submodule and is a separate, more capable workflow.
 The parser currently handles x64 PE32+ and RTR 9.1, including bounded
 DEHYDRATED_DATA processing, MethodTable relationships, virtual slots, and
 frozen strings. Other RTR versions and PE architectures are reported as
-unsupported or partial. The matching .NET 8.0.22 fixture is source-built and
-the parser's Windows-host Ghidra workflow has not yet had a real Windows-host
-run. This does not establish Windows Ghidra import or decompiler behavior.
-Windows Ghidra P0 has no database mutation authority. A PE/CLI or ReadyToRun
+unsupported or partial. The matching .NET 8.0.22 fixture is source-built.
+
+On a Windows host, Windows Ghidra P0 runs the parser without a JAR. Metadata,
+MethodTable relationships, virtual slots and frozen strings come from the
+parser report, and `analyze_function` decompiles slot targets. Tools that read
+the Ghidra database do not see rehydrated bytes (see below), because only the
+optional adapter writes them into the database and Windows Ghidra P0 has no
+database mutation authority. A PE/CLI or ReadyToRun
 assembly should use `inspect_managed_artifact`; it is not NativeAOT.
 
 ## Build and configure
@@ -57,7 +61,9 @@ returns `observations.metadata_recovery` inline from the captured source snapsho
 including the RTR header, MethodTable addresses, frozen strings, derived overlay
 identity, and examined/recovered counts. Its enclosing `unsupported` load-image
 status means independent PE load-image verification was not performed; it does
-not mean the metadata parser failed or the executable failed to load.
+not mean the metadata parser failed or the executable failed to load. Without
+the optional adapter, each recovered type's `type` is `null`, because no Ghidra
+DataType exists; select it by `address`.
 
 Pass a returned MethodTable address to `inspect_native_data_type`. A direct PE
 query also derives the snapshot metadata from the authenticated Ghidra session
@@ -67,8 +73,12 @@ The database result remains `unavailable` when Ghidra has no DataType at that
 address; its `metadata_recovery.source` is `read-only-derived-overlay` and
 carries related type, interface, slot, and target observations. Generated
 address identities do not claim original managed names. The parser does not
-merge frozen literals into Ghidra's database string inventory. Follow slot
-targets with `analyze_function` and ordinary cross-references.
+merge frozen literals into Ghidra's database string inventory: read them from
+`metadata_recovery.frozen_strings`, not `search_strings`. Slot targets come
+from the parser report; on Windows P0 without the adapter, a `read_bytes` of
+a slot in the rehydrated region returns no bytes. The Linux adapter route
+verifies a complete slot read and its target. Follow slot targets with `analyze_function` and ordinary
+cross-references.
 
 The built-in CLI path uses a MethodTable address returned by the parser or
 another observation:
@@ -129,3 +139,11 @@ compiler/linker symbols and raw directory bytes provide the oracle. Stripped
 fixtures exercise heuristic detection. Tests do not execute the resulting
 NativeAOT binaries. Fixture generation and adapter compilation are optional and
 never prerequisites of ordinary native analysis or setup.
+
+The real MCP lane runs only on a Linux x64 host with the adapter. The
+Windows-host behavior above was checked manually over MCP on Windows 11 x64
+(non-elevated, Ghidra 12.1.4, JDK 21, no JAR) with the source-built win-x64
+symbols fixture. The format, RTR version and frozen strings matched the fixture
+oracle; the derived MethodTable, its base type, its interface and a virtual
+slot reaching the overridden method matched the linker map; and pseudocode was
+readable. No CI lane repeats this check.

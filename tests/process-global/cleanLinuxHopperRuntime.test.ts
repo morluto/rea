@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmod, copyFile, readFile, symlink, unlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  symlink,
+  unlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -24,6 +31,8 @@ it
     const directory = await createTestTempDirectory("rea-clean-runtime-test-");
     const launcher = join(directory, "Hopper");
     const alternate = join(directory, "Hopper-alternate");
+    const procRoot = join(directory, "proc");
+    await mkdir(procRoot);
     const alternateMode = mode === "alternate launcher";
     if (alternateMode) {
       await copyFile("/usr/bin/sleep", launcher);
@@ -32,7 +41,10 @@ it
     }
     // A rejection must come from the fixture we are about to launch. An
     // existing Xvfb would otherwise mask a broken executable-identity check.
-    await assertCleanLinuxHopperRuntime(alternateMode ? [launcher] : []);
+    await assertCleanLinuxHopperRuntime(
+      alternateMode ? [launcher] : [],
+      procRoot,
+    );
     const command = alternateMode ? alternate : process.execPath;
     const arguments_ = alternateMode ? ["30"] : ["-e", childCode];
     const parentCode = `
@@ -59,6 +71,11 @@ it
       const { stdout } = await parent;
       const { pid } = JSON.parse(stdout) as { pid: number };
       orphanPid = pid;
+      if (alternateMode) {
+        const processEntry = join(procRoot, String(pid));
+        await mkdir(processEntry);
+        await symlink(`/proc/${String(pid)}/exe`, join(processEntry, "exe"));
+      }
       const { stdout: coordinates } = await execFileAsync("ps", [
         "-p",
         String(pid),
@@ -92,7 +109,10 @@ it
         await unlink(alternate);
       }
       await expect(
-        assertCleanLinuxHopperRuntime(alternateMode ? [launcher] : []),
+        assertCleanLinuxHopperRuntime(
+          alternateMode ? [launcher] : [],
+          procRoot,
+        ),
       ).rejects.toThrow("Clean Linux runner retained a Hopper demo process");
       // Observation must not terminate the fixture, even though it resembles Xvfb.
       const { stdout: alive } = await execFileAsync("ps", [

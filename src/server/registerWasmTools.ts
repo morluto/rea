@@ -1,3 +1,7 @@
+import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
+import { COMPARE_WASM_INTERFACES_CONTRACT } from "../contracts/wasm/wasmComparisonContracts.js";
+import { resolvePairedEvidenceRequest } from "../application/EvidenceInputResolver.js";
+import { recordSessionEvidenceSources } from "./sessionEvidence.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { WasmArtifactService } from "../application/wasm/WasmArtifactService.js";
@@ -21,6 +25,38 @@ export const registerWasmTools = (
   withAdmittedAnalysis?: WithAdmittedAnalysis,
   evidenceById?: EvidenceLookup,
 ): void => {
+  const comparison = COMPARE_WASM_INTERFACES_CONTRACT;
+  const compareHandler = createEvidenceToolHandler(
+    server,
+    async (rawInput, options) => {
+      const input = comparison.inputSchema.safeParse(rawInput);
+      if (!input.success)
+        return err(
+          analysisInputErrorFromIssues(
+            comparison.name,
+            input.error.issues,
+            rawInput,
+          ),
+        );
+      const sources = resolvePairedEvidenceRequest(input.data, evidenceById);
+      if (!sources.ok) return sources;
+      const result = await compareWasmInterfaces(sources.value, options);
+      if (!result.ok) return result;
+      const recorded = recordSessionEvidenceSources(recordEvidence, [
+        sources.value.left,
+        sources.value.right,
+      ]);
+      return recorded.ok ? result : recorded;
+    },
+    logger,
+    recordEvidence,
+    withAdmittedAnalysis,
+  );
+  server.registerTool(
+    comparison.name,
+    toolRegistrationOptions(comparison),
+    compareHandler(comparison),
+  );
   const contract = wasmArtifactModule.contract;
   const handler = createEvidenceToolHandler(
     server,

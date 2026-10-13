@@ -209,13 +209,7 @@ describe("installer TTY fallback", { timeout: 20_000 }, () => {
         cwd: process.cwd(),
         env: {
           ...process.env,
-          HOME: fixture.home,
-          TMPDIR: fixture.temporary,
-          PATH: `${fixture.bin}:/usr/bin:/bin`,
-          FAKE_NPM_LOG: fixture.npmLog,
-          FAKE_REA_LOG: fixture.reaLog,
-          FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-          FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+          ...installerEnvironment(fixture),
           TERM: "xterm-256color",
         },
         name: "xterm-256color",
@@ -581,6 +575,19 @@ const executable = async (path: string, source: string): Promise<void> => {
   await chmod(path, 0o755);
 };
 
+/** Fixture-owned installer environment shared by the exec, pipe and PTY runs. */
+const installerEnvironment = (
+  fixture: InstallerFixture,
+): Record<string, string> => ({
+  HOME: fixture.home,
+  TMPDIR: fixture.temporary,
+  PATH: `${fixture.bin}:/usr/bin:/bin`,
+  FAKE_NPM_LOG: fixture.npmLog,
+  FAKE_REA_LOG: fixture.reaLog,
+  FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
+  FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+});
+
 const runInstaller = async (
   fixture: InstallerFixture,
   args: readonly string[] = [],
@@ -590,13 +597,7 @@ const runInstaller = async (
   execFileAsync("/bin/bash", [script, ...args], {
     env: {
       ...process.env,
-      HOME: fixture.home,
-      TMPDIR: fixture.temporary,
-      PATH: `${fixture.bin}:/usr/bin:/bin`,
-      FAKE_NPM_LOG: fixture.npmLog,
-      FAKE_REA_LOG: fixture.reaLog,
-      FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-      FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+      ...installerEnvironment(fixture),
       ...overrides,
     },
   });
@@ -618,13 +619,7 @@ const runPipedInstaller = async (
   new Promise((resolve, reject) => {
     const child = spawn("/bin/bash", ["-s", "--", ...args], {
       env: {
-        HOME: fixture.home,
-        TMPDIR: fixture.temporary,
-        PATH: `${fixture.bin}:/usr/bin:/bin`,
-        FAKE_NPM_LOG: fixture.npmLog,
-        FAKE_REA_LOG: fixture.reaLog,
-        FAKE_REA_SOURCE: join(fixture.bin, "rea-source"),
-        FAKE_NPM_PREFIX: join(fixture.home, ".npm-global"),
+        ...installerEnvironment(fixture),
         ...overrides,
       },
       stdio: ["pipe", "pipe", "pipe"],

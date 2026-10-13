@@ -31,6 +31,29 @@ it("labels an envelope containing debugger-derived maps as derived", async () =>
 });
 
 it.each([
+  ["x86_64-little-endian", "x86_64"],
+  ["aarch64-little-endian", "arm64"],
+] as const)(
+  "names the CPU family carried by a %s core on created Evidence",
+  async (architecture, expected) => {
+    const fixture = recordedCrashFixture("/selected.core", architecture);
+    const service = new RecordedCrashService({
+      inspectAndClose(input, options) {
+        return this.inspect(input, options);
+      },
+      identity: RECORDED_CRASH_TEST_PROVIDER,
+      inspect: () => Promise.resolve(ok(fixture)),
+    });
+    const result = await service.inspect({
+      path: fixture.artifact.path,
+      include_debugger_context: false,
+    });
+    if (!result.ok) throw result.error;
+    expect(parseEvidence(result.value).subject?.architecture).toBe(expected);
+  },
+);
+
+it.each([
   { path: "relative.elf" },
   { path: "/selected.core", approval: true },
   { path: 123 },

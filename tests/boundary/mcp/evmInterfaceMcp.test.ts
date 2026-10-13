@@ -1,3 +1,7 @@
+import {
+  advertisedMcpToolSchemas,
+  assertRecordedMcpEvidence,
+} from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -66,16 +70,11 @@ it("advertises exact valid schemas and records inline EVM interface evidence wit
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const advertised = (await client.listTools()).tools.find(
-    (tool) => tool.name === "inspect_evm_interface",
+  const schemas = await advertisedMcpToolSchemas(
+    client,
+    "inspect_evm_interface",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("EVM interface inspection must publish both schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(ajv.validateSchema(inputSchema)).toBe(true);
-  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const { ajv, inputSchema } = schemas;
   expect(
     ajv.validate(inputSchema, { path: value.artifact.path, encoding: "hex" }),
   ).toBe(true);
@@ -99,19 +98,14 @@ it("advertises exact valid schemas and records inline EVM interface evidence wit
     name: "inspect_evm_interface",
     arguments: { path: value.artifact.path, encoding: "hex" },
   });
-  expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
-  const parsed = toolContract("inspect_evm_interface").outputSchema.parse(
-    response.structuredContent,
+  assertRecordedMcpEvidence(
+    response,
+    "inspect_evm_interface",
+    schemas,
+    session,
+    value,
+    "inferred",
   );
-  const evidence = parseEvidence(parsed);
-  expect(evidence.confidence).toBe("inferred");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
-  expect(parsed.normalized_result).toEqual(value);
-  expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   expect(
     (
       await client.callTool({

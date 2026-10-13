@@ -74,7 +74,7 @@ describe("doctor", () => {
       ),
     ).toEqual({
       node: `Install ${SUPPORTED_NODE_VERSION_PROSE}.`,
-      host: "REA supports macOS 12+, Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, Omarchy, and the experimental Windows x64 Ghidra P0 boundary.",
+      host: "REA supports macOS 12+, Linux distributions with a recognized apt, dnf, or pacman package family, and the experimental Windows x64 Ghidra P0 boundary; automated Hopper setup additionally requires Ubuntu 24.04+, Fedora 41+, Nobara 44+, 64-bit Arch Linux, CachyOS, or Omarchy.",
       hopper: "Run rea setup to install Hopper, or set HOPPER_LAUNCHER_PATH.",
       target: "Supply a readable local app or program path.",
     });
@@ -418,10 +418,9 @@ describe("doctor scoped readiness", () => {
         platform: "linux",
         linuxDistribution: () =>
           Promise.resolve({
-            id: "debian",
-            versionId: "13",
-            packageFamily: "deb",
-            supported: false,
+            id: "nixos",
+            packageFamily: undefined,
+            hopperSetupSupported: false,
           }),
         clientRegistrations: () =>
           Promise.resolve([
@@ -448,6 +447,31 @@ describe("doctor scoped readiness", () => {
     ]);
     expect(result.informational_checks).toContainEqual(
       expect.objectContaining({ name: "host", ok: false }),
+    );
+  });
+
+  it("accepts a Debian-family host that has no tested Hopper package", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        platform: "linux",
+        macosVersion: () => Promise.resolve(undefined),
+        linuxDistribution: () =>
+          Promise.resolve({
+            id: "kali",
+            versionId: "2026.3",
+            packageFamily: "deb",
+            hopperSetupSupported: false,
+          }),
+      }),
+    );
+
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "host",
+        ok: true,
+        detail: "kali 2026.3",
+      }),
     );
   });
 
@@ -502,7 +526,7 @@ describe("doctor Linux and Hopper discovery", () => {
             id: "ubuntu",
             versionId: "24.04",
             packageFamily: "deb",
-            supported: true,
+            hopperSetupSupported: true,
           }),
         configuredHopperPath: path,
         executable: (candidate) => Promise.resolve(candidate === path),
@@ -522,7 +546,7 @@ describe("doctor Linux and Hopper discovery", () => {
             id: "ubuntu",
             versionId: "24.04",
             packageFamily: "deb",
-            supported: true,
+            hopperSetupSupported: true,
           }),
         linuxDemoRuntimeCheck: () =>
           Promise.resolve({
@@ -554,7 +578,7 @@ describe("doctor Linux and Hopper discovery", () => {
             id: "ubuntu",
             versionId: "24.04",
             packageFamily: "deb",
-            supported: true,
+            hopperSetupSupported: true,
           }),
         executable: (candidate) => Promise.resolve(candidate === path),
         supportedLinuxHopper: () => Promise.resolve(false),

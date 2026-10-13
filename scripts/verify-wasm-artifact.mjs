@@ -310,7 +310,23 @@ try {
         }),
       );
       assert.equal(error.category, "invalid_input");
-      const failed = parseEvidence(error.details.partial_observation);
+      const partial = error.details.partial_observation;
+      assert.equal(partial.kind, "retained-evidence");
+      const failedBundleReply = await client.callTool({
+        name: "get_evidence_bundle",
+        arguments: {},
+      });
+      assert.notEqual(
+        failedBundleReply.isError,
+        true,
+        mcpTextValue(failedBundleReply),
+      );
+      const failedBundle = JSON.parse(mcpTextValue(failedBundleReply)).result;
+      const failed = parseEvidence(
+        failedBundle.records.find(
+          ({ evidence_id }) => evidence_id === partial.evidence_id,
+        ),
+      );
       assert.equal(failed.subject.digest.sha256, sha256(invalidBytes));
       assert.equal(
         failed.normalized_result.validation,

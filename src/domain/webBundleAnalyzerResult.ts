@@ -25,7 +25,8 @@ export const buildWebBundleAnalysis = (
   const sourceMapIncomplete =
     sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
   const partial =
-    accumulator.parseFailures > 0 ||
+    accumulator.failedScripts.length > 0 ||
+    accumulator.recoveredScripts.length > 0 ||
     unavailable.length > 0 ||
     sourceMapIncomplete ||
     omittedScripts !== undefined ||
@@ -44,9 +45,9 @@ export const buildWebBundleAnalysis = (
     },
     inferences: accumulator.inferences,
     unknowns: buildUnknowns({
-      sourceScripts,
       unavailable,
-      parseFailures: accumulator.parseFailures,
+      failedScripts: accumulator.failedScripts,
+      recoveredScripts: accumulator.recoveredScripts,
       sourceMaps,
       omittedScripts,
       omittedSourceMaps,
@@ -54,7 +55,7 @@ export const buildWebBundleAnalysis = (
     completeness: buildCompleteness({
       partial,
       parsedScripts: accumulator.parsedScripts,
-      parseFailures: accumulator.parseFailures,
+      parseFailures: accumulator.failedScripts.length,
       visitedNodes: accumulator.visitedNodes,
     }),
     limitations: bundleLimitations(),
@@ -88,9 +89,9 @@ const chunkNode = (script: IncludedScript) => {
 };
 
 interface UnknownsInput {
-  readonly sourceScripts: IncludedScript[];
   readonly unavailable: string[];
-  readonly parseFailures: number;
+  readonly failedScripts: readonly string[];
+  readonly recoveredScripts: readonly string[];
   readonly sourceMaps: WebBundleAnalysis["observations"]["source_maps"];
   readonly omittedScripts: number | null | undefined;
   readonly omittedSourceMaps: number | null | undefined;
@@ -115,15 +116,23 @@ const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
           affected_script_keys: input.unavailable,
         },
       ]),
-  ...(input.parseFailures === 0
+  ...(input.failedScripts.length === 0
     ? []
     : [
         {
           dimension: "javascript_ast" as const,
           reason: "One or more source artifacts could not be parsed",
-          affected_script_keys: input.sourceScripts.map(
-            ({ script_key }) => script_key,
-          ),
+          affected_script_keys: [...input.failedScripts],
+        },
+      ]),
+  ...(input.recoveredScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "javascript_ast" as const,
+          reason:
+            "The parser recovered from errors in one or more source artifacts; findings may be incomplete",
+          affected_script_keys: [...input.recoveredScripts],
         },
       ]),
   ...(input.omittedSourceMaps === undefined

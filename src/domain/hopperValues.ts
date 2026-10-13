@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { addressCoordinate } from "./native/addressCoordinate.js";
 
 import type { JsonValue } from "./jsonValue.js";
 
@@ -36,16 +37,6 @@ export const addressDistance = (start: string, end: string): number => {
       ? BigInt(Number.MAX_SAFE_INTEGER)
       : distance,
   );
-};
-
-const addressCoordinate = (
-  value: string,
-): { readonly space: string; readonly offset: bigint } | null => {
-  const separator = value.lastIndexOf(":0x");
-  const space = separator < 0 ? "default" : value.slice(0, separator);
-  const offset = separator < 0 ? value : value.slice(separator + 1);
-  if (!/^0x[0-9a-f]+$/u.test(offset)) return null;
-  return { space, offset: BigInt(offset) };
 };
 
 const procedureMapSchema = z.record(z.string(), z.string());
@@ -128,9 +119,9 @@ export const functionBodySchema = z.discriminatedUnion("available", [
     })
     .superRefine((body, context) => {
       let total = 0n;
-      const bounds = new Map<string, { start: bigint; end: bigint }>();
-      const closedSpaces = new Set<string>();
-      let previousSpace: string | null = null;
+      const bounds = new Map<string | null, { start: bigint; end: bigint }>();
+      const closedSpaces = new Set<string | null>();
+      let previousSpace: string | null | undefined;
       for (const range of body.ranges) {
         const start = addressCoordinate(range.start);
         const end = addressCoordinate(range.end);
@@ -146,7 +137,7 @@ export const functionBodySchema = z.discriminatedUnion("available", [
           });
           return;
         }
-        if (previousSpace !== null && previousSpace !== start.space)
+        if (previousSpace !== undefined && previousSpace !== start.space)
           closedSpaces.add(previousSpace);
         const previous = bounds.get(start.space);
         if (

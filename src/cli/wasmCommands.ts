@@ -1,3 +1,6 @@
+import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
+import { parseCliJsonInput } from "../cliJsonInput.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { z } from "incur";
 import { resolve } from "node:path";
 import { wasmArtifactModule } from "../composition/wasm.js";
@@ -13,6 +16,29 @@ export const registerWasmCommands = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
+  cli.command(CLI_COMMANDS.compareWasmInterfaces, {
+    description:
+      "Compare core WASM interfaces from two exact inspection Evidence records",
+    args: z.object({
+      input: z
+        .string()
+        .describe(
+          "Inline JSON or input file containing left/right complete Evidence and required scope",
+        ),
+    }),
+    run: ({ args }) =>
+      withCommandCancellation(async (signal) =>
+        logCliCommand(logger, CLI_COMMANDS.compareWasmInterfaces, async () => {
+          const input = await parseCliJsonInput(
+            args.input,
+            "compare_wasm_interfaces",
+          );
+          if (!input.ok) return input.error;
+          const result = await compareWasmInterfaces(input.value, { signal });
+          return result.ok ? result.value : projectAnalysisError(result.error);
+        }),
+      ),
+  });
   const service = wasmArtifactModule.create(environment);
   cli.command(wasmArtifactModule.cliCommand, {
     description: "Inspect an explicit local WASM artifact with WABT",

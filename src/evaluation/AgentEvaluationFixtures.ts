@@ -8,7 +8,19 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascript/javascriptApplicationAnalysis.js";
 import type { ApplicationNode } from "../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../domain/javascript/javascriptExportShapeComparisonSchemas.js";
-import type { FixtureClaimExpectation } from "./KnownAnswerEvaluation.js";
+import {
+  managedArtifactInspectionSchema,
+  managedMemberInspectionSchema,
+} from "../domain/managed/managedArtifact.js";
+import {
+  managedTokenScopesMatch,
+  parseManagedInspectionEvidence,
+} from "../domain/managed/managedInspectionEvidence.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import type {
+  FixtureClaimContext,
+  FixtureClaimExpectation,
+} from "./KnownAnswerEvaluation.js";
 
 /** Source-owned artifact paths used by the configured known-answer benchmarks. */
 export interface AgentEvaluationFixtureTargets {
@@ -16,6 +28,8 @@ export interface AgentEvaluationFixtureTargets {
   readonly javascriptSha256: string;
   readonly javascriptShapeLeft: string;
   readonly javascriptShapeRight: string;
+  readonly managed?: string;
+  readonly managedSha256?: string;
 }
 
 const desktopFixtureFiles = {
@@ -277,17 +291,122 @@ const parserClaims = (
   ];
 };
 
+const managedMembers = ({ evidence }: FixtureClaimContext) => {
+  const { result } = parseManagedInspectionEvidence(
+    evidence,
+    "inspect_managed_members",
+    managedMemberInspectionSchema,
+  );
+  if (
+    result.coverage.state !== "complete" ||
+    result.metadata.status !== "complete" ||
+    !managedTokenScopesMatch(
+      result.identity_scope.requires_mvid,
+      result.module?.mvid ?? null,
+    )
+  )
+    return undefined;
+  return result;
+};
+
+const managedClaims = (
+  targets: AgentEvaluationFixtureTargets,
+): readonly FixtureClaimExpectation[] => {
+  if (targets.managed === undefined || targets.managedSha256 === undefined)
+    throw new TypeError(
+      "Managed fixture grading requires the built DLL path and SHA-256",
+    );
+  const source = {
+    operation: "inspect_managed_members",
+    authority: "shipped-artifact",
+    confidence: "observed",
+    subject: { path: targets.managed, sha256: targets.managedSha256 },
+  } satisfies Omit<FixtureClaimExpectation["source"], "select">;
+  return [
+    {
+      id: "public_types",
+      expectedValue: ["AgentEval.Profile", "AgentEval.Program"],
+      source: {
+        ...source,
+        select: (_value, context) => {
+          const members = managedMembers(context);
+          if (
+            members === undefined ||
+            members.selection !== null ||
+            Object.hasOwn(context.evidence.parameters, "type_names")
+          )
+            return undefined;
+          return members.types
+            .filter((type) => (type.flags & 7) === 1)
+            .map((type) => type.full_name)
+            .sort(compareUnicodeCodePoints);
+        },
+      },
+    },
+    {
+      id: "entry_point",
+      expectedValue: { declaring_type: "AgentEval.Program", name: "Main" },
+      source: {
+        ...source,
+        select: (_value, context) => {
+          const members = managedMembers(context);
+          if (members === undefined) return undefined;
+          const artifacts = context.deliveredEvidence.filter(
+            (evidence) =>
+              evidence.operation === "inspect_managed_artifact" &&
+              evidence.authority === source.authority &&
+              evidence.confidence === source.confidence &&
+              evidence.subject?.local_path === source.subject.path &&
+              evidence.subject.digest.sha256 === source.subject.sha256,
+          );
+          if (artifacts.length !== 1) return undefined;
+          const { result: artifact } = parseManagedInspectionEvidence(
+            artifacts[0],
+            "inspect_managed_artifact",
+            managedArtifactInspectionSchema,
+          );
+          if (
+            artifact.coverage.state !== "complete" ||
+            artifact.metadata.status !== "complete" ||
+            !managedTokenScopesMatch(
+              artifact.module?.mvid ?? null,
+              members.module?.mvid ?? null,
+            ) ||
+            artifact.pe.cli?.entry_point.kind !== "metadata-token"
+          )
+            return undefined;
+          const methods = members.methods.filter(
+            (method) => method.token === artifact.pe.cli?.entry_point.value,
+          );
+          const method = methods.length === 1 ? methods[0] : undefined;
+          return method === undefined
+            ? undefined
+            : {
+                declaring_type: method.declaring_type,
+                name: method.name,
+              };
+        },
+      },
+    },
+  ];
+};
+
 /** Return the closed known-answer rubric, or undefined for routing-only scenarios. */
 export const agentFixtureClaims = (
   scenarioId: string,
   targets: AgentEvaluationFixtureTargets,
 ): readonly FixtureClaimExpectation[] | undefined => {
   if (scenarioId === "asar") return asarClaims(targets);
+  if (scenarioId === "managed") return managedClaims(targets);
   if (scenarioId === "javascript-export-shape") return parserClaims(targets);
   return undefined;
 };
 
 const answerValueDescriptions: Readonly<Record<string, readonly string[]>> = {
+  managed: [
+    "public_types: string[], listing the exact public top-level type full names in Unicode code-point order from unfiltered member Evidence (omit type_names).",
+    'entry_point: {"declaring_type": string, "name": string}, resolving the CLI metadata entry-point token against the member inventory from the same artifact SHA-256 and module MVID. Cite member Evidence; both artifact and member Evidence must be delivered.',
+  ],
   asar: [
     'renderer_api: {"key": string, "members": string[], "world": string, "source": string}, describing the exposed bridge API, its members, world, and source file.',
     'renderer_ipc: {"channel": string, "operation": string, "source": string}, describing the renderer-side IPC operation and its source file.',

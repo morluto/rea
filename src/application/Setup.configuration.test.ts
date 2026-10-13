@@ -57,7 +57,7 @@ describe("setup workflow", () => {
       id: "ubuntu",
       versionId: "24.04",
       packageFamily: "deb",
-      supported: true,
+      hopperSetupSupported: true,
     };
     host.hopper = "/opt/hopper/bin/Hopper";
     host.linuxDemoRuntimeMissing = true;
@@ -79,7 +79,7 @@ describe("setup workflow", () => {
       id: "ubuntu",
       versionId: "24.04",
       packageFamily: "deb",
-      supported: true,
+      hopperSetupSupported: true,
     };
     host.hopper = "/custom/Hopper";
     host.unsupportedHopperVersion = true;

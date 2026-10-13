@@ -1,8 +1,12 @@
+import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpConnection } from "./CdpConnection.js";
 import {
   cdpTargetWebSocket,
+  discoverCdpBrowserSocket,
+  discoverCdpEndpoint,
+  withCdpDiscoveryDeadline,
   type CdpEndpointDiscovery,
   type CdpEndpointTarget,
 } from "./CdpEndpoint.js";
@@ -12,6 +16,59 @@ export interface CdpTargetSession {
   readonly connection: CdpConnection;
   readonly sessionId: string | undefined;
 }
+
+/** Discovery for one caller-selected endpoint and the browser socket that read it. */
+export interface CdpOpenedEndpoint {
+  readonly discovery: CdpEndpointDiscovery;
+  /**
+   * Browser socket kept for the target session, because a browser may ask
+   * the user to approve each socket. HTTP discovery opens no socket.
+   */
+  readonly connection: CdpConnection | undefined;
+}
+
+/**
+ * Discover one passive browser endpoint through its selected transport. A
+ * browser socket's handshake and discovery share one discovery deadline.
+ */
+export const openCdpEndpoint = async (
+  endpoint: BrowserObservationEndpoint,
+  operation: BrowserObservationOperation,
+  signal?: AbortSignal,
+  timeoutMs?: number,
+): Promise<CdpOpenedEndpoint> => {
+  if (endpoint.transport === "http_discovery")
+    return {
+      discovery: await discoverCdpEndpoint(endpoint.url, operation, signal),
+      connection: undefined,
+    };
+  return await withCdpDiscoveryDeadline(
+    operation,
+    signal,
+    async (deadlineSignal) => {
+      const connection = await CdpConnection.connect(
+        endpoint.url,
+        operation,
+        deadlineSignal,
+      );
+      try {
+        return {
+          discovery: await discoverCdpBrowserSocket(
+            connection,
+            endpoint.url,
+            operation,
+            deadlineSignal,
+          ),
+          connection,
+        };
+      } catch (cause: unknown) {
+        await connection.close();
+        throw cause;
+      }
+    },
+    timeoutMs,
+  );
+};
 
 /** Open one authorized target through its supported browser or page transport. */
 export const openCdpTargetSession = async (
@@ -29,6 +86,16 @@ export const openCdpTargetSession = async (
     limits,
   );
   if (webSocket.scope === "page") return { connection, sessionId: undefined };
+  return await attachCdpTargetSession(connection, target, operation, signal);
+};
+
+/** Attach one target through an open browser socket, which the session then owns. */
+export const attachCdpTargetSession = async (
+  connection: CdpConnection,
+  target: CdpEndpointTarget,
+  operation: BrowserObservationOperation,
+  signal?: AbortSignal,
+): Promise<CdpTargetSession> => {
   try {
     const attached = await connection.send(
       "Target.attachToTarget",

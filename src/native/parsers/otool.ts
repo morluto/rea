@@ -64,6 +64,56 @@ const DYLIB_ENCODING_FIELDS = ["time stamp", "options"];
 const EMPTY_VALUE_FIELDS = new Set(["options", "segname", "sectname"]);
 
 /**
+ * Non-verbose otool prints LC_BUILD_VERSION platform and tool codes as
+ * numbers. Name the codes declared in the SDK's <mach-o/loader.h>, without
+ * the PLATFORM_/TOOL_ prefix, so build metadata uses the same symbolic style
+ * as LC_VERSION_MIN_* platforms. Unknown codes keep their printed value.
+ */
+const BUILD_PLATFORM_NAMES: ReadonlyMap<string, string> = new Map([
+  ["1", "MACOS"],
+  ["2", "IOS"],
+  ["3", "TVOS"],
+  ["4", "WATCHOS"],
+  ["5", "BRIDGEOS"],
+  ["6", "MACCATALYST"],
+  ["7", "IOSSIMULATOR"],
+  ["8", "TVOSSIMULATOR"],
+  ["9", "WATCHOSSIMULATOR"],
+  ["10", "DRIVERKIT"],
+  ["11", "VISIONOS"],
+  ["12", "VISIONOSSIMULATOR"],
+  ["13", "FIRMWARE"],
+  ["14", "SEPOS"],
+  ["15", "MACOS_EXCLAVECORE"],
+  ["16", "MACOS_EXCLAVEKIT"],
+  ["17", "IOS_EXCLAVECORE"],
+  ["18", "IOS_EXCLAVEKIT"],
+  ["19", "TVOS_EXCLAVECORE"],
+  ["20", "TVOS_EXCLAVEKIT"],
+  ["21", "WATCHOS_EXCLAVECORE"],
+  ["22", "WATCHOS_EXCLAVEKIT"],
+  ["23", "VISIONOS_EXCLAVECORE"],
+  ["24", "VISIONOS_EXCLAVEKIT"],
+]);
+const BUILD_TOOL_NAMES: ReadonlyMap<string, string> = new Map([
+  ["1", "CLANG"],
+  ["2", "SWIFT"],
+  ["3", "LD"],
+  ["4", "LLD"],
+  ["1024", "METAL"],
+  ["1025", "AIRLLD"],
+  ["1026", "AIRNT"],
+  ["1027", "AIRNT_PLUGIN"],
+  ["1028", "AIRPACK"],
+  ["1031", "GPUARCHIVER"],
+  ["1032", "METAL_FRAMEWORK"],
+]);
+const buildCodeName = (
+  names: ReadonlyMap<string, string>,
+  value: string | null,
+): string | null => (value === null ? null : (names.get(value) ?? value));
+
+/**
  * otool emits LF, but a capture replayed from another host or toolchain can
  * carry CRLF. The section/command boundaries below match a bare `\n`, so a
  * stray `\r` would swallow the terminator and silently empty `sections` while
@@ -295,7 +345,10 @@ const collectBuild = (
     if (numberField(fields, "ntools") !== tools.length)
       throw new TypeError("otool build-tool count does not match ntools");
     state.builds.push({
-      platform: stringField(fields, "platform"),
+      platform: buildCodeName(
+        BUILD_PLATFORM_NAMES,
+        stringField(fields, "platform"),
+      ),
       minimum_os: stringField(fields, "minos"),
       sdk: stringField(fields, "sdk"),
       tools,
@@ -434,7 +487,7 @@ const parseBuildTools = (
     const tool = /^tool\s+(.+)$/u.exec(lines[index] ?? "")?.[1];
     const version = /^version\s+(.+)$/u.exec(lines[index + 1] ?? "")?.[1];
     if (tool !== undefined && version !== undefined)
-      tools.push({ name: tool, version });
+      tools.push({ name: BUILD_TOOL_NAMES.get(tool) ?? tool, version });
   }
   return tools;
 };

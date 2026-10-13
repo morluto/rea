@@ -45,23 +45,34 @@ const workflow = async () =>
       ),
     ).jobs;
 
-it("collects failed-shard diagnostics before enforcing the shard result", async () => {
+it("merges available failed-shard diagnostics and skips unavailable shard reports", async () => {
   const steps = (await workflow()).test!.steps;
+  const download = steps.find(
+    (step) =>
+      step.uses?.includes("actions/download-artifact") &&
+      step.with?.pattern === "vitest-report-*",
+  );
   const merge = steps.findIndex((step) => step.run?.includes("test:ci:merge"));
   const upload = steps.findIndex((step) => step.with?.name === "test-results");
   const gate = steps.findIndex(
     (step) => step.env?.SHARD_RESULT && step.run?.includes("test "),
   );
   expect(merge).toBeGreaterThan(0);
+  expect(download?.if).toContain("!cancelled()");
+  expect(download?.if).toContain("needs.test-shard.result == 'success'");
+  expect(download?.if).toContain("needs.test-shard.result == 'failure'");
   expect(upload).toBeGreaterThan(merge);
   expect(gate).toBeGreaterThan(upload);
-  expect(steps[merge]?.if).not.toContain("needs.test-shard.result");
   const merges = steps.filter((step) => step.run?.includes("--reporter=json"));
   expect(merges).toHaveLength(2);
-  for (const step of merges)
+  for (const step of merges) {
     expect(step.run).toContain(
       "--reporter=./scripts/ci/test-timing-reporter.mjs",
     );
+    expect(step.if).toContain("!cancelled()");
+    expect(step.if).toContain("needs.test-shard.result == 'success'");
+    expect(step.if).toContain("needs.test-shard.result == 'failure'");
+  }
   expect(steps[upload]?.with?.path).toContain("test-timings.json");
   expect(steps[upload]?.with).toMatchObject({ "include-hidden-files": true });
   expect(steps[upload]?.with?.path).toContain(

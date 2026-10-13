@@ -339,7 +339,10 @@ const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
 const spawnArgvCount = (candidate: SpawnCandidate): number | null => {
   if (candidate.method === "exec") return null;
   const args = candidate.node.arguments[1];
-  return t.isArrayExpression(args) ? args.elements.length : null;
+  return t.isArrayExpression(args) &&
+    !args.elements.some((element) => t.isSpreadElement(element))
+    ? args.elements.length
+    : null;
 };
 
 const objectHasProperty = (

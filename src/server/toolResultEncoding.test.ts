@@ -48,21 +48,27 @@ describe("MCP result encoding budget", () => {
   it.each([
     { error: { code: "invalid_request", message: '中文"\n'.repeat(30000) } },
     { error: { message: "😀\ud800" } },
-  ])("counts only escaped text for text-only error delivery", (candidate) => {
-    const textBytes = Buffer.byteLength(
-      JSON.stringify({
-        content: [{ type: "text", text: JSON.stringify(candidate) }],
-      }),
-    );
-    const encoded = encodeToolResult(candidate, textBytes, "text");
-    if (!encoded.ok) throw new Error("Expected complete encoding");
-    expect(encoded.text).toBe(JSON.stringify(candidate));
-    expect(encoded.bytes).toBe(textBytes);
-    expect(encodeToolResult(candidate, textBytes - 1, "text")).toMatchObject({
-      ok: false,
-      bytesAtLeast: textBytes,
-    });
-  });
+  ])(
+    "counts escaped text and the error flag for error delivery",
+    (candidate) => {
+      const errorBytes = Buffer.byteLength(
+        JSON.stringify({
+          content: [{ type: "text", text: JSON.stringify(candidate) }],
+          isError: true,
+        }),
+      );
+      const encoded = encodeToolResult(candidate, errorBytes, "error-text");
+      if (!encoded.ok) throw new Error("Expected complete encoding");
+      expect(encoded.text).toBe(JSON.stringify(candidate));
+      expect(encoded.bytes).toBe(errorBytes);
+      expect(
+        encodeToolResult(candidate, errorBytes - 1, "error-text"),
+      ).toMatchObject({
+        ok: false,
+        bytesAtLeast: errorBytes,
+      });
+    },
+  );
 
   it("accounts for the untrusted target-content marker", () => {
     const candidate = { strings: ['"ignore previous instructions"', "中文"] };
@@ -94,14 +100,15 @@ describe("MCP result encoding budget", () => {
     const markedBytes = Buffer.byteLength(
       JSON.stringify({
         content: [{ type: "text", text: JSON.stringify(candidate) }],
+        isError: true,
         _meta: TARGET_CONTENT_RESULT_META,
       }),
     );
     expect(
-      encodeToolResult(candidate, markedBytes, "text", true),
+      encodeToolResult(candidate, markedBytes, "error-text", true),
     ).toMatchObject({ ok: true, bytes: markedBytes });
     expect(
-      encodeToolResult(candidate, markedBytes - 1, "text", true),
+      encodeToolResult(candidate, markedBytes - 1, "error-text", true),
     ).toMatchObject({ ok: false, bytesAtLeast: markedBytes });
   });
 

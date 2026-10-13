@@ -42,7 +42,9 @@ const registerTargetList = (
     description:
       "List page targets from a selected loopback CDP browser, optionally filtered by origin",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
     }),
     options: z.object({ ...browserScopeOptions }),
     run: ({ args, options }) =>
@@ -75,7 +77,9 @@ const registerPageInspection = (
     description:
       "Passively inspect one page through CDP, defaulting to its current origin",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: browserPageInspectionOptions,
@@ -118,7 +122,9 @@ const registerBundleAnalysis = (
     description:
       "Capture and statically analyze a page bundle, defaulting to the selected target origin",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
@@ -162,7 +168,9 @@ const registerObservationSession = (
   cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a chosen window",
     args: z.object({
-      endpoint: z.string().describe("Configured loopback CDP HTTP endpoint"),
+      endpoint: z
+        .string()
+        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({

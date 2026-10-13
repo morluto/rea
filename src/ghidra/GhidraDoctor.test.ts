@@ -61,7 +61,7 @@ const doctorHost = (
         id: "ubuntu",
         versionId: "24.04",
         packageFamily: "deb",
-        supported: true,
+        hopperSetupSupported: true,
       }),
     validTarget: () => Promise.resolve(true),
     executable: (path) =>

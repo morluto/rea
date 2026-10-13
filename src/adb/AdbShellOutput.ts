@@ -293,6 +293,10 @@ export const parseBugreportCopiedPath = (stdout: string): string | null => {
   return match === null ? null : match[1]!;
 };
 
+/** Read the device's `Failure [REASON]` verdict from package-change output. */
+export const packageChangeFailureReason = (output: string): string | null =>
+  /Failure \[([^\]]+)\]/u.exec(output)?.[1] ?? null;
+
 /**
  * Parse `adb install`/`adb uninstall` output. adb can print `Failure [...]`
  * with a zero exit code, so the text decides, not the exit status.
@@ -305,10 +309,11 @@ export const parsePackageChangeOutput = (
 } => {
   const text = stdout.trim();
   if (/^Success$/mu.test(text)) return { status: "success", reason: null };
-  const failure = /Failure \[([^\]]+)\]/u.exec(text);
   return {
     status: "failure",
-    reason: failure?.[1] ?? (text === "" ? null : text.slice(0, 512)),
+    reason:
+      packageChangeFailureReason(text) ??
+      (text === "" ? null : text.slice(0, 512)),
   };
 };
 

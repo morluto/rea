@@ -67,3 +67,40 @@ cliTest(
     expect(session.isError, JSON.stringify(session)).not.toBe(true);
   },
 );
+
+cliTest(
+  "rejects a file URL path field without resolving an invented local path",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-electron-file-url-");
+    const application = join(root, "main.js");
+    await writeFile(application, "module.exports = {};\n");
+    const response = await cli.run({
+      arguments: [
+        "capture-electron-scenario",
+        JSON.stringify({
+          executable_path: "file:///opt/electron",
+          application_path: application,
+        }),
+        "--format",
+        "json",
+      ],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["executable_path"],
+            message: expect.stringContaining(
+              "must be absolute local filesystem paths",
+            ),
+          },
+        ],
+      },
+    });
+    expect(response.stdout).not.toContain("ENOENT");
+    expect(response.stdout).not.toContain("file:/opt/electron");
+  },
+);

@@ -217,6 +217,46 @@ function resolveReference(schema: unknown, reference: string): unknown {
   return value;
 }
 
+function localReferenceExpansions(schema: Record<string, unknown>): number {
+  // Clients that render SDK declarations from the advertised input expand
+  // schema-local references against a shared per-input budget; Pi 1.1.0
+  // code-mode allows 32 and renders every later reference as `unknown`.
+  // Count conservatively: every resolvable, non-cyclic reference occurrence
+  // reached while walking the input, never the definitions themselves.
+  let count = 0;
+  const visit = (node: unknown, active: ReadonlySet<string>): void => {
+    if (Array.isArray(node)) {
+      node.forEach((child) => visit(child, active));
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (typeof node.$ref === "string" && !active.has(node.$ref)) {
+      const target = resolveReference(schema, node.$ref);
+      if (target !== undefined) {
+        count += 1;
+        visit(target, new Set([...active, node.$ref]));
+        return;
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (
+        [
+          "$defs",
+          "definitions",
+          "examples",
+          "default",
+          "const",
+          "enum",
+        ].includes(key)
+      )
+        continue;
+      visit(value, active);
+    }
+  };
+  visit(schema, new Set());
+  return count;
+}
+
 function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
   return tools.flatMap((tool) =>
     (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
@@ -672,6 +712,14 @@ describe("MCP process input JSON Schema", () => {
 it("ships nonrecursive input and output schemas in the generated catalog", () => {
   expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
   expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+});
+
+it("keeps advertised input references within the client expansion budget", () => {
+  for (const tool of GENERATED_MCP_TOOL_CATALOG)
+    expect(
+      localReferenceExpansions(tool.inputSchema),
+      `${tool.name} exhausts the shared reference-expansion budget`,
+    ).toBeLessThanOrEqual(32);
 });
 
 it("rejects unresolved output-schema references even for uncalled tools", () => {

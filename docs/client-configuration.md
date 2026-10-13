@@ -129,6 +129,18 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
+## Kimi Code
+
+Setup registers `rea` in `~/.kimi-code/mcp.json`, or
+`$KIMI_CODE_HOME/mcp.json` when set, while preserving unrelated settings and
+creating a `.rea.backup` before updating an existing file. Kimi Code infers
+stdio from the `command` entry, so setup does not add a `type` field. The
+registration includes `startupTimeoutMs = 30000` and `toolTimeoutMs = 120000`.
+Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
+`.agents/skills`, so no separate skill root is required; setup still installs
+and verifies the matching skill files through the normal shared-skill flow.
+Start a new Kimi Code session to pick up MCP and skill changes.
+
 ## Pi
 
 For [Pi](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md),

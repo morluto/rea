@@ -45,6 +45,7 @@ export interface SetupClient {
     | "grok"
     | "omp"
     | "pi"
+    | "kimi"
     | "hermes"
     | "zcode"
     | "dsh"
@@ -164,6 +165,10 @@ const claudeCodeMarkerDirectory = ({ home, env }: ClientPathContext): string =>
 
 const codexDirectory = ({ home, env }: ClientPathContext): string =>
   env.CODEX_HOME || join(home, ".codex");
+
+/** Kimi Code stores MCP declarations beside the rest of its home data. */
+const kimiDirectory = ({ home, env }: ClientPathContext): string =>
+  env.KIMI_CODE_HOME || join(home, ".kimi-code");
 
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
@@ -575,6 +580,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
       join(qwenCodeDirectory(context), "settings.json"),
     markerPath: qwenCodeDirectory,
     format: "json",
+  },
+  {
+    name: "kimi",
+    displayName: "Kimi Code",
+    configPath: (context: ClientPathContext) =>
+      join(kimiDirectory(context), "mcp.json"),
+    markerPath: kimiDirectory,
+    format: "kimi",
   },
   {
     name: "vscode",

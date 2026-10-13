@@ -405,12 +405,16 @@ describe("keyed archive hierarchy coverage", () => {
       const resources = join(bundle, "Contents", "Resources");
       await mkdir(resources, { recursive: true });
       const archive = join(resources, "Foundation.nib");
-      await compile("/usr/bin/xcrun", [
-        "swift",
-        "tests/conformance/native/keyed-archive-hierarchy.swift",
-        archive,
-        "40",
-      ]);
+      await compile(
+        "/usr/bin/xcrun",
+        [
+          "swift",
+          "tests/conformance/native/keyed-archive-hierarchy.swift",
+          archive,
+          "40",
+        ],
+        { timeout: 90_000 },
+      );
 
       const analysis = await analyzeInterfaceBuilderBundle({
         bundlePath: bundle,
@@ -431,6 +435,7 @@ describe("keyed archive hierarchy coverage", () => {
         ),
       ).toHaveLength(41);
     },
+    120_000,
   );
 });
 

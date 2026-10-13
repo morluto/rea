@@ -1,5 +1,8 @@
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import type { RecordedCrash } from "../../domain/native/recordedCrash.js";
+import {
+  RECORDED_LINUX_CORE_PROFILES,
+  type RecordedCrash,
+} from "../../domain/native/recordedCrash.js";
 
 // Exact amd64/core enum projections in the pinned pyelftools 0.33 profile.
 const segmentKinds = new Map([
@@ -81,6 +84,8 @@ export function validateRecordedCrashStructure(
     return snapshot.subarray(Number(offset), Number(offset) + bytes);
   };
   const header = bytesAt(0n, 64);
+  const expectedMachine =
+    RECORDED_LINUX_CORE_PROFILES[report.architecture].machine;
   if (
     !header
       .subarray(0, 6)
@@ -90,7 +95,7 @@ export function validateRecordedCrashStructure(
     ![0, 3].includes(header[7] ?? -1) ||
     header[8] !== 0 ||
     header.readUInt16LE(16) !== 4 ||
-    header.readUInt16LE(18) !== 62
+    header.readUInt16LE(18) !== expectedMachine
   )
     fail();
   const table = header.readBigUInt64LE(32);

@@ -37,6 +37,19 @@ import rows from `xcrun dyld_info -imports /usr/lib/libobjc.A.dylib`.
 `xcrun dyld_info -exports /usr/lib/libc++.1.dylib`. These are separate library
 captures used to check their respective row formats.
 
+`renamed-reexports.txt` is `xcrun dyld_info -exports` for a dylib that
+re-exports `_foo` from `libfoo` under the name `_foo_renamed`:
+
+```sh
+printf 'int foo(void){return 1;}\n' > /tmp/foo.c
+printf 'int own(void){return 2;}\n' > /tmp/re.c
+xcrun clang -dynamiclib /tmp/foo.c -o /tmp/libfoo.dylib -install_name @rpath/libfoo.dylib
+xcrun clang -dynamiclib /tmp/re.c -o /tmp/libre.dylib -install_name @rpath/libre.dylib \
+  /tmp/libfoo.dylib -Wl,-alias,_foo,_foo_renamed
+xcrun dyld_info -exports /tmp/libre.dylib
+xcrun nm -gjU /tmp/libre.dylib
+```
+
 `codesign-missing.txt` is stderr from `codesign -d --verbose=4` on a nonexistent
 path (exit 1). `codesign-unsigned.txt` is stderr from the same command on a copy
 of the fixture after `codesign --remove-signature` (exit 1). Only the latter is

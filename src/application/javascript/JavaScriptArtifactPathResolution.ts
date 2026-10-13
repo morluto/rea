@@ -457,9 +457,8 @@ const bareModuleCandidate = (
     dependencyDirectory = posix.dirname(confined);
   }
   const source = input.files.get(input.sourcePath);
-  let directory = posix.dirname(input.sourcePath);
   let nearestNotFound: CandidateResolution | null = null;
-  while (true) {
+  for (const directory of packageLookupDirectories(input)) {
     const candidate = posix.join(directory, dependencyDirectory);
     const metadata = readPackageMetadata(input, candidate);
     const continueCommonJsLookup =
@@ -487,14 +486,27 @@ const bareModuleCandidate = (
         nearestNotFound ??= packageResolution;
       } else return packageResolution;
     }
-    if (directory === "." || directory === "") break;
-    directory = posix.dirname(directory);
   }
   if (nearestNotFound !== null) return nearestNotFound;
   return unresolvedCandidate("external", [
     "No matching bare package was inventoried in an enclosing node_modules directory.",
   ]);
 };
+
+function* packageLookupDirectories(
+  input: ResolveArtifactPathInput,
+): Generator<string> {
+  let directory = posix.dirname(input.sourcePath);
+  while (true) {
+    if (
+      input.moduleKind !== "require" ||
+      posix.basename(directory) !== "node_modules"
+    )
+      yield directory;
+    if (directory === "." || directory === "") return;
+    directory = posix.dirname(directory);
+  }
+}
 
 /**
  * Nearest same-container package.json, stopping at a `node_modules` directory
@@ -960,15 +972,29 @@ const resolveCandidate = (
   candidate: string,
   packageChain: ReadonlySet<string>,
   emittedSourceCandidates: readonly TypeScriptEmittedSourceCandidate[] = [],
-): CandidateResolution =>
-  resolveFileCandidates(input, fileCandidates(candidate, input.moduleKind)) ??
-  resolveRuntimeSourceCandidates(input, candidate, emittedSourceCandidates) ??
-  resolveDirectory(
+): CandidateResolution => {
+  if (!commonJsDirectoryRequest(input)) {
+    const file =
+      resolveFileCandidates(
+        input,
+        fileCandidates(candidate, input.moduleKind),
+      ) ??
+      resolveRuntimeSourceCandidates(input, candidate, emittedSourceCandidates);
+    if (file !== null) return file;
+  }
+  return resolveDirectory(
     input,
     candidate,
     readPackageMetadata(input, candidate),
     packageChain,
   );
+};
+
+const commonJsDirectoryRequest = (input: ResolveArtifactPathInput): boolean =>
+  input.context === "module-specifier" &&
+  input.moduleKind === "require" &&
+  (input.declaredPath.endsWith("/") ||
+    /(?:^|\/)\.{1,2}$/u.test(input.declaredPath));
 
 const resolveDirectory = (
   input: ResolveArtifactPathInput,

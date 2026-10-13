@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
-import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
 import { sourceMapJsonText } from "../../domain/sourceMapEnvelope.js";
 import type { EncodedSourceMapXInput } from "@jridgewell/trace-mapping";
 
@@ -266,18 +265,6 @@ const inspectLeaf = (
   consumeRecords(budget, Array.isArray(rawSources) ? rawSources.length : 0);
   consumeRecords(budget, Array.isArray(rawNames) ? rawNames.length : 0);
   consumeRecords(budget, Array.isArray(rawContents) ? rawContents.length : 0);
-  options.check?.();
-  if (
-    options.profile === "browser-collection" &&
-    !hasValidSourceMapContents(
-      Array.isArray(rawSources) ? rawSources.length : 0,
-      rawContents,
-    )
-  )
-    throw new SourceMapFormatFailure(
-      "format",
-      "Source-map sourcesContent must align with its source declarations.",
-    );
   options.check?.();
   const leaf = leafSchema.parse(node.value);
   const layout = inspectMappingLayout(leaf.mappings, options.check);

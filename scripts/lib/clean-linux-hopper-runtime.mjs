@@ -16,6 +16,7 @@ export const assertCleanLinuxHopperRuntime = async (
       ? []
       : [process.env.HOPPER_LAUNCHER_PATH]),
   ],
+  procRoot = "/proc",
 ) => {
   const { stdout } = await execFileAsync("ps", ["-ax", "-o", "command="]);
   if (/\/opt\/hopper\/bin\/Hopper|\bXvfb\b|hopper-demo-x11\.py/u.test(stdout))
@@ -32,17 +33,19 @@ export const assertCleanLinuxHopperRuntime = async (
   // /proc exposes the executed file even when argv[0] names a removed symlink.
   // Compare file identity, not a display path or a process name.
   let inspectionError;
-  for (const entry of await readdir("/proc", { withFileTypes: true })) {
+  for (const entry of await readdir(procRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^\d+$/u.test(entry.name)) continue;
     let executable;
     try {
-      executable = await stat(`/proc/${entry.name}/exe`, { bigint: true });
+      executable = await stat(`${procRoot}/${entry.name}/exe`, {
+        bigint: true,
+      });
     } catch (error) {
       if (error?.code === "ENOENT" || error?.code === "ESRCH") continue;
       // Other users' executables may be unreadable. The setup lane launches
       // providers as the caller; unreadable caller-owned processes fail closed.
       if (error?.code === "EACCES") {
-        const owner = await stat(`/proc/${entry.name}`).catch((cause) => {
+        const owner = await stat(`${procRoot}/${entry.name}`).catch((cause) => {
           if (cause?.code === "ENOENT") return undefined;
           throw cause;
         });

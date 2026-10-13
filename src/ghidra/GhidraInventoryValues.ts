@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  bytePatternFields,
+  validateBytePattern,
+  byteSearchResultSchema,
+} from "../domain/native/bytePattern.js";
 import { nativeLoadImageObservationSchema } from "../domain/native/nativeLoadImage.js";
 
 import {
@@ -20,6 +25,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 export const GHIDRA_INVENTORY_OPERATIONS = [
   "inspect_native_load_image",
   "read_bytes",
+  "search_bytes",
   "address_to_file_offset",
   "address_name",
   "list_documents",
@@ -72,6 +78,16 @@ const searchInput = {
 };
 
 const inputSchemas = {
+  search_bytes: z
+    .strictObject({
+      ...bytePatternFields,
+      document,
+      start: explicitAddress.optional(),
+      end: explicitAddress.optional(),
+      limit: z.number().int().min(1).max(1000).default(100),
+      cursor: z.string().min(1).optional(),
+    })
+    .superRefine(validateBytePattern),
   inspect_native_load_image: z.strictObject({}),
   read_bytes: z.strictObject({
     document,
@@ -271,6 +287,24 @@ const containingProcedure = z.discriminatedUnion("found", [
 ]);
 
 const resultSchemas = {
+  search_bytes: byteSearchResultSchema.superRefine((value, context) => {
+    const addresses = [
+      ...value.matches.flatMap((match) => [
+        match.address,
+        ...(match.procedure === null ? [] : [match.procedure.address]),
+      ]),
+      ...[
+        ...value.searched.blocks,
+        ...value.searched.skipped_uninitialized,
+        ...value.searched.skipped_not_loaded,
+      ].flatMap((block) => [block.start, block.end]),
+    ];
+    if (addresses.some((value) => !canonicalAddress.safeParse(value).success))
+      context.addIssue({
+        code: "custom",
+        message: "Byte search addresses must be canonical",
+      });
+  }),
   inspect_native_load_image: nativeLoadImageObservationSchema,
   read_bytes: z
     .strictObject({

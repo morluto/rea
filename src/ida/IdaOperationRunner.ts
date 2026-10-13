@@ -503,7 +503,8 @@ export class IdaOperationRunner {
         items: [],
         availability: {
           available: false,
-          reason: "Upstream xrefs do not establish direct caller relationships.",
+          reason:
+            "Upstream xrefs do not establish direct caller relationships.",
         },
         coverage: {
           status: "unknown",

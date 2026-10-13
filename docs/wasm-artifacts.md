@@ -13,6 +13,11 @@ Check `binary_session` for configured capability availability. A recognized
 header is not validation of the complete module; missing WABT is reported
 separately as an unavailable capability, not as missing native engine support.
 
+The recognized WASM header is checked before automatic database routing from a
+.hop filename. Renaming a module to .hop therefore keeps the static-inspection
+diagnostic. An explicit database selection or raw/COM format selection retains
+the caller's requested interpretation; ordinary .hop database routing is unchanged.
+
 Set `REA_WABT_BIN_DIRECTORY` to an absolute directory containing executable
 `wasm-validate`, `wasm-objdump` and `wasm2wat` (with `.exe` on Windows). Missing
 executables, unsupported banners and inaccessible tools produce actionable
@@ -79,3 +84,46 @@ Both CLI and MCP use the same typed port and application service. MCP publishes
 SDK-compatible schemas and records Evidence for `get_evidence_bundle` readback.
 See [WABT provenance](https://github.com/morluto/rea/blob/main/third_party/wabt/README.md) and
 [testing](testing.md#offline-wasm-artifacts) for real-tool verification.
+
+## Compare core-module interfaces
+
+Inspection adds producer-owned typed `interface` facts while keeping exact WAT
+import/export forms. Function/tag signatures resolve type indices; table/memory
+limits, memory page size and global value type/mutability remain explicit.
+Unadmitted types (including GC reference signatures) retain null signatures and
+issues. Exact decoded names retain escapes, empty names, BOM and punctuation.
+This facet is absent in historical Evidence that did not examine typed interfaces.
+
+`compare_wasm_interfaces` accepts two complete `inspect_wasm_artifact` Evidence
+records, or exact retained references in the current MCP session, and required
+`scope: "imports" | "exports" | "both"`. It reads no files and needs no active
+WABT toolchain. CLI uses portable inline Evidence in one JSON document:
+
+```bash
+rea compare-wasm-interfaces comparison-input.json --json
+```
+
+```json
+{
+  "left": { "kind": "retained-evidence", "evidence_id": "ev_<left-digest>" },
+  "right": { "kind": "retained-evidence", "evidence_id": "ev_<right-digest>" },
+  "scope": "both"
+}
+```
+
+The references above are MCP-only; put complete Evidence objects in the CLI
+input. Resolve summary delivery to its retained complete parent before comparing.
+Results retain both input Evidence IDs, artifact paths/digests/lengths and every
+selected occurrence. Unique names are added, removed, changed or unchanged;
+duplicate names and unsupported signatures are unknown. Incomplete or historical
+inventories never establish absence. Imports group by module/name, exports by
+name, so a change of kind is visible. Output ordering is deterministic.
+
+Static type equality does not establish runtime compatibility, ABI compatibility
+or linking success. Comparison covers core modules; WebAssembly components and
+canonical ABI relationships belong to their separate inspection workflow.
+
+After building, run `REA_WABT_BIN_DIRECTORY=/absolute/wabt/bin node
+scripts/verify-wasm-interface-comparison.mjs` for original-module comparison
+through the compiled CLI and stdio MCP. It uses owned fixtures and WABT 1.0.42;
+no WASM module is instantiated or executed.

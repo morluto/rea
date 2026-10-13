@@ -60,6 +60,7 @@ type DirectAnalysisTool =
   | "annotate_native_function"
   | "inspect_native_load_image"
   | "read_bytes"
+  | "search_bytes"
   | "address_to_file_offset"
   | "binary_overview"
   | "procedure_pseudo_code"

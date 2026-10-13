@@ -83,3 +83,37 @@ it("preserves cancellation before execution", async () => {
   if (result.ok) return;
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
 });
+
+it("preserves a cancellation that races a completed observation", async () => {
+  const controller = new AbortController();
+  const racingPort: ApktoolResourceAnalysisPort = {
+    async inspectAvailability() {
+      return { status: "available", code: null, reason: null, diagnostics: {} };
+    },
+    async close() {},
+    async execute() {
+      // The provider may finish its work before the abort is delivered, so a
+      // successful result is not by itself proof the caller still wants it.
+      controller.abort();
+      return ok(execution);
+    },
+  };
+  const result = await new ApktoolResourceAnalysisService(racingPort).execute(
+    "decode_android_resources",
+    { path: "/targets/app.apk", include_strings: true },
+    { signal: controller.signal },
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  // The observation the provider completed is retained on the cancellation, so
+  // a session still records the Evidence instead of losing finished work.
+  const retained = parseEvidence(result.error.partialObservation);
+  expect(retained.operation).toBe("decode_android_resources");
+  expect(retained.provider).toEqual(identity);
+  expect(retained.parameters).toEqual({
+    path: "/targets/app.apk",
+    include_strings: true,
+  });
+  expect(retained.confidence).toBe("observed");
+});

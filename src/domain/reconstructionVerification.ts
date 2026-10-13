@@ -144,10 +144,15 @@ const evaluateClaim = (
     return source;
   });
   const functionSourceFacts = readValidatedSourceFacts(claim, sources);
-  const observed = observedStatus(claim, comparison);
+  const observation = comparisonObservation(claim, comparison);
+  const observed = observation.status;
   const limitations = [
     ...authorityLimitations(claim, sources, sides),
-    ...sourceCallCoverageLimitations(claim, functionSourceFacts, observed),
+    ...sourceCallCoverageLimitations(
+      claim,
+      functionSourceFacts,
+      observation.hasIndependentFunctionChange === true,
+    ),
   ];
   const relatedUnknowns = reconstructionClaimUnknowns(
     heads,
@@ -235,21 +240,40 @@ const validateComparisonIdentity = (claim: Claim, evidence: Evidence): void => {
     throw new TypeError("Comparison Evidence identity or authority disagrees");
 };
 
-const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
+const comparisonObservation = (
+  claim: Claim,
+  evidence: Evidence,
+): {
+  readonly status: ObservedStatus;
+  readonly hasIndependentFunctionChange?: boolean;
+} => {
   if (claim.kind === "behavioral") {
     const result = processCaptureComparisonSchema.parse(
       evidence.normalized_result,
     );
     validateProcessStatus(result);
-    return claim.dimension === "overall"
-      ? result.status
-      : result[claim.dimension];
+    return {
+      status:
+        claim.dimension === "overall" ? result.status : result[claim.dimension],
+    };
   }
   if (claim.kind === "structural-function") {
     const result = functionComparisonResultSchema.parse(
       evidence.normalized_result,
     );
-    if (claim.dimension === "overall") return result.status;
+    if (claim.dimension === "overall")
+      return {
+        status: result.status,
+        // Historical overall changes may come solely from incomplete call sets.
+        hasIndependentFunctionChange:
+          result.function_match.status === "mismatched" ||
+          (result.function_match.status === "matched" &&
+            result.dimensions.some(
+              (dimension) =>
+                dimension.dimension !== "calls" &&
+                dimension.status === "changed",
+            )),
+      };
     const dimension = result.dimensions.find(
       (item) => item.dimension === claim.dimension,
     );
@@ -263,7 +287,7 @@ const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
       throw new TypeError(
         "Function dimension cites Evidence outside comparison closure",
       );
-    return dimension.status;
+    return { status: dimension.status };
   }
   const result = artifactComparisonResultSchema.parse(
     evidence.normalized_result,
@@ -276,7 +300,7 @@ const observedStatus = (claim: Claim, evidence: Evidence): ObservedStatus => {
     throw new TypeError(
       "Artifact change cites Evidence outside comparison closure",
     );
-  return result.status;
+  return { status: result.status };
 };
 
 const validateProcessStatus = (
@@ -340,12 +364,12 @@ const authorityLimitations = (
 const sourceCallCoverageLimitations = (
   claim: Claim,
   functionSources: readonly FunctionSourceFacts[],
-  observed: ObservedStatus,
+  hasIndependentFunctionChange: boolean,
 ): string[] => {
   if (
     claim.kind !== "structural-function" ||
     (claim.dimension !== "calls" &&
-      !(claim.dimension === "overall" && observed !== "changed"))
+      !(claim.dimension === "overall" && !hasIndependentFunctionChange))
   )
     return [];
   return functionSources.flatMap(({ evidence_id, callCoverageLimitations }) =>

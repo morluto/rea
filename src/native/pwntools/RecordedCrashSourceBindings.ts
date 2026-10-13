@@ -1,23 +1,26 @@
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
-  RECORDED_LINUX_AMD64_REGISTERS,
+  RECORDED_LINUX_CORE_PROFILES,
   type RecordedCrash,
 } from "../../domain/native/recordedCrash.js";
 
-const registerOffsets = new Map<string, number>(
-  RECORDED_LINUX_AMD64_REGISTERS.map((name, index) => [name, 112 + index * 8]),
-);
-
-/** Bind interpreted values and register identities to Linux amd64 source bytes. */
+/** Bind interpreted values and register identities to recorded source bytes. */
 export function validateRecordedCrashSources(
   report: RecordedCrash,
   snapshot: Buffer,
   diagnostics: RecordedCrash["decoder_diagnostics"],
 ): void {
+  const profile = RECORDED_LINUX_CORE_PROFILES[report.architecture];
+  const registerOffsets = new Map<string, number>(
+    profile.registers.map((name, index) => [
+      name,
+      profile.registerOffset + index * profile.registerBytes,
+    ]),
+  );
   const fail = () => {
     throw new AnalysisOutputError(
       "inspect_recorded_crash",
-      "Reported PID or signal value differs from its recorded Linux amd64 source bytes.",
+      `Reported PID or signal value differs from its recorded ${report.architecture} source bytes.`,
       { capturedOutput: diagnostics },
     );
   };
@@ -29,10 +32,10 @@ export function validateRecordedCrashSources(
     if (length < minimumBytes) return fail();
     return snapshot.subarray(start, start + length);
   };
-  // Fixed offsets independently checked against unchanged pwntools 4.15.0
-  // elf_prstatus_amd64 / elf_siginfo_64; this is the sole supported note ABI.
+  // Offsets come from unchanged pwntools 4.15.0 elf_prstatus_amd64 /
+  // elf_prstatus_aarch64 and elf_siginfo_64 through the shared domain profile.
   for (const thread of report.threads) {
-    const bytes = descriptor(thread.note_index, 336);
+    const bytes = descriptor(thread.note_index, profile.prstatusBytes);
     if (
       thread.historical_pid !== bytes.readInt32LE(32) ||
       thread.recorded_current_signal !== bytes.readInt16LE(12)
@@ -49,7 +52,7 @@ export function validateRecordedCrashSources(
       )
         throw new AnalysisOutputError(
           "inspect_recorded_crash",
-          "Reported register source does not match its Linux amd64 register identity.",
+          `Reported register source does not match its ${report.architecture} register identity.`,
           { capturedOutput: diagnostics },
         );
     }

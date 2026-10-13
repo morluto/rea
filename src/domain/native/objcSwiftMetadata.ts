@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { providerSchema } from "../evidence.js";
 
 import {
   compareUnicodeCodePoints,
@@ -115,6 +116,7 @@ export const nativeMetadataEvidenceSchema = z.strictObject({
     "decompiler",
   ]),
   description: z.string().min(1),
+  provider: providerSchema.optional(),
   location: nativeMetadataLocationSchema,
   artifact_path: z.string().min(1).nullable().default(null),
   artifact_sha256: z

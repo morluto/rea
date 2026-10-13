@@ -181,6 +181,10 @@ The separate GitHub Pages host uses only the manual
 
 ## Development feedback and PR verification
 
+For routine merges, wait for the required checks to pass for the current PR
+revision. Administrators retain an override for deliberate maintainer recovery.
+If `main` is broken, prioritize a focused repair before updating affected PRs.
+
 Select checks for the behavior changed. For a source edit:
 
 ```bash

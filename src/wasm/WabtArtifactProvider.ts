@@ -362,8 +362,13 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           OPERATION,
           "Unexpected WABT decoding output.",
         );
-      const { imports, exports, customSectionNames, debugModuleNames } =
-        parseWabtWat(wat.stdout.text);
+      const {
+        imports,
+        exports,
+        customSectionNames,
+        debugModuleNames,
+        interface: interfaceFacts,
+      } = parseWabtWat(wat.stdout.text);
       capturedOutput = {
         stdout: dump.stdout.text,
         stderr: dump.stderr.text,
@@ -388,6 +393,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         sections,
         imports,
         exports,
+        interface: interfaceFacts,
         headers,
         details,
         wat: {

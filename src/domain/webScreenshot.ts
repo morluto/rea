@@ -5,7 +5,7 @@ import { z } from "zod";
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
   browserAllowedOriginsSchema,
-  browserEndpointSchema,
+  browserObservationEndpointSchema,
 } from "./browserObservation.js";
 import { browserVersionSchema } from "./browserObservationSchemas.js";
 
@@ -34,7 +34,7 @@ export type WebScreenshotArtifact = z.infer<typeof webScreenshotArtifactSchema>;
 
 /** Input for one read-only visible-viewport screenshot. */
 export const captureWebScreenshotInputSchema = z.strictObject({
-  cdp_endpoint: browserEndpointSchema,
+  cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
   target_id: z.string().trim().min(1),
 });

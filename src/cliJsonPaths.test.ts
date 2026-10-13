@@ -56,4 +56,38 @@ describe("CLI JSON path normalization", () => {
     });
     expect(input.browser.executable_path).toBe(" browser ");
   });
+
+  it.each([
+    "file:///opt/electron",
+    "FILE:electron",
+    "https://example.test/app",
+  ])("keeps URL %j distinguishable from a local path", (value) => {
+    const input = {
+      executable_path: value,
+      application_path: resolve("/synthetic/app"),
+    };
+    const normalized = resolveCliJsonPaths(input, paths);
+    expect(normalized).toEqual(input);
+    const parsed = electronActiveObservationInputSchema.safeParse(normalized);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) throw new Error("Expected URL path rejection");
+    expect(parsed.error.issues).toEqual([
+      expect.objectContaining({
+        path: ["executable_path"],
+        message: expect.stringContaining(
+          "must be absolute local filesystem paths",
+        ),
+      }),
+    ]);
+  });
+
+  it.each([
+    "bin/electron",
+    "release:v1/electron",
+    "C:\\Electron\\electron.exe",
+  ])("keeps resolving local path %j", (value) => {
+    expect(resolveCliJsonPaths({ executable_path: value }, paths)).toEqual({
+      executable_path: resolve(value),
+    });
+  });
 });

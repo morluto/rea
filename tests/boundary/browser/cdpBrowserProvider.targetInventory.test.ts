@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { listBrowserTargetsInputSchema } from "../../../src/domain/browserObservation.js";
 
 describe("CDP target inventory", () => {
   it("returns every allowed target within the bounded discovery payload", async () => {
@@ -51,10 +52,12 @@ describe("CDP target inventory", () => {
       port = address.port;
       const endpoint = `http://127.0.0.1:${String(port)}`;
 
-      const result = await new CdpBrowserProvider().listTargets({
-        cdp_endpoint: endpoint,
-        allowed_origins: ["https://allowed.example"],
-      });
+      const result = await new CdpBrowserProvider().listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: endpoint,
+          allowed_origins: ["https://allowed.example"],
+        }),
+      );
 
       if (!result.ok) throw result.error;
       expect(result.value.targets).toHaveLength(targets.length);

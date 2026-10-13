@@ -72,6 +72,15 @@ interface CanonicalSkillFile {
   readonly original: SkillFileState | undefined;
 }
 
+const canonicalSkillContent = (relativePath: string): Promise<string> =>
+  readFile(
+    new URL(
+      `../../skills/${PRODUCT_IDENTITY.skillName}/${relativePath}`,
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
 export interface SkillInstallFileOperations {
   readonly mkdir: (path: string) => Promise<void>;
   readonly backup: (source: string, destination: string) => Promise<void>;
@@ -244,18 +253,35 @@ const canonicalSkillFiles = async (
           const destination = join(root, relativePath);
           return {
             destination,
-            content: await readFile(
-              new URL(
-                `../../skills/${PRODUCT_IDENTITY.skillName}/${relativePath}`,
-                import.meta.url,
-              ),
-              "utf8",
-            ),
+            content: await canonicalSkillContent(relativePath),
             original: await readOptionalSkillState(destination, resources),
           };
         }),
     ),
   );
+
+const canonicalSkillNeedsInstallByReading = async (
+  home: string,
+  clientIds: readonly string[],
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+  resources?: ArtifactResourceScope,
+): Promise<boolean> => {
+  for (const { path: root } of skillDestinations(
+    home,
+    clientIds,
+    environment,
+    platform,
+  )) {
+    for (const relativePath of MANAGED_SKILL_FILES) {
+      const destination = join(root, relativePath);
+      const content = await canonicalSkillContent(relativePath);
+      const original = await readOptionalSkillState(destination, resources);
+      if (original?.content !== content) return true;
+    }
+  }
+  return false;
+};
 
 /** Report whether setup would change any file in the managed REA skill bundle. */
 export const canonicalSkillNeedsInstall = async (
@@ -266,15 +292,13 @@ export const canonicalSkillNeedsInstall = async (
   resources?: ArtifactResourceScope,
 ): Promise<boolean> => {
   try {
-    return (
-      await canonicalSkillFiles(
-        home,
-        clientIds,
-        environment,
-        platform,
-        resources,
-      )
-    ).some(({ content, original }) => original?.content !== content);
+    return await canonicalSkillNeedsInstallByReading(
+      home,
+      clientIds,
+      environment,
+      platform,
+      resources,
+    );
   } catch (cause: unknown) {
     if (
       cause instanceof RegularFileCleanupFailure ||

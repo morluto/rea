@@ -54,6 +54,42 @@ const holdReadHandle = (path: string, reason: string) => {
   };
 };
 
+/** Linux setup host with its VS Code client configuration directory prepared. */
+const preparedVsCodeSetupHost = async (prefix: string) => {
+  const home = await createTestTempDirectory(prefix);
+  const host = systemSetupHost(
+    { platform: "linux", homeDirectory: home } as DoctorHost,
+    { HOME: home, XDG_CONFIG_HOME: join(home, "xdg") },
+  );
+  const client = (await host.supportedClients()).find(
+    ({ name }) => name === "vscode",
+  );
+  if (client === undefined) throw new Error("VS Code setup client missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  return { home, host, client };
+};
+
+/** Release the held read handle and show host cleanup reuses it as a third attempt. */
+const expectCloseReclaimsHandle = async (
+  host: { close?: () => Promise<string | undefined> },
+  closeAttempts: readonly object[],
+  release: () => void,
+) => {
+  release();
+  expect(await host.close?.()).toBeUndefined();
+  expect(closeAttempts).toHaveLength(3);
+  expect(closeAttempts[2]).toBe(closeAttempts[0]);
+};
+
+/** Give up on the assertion path: release the handle and let cleanup close it. */
+const cleanupHeldHandle = async (
+  host: { close?: () => Promise<string | undefined> },
+  release: () => void,
+) => {
+  release();
+  await host.close?.();
+};
+
 it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fails", async () => {
   const home = await createTestTempDirectory("rea-uninstall-utf8-close-");
   const path = join(home, "client.json");
@@ -77,13 +113,9 @@ it("retains invalid UTF-8 diagnostics and the uninstall read owner when close fa
     });
     expect(await readFile(path)).toEqual(original);
     expect(closeAttempts).toHaveLength(2);
-    release();
-    expect(await host.close?.()).toBeUndefined();
-    expect(closeAttempts).toHaveLength(3);
-    expect(closeAttempts[2]).toBe(closeAttempts[0]);
+    await expectCloseReclaimsHandle(host, closeAttempts, release);
   } finally {
-    release();
-    await host.close?.();
+    await cleanupHeldHandle(host, release);
   }
 });
 
@@ -126,13 +158,9 @@ describe("ZCode fallback cleanup ownership", () => {
         await expect(readFile(client.configPath)).rejects.toMatchObject({
           code: "ENOENT",
         });
-        release();
-        expect(await host.close?.()).toBeUndefined();
-        expect(closeAttempts).toHaveLength(3);
-        expect(closeAttempts[2]).toBe(closeAttempts[0]);
+        await expectCloseReclaimsHandle(host, closeAttempts, release);
       } finally {
-        release();
-        await host.close?.();
+        await cleanupHeldHandle(host, release);
       }
     },
   );
@@ -145,20 +173,9 @@ describe("setup client configuration cleanup ownership", () => {
   ] as const)(
     "stops configuration and retains the %s read owner until host close",
     async (encoding, original) => {
-      const home = await createTestTempDirectory("rea-setup-config-close-");
-      const environment = {
-        HOME: home,
-        XDG_CONFIG_HOME: join(home, "xdg"),
-      };
-      const host = systemSetupHost(
-        { platform: "linux", homeDirectory: home } as DoctorHost,
-        environment,
+      const { host, client } = await preparedVsCodeSetupHost(
+        "rea-setup-config-close-",
       );
-      const client = (await host.supportedClients()).find(
-        ({ name }) => name === "vscode",
-      );
-      if (client === undefined) throw new Error("VS Code setup client missing");
-      await mkdir(dirname(client.configPath), { recursive: true });
       await writeFile(client.configPath, original);
 
       const { closeAttempts, release } = holdReadHandle(
@@ -210,32 +227,17 @@ describe("setup client configuration cleanup ownership", () => {
         expect(closeAttempts[0]).toBe(closeAttempts[1]);
         expect(await readFile(client.configPath)).toEqual(original);
 
-        release();
-        expect(await host.close?.()).toBeUndefined();
-        expect(closeAttempts).toHaveLength(3);
-        expect(closeAttempts[2]).toBe(closeAttempts[0]);
+        await expectCloseReclaimsHandle(host, closeAttempts, release);
       } finally {
-        release();
-        await host.close?.();
+        await cleanupHeldHandle(host, release);
       }
     },
   );
 
   it("waits for an admitted configuration read and rejects later admissions", async () => {
-    const home = await createTestTempDirectory("rea-setup-config-inflight-");
-    const environment = {
-      HOME: home,
-      XDG_CONFIG_HOME: join(home, "xdg"),
-    };
-    const host = systemSetupHost(
-      { platform: "linux", homeDirectory: home } as DoctorHost,
-      environment,
+    const { host, client } = await preparedVsCodeSetupHost(
+      "rea-setup-config-inflight-",
     );
-    const client = (await host.supportedClients()).find(
-      ({ name }) => name === "vscode",
-    );
-    if (client === undefined) throw new Error("VS Code setup client missing");
-    await mkdir(dirname(client.configPath), { recursive: true });
     await writeFile(client.configPath, '{"servers": {}}\n');
 
     let beginRead!: () => void;

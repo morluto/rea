@@ -64,6 +64,7 @@ describe("client configuration filesystem lifecycle", () => {
       "copilot_cli",
       "commandcode",
       "qwen_code",
+      "kimi",
       "vscode",
       "trae",
       "grok_build",
@@ -1895,14 +1896,11 @@ describe("client configuration filesystem failure reporting", () => {
         remove: () => Promise.reject(new Error("SECRET removal failure")),
       }),
     );
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "skill",
-        status: "failed",
-        detail: expect.stringContaining(
-          `Managed file could not be removed: ${join(skillRoot, "SKILL.md")}`,
-        ),
-      }),
+    const skillItem = result.items.find(({ name }) => name === "skill");
+    expect(skillItem?.status).toBe("failed");
+    expect(skillItem?.detail).toContain(`shared (${skillRoot}): failed (`);
+    expect(skillItem?.detail).toContain(
+      `Managed file could not be removed: ${join(skillRoot, "SKILL.md")}`,
     );
     expect(JSON.stringify(result)).not.toContain("SECRET");
     expect(await readFile(join(skillRoot, "SKILL.md"), "utf8")).toBe(
@@ -1940,6 +1938,42 @@ describe("client configuration filesystem failure reporting", () => {
           "user-authored",
         );
       }),
+    );
+  });
+});
+
+describe("skill root client identifier labels", () => {
+  it("labels each retained or removed skill root by its client identifier", async () => {
+    const home = await createTestTempDirectory("rea-uninstall-skill-labels-");
+    roots.push(home);
+    const customClaudeDirectory = join(home, "claude-config");
+    const sharedRoot = join(home, ".agents/skills/reverse-engineer-anything");
+    const claudeRoot = join(
+      customClaudeDirectory,
+      "skills/reverse-engineer-anything",
+    );
+    await mkdir(sharedRoot, { recursive: true });
+    await mkdir(claudeRoot, { recursive: true });
+    await writeFile(
+      join(sharedRoot, "SKILL.md"),
+      "---\nname: another-skill\n---\n# Not REA-owned\n",
+    );
+    await writeFile(join(claudeRoot, "SKILL.md"), ownedSkillManifest);
+
+    const skillItem = await systemUninstallHost(home, testFileSystem, {
+      CLAUDE_CONFIG_DIR: customClaudeDirectory,
+    }).removeSkill();
+
+    expect(skillItem.name).toBe("skill");
+    expect(skillItem.detail).toContain(`shared (${sharedRoot}): retained (`);
+    expect(skillItem.detail).toContain(
+      `claude_code (${claudeRoot}): removed (`,
+    );
+    await expect(
+      readFile(join(claudeRoot, "SKILL.md"), "utf8"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(sharedRoot, "SKILL.md"), "utf8")).toContain(
+      "another-skill",
     );
   });
 });

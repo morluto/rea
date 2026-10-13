@@ -183,6 +183,54 @@ it(
   INTEGRATION_TEST_TIMEOUT_MS,
 );
 
+it(
+  "browser CLI attaches through a browser socket and records it redacted",
+  async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const inspected = await runCli(
+      [
+        "inspect-web-page",
+        browser.browserWebSocketUrl,
+        "allowed-page",
+        "--observation-ms",
+        "0",
+        "--json",
+      ],
+      process.env,
+    );
+    expect(inspected).toMatchObject({
+      operation: "inspect_web_page",
+      parameters: {
+        cdp_endpoint: browser.browserWebSocketUrl.replace(
+          /fake$/u,
+          "[REDACTED]",
+        ),
+      },
+      normalized_result: { target: { target_id: "allowed-page" } },
+    });
+    expect(JSON.stringify(inspected)).not.toContain("/devtools/browser/fake");
+
+    const refused = await runCli(
+      [
+        "list-browser-targets",
+        browser.browserWebSocketUrl.replace(/fake$/u, "not-this-browser"),
+        "--json",
+      ],
+      process.env,
+    );
+    expect(refused).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        operation: "list_browser_targets",
+        reason: "endpoint_unreachable",
+      },
+    });
+    expect(JSON.stringify(refused)).not.toContain("not-this-browser");
+  },
+  INTEGRATION_TEST_TIMEOUT_MS,
+);
+
 describe("scenario comparison CLI diagnostics", () => {
   const rule = {
     rule_id: "domain",

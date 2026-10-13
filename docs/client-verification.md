@@ -458,7 +458,7 @@ artifact path. Its `expectedFirstTool` is `null`, and
 `targetClarificationPassed` grades that limited routing outcome independently
 of analysis prose heuristics. Analyzing a nearby example cannot pass this case.
 
-The packaged desktop and parser-comparison scenarios now assess a closed set of
+The packaged desktop, parser-comparison, and managed scenarios assess a closed set of
 known fixture claims. Each final answer must be a strict JSON manifest containing
 exactly the requested claim IDs, values, Evidence IDs, and Evidence authority and
 confidence. Golden values are not included in the prompt. The evaluator checks
@@ -475,15 +475,24 @@ analyses and use the requested module and export selectors. Boundary tests packa
 the same source-owned desktop fixture and compare the same source-owned parser
 files through actual MCP tool results, then verify that fabricated answers fail.
 
+The managed rubric checks the exact public top-level type set and the CLI entry
+point's declaring type and method name. The exact type-set claim requires an
+unfiltered member inventory: `selection` must be null and the Evidence parameters
+must omit `type_names`. A selected inventory can still ground the entry-point
+claim. Both inspections must describe the freshly built DLL's SHA-256. Entry-point
+resolution additionally requires complete artifact and member metadata, matching
+non-null module MVIDs, and a unique method at the header's metadata token. These are
+static metadata claims, not runtime behavior;
+compiler-generated member counts, token values, and MVIDs are not golden answers.
+
 Per-scenario `factualCorrectness` is `passed`, `failed`, or `not_assessed` within
 the `configured_fixture_claims` scope. A pass establishes only the configured
-claims, not unrestricted factual correctness. Native, managed, browser,
+claims, not unrestricted factual correctness. Native, browser,
 navigation-context, and address-context scenarios have no factual rubric and
-remain `not_assessed`; the managed workflow requires both artifact and member
-inspection to answer its type and entry-point question.
+remain `not_assessed`.
 
 The closed factual scenarios request complete producer Evidence on the initial
-analysis so their source selectors can authenticate all configured facts.
+inspection or analysis so their source selectors can authenticate all configured facts.
 Summary/page/item workflows are exercised separately by `javascript-module-view`;
 its heuristic gate does not establish full-producer factual correctness.
 

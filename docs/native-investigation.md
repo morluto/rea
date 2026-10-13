@@ -549,3 +549,17 @@ Value projection preserves serialized node kinds, IDs, references and pagination
 Exact and ambiguous value counts describe emitted root/object value instances;
 a root and an object may contain the same value. Archive digests identify the
 original bytes.
+
+## Locate a byte signature
+
+Use `search_bytes` after opening a target with Ghidra to locate a known constant
+or instruction sequence. For example, `{"pattern":"48 8B ?? ?? 89","limit":100}`
+returns ordered addresses with segments, source file offsets and containing
+procedures. The CLI equivalent is
+`rea search-bytes ./program '48 8B ?? ?? 89' --provider ghidra`.
+Use `start`/`end` to constrain the inclusive address window, and continue with
+`next_cursor` until `complete` is true. Inspect `searched` for page coverage and
+skipped uninitialized blocks. A missing match does not establish absence from
+uninitialized memory or across block boundaries. See
+[Ghidra byte search](ghidra-provider.md#masked-byte-search) for mask and coverage
+semantics. This query never executes or modifies target bytes.

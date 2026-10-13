@@ -6,7 +6,10 @@ import { createApktoolResourceAnalysisProvider } from "../composition/apktool.js
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import type { ApktoolOperation } from "../domain/apktool/apktoolResourceAnalysis.js";
+import {
+  apktoolInputSchemas,
+  type ApktoolOperation,
+} from "../domain/apktool/apktoolResourceAnalysis.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
@@ -49,22 +52,19 @@ export const registerApktoolCommands = (
     args: z.object({
       path: z.string().min(1).describe("Local APK file to decode"),
     }),
+    // The locale grammar and the string-projection default belong to the
+    // apktool input owner. Read them from that schema rather than restating a
+    // narrower locale pattern, which refused the owner's own advertised
+    // `b+zh+Hans+CN` form at the CLI boundary.
     options: z.object({
-      locale: z
-        .string()
-        .min(2)
-        .max(16)
-        .regex(
-          /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/u,
-          "Locale must look like de or pt-BR",
-        )
-        .optional()
-        .describe(
-          "Project strings from res/values-<locale> instead of the default",
-        ),
+      locale: apktoolInputSchemas.decode_android_resources.shape.locale,
       strings: z
         .boolean()
-        .default(true)
+        .default(
+          apktoolInputSchemas.decode_android_resources.shape.include_strings.parse(
+            undefined,
+          ),
+        )
         .describe(
           "Include string resources; use --no-strings to skip projecting them",
         ),

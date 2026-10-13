@@ -2,7 +2,11 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import {
+  advertisedReferenceExpansionBudget,
+  inputSchemaWithinReferenceExpansionBudget,
+  presentInputJsonSchema,
+} from "./inputSchemaPresentation.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
@@ -66,7 +70,25 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
       });
       const examples = advertisedInputExamples(contract);
       return {
-        ...presentInputJsonSchema(shared, fallbackPropertyDescription),
+        // Sharing definitions only helps clients that resolve them. A client
+        // rendering declarations from a shared expansion budget degrades
+        // every reference past it to `unknown`, so an input whose shared form
+        // exceeds the budget is re-projected without shared definitions.
+        ...inputSchemaWithinReferenceExpansionBudget(
+          presentInputJsonSchema(shared, fallbackPropertyDescription),
+          () =>
+            presentInputJsonSchema(
+              project({
+                ...options,
+                libraryOptions: {
+                  ...options.libraryOptions,
+                  reused: "inline",
+                },
+              }),
+              fallbackPropertyDescription,
+            ),
+          advertisedReferenceExpansionBudget,
+        ),
         ...(examples.length === 0 ? {} : { examples }),
       };
     },

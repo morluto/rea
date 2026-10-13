@@ -50,7 +50,8 @@ export interface AnalysisAccumulator {
   readonly seen: Set<string>;
   visitedNodes: number;
   parsedScripts: number;
-  parseFailures: number;
+  readonly failedScripts: string[];
+  readonly recoveredScripts: string[];
 }
 
 export const analyzeScript = (
@@ -67,10 +68,12 @@ export const analyzeScript = (
   } catch (cause: unknown) {
     // Unparseable scripts are counted; the failure needs no extra detail.
     void cause;
-    accumulator.parseFailures += 1;
+    accumulator.failedScripts.push(script.script_key);
     return;
   }
   accumulator.parsedScripts += 1;
+  if ((file.errors?.length ?? 0) > 0)
+    accumulator.recoveredScripts.push(script.script_key);
   detectVendorFingerprints(script, accumulator);
   const openReceiverFacts = classifyParsedJavaScriptOpenReceivers(file);
   const rpc = createJavaScriptRpcScan(
@@ -293,19 +296,18 @@ const addWebMcpDeclaration = (
           : [],
       )
     : [];
+  const metadata = {
+    name: name ?? null,
+    description: description ?? null,
+    schema_property_names: [...new Set(schemaPropertyNames)].sort(),
+  };
+  // Deduplicate the metadata we return, preserving omission and descriptions.
   // Property names are a variable-length source-derived list: NUL-joins
   // would collapse ["a\0b"] with ["a", "b"] and drop a declaration.
-  const key = compositeKey([
-    "webmcp",
-    script.script_key,
-    name ?? "",
-    schemaPropertyNames,
-  ]);
+  const key = compositeKey(["webmcp", script.script_key, metadata]);
   addUnique(accumulator, key, () =>
     accumulator.webMcp.push({
-      name: name ?? null,
-      description: description ?? null,
-      schema_property_names: [...new Set(schemaPropertyNames)].sort(),
+      ...metadata,
       trust: "page-declared-untrusted",
       location: location(script.script_key, node),
     }),
@@ -387,7 +389,8 @@ export const emptyAccumulator = (): AnalysisAccumulator => ({
   seen: new Set(),
   visitedNodes: 0,
   parsedScripts: 0,
-  parseFailures: 0,
+  failedScripts: [],
+  recoveredScripts: [],
 });
 
 export const isIncludedScript = (

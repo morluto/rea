@@ -188,8 +188,12 @@ it("closes the service and retains an unexpected producer rejection", async () =
   });
 });
 
-it("rejects an oversized selector budget before the CLI invokes its service", async () => {
-  const cli = Cli.create("capture-selector-test", { sync: false });
+/** Serve one inspection request whose service must never be reached. */
+const rejectBeforeService = async (
+  name: string,
+  args: string[],
+): Promise<string> => {
+  const cli = Cli.create(name, { sync: false });
   let called = false;
   registerCaptureCommands(
     cli,
@@ -207,66 +211,41 @@ it("rejects an oversized selector budget before the CLI invokes its service", as
     },
   );
   let stdout = "";
-  await cli.serve(
-    [
-      "inspect-packet-capture",
-      "recording.pcap",
-      "--fields",
-      "x".repeat(8192),
-      "--display_filter",
-      "界".repeat(8192),
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => {},
+  await cli.serve(args, {
+    stdout: (text) => {
+      stdout += text;
     },
-  );
+    exit: () => {},
+  });
   expect(called).toBe(false);
+  return stdout;
+};
+
+it("rejects an oversized selector budget before the CLI invokes its service", async () => {
+  const stdout = await rejectBeforeService("capture-selector-test", [
+    "inspect-packet-capture",
+    "recording.pcap",
+    "--fields",
+    "x".repeat(8192),
+    "--display_filter",
+    "界".repeat(8192),
+    "--format",
+    "json",
+  ]);
   expect(stdout).toContain("32 KiB");
 });
 
 it("rejects conflicting output options before the CLI invokes its service", async () => {
-  const cli = Cli.create("capture-window-test", { sync: false });
-  let called = false;
-  registerCaptureCommands(
-    cli,
-    silentLogger,
-    {},
-    {
-      inspectFields: async () => {
-        throw new Error("Unexpected field discovery call");
-      },
-      inspect: async () => {
-        called = true;
-        throw new Error("Must not inspect");
-      },
-      close: async () => {},
-    },
-  );
-  let stdout = "";
-  await cli.serve(
-    [
-      "inspect-packet-capture",
-      "recording.pcap",
-      "--fields",
-      "ip.addr",
-      "--all_matches",
-      "--match_limit",
-      "20",
-      "--format",
-      "json",
-    ],
-    {
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => {},
-    },
-  );
-  expect(called).toBe(false);
+  const stdout = await rejectBeforeService("capture-window-test", [
+    "inspect-packet-capture",
+    "recording.pcap",
+    "--fields",
+    "ip.addr",
+    "--all_matches",
+    "--match_limit",
+    "20",
+    "--format",
+    "json",
+  ]);
   expect(stdout).toContain("mutually exclusive");
 });

@@ -17,6 +17,46 @@ export const registerCoreNativeCommands = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   registerAnnotationCommand(cli, logger, runDirectAnalysis);
+  cli.command(CLI_COMMANDS.searchBytes, {
+    description: "Find masked byte patterns in initialized provider memory",
+    args: z.object({
+      path: z.string().describe("Local executable path"),
+      pattern: z.string().describe("Hexadecimal byte pairs with ?? wildcards"),
+    }),
+    options: z.object({
+      mask: z.string().optional().describe("Equal-length hexadecimal bit mask"),
+      start: z.string().optional().describe("Inclusive start address"),
+      end: z.string().optional().describe("Inclusive end address"),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Continuation from the same query's next_cursor"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(1000)
+        .default(100)
+        .describe("Maximum matches on this page"),
+      ...nativeOpenOptionFields,
+    }),
+    run: ({ args, options }) =>
+      logCliCommand(logger, CLI_COMMANDS.searchBytes, () =>
+        runDirectAnalysis(
+          args.path,
+          "search_bytes",
+          {
+            pattern: args.pattern,
+            limit: options.limit,
+            ...(options.mask === undefined ? {} : { mask: options.mask }),
+            ...(options.start === undefined ? {} : { start: options.start }),
+            ...(options.end === undefined ? {} : { end: options.end }),
+            ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+          },
+          directAnalysisOptionsFromCli(logger, options),
+        ),
+      ),
+  });
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:
       "Verify loaded native bytes, source mappings, relocations and entry",

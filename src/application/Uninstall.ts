@@ -627,11 +627,16 @@ const removeManagedSkills = async (
   platform: NodeJS.Platform,
   writeBlocker?: (path: string) => string | undefined,
 ): Promise<UninstallItem> => {
-  // Every destination shares one summary item, so each result is labeled by
-  // the directory it refers to.
+  // Every destination shares one summary item; preserve both client and path.
   const results = await Promise.all(
-    skillDestinations(home, undefined, environment, platform).map(({ path }) =>
-      removeManagedSkill(path, path, fileSystem, writeBlocker),
+    skillDestinations(home, undefined, environment, platform).map(
+      ({ client, path }) =>
+        removeManagedSkill(
+          path,
+          `${client} (${path})`,
+          fileSystem,
+          writeBlocker,
+        ),
     ),
   );
   const failed = results.find(({ status }) => status === "failed");

@@ -28,6 +28,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
@@ -141,6 +142,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         "set_addresses_names",
         "inspect_native_load_image",
         "read_bytes",
+        "search_bytes",
         "address_to_file_offset",
         "ping",
         "shutdown",
@@ -378,6 +380,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return switch (request.method) {
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
+            case "search_bytes" -> searchMemoryBytes(request.params, descriptor);
             case "address_to_file_offset" -> addressToFileOffset(request.params);
             case "address_name" -> addressName(request.params);
             case "list_documents" -> listDocuments(request.params);
@@ -684,6 +687,160 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
+    private JsonObject searchMemoryBytes(JsonObject params, SessionDescriptor descriptor) throws Exception {
+        // mask, start, end, and cursor are omitted when absent; JSON encoding drops those keys.
+        Set<String> keys = params.keySet();
+        if (!keys.containsAll(Set.of("document", "pattern", "limit")) ||
+            !Set.of("document", "pattern", "mask", "start", "end", "limit", "cursor").containsAll(keys))
+            throw new RequestFailure("invalid_request", "Bridge request fields are invalid");
+        requireDocument(params);
+        // Public input validation owns the grammar; validate again at the socket boundary.
+        String pattern = requireString(params, "pattern").replaceAll("[\\s\\p{Z}\\uFEFF]", "");
+        String mask = params.has("mask") ? requireString(params, "mask") : null;
+        if (mask != null) mask = mask.replaceAll("[\\s\\p{Z}\\uFEFF]", "");
+        if (pattern.isEmpty() || pattern.length() % 2 != 0 ||
+            (mask != null && mask.length() != pattern.length()))
+            throw new RequestFailure("invalid_request", "Mask length must equal a nonempty byte pattern length");
+        byte[] bytes = new byte[pattern.length() / 2];
+        byte[] masks = new byte[bytes.length];
+        boolean constrained = false;
+        for (int index = 0; index < bytes.length; index++) {
+            monitor.checkCancelled();
+            String pair = pattern.substring(index * 2, index * 2 + 2);
+            if ((!pair.equals("??") && !isHexadecimal(pair, 0, 2)) ||
+                (mask != null && !isHexadecimal(mask, index * 2, index * 2 + 2)))
+                throw new RequestFailure("invalid_request", "Use hexadecimal byte pairs or ?? wildcards");
+            int selected = mask == null ? 255 : Integer.parseInt(mask.substring(index * 2, index * 2 + 2), 16);
+            bytes[index] = (byte) (pair.equals("??") ? 0 : Integer.parseInt(pair, 16));
+            masks[index] = (byte) (pair.equals("??") ? 0 : selected);
+            constrained |= masks[index] != 0;
+        }
+        if (!constrained) throw new RequestFailure("invalid_request", "Pattern must constrain at least one bit");
+        int limit = requireBoundedInteger(params, "limit", 1, 1000);
+        Address start = params.has("start") ? requireAddress(params, "start") : null;
+        Address end = params.has("end") ? requireAddress(params, "end") : null;
+        if (start != null && end != null &&
+            (!start.getAddressSpace().equals(end.getAddressSpace()) || start.compareTo(end) > 0))
+            throw new RequestFailure("invalid_request", "Search bounds must be ordered in one address space");
+        JsonArray identity = new JsonArray();
+        for (String value : new String[] { descriptor.targetSha256, descriptor.profileDigest,
+                bytesHex(bytes), bytesHex(masks), start == null ? "" : canonicalAddress(start),
+                end == null ? "" : canonicalAddress(end), optionalString(params, "document") }) identity.add(value);
+        String binding = bytesHex(MessageDigest.getInstance("SHA-256").digest(identity.toString().getBytes(StandardCharsets.UTF_8)));
+        String cursor = params.has("cursor") ? requireString(params, "cursor") : null;
+        Address resume = null;
+        if (cursor != null) {
+            if (!cursor.startsWith(binding + ":"))
+                throw new RequestFailure("invalid_request", "Byte search cursor does not match the target and query");
+            resume = parseReaAddress(cursor.substring(binding.length() + 1));
+            MemoryBlock resumedBlock = currentProgram.getMemory().getBlock(resume);
+            Address bound = start == null ? end : start;
+            if (resumedBlock == null || !resumedBlock.isInitialized() ||
+                (bound != null && !bound.getAddressSpace().equals(resume.getAddressSpace())) ||
+                (start != null && resume.compareTo(start) < 0) ||
+                (end != null && resume.compareTo(end) > 0))
+                throw new RequestFailure("invalid_request", "Byte search cursor lies outside initialized query memory");
+        }
+        List<MemoryBlock> ordered = new ArrayList<>(List.of(currentProgram.getMemory().getBlocks()));
+        ordered.sort(Comparator.comparing(MemoryBlock::getStart));
+        JsonArray matches = new JsonArray();
+        JsonArray blocks = new JsonArray();
+        JsonArray skipped = new JsonArray();
+        JsonArray notLoaded = new JsonArray();
+        long covered = 0;
+        String next = null;
+        for (MemoryBlock block : ordered) {
+            monitor.checkCancelled();
+            Address low = block.getStart();
+            Address high = block.getEnd();
+            Address bound = start == null ? end : start;
+            if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
+            // Without bounds, search loaded memory only. Non-loaded file parts
+            // (such as .symtab) and overlays stay reachable through explicit bounds.
+            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+                notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (start != null && low.compareTo(start) < 0) low = start;
+            if (end != null && high.compareTo(end) > 0) high = end;
+            if (low.compareTo(high) > 0) continue;
+            if (!block.isInitialized()) {
+                skipped.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (next != null) continue;
+            if (resume != null && low.compareTo(resume) < 0) low = resume;
+            if (low.compareTo(high) > 0 || !low.getAddressSpace().equals(high.getAddressSpace())) continue;
+            Address at = low;
+            Address examinedEnd = high;
+            while (at != null && at.compareTo(high) <= 0 && high.subtract(at) >= bytes.length - 1L) {
+                monitor.checkCancelled();
+                // Ghidra's end address bounds candidate starts, not the final matched byte.
+                Address found = currentProgram.getMemory().findBytes(at, high.subtract(bytes.length - 1L), bytes, masks, true, monitor);
+                monitor.checkCancelled();
+                if (found == null || high.subtract(found) < bytes.length - 1L) break;
+                if (matches.size() == limit) {
+                    next = binding + ":" + canonicalAddress(found);
+                    examinedEnd = found.addNoWrap(bytes.length - 1L);
+                    break;
+                }
+                JsonObject match = new JsonObject();
+                match.addProperty("address", canonicalAddress(found));
+                match.addProperty("segment", block.getName());
+                Long offset = targetFileOffset(block, found).offset();
+                match.add("file_offset", offset == null ? JsonNull.INSTANCE : GSON.toJsonTree(offset));
+                Function function = currentProgram.getFunctionManager().getFunctionContaining(found);
+                JsonObject procedure = new JsonObject();
+                if (function != null) {
+                    procedure.addProperty("address", canonicalAddress(function.getEntryPoint()));
+                    procedure.addProperty("name", function.getName(true));
+                }
+                match.add("procedure", function == null ? JsonNull.INSTANCE : procedure);
+                matches.add(match);
+                at = found.next();
+            }
+            JsonObject coverage = byteSearchCoverage(block, low, examinedEnd);
+            covered = Math.addExact(covered, coverage.get("bytes").getAsLong());
+            blocks.add(coverage);
+        }
+        JsonObject searched = new JsonObject();
+        searched.add("blocks", blocks);
+        searched.addProperty("bytes", covered);
+        searched.add("skipped_uninitialized", skipped);
+        searched.add("skipped_not_loaded", notLoaded);
+        JsonObject result = new JsonObject();
+        result.add("matches", matches);
+        result.add("searched", searched);
+        result.addProperty("complete", next == null);
+        result.add("next_cursor", next == null ? JsonNull.INSTANCE : GSON.toJsonTree(next));
+        return result;
+    }
+
+    private static JsonObject byteSearchCoverage(MemoryBlock block, Address low, Address high) {
+        JsonObject result = new JsonObject();
+        result.addProperty("segment", block.getName());
+        result.addProperty("start", canonicalAddress(low));
+        result.addProperty("end", canonicalAddress(high));
+        result.addProperty("bytes", high.subtract(low) + 1);
+        return result;
+    }
+
+    private record TargetFileOffset(Long offset, int mappings) {}
+
+    private TargetFileOffset targetFileOffset(MemoryBlock block, Address address) throws Exception {
+        Long offset = null;
+        int mappings = 0;
+        for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
+            if (!source.contains(address) || source.getFileBytes().isEmpty() ||
+                !isTargetSource(source.getFileBytes().get())) continue;
+            long candidate = source.getFileBytesOffset(address);
+            if (candidate < 0) continue;
+            offset = candidate;
+            mappings++;
+        }
+        return new TargetFileOffset(mappings == 1 && offset <= 9007199254740991L ? offset : null, mappings);
+    }
+
     private JsonObject addressToFileOffset(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
@@ -691,18 +848,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         MemoryBlock block = currentProgram.getMemory().getBlock(address);
         if (block == null || !block.isInitialized())
             throw new RequestFailure("invalid_request", "Address has no initialized file-backed memory: " + canonicalAddress(address));
-        Long fileOffset = null;
-        int mappings = 0;
-        for (MemoryBlockSourceInfo source : block.getSourceInfos()) {
-            if (!source.contains(address) || source.getFileBytes().isEmpty() ||
-                !isTargetSource(source.getFileBytes().get())) continue;
-            long offset = source.getFileBytesOffset(address);
-            if (offset < 0) continue;
-            fileOffset = offset;
-            mappings++;
-        }
-        if (mappings != 1)
-            throw new RequestFailure("invalid_request", "Address has " + mappings + " authoritative target-file mappings: " + canonicalAddress(address));
+        TargetFileOffset mapping = targetFileOffset(block, address);
+        if (mapping.mappings() != 1)
+            throw new RequestFailure("invalid_request", "Address has " + mapping.mappings() + " authoritative target-file mappings: " + canonicalAddress(address));
+        Long fileOffset = mapping.offset();
+        if (fileOffset == null)
+            throw new RequestFailure("invalid_request", "Address lacks a safe file offset: " + canonicalAddress(address));
         JsonObject result = new JsonObject();
         result.addProperty("address", canonicalAddress(address));
         result.addProperty("file_offset", fileOffset);

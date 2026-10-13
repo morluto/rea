@@ -49,6 +49,9 @@ const observeAgain = (
       result,
       confidence: source.confidence,
       authority: source.authority,
+      ...(source.relationship_coverage === null
+        ? {}
+        : { relationshipCoverage: source.relationship_coverage }),
     },
   );
 

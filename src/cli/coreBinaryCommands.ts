@@ -48,7 +48,10 @@ const registerOverviewCommands = (
   cli.command(CLI_COMMANDS.analyze, {
     description: "Get an overview of an app",
     args: z.object({
-      path: z.string().describe("App, program, or analysis database path"),
+      path: z
+        .string()
+        .min(1)
+        .describe("App, program, or analysis database path"),
     }),
     options: overviewOptions.extend({
       integrityPolicy: javascriptApplicationOptions.shape.integrityPolicy,

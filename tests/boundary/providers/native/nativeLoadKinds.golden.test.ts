@@ -229,6 +229,62 @@ it("normalizes legacy version-minimum commands into build metadata", () => {
   ]);
 });
 
+it("names numeric build-version platforms and tools", () => {
+  const load = parseOtoolLoadCommands(
+    withOtoolMachHeader(
+      [
+        "Load command 0",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 48",
+        " platform 1",
+        "    minos 11.0",
+        "      sdk 26.5",
+        "   ntools 2",
+        "     tool 3",
+        "  version 1267.0",
+        "     tool 1029",
+        "  version 1.0",
+        "Load command 1",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 24",
+        " platform 99",
+        "    minos 1.0",
+        "      sdk 1.0",
+        "   ntools 0",
+        "Load command 2",
+        "      cmd LC_BUILD_VERSION",
+        "  cmdsize 32",
+        " platform MACCATALYST",
+        "    minos 14.0",
+        "      sdk 14.2",
+        "   ntools 1",
+        "     tool SWIFT",
+        "  version 5.9",
+        "",
+      ].join("\n"),
+    ),
+  );
+  expect(load.builds).toEqual([
+    {
+      platform: "MACOS",
+      minimum_os: "11.0",
+      sdk: "26.5",
+      tools: [
+        { name: "LD", version: "1267.0" },
+        { name: "1029", version: "1.0" },
+      ],
+    },
+    { platform: "99", minimum_os: "1.0", sdk: "1.0", tools: [] },
+    {
+      platform: "MACCATALYST",
+      minimum_os: "14.0",
+      sdk: "14.2",
+      tools: [{ name: "SWIFT", version: "5.9" }],
+    },
+  ]);
+  expect(load.commands[0]?.fields.platform).toBe(1);
+});
+
 it("does not classify LC_LOAD_DYLINKER as a dylib dependency", async () => {
   const load = parseOtoolLoadCommands(
     await nativeFixture("native-macho-header/otool-header-load.txt"),
@@ -272,4 +328,79 @@ it("limits thread-state entrypoints instead of reporting none silently", async (
   expect(result.value.limitations).toContain(
     "Thread-state entrypoints (LC_UNIXTHREAD/LC_THREAD) are retained as raw load commands; file offsets are not derived.",
   );
+});
+
+it.each([
+  ["1", "MACOS"],
+  ["2", "IOS"],
+  ["3", "TVOS"],
+  ["4", "WATCHOS"],
+  ["5", "BRIDGEOS"],
+  ["6", "MACCATALYST"],
+  ["7", "IOSSIMULATOR"],
+  ["8", "TVOSSIMULATOR"],
+  ["9", "WATCHOSSIMULATOR"],
+  ["10", "DRIVERKIT"],
+  ["11", "VISIONOS"],
+  ["12", "VISIONOSSIMULATOR"],
+  ["13", "FIRMWARE"],
+  ["14", "SEPOS"],
+  ["15", "MACOS_EXCLAVECORE"],
+  ["16", "MACOS_EXCLAVEKIT"],
+  ["17", "IOS_EXCLAVECORE"],
+  ["18", "IOS_EXCLAVEKIT"],
+  ["19", "TVOS_EXCLAVECORE"],
+  ["20", "TVOS_EXCLAVEKIT"],
+  ["21", "WATCHOS_EXCLAVECORE"],
+  ["22", "WATCHOS_EXCLAVEKIT"],
+  ["23", "VISIONOS_EXCLAVECORE"],
+  ["24", "VISIONOS_EXCLAVEKIT"],
+] as const)("names build platform %s as %s", (code, name) => {
+  const load = parseOtoolLoadCommands(
+    withOtoolMachHeader(
+      [
+        "Load command 0",
+        "cmd LC_BUILD_VERSION",
+        "cmdsize 24",
+        `platform ${code}`,
+        "minos 1.0",
+        "sdk 1.0",
+        "ntools 0",
+        "",
+      ].join("\n"),
+    ),
+  );
+  expect(load.builds[0]?.platform).toBe(name);
+});
+
+it.each([
+  ["1", "CLANG"],
+  ["2", "SWIFT"],
+  ["3", "LD"],
+  ["4", "LLD"],
+  ["1024", "METAL"],
+  ["1025", "AIRLLD"],
+  ["1026", "AIRNT"],
+  ["1027", "AIRNT_PLUGIN"],
+  ["1028", "AIRPACK"],
+  ["1031", "GPUARCHIVER"],
+  ["1032", "METAL_FRAMEWORK"],
+] as const)("names build tool %s as %s", (code, name) => {
+  const load = parseOtoolLoadCommands(
+    withOtoolMachHeader(
+      [
+        "Load command 0",
+        "cmd LC_BUILD_VERSION",
+        "cmdsize 32",
+        "platform 1",
+        "minos 1.0",
+        "sdk 1.0",
+        "ntools 1",
+        `tool ${code}`,
+        "version 1.0",
+        "",
+      ].join("\n"),
+    ),
+  );
+  expect(load.builds[0]?.tools).toEqual([{ name, version: "1.0" }]);
 });

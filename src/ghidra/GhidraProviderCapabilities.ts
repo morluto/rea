@@ -90,6 +90,11 @@ export const limitationsFor = (operation: string): readonly string[] => {
         ...common,
         "Bytes reflect Ghidra's initialized memory, including loader fixups. Reads stop at an unmapped or uninitialized byte and report completeness explicitly.",
       ];
+    case "search_bytes":
+      return [
+        ...common,
+        "Searches initialized loader-adjusted memory independently per block, in provider address order. Bounds and page coverage ends are inclusive. Uninitialized blocks are listed separately. Overlapping matches are included; patterns never cross block boundaries. A cursor resumes the same target, profile and query. Cancellation discards the active search and returns no successful partial page.",
+      ];
     case "address_to_file_offset":
       return [
         ...common,

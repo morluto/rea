@@ -43,38 +43,117 @@ export const browserOriginSchema = z
 export const isLiteralLoopbackHostname = (hostname: string): boolean =>
   hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 
+const HTTP_ENDPOINT_MESSAGE =
+  "CDP endpoint must be an explicit-port HTTP URL on 127.0.0.1 or ::1";
+const BROWSER_SOCKET_PATH = "/devtools/browser/";
+const REDACTED_BROWSER_SOCKET_PATH = `${BROWSER_SOCKET_PATH}[REDACTED]`;
+
+/** Normalized origin of an accepted loopback CDP HTTP discovery endpoint. */
+const httpDiscoveryOrigin = (url: URL): string | undefined =>
+  url.protocol === "http:" &&
+  isLiteralLoopbackHostname(url.hostname) &&
+  url.port !== "" &&
+  url.username === "" &&
+  url.password === "" &&
+  url.pathname === "/" &&
+  !urlDeclaresQueryOrFragment(url)
+    ? url.origin
+    : undefined;
+
+/** Scheme and authority of an accepted loopback CDP browser WebSocket. */
+const browserSocketAuthority = (url: URL): string | undefined => {
+  const id = url.pathname.slice(BROWSER_SOCKET_PATH.length);
+  return url.protocol === "ws:" &&
+    isLiteralLoopbackHostname(url.hostname) &&
+    url.port !== "" &&
+    url.username === "" &&
+    url.password === "" &&
+    !urlDeclaresQueryOrFragment(url) &&
+    url.pathname.startsWith(BROWSER_SOCKET_PATH) &&
+    id.length > 0 &&
+    !id.includes("/")
+    ? `${url.protocol}//${url.host}`
+    : undefined;
+};
+
 /** Loopback-only HTTP endpoint accepted for a user-owned CDP browser. */
 export const browserEndpointSchema = z
   .string()
   .min(1)
   .transform((value, context) => {
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch (cause: unknown) {
-      // Invalid input is reported through the zod issue.
-      void cause;
+    const url = URL.parse(value);
+    const origin = url === null ? undefined : httpDiscoveryOrigin(url);
+    if (origin !== undefined) return origin;
+    context.addIssue({
+      code: "custom",
+      message:
+        url === null ? "Invalid CDP endpoint URL" : HTTP_ENDPOINT_MESSAGE,
+    });
+    return z.NEVER;
+  });
+
+/**
+ * Caller-selected endpoint for passive browser observation. A browser socket
+ * skips HTTP discovery; its identifier gates access, so `recorded` omits it.
+ */
+export interface BrowserObservationEndpoint {
+  readonly transport: "http_discovery" | "browser_websocket";
+  readonly url: string;
+  readonly recorded: string;
+}
+
+/** Loopback CDP HTTP discovery origin or browser WebSocket URL. */
+export const browserObservationEndpointSchema = z
+  .string()
+  .min(1)
+  .describe(
+    "Literal loopback CDP endpoint: http://127.0.0.1:PORT, or ws://127.0.0.1:PORT/devtools/browser/ID.",
+  )
+  .transform((value, context): BrowserObservationEndpoint => {
+    const url = URL.parse(value);
+    if (url === null) {
       context.addIssue({ code: "custom", message: "Invalid CDP endpoint URL" });
       return z.NEVER;
     }
-    if (
-      url.protocol !== "http:" ||
-      !isLiteralLoopbackHostname(url.hostname) ||
-      url.port === "" ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.pathname !== "/" ||
-      urlDeclaresQueryOrFragment(url)
-    ) {
-      context.addIssue({
-        code: "custom",
-        message:
-          "CDP endpoint must be an explicit-port HTTP URL on 127.0.0.1 or ::1",
-      });
-      return z.NEVER;
-    }
-    return url.origin;
+    const origin = httpDiscoveryOrigin(url);
+    if (origin !== undefined)
+      return { transport: "http_discovery", url: origin, recorded: origin };
+    const authority = browserSocketAuthority(url);
+    if (authority !== undefined)
+      return {
+        transport: "browser_websocket",
+        url: url.href,
+        recorded: `${authority}${REDACTED_BROWSER_SOCKET_PATH}`,
+      };
+    context.addIssue({
+      code: "custom",
+      message:
+        url.protocol === "ws:"
+          ? "CDP browser WebSocket must be ws://127.0.0.1:PORT/devtools/browser/ID or ws://[::1]:PORT/devtools/browser/ID"
+          : HTTP_ENDPOINT_MESSAGE,
+    });
+    return z.NEVER;
   });
+
+/** Evidence form of a passive browser endpoint, with any socket identifier redacted. */
+export const recordedBrowserObservationEndpointSchema = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => {
+      const url = URL.parse(value);
+      return (
+        url !== null &&
+        (httpDiscoveryOrigin(url) !== undefined ||
+          (browserSocketAuthority(url) !== undefined &&
+            url.pathname === REDACTED_BROWSER_SOCKET_PATH))
+      );
+    },
+    {
+      message:
+        "Recorded CDP endpoint must be a loopback HTTP origin or a redacted browser WebSocket URL",
+    },
+  );
 
 export const browserAllowedOriginsSchema = z
   .array(browserOriginSchema)
@@ -82,7 +161,7 @@ export const browserAllowedOriginsSchema = z
   .default([]);
 
 const browserInput = {
-  cdp_endpoint: browserEndpointSchema,
+  cdp_endpoint: browserObservationEndpointSchema,
   allowed_origins: browserAllowedOriginsSchema,
 };
 

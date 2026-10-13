@@ -29,8 +29,10 @@ admitted raw NMOS 6502 mapping on Windows. Windows P0 admission remains limited
 to native PE and raw NMOS 6502 images. For x64 PE
 NativeAOT RTR 9.1, the read-only snapshot parser can report metadata through
 `inspect_native_load_image` and `inspect_native_data_type` without a JAR or
-database mutation. A real Windows-host NativeAOT Ghidra run is still required
-to establish the complete host workflow.
+database mutation: MethodTable relationships, virtual slots and frozen strings.
+`analyze_function` decompiles slot targets. Database reads of the rehydrated
+bytes (`read_bytes`, `search_strings`) return nothing on this host. See
+[NativeAOT](ghidra-nativeaot.md).
 
 This boundary does not establish general Windows feature parity. Ghidra GUI
 state, annotations, other target architectures and formats, and Hopper-only

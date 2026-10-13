@@ -8,6 +8,7 @@ import { CordisExpression, DshCordisYaml } from "./DshCordisYaml.js";
 export const DSH_ENTRY_ID = "rea-mcp";
 export const DSH_CLIENT_PACKAGE = "@deepseek-ai/dsh-mcp-client";
 const LAUNCHER_KEYS = new Set(["serverName", "transport", "command", "args"]);
+const SELECTOR_KEYS = new Set(["id", "name"]);
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" &&
   value !== null &&
@@ -295,10 +296,15 @@ export class DshCordisDocument {
         carried = true;
         return [this.#entry(desired, invalidated)] as typeof inserted.items;
       });
-      replacements.set(
-        op.source,
-        inserted.items.length === 0 ? undefined : copy,
-      );
+      if (inserted.items.length === 0) copy.delete("insert");
+      // An emptied operation keeps caller fields unless it would patch REA's row.
+      const kept =
+        inserted.items.length > 0 ||
+        (this.#id(op.map) !== DSH_ENTRY_ID &&
+          copy.items.some(
+            (pair) => !SELECTOR_KEYS.has(this.#yaml.value(pair.key) as string),
+          ));
+      replacements.set(op.source, kept ? copy : undefined);
     }
     const output = this.#yaml.document.clone();
     const outputRoot = output.contents;

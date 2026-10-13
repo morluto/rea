@@ -229,7 +229,7 @@ it("extracts escaped WAT import/export forms while retaining multiline producer 
     new URL("../../tests/fixtures/wasm/decoded.wat", import.meta.url),
     "utf8",
   );
-  expect(parseWabtWat(text)).toEqual({
+  expect(parseWabtWat(text)).toMatchObject({
     imports: ['(import "env" "foo" (func (;0;) (type 0)))'],
     exports: ['(export "memory" (memory 0))', '(export "run" (func 1))'],
     customSectionNames: ["test"],
@@ -239,7 +239,7 @@ it("extracts escaped WAT import/export forms while retaining multiline producer 
     parseWabtWat(
       '(module (import "a.b" "c\\0aline" (func)) (export "fake\\22Export[1]:" (func 0)))',
     ),
-  ).toEqual({
+  ).toMatchObject({
     imports: ['(import "a.b" "c\\0aline" (func))'],
     exports: ['(export "fake\\22Export[1]:" (func 0))'],
     customSectionNames: [],

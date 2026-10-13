@@ -310,7 +310,7 @@ describe("setup scoped readiness", () => {
       id: "debian",
       versionId: "13",
       packageFamily: "deb",
-      supported: false,
+      hopperSetupSupported: false,
     };
     const result = await runSetup(options(true, true), host);
     expect(result.status).toBe("needs_human");
@@ -326,7 +326,7 @@ describe("setup scoped readiness", () => {
       id: "debian",
       versionId: "13",
       packageFamily: "deb",
-      supported: false,
+      hopperSetupSupported: false,
     };
     host.ghidra = "/opt/ghidra_12.1.4_PUBLIC";
     host.javaHome = "/usr/lib/jvm/jdk-21";

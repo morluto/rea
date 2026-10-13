@@ -143,3 +143,13 @@ export const completeReconstructionCoverageData = () => {
     ],
   });
 };
+
+/** Complete workspace with its first verifier result and boundary narrowed once. */
+export const completeReconstructionCoverageFixture = () => {
+  const workspace = completeReconstructionCoverageData();
+  const result = workspace.verifier_results[0];
+  const boundary = workspace.boundaries[0];
+  if (result === undefined || boundary === undefined)
+    throw new Error("Expected complete reconstruction coverage fixture");
+  return { workspace, result, boundary };
+};

@@ -266,6 +266,11 @@ const normalizeMacho = (
     ]),
     exports: covered(exports, false, [
       "Merged nm/dyld_info results may be incomplete for stripped binaries.",
+      ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
+        ? [
+            "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",
+          ]
+        : []),
     ]),
     segments: covered(
       load.segments.map((segment) => ({

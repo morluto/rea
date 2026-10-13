@@ -287,9 +287,12 @@ cliTest("uninstall names each retained skill directory", async ({ cli }) => {
   };
   const skill = report.items?.find(({ name }) => name === "skill");
   expect(skill?.status).toBe("retained");
-  for (const directory of [shared, claude]) {
+  for (const [client, directory] of [
+    ["shared", shared],
+    ["claude_code", claude],
+  ] as const) {
     expect(skill?.detail).toContain(
-      `${directory}: retained (Skill manifest is not REA-owned.)`,
+      `${client} (${directory}): retained (Skill manifest is not REA-owned.)`,
     );
     expect(await readFile(join(directory, "SKILL.md"), "utf8")).toBe(
       "---\nname: unrelated\n---\n",

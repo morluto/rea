@@ -553,10 +553,10 @@ const collectSourceMapOriginals = (
     if (!Array.isArray(names))
       return invalidSourceMap(file, "Source map has no sources array.");
     const contents = map.sourcesContent;
-    if (!hasValidSourceMapContents(names.length, contents))
+    if (!hasValidSourceMapContents(contents))
       return invalidSourceMap(
         file,
-        "Source map sourcesContent must contain one string or null entry per source.",
+        "Source map sourcesContent must be an array of strings or null entries.",
       );
     if (map.sourceRoot != null && typeof map.sourceRoot !== "string")
       return invalidSourceMap(

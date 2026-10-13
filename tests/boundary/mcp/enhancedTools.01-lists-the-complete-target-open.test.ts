@@ -104,7 +104,16 @@ const fixturePort = (): AnalysisOperationPort => ({
               "0x11": "_OBJC_CLASS_$_Fixture",
               "0x12": "_OBJC_PROTOCOL_$_FixtureDelegate",
               "0x13": "entry",
-            }),
+            }).map((entry) => ({
+              ...entry,
+              symbol: {
+                primary: true,
+                dynamic: false,
+                external: false,
+                type: "label",
+                source: "analysis",
+              },
+            })),
           ),
         );
       case "decode_interface_builder":

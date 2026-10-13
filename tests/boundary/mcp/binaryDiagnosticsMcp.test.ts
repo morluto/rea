@@ -1,9 +1,11 @@
+import {
+  advertisedMcpToolSchemas,
+  assertRecordedMcpEvidence,
+} from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 import { BinaryLayoutService } from "../../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
@@ -43,16 +45,11 @@ it("advertises exact valid schemas and records inline layout without a binary ta
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
-  const advertised = (await client.listTools()).tools.find(
-    (tool) => tool.name === "inspect_binary_layout",
+  const schemas = await advertisedMcpToolSchemas(
+    client,
+    "inspect_binary_layout",
   );
-  if (advertised?.outputSchema === undefined)
-    throw new Error("layout must publish both schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
-  const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
-  expect(ajv.validateSchema(inputSchema)).toBe(true);
-  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const { ajv, inputSchema } = schemas;
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
   expect(
     ajv.validate(inputSchema, {
@@ -64,19 +61,14 @@ it("advertises exact valid schemas and records inline layout without a binary ta
     name: "inspect_binary_layout",
     arguments: { path: value.artifact.path },
   });
-  expect(response.isError).not.toBe(true);
-  expect(
-    ajv.validate(outputSchema, response.structuredContent),
-    JSON.stringify(ajv.errors),
-  ).toBe(true);
-  const parsed = toolContract("inspect_binary_layout").outputSchema.parse(
-    response.structuredContent,
+  const evidence = assertRecordedMcpEvidence(
+    response,
+    "inspect_binary_layout",
+    schemas,
+    session,
+    value,
+    "observed",
   );
-  const evidence = parseEvidence(parsed);
-  expect(evidence.confidence).toBe("observed");
-  expect(evidence.subject?.digest.sha256).toBe(value.artifact.sha256);
-  expect(parsed.normalized_result).toEqual(value);
-  expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
   const viewed = await client.callTool({
     name: "inspect_analysis_view",
     arguments: {

@@ -11,6 +11,12 @@ import sys
 
 PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
 
+# Linux ET_CORE machine identifiers whose PRSTATUS layout is interpreted with
+# unchanged pwntools 4.15.0 ctypes. Both share pr_cursig@12, pr_pid@32 and
+# pr_reg@112; only the register window differs: amd64 is 27 x 8 bytes for a
+# 336-byte descriptor, AArch64 is 34 x 8 bytes for a 392-byte descriptor.
+CORE_MACHINES = (62, 183)
+
 
 class CoreFailure(Exception):
     def __init__(self, reason, message):
@@ -51,12 +57,27 @@ def inspect_core(path, cache):
     # Other declared OSABIs must never select Linux note ctypes.
     if content[7] not in (0, 3) or content[8] != 0:
         raise CoreFailure("unsupported-target", "Initial recorded-core profile requires System V or GNU/Linux OSABI with ABI version zero; selected OSABI=" + str(content[7]) + ", ABI version=" + str(content[8]) + ".")
-    if int.from_bytes(content[16:18], "little") != 4 or int.from_bytes(content[18:20], "little") != 62:
-        raise CoreFailure("unsupported-target", "Initial recorded-core profile requires x86-64 ET_CORE.")
+    machine = int.from_bytes(content[18:20], "little")
+    if int.from_bytes(content[16:18], "little") != 4 or machine not in CORE_MACHINES:
+        raise CoreFailure("unsupported-target", "Initial recorded-core profile requires ET_CORE for x86-64 or AArch64; selected ET_TYPE=" + str(int.from_bytes(content[16:18], "little")) + ", e_machine=" + str(machine) + ".")
     from elftools.common.exceptions import ELFError
     from elftools.common.utils import struct_parse
     from elftools.elf.elffile import ELFFile
-    from pwnlib.elf.datatypes import elf_prstatus_amd64, elf_siginfo_64, user_regs_struct_amd64
+    from pwnlib.elf.datatypes import (
+        elf_prstatus_aarch64,
+        elf_prstatus_amd64,
+        elf_siginfo_64,
+        user_regs_struct_aarch64,
+        user_regs_struct_amd64,
+    )
+    if machine == 62:
+        profile_label = "x86-64"
+        architecture = "x86_64-little-endian"
+        prstatus_type, registers_type = elf_prstatus_amd64, user_regs_struct_amd64
+    else:
+        profile_label = "AArch64"
+        architecture = "aarch64-little-endian"
+        prstatus_type, registers_type = elf_prstatus_aarch64, user_regs_struct_aarch64
     try:
         image = ELFFile(io.BytesIO(content))
         header = image.header
@@ -107,17 +128,17 @@ def inspect_core(path, cache):
                 if owner != b"CORE\0":
                     continue
                 if note.n_type == "NT_PRSTATUS":
-                    if len(descriptor) < ctypes.sizeof(elf_prstatus_amd64):
-                        raise CoreFailure("format", "Linux amd64 NT_PRSTATUS descriptor is truncated.")
-                    status = elf_prstatus_amd64.from_buffer_copy(descriptor)
+                    if len(descriptor) < ctypes.sizeof(prstatus_type):
+                        raise CoreFailure("format", "Linux " + profile_label + " NT_PRSTATUS descriptor is truncated.")
+                    status = prstatus_type.from_buffer_copy(descriptor)
                     registers = []
-                    for name, kind in user_regs_struct_amd64._fields_:
-                        relative = elf_prstatus_amd64.pr_reg.offset + getattr(user_regs_struct_amd64, name).offset
+                    for name, kind in registers_type._fields_:
+                        relative = prstatus_type.pr_reg.offset + getattr(registers_type, name).offset
                         registers.append({"name": name, "value": hex(getattr(status.pr_reg, name)), "location": location(descriptor_start + relative, ctypes.sizeof(kind), end)})
                     threads.append({"note_index": note_index, "historical_pid": ctypes.c_int32(status.pr_pid).value, "recorded_current_signal": status.pr_cursig, "registers": registers})
                 elif note.n_type == "NT_SIGINFO":
                     if len(descriptor) < ctypes.sizeof(elf_siginfo_64):
-                        raise CoreFailure("format", "Linux amd64 NT_SIGINFO descriptor is truncated.")
+                        raise CoreFailure("format", "Linux " + profile_label + " NT_SIGINFO descriptor is truncated.")
                     signal = elf_siginfo_64.from_buffer_copy(descriptor)
                     number = ctypes.c_int32(signal.si_signo).value
                     code = ctypes.c_int32(signal.si_code).value
@@ -125,7 +146,7 @@ def inspect_core(path, cache):
                     signals.append({"note_index": note_index, "number": number, "code": code, "errno": ctypes.c_int32(signal.si_errno).value,
                                     "fault_address": hex(signal.sigfault_addr) if known else None,
                                     "fault_address_meaning": "recorded-sigsegv-address" if known else "unknown", "thread_association": "unknown"})
-        return {"format": "elf-core", "architecture": "x86_64-little-endian", "target_execution": "not-performed", "live_process_identity": "unknown",
+        return {"format": "elf-core", "architecture": architecture, "target_execution": "not-performed", "live_process_identity": "unknown",
                 "segments": segments, "notes": notes, "note_padding": padding, "threads": threads, "signals": signals,
                 "note_interpretation_completeness": "unknown",
                 "limitations": ["The initial Linux note profile accepts System V/unspecified or GNU/Linux OSABI with ABI version zero; an unspecified OSABI alone does not prove operating-system origin.",

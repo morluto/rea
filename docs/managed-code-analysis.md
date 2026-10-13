@@ -233,8 +233,9 @@ these routes, their layout/host restrictions, derived-memory provenance, and
 verification coverage.
 
 REA's experimental Windows Ghidra boundary admits native x86 and x86-64 PE
-applications and DLLs for static analysis. This does not establish Windows
-NativeAOT metadata-recovery coverage.
+applications and DLLs for static analysis. For x64 PE NativeAOT, the read-only
+parser also runs there; the [NativeAOT guide](ghidra-nativeaot.md) lists what a
+Windows host covers.
 
 For NativeAOT analysis, preserve the selected native artifact's path and digest
 and report recovered type data with its returned provenance. Linking those types

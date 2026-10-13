@@ -1,5 +1,8 @@
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
-import type { RecordedCrash } from "../../../src/domain/native/recordedCrash.js";
+import type {
+  RecordedCrash,
+  RecordedCrashArchitecture,
+} from "../../../src/domain/native/recordedCrash.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
@@ -48,6 +51,7 @@ it
   .runIf(host)
   .each([
     "success",
+    "success-aarch64",
     "wrong-register",
     "wrong-register-source",
     "missing-thread",
@@ -77,9 +81,13 @@ it
   ] as const)(
   "validates recorded source bytes and cleanup: %s",
   async (scenario) => {
+    const architecture = scenario.endsWith("aarch64")
+      ? "aarch64-little-endian"
+      : "x86_64-little-endian";
     const { path, value, bytes } = await fixture(
       true,
       scenario === "wrong-owner-display",
+      architecture,
     );
     if (scenario.startsWith("wrong-ei-version-"))
       bytes[6] = Number(scenario.at(-1));
@@ -123,8 +131,9 @@ it
       path,
       include_debugger_context: false,
     });
-    if (scenario === "success") {
+    if (scenario === "success" || scenario === "success-aarch64") {
       if (!result.ok) throw result.error;
+      expect(result.value.architecture).toBe(architecture);
       expect(result.value.threads).toEqual(value.threads);
       expect(result.value.diagnostics.stdout).toBe("recorded warning");
     } else
@@ -340,13 +349,17 @@ const expectOptionalContextFailure = (
     });
 };
 
-const fixture = async (includeSignal = false, opaqueOwner = false) => {
+const fixture = async (
+  includeSignal = false,
+  opaqueOwner = false,
+  architecture: RecordedCrashArchitecture = "x86_64-little-endian",
+) => {
   const workspace = await createTestWorkspace("rea-recorded-core-seam-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
   const path = join(workspace.root, "recorded.core");
   const value = includeSignal
-    ? recordedCrashSignalFixture(path)
-    : recordedCrashFixture(path);
+    ? recordedCrashSignalFixture(path, architecture)
+    : recordedCrashFixture(path, architecture);
   if (opaqueOwner) {
     value.notes = value.notes.map((note) =>
       note.index === 0

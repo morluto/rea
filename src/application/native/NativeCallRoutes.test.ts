@@ -7,6 +7,59 @@ import { err, ok } from "../../domain/result.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
+describe("untyped native call route fallback", () => {
+  it.each([{ callees: [] }, { callees: ["0x2000"] }])(
+    "preserves targetless calls and their provider when fallback callees are $callees",
+    async ({ callees }) => {
+      const calls: string[] = [];
+      const referenceProvider = { ...provider, id: "hopper", name: "Hopper" };
+      const fallbackProvider = { ...provider, id: "fallback" };
+      const signal = new AbortController().signal;
+      const unknown = { address: "0x1008", reason: "No static target" };
+      const result = await readNativeCallRoutes(
+        {
+          execute: async (operation, parameters, options) => {
+            calls.push(operation);
+            expect(parameters.procedure).toBe("0x1000");
+            expect(options).toEqual({ signal, selectorOrigin: "provider" });
+            return ok(
+              createAnalysisExecution(
+                operation === "procedure_references"
+                  ? {
+                      reference_kinds_available: false,
+                      references: [],
+                      unresolved_calls: [unknown],
+                    }
+                  : callees,
+                operation === "procedure_references"
+                  ? referenceProvider
+                  : fallbackProvider,
+              ),
+            );
+          },
+        },
+        "0x1000",
+        signal,
+        "provider",
+      );
+      expect(calls).toEqual(["procedure_references", "procedure_callees"]);
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          provider: fallbackProvider,
+          routes: callees.map((address) => ({
+            address,
+            site: "0x1000",
+            relation: "provider_call",
+            resolution: "inferred",
+          })),
+          unknowns: [{ ...unknown, provider: referenceProvider }],
+        },
+      });
+    },
+  );
+});
+
 describe("typed native call routes", () => {
   it("preserves computed targets, ambiguity and targetless call sites", async () => {
     const reference = jsonValueSchema.parse(ghidraReferenceEdge());

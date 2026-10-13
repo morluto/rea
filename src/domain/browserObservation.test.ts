@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   browserEndpointSchema,
+  browserObservationEndpointSchema,
   browserOriginSchema,
+  recordedBrowserObservationEndpointSchema,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
@@ -44,6 +46,58 @@ describe("browser observation contracts", () => {
       "http://user:pass@127.0.0.1:9222",
     ])
       expect(browserEndpointSchema.safeParse(value).success, value).toBe(false);
+  });
+
+  it("accepts a loopback browser socket and records it without its identifier", () => {
+    expect(
+      browserObservationEndpointSchema.parse("http://127.0.0.1:9222/"),
+    ).toEqual({
+      transport: "http_discovery",
+      url: "http://127.0.0.1:9222",
+      recorded: "http://127.0.0.1:9222",
+    });
+    expect(
+      browserObservationEndpointSchema.parse(
+        "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+      ),
+    ).toEqual({
+      transport: "browser_websocket",
+      url: "ws://[::1]:9222/devtools/browser/0b1c-socket-id",
+      recorded: "ws://[::1]:9222/devtools/browser/[REDACTED]",
+    });
+    for (const value of [
+      "ws://127.0.0.1/devtools/browser/id",
+      "ws://localhost:9222/devtools/browser/id",
+      "wss://127.0.0.1:9222/devtools/browser/id",
+      "ws://user:pass@127.0.0.1:9222/devtools/browser/id",
+      "ws://127.0.0.1:9222/devtools/browser/id?token=x",
+      "ws://127.0.0.1:9222/devtools/browser/id#fragment",
+      "ws://127.0.0.1:9222/devtools/browser/id?",
+      "ws://127.0.0.1:9222/devtools/browser/id#",
+      "ws://127.0.0.1:9222/devtools/browser/",
+      "ws://127.0.0.1:9222/devtools/browser/id/extra",
+      "ws://127.0.0.1:9222/devtools/page/id",
+    ])
+      expect(
+        browserObservationEndpointSchema.safeParse(value).success,
+        value,
+      ).toBe(false);
+  });
+
+  it("accepts recorded browser sockets only in their redacted form", () => {
+    for (const value of [
+      "http://127.0.0.1:9222",
+      "ws://127.0.0.1:9222/devtools/browser/[REDACTED]",
+    ])
+      expect(
+        recordedBrowserObservationEndpointSchema.safeParse(value).success,
+        value,
+      ).toBe(true);
+    expect(
+      recordedBrowserObservationEndpointSchema.safeParse(
+        "ws://127.0.0.1:9222/devtools/browser/0b1c-socket-id",
+      ).success,
+    ).toBe(false);
   });
 });
 
