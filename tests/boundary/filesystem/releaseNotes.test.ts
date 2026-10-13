@@ -440,7 +440,19 @@ it("binds publication to complete recorded history and the reviewed base", async
   await git(f.directory, ["add", "CHANGELOG.md", ...pluginManifests]);
   await git(f.directory, ["commit", "-m", "chore: release notes"]);
   const source = await git(f.directory, ["rev-parse", "HEAD"]);
-  // Release PRs bump the plugin manifest version and pinned launch only.
+  // Release PRs may migrate the launcher pin from package@version to bare
+  // SemVer while changing only the plugin version.
+  for (const path of [
+    ".claude-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    ".cursor-plugin/mcp.json",
+  ]) {
+    const manifest = JSON.parse(
+      await readFile(join(f.directory, path), "utf8"),
+    );
+    manifest.mcpServers.rea.args[1] = "6.4.0";
+    await writeFile(join(f.directory, path), JSON.stringify(manifest));
+  }
   await f.invoke(["check", "--manifest", f.manifest, "--source", source]);
   await writeFile(join(f.directory, "product.txt"), "later product change");
   await git(f.directory, ["add", "product.txt"]);

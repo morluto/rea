@@ -378,10 +378,14 @@ function pluginManifestWithoutVersions(text) {
   if (manifest === null || typeof manifest !== "object") return text;
   if ("version" in manifest) manifest.version = "";
   const launch = manifest.mcpServers?.rea?.args;
-  // Only the version after the last "@" is release-owned; a different package
-  // name changes what the plugin runs.
+  // The current launcher stores only the product's bare SemVer pin; older
+  // manifests used an explicit package specifier. Canonicalize both forms
+  // while retaining any explicitly different package name as behavior.
   if (Array.isArray(launch) && typeof launch[1] === "string")
-    launch[1] = launch[1].replace(/@[^@/]*$/u, "@");
+    launch[1] =
+      valid(launch[1]) === launch[1]
+        ? "rea-agents@"
+        : launch[1].replace(/@[^@/]*$/u, "@");
   return JSON.stringify(manifest);
 }
 
