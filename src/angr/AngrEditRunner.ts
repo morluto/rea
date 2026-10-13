@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisProtocolError,
@@ -21,6 +22,7 @@ import {
   editBatchSchema,
   flavorSchema,
   type AngrEditBatch,
+  type AngrFunction,
 } from "./AngrProtocolValues.js";
 
 const SESSION_EFFECTS = {
@@ -84,9 +86,13 @@ export class AngrEditRunner {
     tool: "rename" | "set_type" | "set_comments",
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<AngrEditBatch> {
-    const batch = editBatchSchema.parse(await this.runner.call(tool, args));
-    if (batch.dry_run !== true && batch.succeeded > 0)
-      this.options.onMutation();
+    // Caches derived from names are dropped before dispatch: the server may
+    // apply the edit even when the caller cancels before the reply.
+    if (args.dry_run !== true) this.options.onMutation();
+    const batch = editBatchSchema.parse(
+      await this.runner.callSettled(tool, args),
+    );
+    if (this.runner.cancelled) throw new AnalysisCancelledError(tool);
     if (batch.results.length !== batch.total)
       throw new AnalysisProtocolError(
         "angr edit batch reported a different item count than it returned.",
@@ -186,45 +192,51 @@ export class AngrEditRunner {
       input.procedure,
       "annotate_native_function",
     );
-    if (input.name !== undefined) {
-      const batch = await this.batch("rename", {
-        items: [
-          { kind: "function", address: fn.address, new_name: input.name },
-        ],
-        allow_overwrite: false,
-      });
-      const entry = batch.results[0];
-      if (entry === undefined || !applied(entry.status))
-        throw new AnalysisInputError("annotate_native_function", undefined, [
-          {
-            path: ["name"],
-            reason: "invalid_value",
-            message: entry?.error ?? "angr rejected the function name.",
-          },
-        ]);
-    }
+    const rollback: { name?: string; comment?: string } = {};
     let comment: string | null = null;
-    if (input.comment !== undefined) {
-      const batch = await this.batch("set_comments", {
-        items: [
-          { kind: "function", address: fn.address, comment: input.comment },
-        ],
-      });
-      const entry = batch.results[0];
-      if (entry === undefined || !applied(entry.status))
-        throw new AnalysisProtocolError(
-          `angr rejected the entry comment: ${entry?.error ?? "no result"}`,
+    let refreshed: AngrFunction;
+    try {
+      if (input.comment !== undefined) {
+        const entry = await this.applyOne("set_comments", {
+          kind: "function",
+          address: fn.address,
+          comment: input.comment,
+        });
+        if (entry === undefined || !applied(entry.status))
+          throw new AnalysisProtocolError(
+            `angr rejected the entry comment: ${entry?.error ?? "no result"}`,
+          );
+        if (entry.status === "ok") rollback.comment = entry.old ?? "";
+        comment = entry.new ?? "";
+      } else
+        this.runner.limitations.push(
+          "The existing entry comment was not read back because it was not changed; angr's MCP server has no comment read.",
         );
-      comment = entry.new ?? "";
-    } else
-      this.runner.limitations.push(
-        "The existing entry comment was not read back because it was not changed; angr's MCP server has no comment read.",
-      );
-    const refreshed = await this.runner.resolve(fn.address);
-    if (input.name !== undefined && refreshed.name !== input.name)
-      throw new AnalysisProtocolError(
-        "angr function name readback disagrees with the requested name.",
-      );
+      if (input.name !== undefined) {
+        const entry = await this.applyOne("rename", {
+          kind: "function",
+          address: fn.address,
+          new_name: input.name,
+        });
+        if (entry === undefined || !applied(entry.status))
+          throw new AnalysisInputError("annotate_native_function", undefined, [
+            {
+              path: ["name"],
+              reason: "invalid_value",
+              message: entry?.error ?? "angr rejected the function name.",
+            },
+          ]);
+        if (entry.status === "ok") rollback.name = fn.name;
+      }
+      refreshed = await this.runner.resolve(fn.address);
+      if (input.name !== undefined && refreshed.name !== input.name)
+        throw new AnalysisProtocolError(
+          "angr function name readback disagrees with the requested name.",
+        );
+    } catch (cause: unknown) {
+      await this.rollbackAnnotations(fn.address, rollback, cause);
+      throw cause;
+    }
     return {
       annotations: {
         address: refreshed.address,
@@ -235,6 +247,54 @@ export class AngrEditRunner {
       dossier: await this.runner.dossier(refreshed),
       effects: SESSION_EFFECTS,
     };
+  }
+
+  /** Apply one edit item and return its entry; dry runs never reach here. */
+  private async applyOne(
+    tool: "rename" | "set_comments",
+    item: Readonly<Record<string, JsonValue>>,
+  ) {
+    const batch = await this.batch(tool, {
+      items: [item],
+      ...(tool === "rename" ? { allow_overwrite: false } : {}),
+    });
+    return batch.results[0];
+  }
+
+  /** Restore the values an annotation changed before it failed; an unrestorable edit is reported. */
+  private async rollbackAnnotations(
+    address: string,
+    rollback: { name?: string; comment?: string },
+    cause: unknown,
+  ): Promise<void> {
+    const remaining: string[] = [];
+    if (rollback.name !== undefined) {
+      const entry = await this.applyOne("rename", {
+        kind: "function",
+        address,
+        new_name: rollback.name,
+      }).catch(() => undefined);
+      if (entry === undefined || !applied(entry.status))
+        remaining.push(
+          `function name (previously ${JSON.stringify(rollback.name)})`,
+        );
+    }
+    if (rollback.comment !== undefined) {
+      const entry = await this.applyOne("set_comments", {
+        kind: "function",
+        address,
+        comment: rollback.comment,
+      }).catch(() => undefined);
+      if (entry === undefined || !applied(entry.status))
+        remaining.push("entry comment");
+    }
+    if (remaining.length > 0)
+      throw new AnalysisProtocolError(
+        `The annotation failed and its applied edits could not be restored: ${remaining.join(", ")}. ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        { cause },
+      );
   }
 
   async renameVariables(
@@ -340,7 +400,7 @@ export class AngrEditRunner {
     let changed: z.infer<typeof flavorSchema>;
     try {
       changed = flavorSchema.parse(
-        await this.runner.call("set_decompilation_flavor", {
+        await this.runner.callSettled("set_decompilation_flavor", {
           flavor: input.flavor,
         }),
       );
@@ -364,6 +424,8 @@ export class AngrEditRunner {
     }
     this.options.onFlavor(changed.flavor);
     this.options.onMutation();
+    if (this.runner.cancelled)
+      throw new AnalysisCancelledError("set_native_decompilation_flavor");
     const current = flavorSchema.parse(
       await this.runner.call("get_decompilation_flavor", {}),
     );

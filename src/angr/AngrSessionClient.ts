@@ -26,7 +26,10 @@ import { createEvidence } from "../domain/evidence.js";
 import type { AngrConfiguration } from "./AngrConfiguration.js";
 import type { AngrMcpConnection } from "./AngrMcpConnection.js";
 import { parseAngrInput } from "./AngrInput.js";
-import { AngrOperationRunner } from "./AngrOperationRunner.js";
+import {
+  AngrOperationRunner,
+  type AngrRawObservation,
+} from "./AngrOperationRunner.js";
 import {
   ANGR_FLAVOR_TOOLS,
   ANGR_LIMITATIONS,
@@ -77,8 +80,12 @@ export class AngrSessionClient implements AnalysisClient {
   #closing = false;
   #closePromise: Promise<Result<null, AnalysisError>> | undefined;
   #loaded: AngrLoadedBinary | undefined;
+  /** Retained as soon as the server reports it, so a failed startup can still close the project. */
+  #projectId: string | undefined;
   #cfg: JsonValue = null;
-  #callGraph: Promise<AngrCallGraph> | undefined;
+  #callGraph:
+    | Promise<{ graph: AngrCallGraph; observation: AngrRawObservation }>
+    | undefined;
   #flavor: string | null = null;
   #flavorToolsAvailable = false;
   /** Session-wide limitations established at startup. */
@@ -204,12 +211,19 @@ export class AngrSessionClient implements AnalysisClient {
     return new AngrOperationRunner(this.connection, this.#loaded.project_id, {
       signal: options?.signal,
       selectorOrigin: options?.selectorOrigin,
-      callGraph: (load) => {
-        this.#callGraph ??= load().catch((cause: unknown) => {
-          this.#callGraph = undefined;
-          throw cause;
-        });
-        return this.#callGraph;
+      callGraph: async (runner) => {
+        if (this.#callGraph === undefined) {
+          this.#callGraph = runner.loadCallGraph().catch((cause: unknown) => {
+            this.#callGraph = undefined;
+            throw cause;
+          });
+          return (await this.#callGraph).graph;
+        }
+        // A cache hit replays the reply so this result's Evidence explains its relationships.
+        const cached = await this.#callGraph;
+        if (!runner.raw.some(({ tool }) => tool === "get_callgraph"))
+          runner.raw.push({ ...cached.observation, reused: true });
+        return cached.graph;
       },
       flavorToolsAvailable: this.#flavorToolsAvailable,
       // Call-graph nodes carry function names, so any applied edit invalidates it.
@@ -301,8 +315,12 @@ export class AngrSessionClient implements AnalysisClient {
           },
           confidence: "observed",
           authority: "external-service",
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
           limitations: [
             ...ANGR_LIMITATIONS,
+            ...this.#limitations,
             ...new Set(runner.limitations),
             "The requested angr operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
           ],
@@ -328,7 +346,11 @@ export class AngrSessionClient implements AnalysisClient {
       throw new AnalysisProtocolError(
         `angr MCP server is missing tools: ${missing.join(", ")}. Install a current angr release with its MCP extra; see docs/angr-provider.md.`,
       );
-    const loaded = loadBinarySchema.parse(await this.#loadBinary());
+    const reply = await this.#loadBinary();
+    this.#projectId = z
+      .object({ project_id: z.string().min(1) })
+      .parse(reply).project_id;
+    const loaded = loadBinarySchema.parse(reply);
     this.#loaded = loaded;
     await this.#verifyLoadedTarget(loaded);
     const cfg = cfgStatsSchema.parse(
@@ -440,15 +462,14 @@ export class AngrSessionClient implements AnalysisClient {
     await this.#tail;
     if (this.#closed) return ok(null);
     const resource =
-      this.#loaded === undefined
+      this.#projectId === undefined
         ? "angr MCP connection"
-        : `angr project ${this.#loaded.project_id}`;
+        : `angr project ${this.#projectId}`;
     try {
       if (this.#startup !== undefined) {
         // A failed startup may still have loaded the project before CFG recovery.
         await this.#startup.catch(() => undefined);
-        const transportClosed =
-          this.#loaded !== undefined && (await this.#closeProject());
+        const transportClosed = await this.#closeProject();
         if (!transportClosed) await this.connection.close();
       }
       this.#closed = true;
@@ -460,26 +481,30 @@ export class AngrSessionClient implements AnalysisClient {
 
   /** Closes the loaded project; true when the owned transport was ended to release it. */
   async #closeProject(): Promise<boolean> {
-    if (this.#loaded === undefined) return false;
+    const projectId = this.#projectId;
+    if (projectId === undefined) return false;
     try {
       const closed = closeProjectSchema.parse(
         await this.connection.call("close_project", {
-          project_id: this.#loaded.project_id,
+          project_id: projectId,
         }),
       );
-      if (closed.project_id !== this.#loaded.project_id)
+      if (closed.project_id !== projectId)
         throw new AnalysisProtocolError(
           "angr closed a different project than the one this session loaded.",
         );
     } catch (cause: unknown) {
-      // An attached server keeps the project for a later retry. An owned stdio
-      // server holds it only in memory, so ending the process releases it.
-      if ("url" in this.config) throw cause;
+      // A shared (attached) server keeps the project for a later retry, even
+      // behind a stdio proxy. An owned headless server holds it only in
+      // memory, so ending the process releases it.
+      if (this.config.mode === "attached") throw cause;
       await this.connection.close();
       this.#loaded = undefined;
+      this.#projectId = undefined;
       return true;
     }
     this.#loaded = undefined;
+    this.#projectId = undefined;
     return false;
   }
 }

@@ -42,6 +42,8 @@ export interface AngrRawObservation {
   readonly tool: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly result: JsonValue;
+  /** True when replayed from the session cache rather than requested by this operation. */
+  readonly reused?: true;
 }
 
 type ProcedureIdentity = z.infer<typeof procedureIdentitySchema>;
@@ -157,9 +159,9 @@ export class AngrOperationRunner {
     private readonly options: {
       readonly signal?: AbortSignal | undefined;
       readonly selectorOrigin?: "provider" | undefined;
-      /** Session-cached call graph; angr's recovered graph is static after CFG recovery. */
+      /** Session-cached call graph; a cache hit replays the reply into this runner's raw observations. */
       readonly callGraph: (
-        load: () => Promise<AngrCallGraph>,
+        runner: AngrOperationRunner,
       ) => Promise<AngrCallGraph>;
       /** Whether the connected server advertises the decompilation-flavor tools. */
       readonly flavorToolsAvailable: boolean;
@@ -169,7 +171,25 @@ export class AngrOperationRunner {
     },
   ) {}
 
+  get cancelled(): boolean {
+    return this.options.signal?.aborted === true;
+  }
+
   async call(
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+  ): Promise<JsonValue> {
+    const result = await this.callSettled(tool, args);
+    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
+    return result;
+  }
+
+  /**
+   * Like `call`, but a reply that arrives after cancellation is still returned,
+   * so an edit the server already applied can update local state before the
+   * cancellation is reported.
+   */
+  async callSettled(
     tool: string,
     args: Readonly<Record<string, JsonValue>>,
   ): Promise<JsonValue> {
@@ -177,8 +197,21 @@ export class AngrOperationRunner {
     const scoped = { ...args, project_id: this.projectId };
     const result = await this.connection.call(tool, scoped);
     this.raw.push({ tool, arguments: scoped, result });
-    if (this.options.signal?.aborted) throw new AnalysisCancelledError(tool);
     return result;
+  }
+
+  /** Fetch the call graph, returning the raw reply so a session cache can replay it. */
+  async loadCallGraph(): Promise<{
+    graph: AngrCallGraph;
+    observation: AngrRawObservation;
+  }> {
+    const graph = callGraphSchema.parse(await this.call("get_callgraph", {}));
+    const observation = this.raw[this.raw.length - 1];
+    if (observation === undefined)
+      throw new AnalysisProtocolError(
+        "angr call graph reply was not recorded.",
+      );
+    return { graph, observation };
   }
 
   async functions() {
@@ -328,9 +361,7 @@ export class AngrOperationRunner {
     fn: AngrFunction,
     direction: "callers" | "callees",
   ): Promise<{ items: ProcedureIdentity[]; coverage: RelationshipCoverage }> {
-    const graph = await this.options.callGraph(async () =>
-      callGraphSchema.parse(await this.call("get_callgraph", {})),
-    );
+    const graph = await this.options.callGraph(this);
     const nodes = new Map(graph.nodes.map((node) => [node.address, node]));
     const related = new Set<string>();
     for (const edge of graph.edges) {

@@ -348,7 +348,9 @@ export class RecordingAngrMcp implements AngrMcpConnection {
       };
       if (name === "rename") {
         const newName = String(item.new_name);
-        if (kind === "function" && fn !== undefined) {
+        if (newName === "__reject__")
+          fail("Name '__reject__' is not a valid identifier.");
+        else if (kind === "function" && fn !== undefined) {
           entry.old = this.names.get(fn.address) ?? fn.name;
           entry.target = entry.old;
           entry.new = newName;
@@ -389,9 +391,10 @@ export class RecordingAngrMcp implements AngrMcpConnection {
       } else {
         const address =
           kind === "function" ? (fn?.address ?? "") : String(item.address);
+        const comment = String(item.comment ?? "");
         if (address === "") fail(`No function named ${JSON.stringify(fnKey)}.`);
+        else if (comment === "__reject__") fail("Comment rejected by fixture.");
         else {
-          const comment = String(item.comment ?? "");
           entry.target = address;
           entry.old = this.comments.get(address) ?? null;
           entry.new = comment;
