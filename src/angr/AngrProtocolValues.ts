@@ -24,8 +24,6 @@ export const angrLoadOptions = (
 ): Readonly<Record<string, string>> => {
   if (target.kind !== "executable") return {};
   const arch = ARCHINFO_IDS[target.architecture];
-  if (target.format === "mach-o-universal")
-    return arch === undefined ? {} : { arch };
   if (target.format === "raw-binary" && arch !== undefined)
     // REA maps the whole file from the entry point, so the image base is the entry.
     return {

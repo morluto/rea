@@ -395,7 +395,7 @@ export class AngrSessionClient implements AnalysisClient {
     }
   }
 
-  /** Headered files load as-is; a universal slice or raw image carries REA's selection to angr. */
+  /** Headered files load as-is; supported raw images carry REA's loader selection to angr. */
   async #loadBinary(): Promise<JsonValue> {
     const options = angrLoadOptions(this.target);
     try {

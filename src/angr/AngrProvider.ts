@@ -1,3 +1,4 @@
+import { angrLoadOptions } from "./AngrProtocolValues.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
@@ -95,6 +96,16 @@ export class AngrProvider implements AnalysisProviderCandidate {
         reason:
           "angr admits executable inputs, not analysis databases or archives. Select the original input binary.",
         diagnostics,
+      };
+    if (target.format === "mach-o-universal")
+      return {
+        status: "unsupported", code: "target_format_unsupported",
+        reason: "angr architecture selection cannot establish the caller-selected universal slice offset and size. Select a thin executable.", diagnostics,
+      };
+    if (target.format === "raw-binary" && Object.keys(angrLoadOptions(target)).length === 0)
+      return {
+        status: "unsupported", code: "target_format_unsupported",
+        reason: "The selected raw-image architecture has no supported angr loader mapping.", diagnostics,
       };
     return { status: "supported", code: null, reason: null, diagnostics };
   }

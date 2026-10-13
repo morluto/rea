@@ -46,7 +46,7 @@ describe("angr provider discovery", () => {
         ),
     ).toBe(true);
   });
-  it("admits every executable format and declines non-executable kinds", () => {
+  it("admits supported executable inputs and declines unavailable slice selection", () => {
     const provider = configured();
     const executables: readonly BinaryTarget[] = [
       { ...identity, format: "elf" },
@@ -57,16 +57,15 @@ describe("angr provider discovery", () => {
         entryPoint: "0x8000000",
         entryPointSource: "0x8000000",
       },
-      {
-        ...identity,
-        format: "mach-o-universal",
-        universalSlice: { offset: 0, size: 1 },
-      },
+
     ];
     for (const target of executables)
       expect(provider.inspectTargetSupport(target)).toMatchObject({
         status: "supported",
       });
+    expect(provider.inspectTargetSupport({
+      ...identity, format: "mach-o-universal", universalSlice: { offset: 0, size: 1 },
+    })).toMatchObject({ status: "unsupported", code: "target_format_unsupported" });
     expect(
       provider.inspectTargetSupport({
         path: "/tmp/target.i64",
