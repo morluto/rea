@@ -408,3 +408,32 @@ describe("annotation rollback when the refreshed analysis fails", () => {
     }
   });
 });
+
+describe("explicit document selection", () => {
+  it("rejects a document other than the bound target before contacting angr", async () => {
+    const { target, producer, client } = await open();
+    try {
+      const other = await client.execute("set_comment", {
+        address: "0x1004",
+        comment: "stray",
+        document: `${target.path}.other`,
+      });
+      expect(other.ok).toBe(false);
+      if (!other.ok) expect(other.error._tag).toBe("AnalysisInputError");
+      expect(producer.connects).toBe(0);
+      expect(producer.comments.size).toBe(0);
+      const read = await client.execute("procedure_address", {
+        procedure: "main",
+        document: `${target.path}.other`,
+      });
+      expect(read.ok).toBe(false);
+      const same = await client.execute("procedure_address", {
+        procedure: "main",
+        document: target.path,
+      });
+      expect(same.ok && same.value.result).toBe("0x1000");
+    } finally {
+      await client.close();
+    }
+  });
+});

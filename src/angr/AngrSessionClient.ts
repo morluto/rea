@@ -1,4 +1,5 @@
 import { realpath } from "node:fs/promises";
+import { normalize } from "node:path";
 import { z } from "zod";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
@@ -10,6 +11,7 @@ import {
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
   AnalysisProtocolError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
@@ -50,6 +52,11 @@ const isAngrOperation = (operation: string): operation is AngrOperation =>
   operationSet.has(operation);
 const wasCancelled = (options: ExecutionOptions | undefined): boolean =>
   options?.signal?.aborted === true;
+/** Compare host-local paths; Windows paths compare case-insensitively. */
+const sameHostPath = (left: string, right: string): boolean =>
+  process.platform === "win32"
+    ? normalize(left).toLowerCase() === normalize(right).toLowerCase()
+    : normalize(left) === normalize(right);
 
 /** A failed cleanup retains the upstream project and reports it for retry. */
 class AngrCleanupError extends ProviderAdapterError {
@@ -160,6 +167,27 @@ export class AngrSessionClient implements AnalysisClient {
       if (!parsed.ok) return parsed;
       parameters = parsed.value;
     }
+    // An explicit document must name the bound target: one session serves
+    // exactly one angr project, and a mismatch must not read or edit it.
+    const document = parameters.document;
+    if (
+      document !== undefined &&
+      (typeof document !== "string" ||
+        (!sameHostPath(document, this.target.path) &&
+          (this.target.sourcePath === undefined ||
+            !sameHostPath(document, this.target.sourcePath))))
+    )
+      return err(
+        new AnalysisInputError(operation, undefined, [
+          {
+            path: ["document"],
+            reason: "invalid_value",
+            expected: this.target.path,
+            message:
+              "angr document must be the REA-bound target; omit document or use its admitted path.",
+          },
+        ]),
+      );
     let runner: AngrOperationRunner | undefined;
     try {
       await this.#start();

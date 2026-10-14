@@ -57,15 +57,21 @@ describe("angr provider discovery", () => {
         entryPoint: "0x8000000",
         entryPointSource: "0x8000000",
       },
-
     ];
     for (const target of executables)
       expect(provider.inspectTargetSupport(target)).toMatchObject({
         status: "supported",
       });
-    expect(provider.inspectTargetSupport({
-      ...identity, format: "mach-o-universal", universalSlice: { offset: 0, size: 1 },
-    })).toMatchObject({ status: "unsupported", code: "target_format_unsupported" });
+    expect(
+      provider.inspectTargetSupport({
+        ...identity,
+        format: "mach-o-universal",
+        universalSlice: { offset: 0, size: 1 },
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
     expect(
       provider.inspectTargetSupport({
         path: "/tmp/target.i64",

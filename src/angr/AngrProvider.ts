@@ -99,13 +99,22 @@ export class AngrProvider implements AnalysisProviderCandidate {
       };
     if (target.format === "mach-o-universal")
       return {
-        status: "unsupported", code: "target_format_unsupported",
-        reason: "angr architecture selection cannot establish the caller-selected universal slice offset and size. Select a thin executable.", diagnostics,
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "angr architecture selection cannot establish the caller-selected universal slice offset and size. Select a thin executable.",
+        diagnostics,
       };
-    if (target.format === "raw-binary" && Object.keys(angrLoadOptions(target)).length === 0)
+    if (
+      target.format === "raw-binary" &&
+      Object.keys(angrLoadOptions(target)).length === 0
+    )
       return {
-        status: "unsupported", code: "target_format_unsupported",
-        reason: "The selected raw-image architecture has no supported angr loader mapping.", diagnostics,
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "The selected raw-image architecture has no supported angr loader mapping.",
+        diagnostics,
       };
     return { status: "supported", code: null, reason: null, diagnostics };
   }
