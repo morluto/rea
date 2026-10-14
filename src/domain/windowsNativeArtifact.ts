@@ -13,7 +13,23 @@ export const WINDOWS_NATIVE_ARTIFACT = {
   artifact: "rea-windows-x64.node",
 } as const;
 
-export type WindowsNativeManifest = typeof WINDOWS_NATIVE_ARTIFACT & {
+/** Packaged artifact and PE machine for each admitted Windows architecture. */
+export const WINDOWS_NATIVE_TARGETS = {
+  x64: { artifact: "rea-windows-x64.node", machine: 0x8664 },
+  arm64: { artifact: "rea-windows-arm64.node", machine: 0xaa64 },
+} as const;
+export type WindowsNativeArchitecture = keyof typeof WINDOWS_NATIVE_TARGETS;
+
+const windowsNativeArtifactFor = (architecture: WindowsNativeArchitecture) =>
+  ({
+    ...WINDOWS_NATIVE_ARTIFACT,
+    architecture,
+    artifact: WINDOWS_NATIVE_TARGETS[architecture].artifact,
+  }) as const;
+
+export type WindowsNativeManifest = ReturnType<
+  typeof windowsNativeArtifactFor
+> & {
   readonly packageVersion: string;
   readonly artifactSha256: string;
 };
@@ -26,7 +42,9 @@ export class WindowsNativeArtifactError extends Error {
 export const parseWindowsNativeManifest = (
   value: unknown,
   packageVersion: string,
+  architecture: WindowsNativeArchitecture = WINDOWS_NATIVE_ARTIFACT.architecture,
 ): Result<WindowsNativeManifest, WindowsNativeArtifactError> => {
+  const contract = windowsNativeArtifactFor(architecture);
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return err(
       new WindowsNativeArtifactError(
@@ -48,7 +66,7 @@ export const parseWindowsNativeManifest = (
         "Windows native artifact manifest has missing or unknown fields",
       ),
     );
-  for (const [key, expected] of Object.entries(WINDOWS_NATIVE_ARTIFACT))
+  for (const [key, expected] of Object.entries(contract))
     if (manifest[key] !== expected)
       return err(
         new WindowsNativeArtifactError(
@@ -77,15 +95,22 @@ export const parseWindowsNativeManifest = (
       ),
     );
   return ok({
-    ...WINDOWS_NATIVE_ARTIFACT,
+    ...contract,
     packageVersion: manifest.packageVersion,
     artifactSha256: manifest.artifactSha256,
   });
 };
 
-const validateWindowsX64Artifact = (
+const validateWindowsPeArtifact = (
   bytes: Buffer,
+  architecture: WindowsNativeArchitecture,
 ): Result<void, WindowsNativeArtifactError> => {
+  const notTarget = () =>
+    err(
+      new WindowsNativeArtifactError(
+        `Windows native artifact is not a Windows ${architecture} PE32+ image`,
+      ),
+    );
   if (bytes.length < 64 || bytes.toString("latin1", 0, 2) !== "MZ")
     return err(
       new WindowsNativeArtifactError(
@@ -94,32 +119,19 @@ const validateWindowsX64Artifact = (
     );
   const observed = observeMzWindowsHeader(bytes);
   if (observed.state !== "declared" || observed.signature !== "PE")
-    return err(
-      new WindowsNativeArtifactError(
-        "Windows native artifact is not a Windows x64 PE32+ image",
-      ),
-    );
+    return notTarget();
   const offset = observed.offset;
   const coff = readPeCoffHeader(bytes.subarray(offset + 4, offset + 24));
   if (
     !coff.ok ||
-    coff.value.machine !== 0x8664 ||
+    coff.value.machine !== WINDOWS_NATIVE_TARGETS[architecture].machine ||
     coff.value.optionalHeaderSize > bytes.length - offset - 24
   )
-    return err(
-      new WindowsNativeArtifactError(
-        "Windows native artifact is not a Windows x64 PE32+ image",
-      ),
-    );
+    return notTarget();
   const optional = readPeOptionalHeaderIdentity(
     bytes.subarray(offset + 24, offset + 24 + coff.value.optionalHeaderSize),
   );
-  if (!optional.ok || optional.value.bits !== 64)
-    return err(
-      new WindowsNativeArtifactError(
-        "Windows native artifact is not a Windows x64 PE32+ image",
-      ),
-    );
+  if (!optional.ok || optional.value.bits !== 64) return notTarget();
   return ok(undefined);
 };
 
@@ -136,7 +148,7 @@ export const validateWindowsNativeArtifact = (
         "Windows native artifact SHA-256 does not match package metadata",
       ),
     );
-  return validateWindowsX64Artifact(bytes);
+  return validateWindowsPeArtifact(bytes, manifest.architecture);
 };
 
 /** Produce metadata only for a Windows x64 PE32+ artifact. */
@@ -144,7 +156,10 @@ export const createWindowsNativeManifest = (
   packageVersion: string,
   bytes: Buffer,
 ): Result<WindowsNativeManifest, WindowsNativeArtifactError> => {
-  const valid = validateWindowsX64Artifact(bytes);
+  const valid = validateWindowsPeArtifact(
+    bytes,
+    WINDOWS_NATIVE_ARTIFACT.architecture,
+  );
   if (!valid.ok) return valid;
   return parseWindowsNativeManifest(
     {
