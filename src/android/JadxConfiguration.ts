@@ -501,13 +501,16 @@ const archiveCancellation = (
 const requireSupportedHost = (host: HostPlatform): void => {
   const { platform, architecture } = host;
   if (platform === "linux" || platform === "darwin") return;
-  if (platform === "win32" && architecture === "x64") {
+  if (
+    platform === "win32" &&
+    (architecture === "x64" || architecture === "arm64")
+  ) {
     const loaded = systemWindowsNativeAuthority(host);
     if (loaded.available) {
       if (loaded.authority.inspection.protocolStdin === true) return;
       throw configurationFailure(
         "runtime_missing",
-        "The bundled Windows native artifact lacks owned protocol stdin; use a matching current Windows x64 REA package.",
+        "The bundled Windows native artifact lacks owned protocol stdin; use a matching current Windows REA package for this architecture.",
         {
           platform: platform,
           architecture: architecture,
@@ -546,7 +549,7 @@ const requireSupportedHost = (host: HostPlatform): void => {
   }
   throw configurationFailure(
     "unsupported_host",
-    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, or Windows x64 with its bundled native controls.`,
+    `Android JADX subprocess ownership is unsupported on ${platform}/${architecture}; use Linux, macOS, or Windows x64/arm64 with its bundled native controls.`,
     { platform: platform },
     "unsupported_host",
   );
