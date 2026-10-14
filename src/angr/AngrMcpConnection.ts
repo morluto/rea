@@ -35,7 +35,7 @@ const toolResultSchema = z.object({
   isError: z.boolean().optional(),
   structuredContent: z.record(z.string(), z.unknown()).optional(),
   content: z.array(
-    z.object({ type: z.string(), text: z.string().optional() }).passthrough(),
+    z.looseObject({ type: z.string(), text: z.string().optional() }),
   ),
 });
 

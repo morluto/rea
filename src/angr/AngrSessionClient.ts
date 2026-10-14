@@ -94,6 +94,8 @@ export class AngrSessionClient implements AnalysisClient {
   #flavorToolsAvailable = false;
   /** Session-wide limitations established at startup. */
   readonly #limitations: string[] = [];
+  /** Replies received while loading and preparing the project, retained for startup failures. */
+  readonly #startupObservations: AngrRawObservation[] = [];
 
   constructor(
     private readonly config: AngrConfiguration,
@@ -338,8 +340,11 @@ export class AngrSessionClient implements AnalysisClient {
             "Check the configured angr interpreter or MCP registration and the selected target; see docs/angr-provider.md.",
         },
       });
-    if (runner !== undefined && runner.raw.length > 0) {
-      const observations = jsonValueSchema.parse(runner.raw);
+    // Before a runner exists, the completed startup replies are the only
+    // observations; after one exists, startup already succeeded.
+    const raw = runner === undefined ? this.#startupObservations : runner.raw;
+    if (raw.length > 0) {
+      const observations = jsonValueSchema.parse(raw);
       failure.retainPartialObservation(
         createEvidence(this.target, ANGR_PROVIDER_IDENTITY, {
           predicateType: "analysis-observation",
@@ -364,12 +369,14 @@ export class AngrSessionClient implements AnalysisClient {
           limitations: [
             ...ANGR_LIMITATIONS,
             ...this.#limitations,
-            ...new Set(runner.limitations),
-            "The requested angr operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
+            ...new Set(runner?.limitations ?? []),
+            runner === undefined
+              ? "angr session startup failed after these completed upstream replies; the partial Evidence records what the server reported before the failure."
+              : "The requested angr operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
           ],
           locations: [
             { kind: "artifact-path", path: this.target.path },
-            ...runner.locations,
+            ...(runner?.locations ?? []),
           ],
         }),
       );
@@ -397,7 +404,7 @@ export class AngrSessionClient implements AnalysisClient {
     this.#loaded = loaded;
     await this.#verifyLoadedTarget(loaded);
     const cfg = cfgStatsSchema.parse(
-      await this.connection.call(
+      await this.#startupCall(
         "get_cfg",
         {
           project_id: loaded.project_id,
@@ -417,7 +424,7 @@ export class AngrSessionClient implements AnalysisClient {
     );
     if (this.#flavorToolsAvailable) {
       const current = flavorSchema.parse(
-        await this.connection.call("get_decompilation_flavor", {
+        await this.#startupCall("get_decompilation_flavor", {
           project_id: loaded.project_id,
         }),
       );
@@ -429,7 +436,7 @@ export class AngrSessionClient implements AnalysisClient {
           `The angr registration selects flavor ${this.config.flavor}, but the connected server has no decompilation-flavor tools; upgrade angr or remove the flavor setting.`,
         );
       const changed = flavorSchema.parse(
-        await this.connection.call("set_decompilation_flavor", {
+        await this.#startupCall("set_decompilation_flavor", {
           project_id: loaded.project_id,
           flavor: this.config.flavor,
         }),
@@ -442,7 +449,7 @@ export class AngrSessionClient implements AnalysisClient {
   async #loadBinary(): Promise<JsonValue> {
     const options = angrLoadOptions(this.target);
     try {
-      return await this.connection.call(
+      return await this.#startupCall(
         "load_binary",
         {
           binary_path: this.target.path,
@@ -463,6 +470,17 @@ export class AngrSessionClient implements AnalysisClient {
         );
       throw cause;
     }
+  }
+
+  /** A startup call whose reply is retained so a later startup failure can explain itself. */
+  async #startupCall(
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<JsonValue> {
+    const result = await this.connection.call(tool, args, options);
+    this.#startupObservations.push({ tool, arguments: args, result });
+    return result;
   }
 
   /**

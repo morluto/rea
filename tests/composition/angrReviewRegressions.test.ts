@@ -437,3 +437,27 @@ describe("explicit document selection", () => {
     }
   });
 });
+
+describe("startup failure provenance", () => {
+  it("retains the replies angr returned before startup failed", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.overrideCall = (name) => {
+        if (name === "get_cfg")
+          throw new AnalysisProtocolError(
+            "angr MCP tool failed: CFG recovery exploded",
+          );
+        return undefined;
+      };
+      const result = await client.execute("list_procedures", {});
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const partial = JSON.stringify(result.error.partialObservation);
+        expect(partial).toContain('"tool":"load_binary"');
+        expect(partial).toContain("startup failed");
+      }
+    } finally {
+      await client.close();
+    }
+  });
+});

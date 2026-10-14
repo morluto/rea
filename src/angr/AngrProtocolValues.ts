@@ -35,159 +35,127 @@ export const angrLoadOptions = (
   return {};
 };
 
-export const loadBinarySchema = z
-  .object({
-    project_id: z.string().min(1),
-    binary_path: z.string().min(1),
-    sha256: z
-      .string()
-      .regex(/^[0-9a-f]{64}$/iu)
-      .optional(),
-    arch: z.string(),
-    bits: z.number().int(),
-    endianness: z.string(),
-    entry_point: angrAddressSchema,
-    filename: z.string(),
-  })
-  .passthrough();
+export const loadBinarySchema = z.looseObject({
+  project_id: z.string().min(1),
+  binary_path: z.string().min(1),
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/iu)
+    .optional(),
+  arch: z.string(),
+  bits: z.number().int(),
+  endianness: z.string(),
+  entry_point: angrAddressSchema,
+  filename: z.string(),
+});
 export type AngrLoadedBinary = z.infer<typeof loadBinarySchema>;
 
-export const cfgStatsSchema = z
-  .object({
-    project_id: z.string(),
-    status: z.literal("success"),
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    functions_discovered: z.number().int().min(0),
-  })
-  .passthrough();
+export const cfgStatsSchema = z.looseObject({
+  project_id: z.string(),
+  status: z.literal("success"),
+  nodes: z.number().int().min(0),
+  edges: z.number().int().min(0),
+  functions_discovered: z.number().int().min(0),
+});
 
-export const functionSummarySchema = z
-  .object({
-    address: angrAddressSchema,
-    name: z.string(),
-    is_plt: z.boolean(),
-    is_syscall: z.boolean(),
-  })
-  .passthrough();
+export const functionSummarySchema = z.looseObject({
+  address: angrAddressSchema,
+  name: z.string(),
+  is_plt: z.boolean(),
+  is_syscall: z.boolean(),
+});
 export type AngrFunctionSummary = z.infer<typeof functionSummarySchema>;
 
-export const functionPageSchema = z
-  .object({
-    total: z.number().int().min(0),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1),
-    functions: z.array(functionSummarySchema),
-  })
-  .passthrough();
+export const functionPageSchema = z.looseObject({
+  total: z.number().int().min(0),
+  offset: z.number().int().min(0),
+  limit: z.number().int().min(1),
+  functions: z.array(functionSummarySchema),
+});
 
-export const functionInfoSchema = z
-  .object({
-    address: angrAddressSchema,
-    name: z.string(),
-    size: z.number().int().min(0).nullable(),
-    is_plt: z.boolean(),
-    is_syscall: z.boolean(),
-    is_simprocedure: z.boolean(),
-    returning: z.boolean().nullable(),
-    binary_name: z.string().nullable(),
-    num_blocks: z.number().int().min(0),
-    prototype: z.string().optional(),
-  })
-  .passthrough();
+export const functionInfoSchema = z.looseObject({
+  address: angrAddressSchema,
+  name: z.string(),
+  size: z.number().int().min(0).nullable(),
+  is_plt: z.boolean(),
+  is_syscall: z.boolean(),
+  is_simprocedure: z.boolean(),
+  returning: z.boolean().nullable(),
+  binary_name: z.string().nullable(),
+  num_blocks: z.number().int().min(0),
+  prototype: z.string().optional(),
+});
 export type AngrFunction = z.infer<typeof functionInfoSchema>;
 
-export const decompileSchema = z
-  .object({
-    function_address: angrAddressSchema,
-    function_name: z.string(),
-    code: z.string(),
-  })
-  .passthrough();
+export const decompileSchema = z.looseObject({
+  function_address: angrAddressSchema,
+  function_name: z.string(),
+  code: z.string(),
+});
 
-export const instructionSchema = z
-  .object({
-    address: angrAddressSchema,
-    mnemonic: z.string(),
-    op_str: z.string(),
-    bytes: z.string(),
-  })
-  .passthrough();
+export const instructionSchema = z.looseObject({
+  address: angrAddressSchema,
+  mnemonic: z.string(),
+  op_str: z.string(),
+  bytes: z.string(),
+});
 
-export const basicBlockSchema = z
-  .object({
-    address: angrAddressSchema,
-    size: z.number().int().min(0),
-    instruction_count: z.number().int().min(0),
-    instructions: z.array(instructionSchema).optional(),
-    disasm_error: z.string().optional(),
-  })
-  .passthrough();
+export const basicBlockSchema = z.looseObject({
+  address: angrAddressSchema,
+  size: z.number().int().min(0),
+  instruction_count: z.number().int().min(0),
+  instructions: z.array(instructionSchema).optional(),
+  disasm_error: z.string().optional(),
+});
 export type AngrBasicBlock = z.infer<typeof basicBlockSchema>;
 
-export const basicBlocksSchema = z
-  .object({
-    function_address: angrAddressSchema,
-    function_name: z.string(),
-    block_count: z.number().int().min(0),
-    blocks: z.array(basicBlockSchema),
-  })
-  .passthrough();
+export const basicBlocksSchema = z.looseObject({
+  function_address: angrAddressSchema,
+  function_name: z.string(),
+  block_count: z.number().int().min(0),
+  blocks: z.array(basicBlockSchema),
+});
 
-export const xrefsSchema = z
-  .object({
-    address: angrAddressSchema,
-    direction: z.enum(["to", "from"]),
-    count: z.number().int().min(0),
-    xrefs: z.array(
-      z
-        .object({
-          from_address: angrAddressSchema.nullable(),
-          to_address: angrAddressSchema.nullable(),
-          type: z.string(),
-          block_address: angrAddressSchema.nullable(),
-        })
-        .passthrough(),
-    ),
-  })
-  .passthrough();
+export const xrefsSchema = z.looseObject({
+  address: angrAddressSchema,
+  direction: z.enum(["to", "from"]),
+  count: z.number().int().min(0),
+  xrefs: z.array(
+    z.looseObject({
+      from_address: angrAddressSchema.nullable(),
+      to_address: angrAddressSchema.nullable(),
+      type: z.string(),
+      block_address: angrAddressSchema.nullable(),
+    }),
+  ),
+});
 
-export const stringsSchema = z
-  .object({
-    count: z.number().int().min(0),
-    strings: z.array(
-      z
-        .object({
-          address: angrAddressSchema,
-          content: z.string(),
-          size: z.number().int().min(0).nullable(),
-          type: z.enum(["ascii", "unicode"]),
-        })
-        .passthrough(),
-    ),
-  })
-  .passthrough();
+export const stringsSchema = z.looseObject({
+  count: z.number().int().min(0),
+  strings: z.array(
+    z.looseObject({
+      address: angrAddressSchema,
+      content: z.string(),
+      size: z.number().int().min(0).nullable(),
+      type: z.enum(["ascii", "unicode"]),
+    }),
+  ),
+});
 
-export const callGraphSchema = z
-  .object({
-    node_count: z.number().int().min(0),
-    edge_count: z.number().int().min(0),
-    nodes: z.array(
-      z
-        .object({
-          address: angrAddressSchema,
-          name: z.string(),
-          is_plt: z.boolean(),
-        })
-        .passthrough(),
-    ),
-    edges: z.array(
-      z
-        .object({ from: angrAddressSchema, to: angrAddressSchema })
-        .passthrough(),
-    ),
-  })
-  .passthrough();
+export const callGraphSchema = z.looseObject({
+  node_count: z.number().int().min(0),
+  edge_count: z.number().int().min(0),
+  nodes: z.array(
+    z.looseObject({
+      address: angrAddressSchema,
+      name: z.string(),
+      is_plt: z.boolean(),
+    }),
+  ),
+  edges: z.array(
+    z.looseObject({ from: angrAddressSchema, to: angrAddressSchema }),
+  ),
+});
 export type AngrCallGraph = z.infer<typeof callGraphSchema>;
 
 const editText = z
@@ -196,46 +164,41 @@ const editText = z
   .optional()
   .transform((value) => (value == null ? null : String(value)));
 
-export const editEntrySchema = z
-  .object({
-    index: z.number().int().min(0),
-    kind: z.string(),
-    status: z.enum(["ok", "unchanged", "error", "skipped"]),
-    function_address: angrAddressSchema.nullable(),
-    function_name: z.string().nullable(),
-    target: editText,
-    old: editText,
-    new: editText,
-    detail: z.record(z.string(), z.unknown()).nullable().optional(),
-    error: z.string().nullable().optional(),
-  })
-  .passthrough();
+export const editEntrySchema = z.looseObject({
+  index: z.number().int().min(0),
+  kind: z.string(),
+  status: z.enum(["ok", "unchanged", "error", "skipped"]),
+  function_address: angrAddressSchema.nullable(),
+  function_name: z.string().nullable(),
+  target: editText,
+  old: editText,
+  new: editText,
+  detail: z.record(z.string(), z.unknown()).nullable().optional(),
+  error: z.string().nullable().optional(),
+});
 export type AngrEditEntry = z.infer<typeof editEntrySchema>;
 
-export const editBatchSchema = z
-  .object({
-    dry_run: z.boolean(),
-    total: z.number().int().min(0),
-    succeeded: z.number().int().min(0),
-    unchanged: z.number().int().min(0),
-    failed: z.number().int().min(0),
-    skipped: z.number().int().min(0),
-    results: z.array(editEntrySchema),
-    functions_affected: z.array(angrAddressSchema),
-  })
-  .passthrough();
+export const editBatchSchema = z.looseObject({
+  dry_run: z.boolean(),
+  total: z.number().int().min(0),
+  succeeded: z.number().int().min(0),
+  unchanged: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  skipped: z.number().int().min(0),
+  results: z.array(editEntrySchema),
+  functions_affected: z.array(angrAddressSchema),
+});
 export type AngrEditBatch = z.infer<typeof editBatchSchema>;
 
-export const flavorSchema = z
-  .object({
-    flavor: z.string().min(1),
-    previous_flavor: z.string().min(1).optional(),
-    available_flavors: z.array(z.string().min(1)).optional(),
-    detected_language: z.string().min(1).nullable().optional(),
-    detection_confidence: z.string().min(1).nullable().optional(),
-  })
-  .passthrough();
+export const flavorSchema = z.looseObject({
+  flavor: z.string().min(1),
+  previous_flavor: z.string().min(1).optional(),
+  available_flavors: z.array(z.string().min(1)).optional(),
+  detected_language: z.string().min(1).nullable().optional(),
+  detection_confidence: z.string().min(1).nullable().optional(),
+});
 
-export const closeProjectSchema = z
-  .object({ project_id: z.string(), closed: z.boolean() })
-  .passthrough();
+export const closeProjectSchema = z.looseObject({
+  project_id: z.string(),
+  closed: z.boolean(),
+});
