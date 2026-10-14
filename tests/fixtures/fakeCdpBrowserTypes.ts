@@ -105,6 +105,9 @@ export interface FakeOptions {
   readonly webMcpTools?: boolean;
   /** Replaces the primary tool's registration stack; returning `undefined` omits it. */
   readonly webMcpStackTrace?: (origin: string) => JsonValue | undefined;
+  readonly webMcpConsequential?: JsonValue;
+  /** Primary tool's annotations payload; own-property presence selects it so explicit null reaches the provider. */
+  readonly webMcpAnnotations?: JsonValue;
   readonly webMcpFrameCount?: number;
   readonly webMcpChildLeavesScope?: boolean;
   readonly electronFileUrl?: string;
