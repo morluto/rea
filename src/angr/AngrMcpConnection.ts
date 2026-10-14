@@ -31,6 +31,9 @@ export interface AngrMcpConnection {
   close(): Promise<void>;
 }
 
+/** Bound retained upstream error text so diagnostics stay caller-safe in size. */
+const UPSTREAM_REASON_LIMIT = 4_096;
+
 const toolResultSchema = z.object({
   isError: z.boolean().optional(),
   structuredContent: z.record(z.string(), z.unknown()).optional(),
@@ -45,10 +48,13 @@ export const decodeAngrToolResult = (input: unknown): JsonValue => {
   const blocks = result.content.flatMap((block) =>
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
-  if (result.isError === true)
-    throw new AnalysisProtocolError(
-      `angr MCP tool failed: ${blocks.join("\n")}`,
-    );
+  if (result.isError === true) {
+    // The projection replaces the message, so the upstream reason travels as diagnostics.
+    const reason = blocks.join("\n").slice(0, UPSTREAM_REASON_LIMIT);
+    throw new AnalysisProtocolError(`angr MCP tool failed: ${reason}`, {
+      diagnostics: { upstream_tool_error: reason },
+    });
+  }
   if (result.structuredContent !== undefined) {
     const value = result.structuredContent;
     return jsonValueSchema.parse(

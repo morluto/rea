@@ -542,11 +542,13 @@ export class AngrOperationRunner {
   async dossier(fn: AngrFunction): Promise<JsonValue> {
     const blocks = await this.blocks(fn);
     let pseudocode: string | null;
+    let pseudocodeFailure: string | undefined;
     try {
       pseudocode = await this.pseudocode(fn);
     } catch (cause: unknown) {
       if (!(cause instanceof AnalysisProtocolError)) throw cause;
       pseudocode = null;
+      pseudocodeFailure = cause.message;
       this.limitations.push(`Pseudocode is unavailable: ${cause.message}`);
     }
     const callers = await this.relationships(fn, "callers");
@@ -573,6 +575,39 @@ export class AngrOperationRunner {
       basic_blocks: [],
       native_api: null,
       native_value_flow: null,
+      // Empty facets above are unsupported, not observed absence; say so explicitly.
+      facet_availability: {
+        pseudocode:
+          pseudocodeFailure === undefined
+            ? { available: true }
+            : {
+                available: false,
+                reason: `angr did not produce pseudocode: ${pseudocodeFailure}`,
+              },
+        assembly: { available: true },
+        comments: {
+          available: false,
+          reason:
+            "angr's MCP server has no comment read; comments are not exposed.",
+        },
+        callers: { available: true },
+        callees: { available: true },
+        references: {
+          available: false,
+          reason:
+            "angr adapter does not expose typed reference edges; xrefs reports data references only.",
+        },
+        strings_names: {
+          available: false,
+          reason:
+            "angr adapter does not expose function-referenced strings and names.",
+        },
+        cfg: {
+          available: false,
+          reason:
+            "angr's MCP server reports basic blocks without successors; the dossier omits them.",
+        },
+      },
       limitations: [
         ...ANGR_LIMITATIONS,
         ...new Set(this.limitations),

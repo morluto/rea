@@ -6,6 +6,7 @@ import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderCapabilities.
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
+import { decodeAngrToolResult } from "../../src/angr/AngrMcpConnection.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -459,5 +460,71 @@ describe("startup failure provenance", () => {
     } finally {
       await client.close();
     }
+  });
+});
+
+describe("dossier facet availability and upstream failure reasons", () => {
+  it("marks unsupported dossier facets unavailable and failed pseudocode explicitly", async () => {
+    const { producer, client } = await open();
+    try {
+      const ok = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!ok.ok) throw ok.error;
+      const facets = (
+        ok.value.result as {
+          facet_availability: Record<string, { available: boolean }>;
+        }
+      ).facet_availability;
+      expect(facets.pseudocode).toEqual({ available: true });
+      expect(facets.callers).toEqual({ available: true });
+      expect(facets.comments?.available).toBe(false);
+      expect(facets.references?.available).toBe(false);
+      expect(facets.cfg?.available).toBe(false);
+      producer.overrideCall = (name) => {
+        if (name === "decompile_function")
+          throw new AnalysisProtocolError(
+            "angr MCP tool failed: Function too complex: 60000 blocks exceed max_function_blocks=50000",
+          );
+        return undefined;
+      };
+      const degraded = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!degraded.ok) throw degraded.error;
+      const result = degraded.value.result as {
+        pseudocode: string;
+        facet_availability: {
+          pseudocode: { available: boolean; reason?: string };
+        };
+      };
+      expect(result.pseudocode).toBe("");
+      expect(result.facet_availability.pseudocode.available).toBe(false);
+      expect(result.facet_availability.pseudocode.reason).toContain(
+        "max_function_blocks",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+  it("keeps the upstream reason in diagnostics when a tool call fails", () => {
+    expect(() =>
+      decodeAngrToolResult({
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "CFG not built for project p1. Call get_cfg first.",
+          },
+        ],
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        diagnostics: {
+          upstream_tool_error:
+            "CFG not built for project p1. Call get_cfg first.",
+        },
+      }),
+    );
   });
 });
