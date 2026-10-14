@@ -124,11 +124,13 @@ An existing browser keeps its own background scheduling. When its window is
 minimized or covered, Chromium can mark the page hidden, pause
 `requestAnimationFrame` and throttle timers. Passive captures and
 `capture_web_screenshot` still succeed and do not record page visibility, so
-animation positions, canvas frames and time-driven text can be stale. Before
-reporting time-dependent behavior, ask the user to bring the window to the
-front, or compare two captures taken apart: unchanged time-driven content is
-an observation limitation, not page behavior. Launch-mode scenarios use
-Playwright's default Chromium switches, which disable this throttling.
+animation positions, canvas frames and time-driven text can be stale. Two
+unchanged captures from a background window cannot tell throttling apart from a
+page that stopped updating. Before reporting time-dependent behavior, ask the
+user to bring the window to the front and capture again; until then, report
+unchanged time-driven content as possibly limited by observation. Launch-mode
+scenarios use Playwright's default Chromium switches, which disable this
+throttling.
 
 ## Fiddler Everywhere traffic debugging
 
