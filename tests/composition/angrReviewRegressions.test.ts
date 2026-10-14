@@ -572,3 +572,116 @@ describe("credential redaction in upstream tool errors", () => {
     expect(serialized).toContain("[redacted transport credential]");
   });
 });
+
+describe("failed disassembly", () => {
+  const undisassembled = {
+    project_id: "p1",
+    function_address: "0x1000",
+    function_name: "main",
+    block_count: 2,
+    blocks: [
+      {
+        address: "0x1000",
+        size: 16,
+        instruction_count: 0,
+        instructions: [],
+        disasm_error: "Failed to disassemble",
+      },
+      {
+        address: "0x1010",
+        size: 16,
+        instruction_count: 0,
+        instructions: [],
+        disasm_error: "Failed to disassemble",
+      },
+    ],
+  };
+  it("marks dossier assembly unavailable when no block was disassembled", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.overrideCall = (name) =>
+        name === "get_basic_blocks" ? undisassembled : undefined;
+      const result = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      const dossier = result.value.result as {
+        assembly: string[];
+        facet_availability: {
+          assembly: { available: boolean; reason?: string };
+        };
+      };
+      expect(dossier.assembly).toEqual([]);
+      expect(dossier.facet_availability.assembly.available).toBe(false);
+      expect(dossier.facet_availability.assembly.reason).toContain(
+        "Failed to disassemble",
+      );
+    } finally {
+      await client.close();
+    }
+  });
+  it("fails assembly reads instead of returning an empty listing", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.overrideCall = (name) =>
+        name === "get_basic_blocks" ? undisassembled : undefined;
+      for (const operation of [
+        "procedure_assembly",
+        "read_function_instructions",
+      ] as const) {
+        const result = await client.execute(operation, { procedure: "main" });
+        expect(result.ok).toBe(false);
+        if (!result.ok)
+          expect(result.error.diagnostics).toMatchObject({ operation });
+      }
+    } finally {
+      await client.close();
+    }
+  });
+  it("keeps assembly available when only some blocks failed", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.overrideCall = (name) =>
+        name === "get_basic_blocks"
+          ? {
+              ...undisassembled,
+              blocks: [
+                {
+                  address: "0x1000",
+                  size: 16,
+                  instruction_count: 0,
+                  instructions: [],
+                  disasm_error: "Failed to disassemble",
+                },
+                {
+                  address: "0x1010",
+                  size: 16,
+                  instruction_count: 1,
+                  instructions: [
+                    {
+                      address: "0x1010",
+                      mnemonic: "ret",
+                      op_str: "",
+                      bytes: "c3",
+                    },
+                  ],
+                },
+              ],
+            }
+          : undefined;
+      const result = await client.execute("analyze_function", {
+        procedure: "main",
+      });
+      if (!result.ok) throw result.error;
+      const dossier = result.value.result as {
+        facet_availability: { assembly: { available: boolean } };
+      };
+      expect(dossier.facet_availability.assembly.available).toBe(true);
+      expect(result.value.limitations).toContainEqual(
+        expect.stringContaining("could not disassemble 1 basic block"),
+      );
+    } finally {
+      await client.close();
+    }
+  });
+});

@@ -147,6 +147,37 @@ const instructionLines = (blocks: readonly AngrBasicBlock[]): string[] =>
     ),
   );
 
+/**
+ * Why no instruction was recovered, or undefined when angr disassembled at
+ * least one. An empty listing must never pass for a complete one.
+ */
+const assemblyFailure = (
+  blocks: readonly AngrBasicBlock[],
+): string | undefined => {
+  if (instructionLines(blocks).length > 0) return undefined;
+  if (blocks.length === 0)
+    return "angr reported no basic blocks for this function.";
+  const errors = [
+    ...new Set(blocks.flatMap(({ disasm_error }) => disasm_error ?? [])),
+  ];
+  return errors.length > 0
+    ? `angr could not disassemble any of the function's ${blocks.length} basic block(s): ${errors.join("; ")}`
+    : `angr returned ${blocks.length} basic block(s) without instructions.`;
+};
+
+/** Instruction lines for operations whose whole answer is the listing. */
+const requireInstructionLines = (
+  operation: string,
+  blocks: readonly AngrBasicBlock[],
+): string[] => {
+  const failure = assemblyFailure(blocks);
+  if (failure !== undefined)
+    throw new AnalysisProtocolError(failure, {
+      diagnostics: { operation, disassembly: failure },
+    });
+  return instructionLines(blocks);
+};
+
 /** Translate explicit analyst questions into a closed set of read-only upstream requests. */
 export class AngrOperationRunner {
   readonly raw: AngrRawObservation[] = [];
@@ -456,7 +487,9 @@ export class AngrOperationRunner {
       case "procedure_pseudo_code":
         return this.pseudocode(fn);
       case "procedure_assembly":
-        return instructionLines(await this.blocks(fn)).join("\n");
+        return requireInstructionLines(operation, await this.blocks(fn)).join(
+          "\n",
+        );
       case "procedure_callers":
       case "procedure_callees": {
         const relationships = await this.relationships(
@@ -470,7 +503,7 @@ export class AngrOperationRunner {
         const blocks = await this.blocks(fn);
         return functionInstructionWindowSchema.parse({
           procedure: this.identity(fn, blocks),
-          instructions: instructionLines(blocks),
+          instructions: requireInstructionLines(operation, blocks),
           limitations: [...ANGR_LIMITATIONS, ...this.limitations],
         });
       }
@@ -541,6 +574,7 @@ export class AngrOperationRunner {
 
   async dossier(fn: AngrFunction): Promise<JsonValue> {
     const blocks = await this.blocks(fn);
+    const disassemblyFailure = assemblyFailure(blocks);
     let pseudocode: string | null;
     let pseudocodeFailure: string | undefined;
     try {
@@ -584,7 +618,10 @@ export class AngrOperationRunner {
                 available: false,
                 reason: `angr did not produce pseudocode: ${pseudocodeFailure}`,
               },
-        assembly: { available: true },
+        assembly:
+          disassemblyFailure === undefined
+            ? { available: true }
+            : { available: false, reason: disassemblyFailure },
         comments: {
           available: false,
           reason:

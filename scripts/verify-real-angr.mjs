@@ -303,6 +303,13 @@ const mcp = async (cliDossier) => {
     );
     assert.equal(prototypes.dry_run, true);
     assert.equal(prototypes.total, 1);
+    // A rejected item is still a successful tool reply; require an accepted readback.
+    assert.ok(
+      ["ok", "unchanged"].includes(prototypes.results[0]?.status),
+      `prototype dry run rejected: ${prototypes.results[0]?.error ?? "no item result"}`,
+    );
+    assert.equal(prototypes.failed, 0);
+    assert.equal(prototypes.results[0]?.new, "int");
     assert.equal(
       observe(
         await call("set_comment", {
