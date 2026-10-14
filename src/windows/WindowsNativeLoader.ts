@@ -8,8 +8,10 @@ import { z } from "zod";
 import { PACKAGE_METADATA } from "../generatedPackageMetadata.js";
 import {
   WINDOWS_NATIVE_ARTIFACT,
+  WINDOWS_NATIVE_TARGETS,
   parseWindowsNativeManifest,
   validateWindowsNativeArtifact,
+  type WindowsNativeArchitecture,
 } from "../domain/windowsNativeArtifact.js";
 import { RuntimeControlUnavailableError } from "../domain/runtimeControlUnavailableError.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -34,7 +36,7 @@ export const windowsFileIdentitySchema = z.strictObject({
 const inspectionSchema = z.strictObject({
   abiVersion: z.literal(WINDOWS_NATIVE_ARTIFACT.abiVersion),
   nodeApiVersion: z.literal(WINDOWS_NATIVE_ARTIFACT.nodeApiVersion),
-  architecture: z.literal(WINDOWS_NATIVE_ARTIFACT.architecture),
+  architecture: z.enum(["x64", "arm64"]),
   filesystem: windowsFileIdentitySchema,
   privateDacl: z.literal(true),
   privateBridgeDescriptorAccess: z.literal(true),
@@ -86,12 +88,21 @@ export interface WindowsNativeLoadHost {
   readonly nodeApiVersion: string | undefined;
   readonly packageVersion: string;
   readManifest(): unknown;
-  readArtifact(): Buffer;
-  loadArtifact(): unknown;
+  readArtifact(artifact: string): Buffer;
+  loadArtifact(artifact: string): unknown;
 }
 
-const missingWindowsNativeFileReason = (file: string): string =>
-  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from the rea-agents@${PACKAGE_METADATA.version} tarball only when this checkout matches that published release's native contract. Matching package version alone is insufficient; otherwise build them from this exact source checkout using native/windows/README.md. No native artifact was loaded.`;
+const isWindowsNativeArchitecture = (
+  architecture: string,
+): architecture is WindowsNativeArchitecture =>
+  Object.hasOwn(WINDOWS_NATIVE_TARGETS, architecture);
+
+/** Name the host's own artifact, so arm64 recovery does not point at x64. */
+const missingWindowsNativeFileReason = (
+  file: string,
+  artifact: string,
+): string =>
+  `Missing packaged Windows native file native/windows/build/${file} (ENOENT). Restore both native/windows/build/manifest.json and native/windows/build/${artifact} from the rea-agents@${PACKAGE_METADATA.version} tarball only when this checkout matches that published release's native contract. Matching package version alone is insufficient; otherwise build them from this exact source checkout using native/windows/README.md. No native artifact was loaded.`;
 
 /** Recovery when Windows refuses to load the verified artifact, for example by code-integrity policy. */
 export const WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION =
@@ -131,7 +142,11 @@ export class WindowsNativeAuthorityUnavailableError extends RuntimeControlUnavai
   }
 }
 
-const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
+const readPackagedWindowsNativeFile = <T>(
+  file: string,
+  artifact: string,
+  read: () => T,
+): T => {
   try {
     return read();
   } catch (cause: unknown) {
@@ -141,7 +156,9 @@ const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
       "code" in cause &&
       cause.code === "ENOENT"
     )
-      throw new Error(missingWindowsNativeFileReason(file), { cause });
+      throw new Error(missingWindowsNativeFileReason(file, artifact), {
+        cause,
+      });
     throw cause;
   }
 };
@@ -150,12 +167,15 @@ const readPackagedWindowsNativeFile = <T>(file: string, read: () => T): T => {
 export const loadWindowsNativeAuthority = (
   host: WindowsNativeLoadHost,
 ): WindowsNativeLoadResult => {
-  if (host.platform !== "win32" || host.architecture !== "x64")
+  const architecture = host.architecture;
+  if (host.platform !== "win32" || !isWindowsNativeArchitecture(architecture))
     return {
       available: false,
       failureStage: "host",
-      reason: "REA Windows native controls require a Windows x64 host.",
+      reason:
+        "REA Windows native controls require a Windows x64 or arm64 host.",
     };
+  const target = WINDOWS_NATIVE_TARGETS[architecture];
   const nodeApiVersion = Number(host.nodeApiVersion);
   if (
     !Number.isSafeInteger(nodeApiVersion) ||
@@ -168,24 +188,28 @@ export const loadWindowsNativeAuthority = (
     };
   try {
     const manifest = parseWindowsNativeManifest(
-      readPackagedWindowsNativeFile("manifest.json", () => host.readManifest()),
+      readPackagedWindowsNativeFile("manifest.json", target.artifact, () =>
+        host.readManifest(),
+      ),
       host.packageVersion,
+      architecture,
     );
     if (!manifest.ok) throw manifest.error;
     const artifact = readPackagedWindowsNativeFile(
-      WINDOWS_NATIVE_ARTIFACT.artifact,
-      () => host.readArtifact(),
+      target.artifact,
+      target.artifact,
+      () => host.readArtifact(target.artifact),
     );
     const valid = validateWindowsNativeArtifact(manifest.value, artifact);
     if (!valid.ok) throw valid.error;
     let loadedModule: unknown;
     try {
-      loadedModule = host.loadArtifact();
+      loadedModule = host.loadArtifact(target.artifact);
     } catch (cause: unknown) {
       return {
         available: false,
         failureStage: "load",
-        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/rea-windows-x64.node: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
+        reason: `REA Windows native controls are unavailable: Windows refused to load the verified native/windows/build/${target.artifact}: ${errorMessage(cause)} ${WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION}`,
       };
     }
     const binding = bindingSchema.parse(loadedModule);
@@ -208,6 +232,12 @@ export const loadWindowsNativeAuthority = (
         reason: `REA Windows native inspection is invalid: ${parsed.error.message}`,
       };
     const inspection = parsed.data;
+    if (inspection.architecture !== architecture)
+      return {
+        available: false,
+        failureStage: "inspection",
+        reason: `REA Windows native inspection reports ${inspection.architecture} on this ${architecture} host`,
+      };
     return { available: true, authority: { call: binding.call, inspection } };
   } catch (cause: unknown) {
     return {
@@ -237,20 +267,14 @@ const loadPackagedWindowsNativeAuthority = ({
       const value: unknown = JSON.parse(encoded);
       return value;
     },
-    readArtifact: () =>
+    readArtifact: (artifact) =>
       readFileSync(
-        new URL(
-          "../../native/windows/build/rea-windows-x64.node",
-          import.meta.url,
-        ),
+        new URL(`../../native/windows/build/${artifact}`, import.meta.url),
       ),
-    loadArtifact: () => {
+    loadArtifact: (artifact) => {
       const value: unknown = createRequire(import.meta.url)(
         fileURLToPath(
-          new URL(
-            "../../native/windows/build/rea-windows-x64.node",
-            import.meta.url,
-          ),
+          new URL(`../../native/windows/build/${artifact}`, import.meta.url),
         ),
       );
       return value;
