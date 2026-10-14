@@ -6,7 +6,10 @@ import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderCapabilities.
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
-import { decodeAngrToolResult } from "../../src/angr/AngrMcpConnection.js";
+import {
+  decodeAngrToolResult,
+  redactAngrCredentials,
+} from "../../src/angr/AngrMcpConnection.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -526,5 +529,46 @@ describe("dossier facet availability and upstream failure reasons", () => {
         },
       }),
     );
+  });
+});
+
+describe("credential redaction in upstream tool errors", () => {
+  it("removes configured transport credentials before they reach diagnostics", () => {
+    const config = {
+      url: "http://127.0.0.1:8000/mcp",
+      headers: {
+        Authorization: "Bearer fixture-secret-token",
+        Cookie: "session=fixture-cookie",
+      },
+      mode: "attached" as const,
+      timeoutMs: 1000,
+      startupTimeoutMs: 1000,
+      autoLoadLibs: false,
+    };
+    let thrown: unknown;
+    try {
+      decodeAngrToolResult(
+        {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: "proxy rejected Authorization: Bearer fixture-secret-token with Cookie session=fixture-cookie",
+            },
+          ],
+        },
+        (text) => redactAngrCredentials(text, config),
+      );
+    } catch (cause: unknown) {
+      thrown = cause;
+    }
+    expect(thrown).toBeInstanceOf(AnalysisProtocolError);
+    const serialized = JSON.stringify({
+      message: (thrown as Error).message,
+      diagnostics: (thrown as AnalysisProtocolError).diagnostics,
+    });
+    expect(serialized).not.toContain("fixture-secret-token");
+    expect(serialized).not.toContain("fixture-cookie");
+    expect(serialized).toContain("[redacted transport credential]");
   });
 });

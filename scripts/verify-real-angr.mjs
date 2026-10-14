@@ -194,17 +194,25 @@ const mcp = async (cliDossier) => {
         ),
       );
       assert.ok(current.available_flavors.includes(current.flavor));
-      const changed = observe(
-        await call("set_native_decompilation_flavor", { flavor: "rust" }),
+      // A registration may already select rust, so switch to any other flavor.
+      const other = current.available_flavors.find(
+        (name) => name !== current.flavor,
       );
-      assert.equal(changed.flavor, "rust");
+      assert.ok(
+        other !== undefined,
+        "angr offers only one decompilation flavor",
+      );
+      const changed = observe(
+        await call("set_native_decompilation_flavor", { flavor: other }),
+      );
+      assert.equal(changed.flavor, other);
       assert.equal(changed.previous_flavor, current.flavor);
-      const rust = observe(
+      const rendered = observe(
         await call("procedure_pseudo_code", {
           procedure: dossier.procedure.address,
         }),
       );
-      assert.notEqual(rust, dossier.pseudocode);
+      assert.notEqual(rendered, dossier.pseudocode);
       const restored = observe(
         await call("set_native_decompilation_flavor", {
           flavor: current.flavor,

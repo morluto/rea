@@ -43,14 +43,18 @@ const toolResultSchema = z.object({
 });
 
 /** Decode FastMCP's structured result, unwrapping its scalar `result` envelope. */
-export const decodeAngrToolResult = (input: unknown): JsonValue => {
+export const decodeAngrToolResult = (
+  input: unknown,
+  redact: (text: string) => string = (text) => text,
+): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = result.content.flatMap((block) =>
     block.type === "text" && block.text !== undefined ? [block.text] : [],
   );
   if (result.isError === true) {
     // The projection replaces the message, so the upstream reason travels as diagnostics.
-    const reason = blocks.join("\n").slice(0, UPSTREAM_REASON_LIMIT);
+    // Redact before bounding so a credential cannot be split across the cut.
+    const reason = redact(blocks.join("\n")).slice(0, UPSTREAM_REASON_LIMIT);
     throw new AnalysisProtocolError(`angr MCP tool failed: ${reason}`, {
       diagnostics: { upstream_tool_error: reason },
     });
@@ -76,28 +80,36 @@ export const decodeAngrToolResult = (input: unknown): JsonValue => {
   }
 };
 
+/** Remove configured transport credentials from text that may reach a caller. */
+export const redactAngrCredentials = (
+  text: string,
+  config: AngrConfiguration,
+): string => {
+  if (!("headers" in config)) return text;
+  let redacted = text;
+  for (const [name, value] of Object.entries(config.headers)) {
+    if (!/^(?:authorization|proxy-authorization|cookie)$/iu.test(name))
+      continue;
+    const credential = value.match(/^(?:Bearer|Basic)\s+([\s\S]+)$/iu)?.[1];
+    for (const secret of [value, credential])
+      if (secret !== undefined && secret.length > 0)
+        redacted = redacted
+          .split(secret)
+          .join("[redacted transport credential]");
+  }
+  return redacted;
+};
+
 /** Redact configured transport authentication values from SDK diagnostics only. */
 export const redactAngrTransportFailure = (
   cause: unknown,
   config: AngrConfiguration,
 ): Error => {
-  let message =
+  const message =
     cause instanceof Error
       ? cause.message
       : "Unknown angr MCP transport failure";
-  if ("headers" in config) {
-    for (const [name, value] of Object.entries(config.headers)) {
-      if (!/^(?:authorization|proxy-authorization|cookie)$/iu.test(name))
-        continue;
-      const credential = value.match(/^(?:Bearer|Basic)\s+([\s\S]+)$/iu)?.[1];
-      for (const secret of [value, credential])
-        if (secret !== undefined && secret.length > 0)
-          message = message
-            .split(secret)
-            .join("[redacted transport credential]");
-    }
-  }
-  return new Error(message, { cause });
+  return new Error(redactAngrCredentials(message, config), { cause });
 };
 
 /** Create a standard SDK connection to an angr MCP registration. */
@@ -190,6 +202,7 @@ export const createAngrMcpConnection = (
             { timeout: options?.timeoutMs ?? config.timeoutMs },
           )
           .catch(transportFailure),
+        (text) => redactAngrCredentials(text, config),
       );
     },
     serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
