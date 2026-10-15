@@ -614,6 +614,7 @@ describe("CdpBrowserProvider: WebMCP invalid annotation payloads", () => {
   it.each([
     ["a non-boolean consequential hint", { webMcpConsequential: "sometimes" }],
     ["a malformed annotations payload", { webMcpAnnotations: "yes" }],
+    ["a null annotations payload", { webMcpAnnotations: null }],
   ])(
     "retains the tool but marks coverage incomplete when the page emits %s",
     async (_label, annotationsOptions) => {
