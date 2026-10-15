@@ -118,13 +118,13 @@ export const windowsNativeFailureRemediation = (
   failureStage: WindowsNativeFailureStage,
 ): string =>
   failureStage === "host"
-    ? "Use a Windows x64 host and a supported Node.js runtime with Node-API 8 or newer."
+    ? "Use a Windows x64 or arm64 host and a supported Node.js runtime with Node-API 8 or newer."
     : failureStage === "load"
       ? WINDOWS_NATIVE_LOAD_REFUSED_REMEDIATION
       : failureStage === "artifact"
-        ? "Use the matching published Windows x64 REA package. Restore native/windows/build/manifest.json and native/windows/build/rea-windows-x64.node from a same-version rea-agents tarball only for its corresponding release source. Matching package version alone is insufficient for an unreleased checkout; otherwise build them from this exact source checkout using native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
+        ? "Use the published REA package whose bundled native artifact matches this Windows host's architecture (rea-windows-x64.node or rea-windows-arm64.node). Restore native/windows/build/manifest.json and that artifact from a same-version rea-agents tarball only for its corresponding release source. Matching package version alone is insufficient for an unreleased checkout; otherwise build them from this exact source checkout using native/windows/README.md. The loader checks version, ABI, architecture, and digest before granting authority; no download or install is performed automatically."
         : failureStage === "inspection"
-          ? "Install the matching Windows x64 REA package; its native inspection must prove every required security control."
+          ? "Install the REA package whose bundled native artifact matches this Windows host's architecture; its native inspection must prove every required security control."
           : "Inspect the preserved native self-test error. Check that the process has a writable local NTFS/ReFS temporary directory and that its filesystem, DACL, Job Object, and cleanup operations are permitted. Resolve the reported constraint, then rerun rea doctor; reinstalling Ghidra or Java cannot fix this self-test.";
 
 /** Refusal when the Windows native authority cannot be loaded or self-tested before launch. */
