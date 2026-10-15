@@ -587,6 +587,30 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
     expect(methods).not.toContain("Runtime.evaluate");
   });
 
+  it("reports WebMCP unavailable when the experimental domain is absent", async () => {
+    const browser = await startFakeCdpBrowser({
+      unsupportedMethods: ["WebMCP.enable"],
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.status).toBe("unavailable");
+    expect(result.value.tools.items).toEqual([]);
+    expect(result.value.completeness.unavailable_sections).toContain(
+      "webmcp_tools",
+    );
+  });
+});
+
+describe("CdpBrowserProvider: WebMCP invalid annotation payloads", () => {
   it.each([
     ["a non-boolean consequential hint", { webMcpConsequential: "sometimes" }],
     ["a malformed annotations payload", { webMcpAnnotations: "yes" }],
@@ -624,28 +648,6 @@ describe("CdpBrowserProvider: WebMCP discovery and completeness", () => {
       );
     },
   );
-
-  it("reports WebMCP unavailable when the experimental domain is absent", async () => {
-    const browser = await startFakeCdpBrowser({
-      unsupportedMethods: ["WebMCP.enable"],
-    });
-    trackBrowser(browser);
-    const result = await new CdpBrowserProvider().discoverWebMcpTools(
-      discoverWebMcpToolsInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-
-    if (!result.ok) throw result.error;
-    expect(result.value.status).toBe("unavailable");
-    expect(result.value.tools.items).toEqual([]);
-    expect(result.value.completeness.unavailable_sections).toContain(
-      "webmcp_tools",
-    );
-  });
 });
 
 it("retains readable replay updates while malformed additions or removals leave equality unknown", async () => {
