@@ -364,7 +364,12 @@ count and SHA-256 and reports, each with its original file offset and length:
 - the module name and description;
 - segments: code or data, flags, file range (`null` for a segment without file
   data), minimum allocation, and the count and range of its relocation records;
-- resources: numeric or named type and name identities and payload ranges;
+- resources: numeric or named type and name identities (`none` for a zero
+  name word), the declared length and the payload range (`null` for a resource
+  without file data). Lengths are stored in alignment units, so a final
+  resource may declare up to one unit past the end of the file, as VB3
+  executables do; its range then covers only the bytes present and a
+  limitation says so. Overrunning by a whole unit or more is malformed;
 - resident and non-resident exported names with ordinals;
 - referenced module names, in module-reference order;
 - entries: ordinal, fixed or movable, segment and offset.

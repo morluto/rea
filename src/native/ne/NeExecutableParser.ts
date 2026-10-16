@@ -256,10 +256,12 @@ const readSegments = async (
 
 const readResources = async (
   reader: NeReader,
-): Promise<NeExecutable["resources"]> => {
+): Promise<{ resources: NeExecutable["resources"]; truncated: number }> => {
   const resources: NeExecutable["resources"] = [];
+  let truncated = 0;
   // An empty resource table starts where the resident name table does.
-  if (reader.field(0x24) === reader.field(0x26)) return resources;
+  if (reader.field(0x24) === reader.field(0x26))
+    return { resources, truncated };
   const table = reader.ne + reader.field(0x24);
   reader.require(table, 2, "resource table");
   const shift = reader.u16(table);
@@ -267,6 +269,7 @@ const readResources = async (
     neFailure("NE resource alignment shift exceeds 15.");
   const identity = (encoded: number): NeIdentity => {
     if ((encoded & 0x8000) !== 0) return { kind: "id", id: encoded & 0x7fff };
+    if (encoded === 0) return { kind: "none" };
     const named = reader.name(table + encoded, "resource name");
     if (named === null) return neFailure("Empty NE resource name.");
     return { kind: "name", ...named };
@@ -275,7 +278,7 @@ const readResources = async (
   for (;;) {
     reader.require(cursor, 2, "resource type");
     const typeId = reader.u16(cursor);
-    if (typeId === 0) return resources;
+    if (typeId === 0) return { resources, truncated };
     reader.require(cursor, 8, "resource type");
     const count = reader.u16(cursor + 2);
     reader.require(cursor + 8, count * 12, "resource entries");
@@ -285,13 +288,24 @@ const readResources = async (
       const entry = cursor + 8 + index * 12;
       const offset = reader.u16(entry) * 2 ** shift;
       const length = reader.u16(entry + 2) * 2 ** shift;
-      reader.require(offset, length, "resource");
+      let location: Range | null = null;
+      // Offset 0 marks a resource without file data. Lengths are stored in
+      // alignment units, so a final resource may declare up to one unit more
+      // than the file holds; its location then covers only the bytes present.
+      if (offset !== 0) {
+        const present = Math.min(length, reader.bytes.length - offset);
+        if (present < 0 || length - present >= 2 ** shift)
+          reader.require(offset, length, "resource");
+        if (present < length) truncated++;
+        location = { offset, bytes: present };
+      }
       resources.push(
         reader.account({
           type,
           name: identity(reader.u16(entry + 6)),
           flags: reader.u16(entry + 4),
-          location: { offset, bytes: length },
+          location,
+          declared_bytes: length,
           entry_location: { offset: entry, bytes: 12 },
         }),
       );
@@ -401,7 +415,7 @@ export const parseNeExecutable = async (
   reader.require(reader.ne, HEADER_BYTES, "header");
   const header = readHeader(reader);
   const segments = await readSegments(reader, header.alignment_shift);
-  const resources = await readResources(reader);
+  const { resources, truncated } = await readResources(reader);
   // The first resident name is the module name; the first non-resident name is
   // the module description.
   const [moduleName, ...residentNames] = await reader.nameTable(
@@ -429,6 +443,13 @@ export const parseNeExecutable = async (
       "Static NE header and table inventory; segment data, relocation records and resource payloads remain opaque.",
       "Names are 8-bit strings decoded byte-for-byte as latin1; the original code page is not recorded in the image.",
       "Imported function names are referenced only from relocation records, which are counted but not decoded.",
+      ...(truncated === 0
+        ? []
+        : [
+            truncated === 1
+              ? "1 resource's declared length passes the end of the file by less than one alignment unit; its location covers only the bytes present."
+              : `${String(truncated)} resources' declared lengths pass the end of the file by less than one alignment unit; their locations cover only the bytes present.`,
+          ]),
     ],
   };
   signal?.throwIfAborted();

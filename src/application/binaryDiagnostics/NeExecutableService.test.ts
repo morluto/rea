@@ -58,7 +58,7 @@ it.each([
     const report = await observedReport();
     if (problem === "different-path") report.artifact.path = "/other.dll";
     if (problem === "outside-range")
-      report.resources[0]!.location.offset = report.artifact.bytes;
+      report.resources[0]!.location!.offset = report.artifact.bytes;
     if (problem === "wrong-coverage") report.coverage.examined_rows = 99;
     if (problem === "relocations-detached")
       report.segments[0]!.relocations!.location.offset += 2;

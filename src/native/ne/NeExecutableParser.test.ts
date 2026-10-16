@@ -141,6 +141,7 @@ describe("portable NE executable inventory", () => {
         name: { kind: "id", id: 1 },
         flags: 0x0030,
         location: { offset: fixture.iconResource, bytes: 32 },
+        declared_bytes: 32,
         entry_location: { offset: fixture.resourceTable + 10, bytes: 12 },
       },
       {
@@ -156,6 +157,7 @@ describe("portable NE executable inventory", () => {
         },
         flags: 0x0010,
         location: { offset: fixture.customResource, bytes: 16 },
+        declared_bytes: 16,
         entry_location: { offset: fixture.resourceTable + 30, bytes: 12 },
       },
     ]);
@@ -257,5 +259,44 @@ describe("portable NE executable parsing edge cases", () => {
     await expect(
       parse(neFixture().bytes, 4096, controller.signal),
     ).rejects.toThrow();
+  });
+});
+
+describe("NE resource entries as linkers write them", () => {
+  it("reports a final resource whose rounded-up length passes the end of the file", async () => {
+    // Linkers store resource lengths in alignment units, so the last resource
+    // can declare up to one unit more than the file holds (VB3 executables do).
+    const fixture = neFixture();
+    const bytes = fixture.bytes.subarray(0, fixture.customResource + 13);
+    const result = await parse(bytes);
+    expect(result.resources[1]).toMatchObject({
+      location: { offset: fixture.customResource, bytes: 13 },
+      declared_bytes: 16,
+    });
+    expect(result.limitations).toContain(
+      "1 resource's declared length passes the end of the file by less than one alignment unit; its location covers only the bytes present.",
+    );
+  });
+
+  it("reports a resource without file data as having no location", async () => {
+    const fixture = neFixture();
+    const bytes = Buffer.from(fixture.bytes);
+    bytes.writeUInt16LE(0, fixture.resourceTable + 10);
+    bytes.writeUInt16LE(0, fixture.resourceTable + 12);
+    const result = await parse(bytes);
+    expect(result.resources[0]).toMatchObject({
+      location: null,
+      declared_bytes: 0,
+    });
+  });
+
+  it("reports a zero resource name as no identity rather than reading the table header", async () => {
+    // VB3 leaves an all-zero placeholder entry; name offset 0 would be the
+    // alignment shift word, which never starts a name.
+    const fixture = neFixture();
+    const bytes = Buffer.from(fixture.bytes);
+    bytes.writeUInt16LE(0, fixture.resourceTable + 16);
+    const result = await parse(bytes);
+    expect(result.resources[0]?.name).toEqual({ kind: "none" });
   });
 });

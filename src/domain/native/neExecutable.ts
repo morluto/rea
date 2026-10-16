@@ -12,6 +12,8 @@ const name = z.strictObject({ name: z.string(), location: range });
 const identity = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("id"), id: u16 }),
   z.strictObject({ kind: z.literal("name"), ...name.shape }),
+  // A zero name word: offset 0 is the table's alignment shift, never a name.
+  z.strictObject({ kind: z.literal("none") }),
 ]);
 const exportedName = z.strictObject({ ...name.shape, ordinal: u16 });
 
@@ -87,7 +89,8 @@ export const neExecutableSchema = z.strictObject({
       type: identity,
       name: identity,
       flags: u16,
-      location: range,
+      location: range.nullable(),
+      declared_bytes: uint,
       entry_location: range,
     }),
   ),

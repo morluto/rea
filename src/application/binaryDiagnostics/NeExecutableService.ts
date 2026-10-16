@@ -105,10 +105,10 @@ const validReport = (
     ) &&
     report.resources.every(
       (resource) =>
-        inside(resource.location) &&
+        (resource.location === null || inside(resource.location)) &&
         inside(resource.entry_location) &&
         [resource.type, resource.name].every(
-          (identity) => identity.kind === "id" || inside(identity.location),
+          (identity) => identity.kind !== "name" || inside(identity.location),
         ),
     ) &&
     report.module_references.every(
