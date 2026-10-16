@@ -339,6 +339,51 @@ buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
 
+## Portable NE executables
+
+`inspect_ne_executable` / `inspect-ne-executable` inspects an explicit 16-bit
+NE (New Executable) image, the format of Windows 3.x and OS/2 1.x programs and
+libraries, without an active target or native engine:
+
+```sh
+rea inspect-ne-executable ./legacy.dll --json
+```
+
+```json
+{
+  "name": "inspect_ne_executable",
+  "arguments": { "path": "/artifacts/legacy.dll" }
+}
+```
+
+The complete Evidence identifies the stable artifact snapshot by path, byte
+count and SHA-256 and reports, each with its original file offset and length:
+
+- the NE header: library or application, entry point and initial stack,
+  automatic data segment, target operating system and expected Windows version;
+- the module name and description;
+- segments: code or data, flags, file range (`null` for a segment without file
+  data), minimum allocation, and the count and range of its relocation records;
+- resources: numeric or named type and name identities and payload ranges;
+- resident and non-resident exported names with ordinals;
+- referenced module names, in module-reference order;
+- entries: ordinal, fixed or movable, segment and offset.
+
+Names are 8-bit strings decoded byte for byte as latin1; the image does not
+record its code page. Segment data, relocation records and resource payloads are
+not decoded, so imported function names, which only relocation records
+reference, are not reported. Malformed headers, tables leaving the file,
+unterminated name tables, entry bundles that overrun the entry table and movable
+entries without their `INT 3Fh` thunk fail as malformed or truncated targets,
+rather than returning partial inventories. A refusal after the read keeps the
+read file's path, byte count and SHA-256.
+
+`max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_rows` defaults to
+131072 table rows (maximum 1048576). CLI options are `--max-file-bytes` and
+`--max-rows`. Metadata is bounded to 8 MiB; exceeding any budget fails without
+truncation. Requests honor cancellation. The operation reads regular files only
+and rejects symbolic links.
+
 ## Byte entropy triage
 
 Entropy admission preserves the caller's spelling in `caller_input_path`. On

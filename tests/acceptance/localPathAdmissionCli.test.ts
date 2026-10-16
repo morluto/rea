@@ -25,6 +25,7 @@ const fileCommands = [
   "inspect-kernel-build-config",
   "inspect-byte-entropy",
   "inspect-pe-resources",
+  "inspect-ne-executable",
   "inspect-pe-certificates",
   "inspect-native-exports",
   "inspect-binary-layout",

@@ -143,6 +143,9 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   peLoadConfig: { cases: ["tests/acceptance/peLoadConfigCli.test.ts"] },
   peUnwindRanges: { cases: ["tests/acceptance/peUnwindRangesCli.test.ts"] },
   peResources: { cases: ["tests/acceptance/applications/peResources.test.ts"] },
+  neExecutable: {
+    cases: ["tests/acceptance/applications/neExecutable.test.ts"],
+  },
   nugetNupkg: { cases: ["tests/acceptance/nugetNupkgCli.test.ts"] },
   pythonPyc: { cases: ["tests/acceptance/pythonPycCli.test.ts"] },
   recordedCrash: { cases: ["tests/boundary/mcp/recordedCrashMcp.test.ts"] },

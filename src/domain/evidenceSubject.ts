@@ -35,6 +35,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "dotnet-bundle",
   "bun-standalone",
   "deno-standalone",
+  "ne",
   ...nonArtifactTargetFormats.slice(trailingArchiveIndex),
 ]);
 

@@ -234,6 +234,9 @@ explicit path or endpoint and do not need it.
     ([certificates](https://github.com/morluto/rea/blob/main/docs/pe-certificates.md),
     [imports](https://github.com/morluto/rea/blob/main/docs/pe-imports.md),
     [load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md)).
+  - 16-bit NE (Windows 3.x/OS/2) header, segments, resources, exported names,
+    module references and entries: `inspect_ne_executable`
+    ([NE guide](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md#portable-ne-executables)).
   - Windows `.lnk` shortcut: `inspect_windows_shortcut`; the target is not
     resolved ([shortcut guide](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md)).
   - ELF, PE and Mach-O hardening: `inspect_binary_hardening`; use

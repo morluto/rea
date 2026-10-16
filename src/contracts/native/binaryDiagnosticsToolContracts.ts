@@ -48,6 +48,10 @@ import {
   peResourcesSchema,
 } from "../../domain/native/peResources.js";
 import {
+  inspectNeExecutableInputSchema,
+  neExecutableSchema,
+} from "../../domain/native/neExecutable.js";
+import {
   inspectPeCertificatesInputSchema,
   peCertificatesSchema,
 } from "../../domain/native/peCertificates.js";
@@ -457,6 +461,23 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       {
         title: "Inspect PE resource identities and icon relationships",
         input: { path: "/artifacts/application.exe" },
+      },
+    ],
+  },
+  {
+    name: "inspect_ne_executable",
+    availability: "standalone",
+    cli: true,
+    ...toolContractMetadata("inspect_ne_executable", evidenceEffects),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local 16-bit Windows or OS/2 NE (New Executable) image without executing it or opening a disassembler. Returns the NE header (module kind, entry point, target OS, expected Windows version), module name and description, the segment table with file ranges and relocation-record counts, resource type/name identities and file ranges, resident and non-resident exported names with ordinals, referenced module names and the entry table, each with its original file location. Segment data, relocation records and resource payloads remain opaque. Reads a stable regular file; malformed tables and exhausted budgets return no partial success. Portable on supported Node hosts; no engine installation required.",
+    inputSchema: inspectNeExecutableInputSchema,
+    outputSchema: evidenceResultOf(neExecutableSchema),
+    examples: [
+      {
+        title: "Inspect a Windows 3.x DLL's exports, imports and segments",
+        input: { path: "/artifacts/legacy.dll" },
       },
     ],
   },

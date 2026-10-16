@@ -1631,6 +1631,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       ),
     },
   },
+  "rea-ne-executable": inProcess(
+    covered(
+      test(
+        "tests/boundary/filesystem/neExecutable.test.ts",
+        "returns complete Evidence for a stable NE file",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/neExecutable.test.ts"),
+  ),
   "rea-nuget-nupkg": inProcess(
     covered(
       test(
