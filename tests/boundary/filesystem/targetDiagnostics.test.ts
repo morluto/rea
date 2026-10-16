@@ -53,7 +53,25 @@ describe("executable format refusal diagnostics", () => {
     },
   );
 
-  it.each(["NE", "LE", "LX"] as const)(
+  it.each([0x80, 0x2000] as const)(
+    "resolves an NE image at new-header offset %i as an artifact for NE inspection",
+    async (offset) => {
+      const directory = await createTestTempDirectory("rea-target-ne-");
+      const path = join(directory, "legacy.dll");
+      const bytes = Buffer.alloc(offset + 0x40);
+      bytes.write("MZ", 0, "ascii");
+      bytes.writeUInt16LE(4, 8);
+      bytes.writeUInt32LE(offset, 0x3c);
+      bytes.write("NE", offset, "ascii");
+      await writeFile(path, bytes);
+
+      const result = await parseBinaryTarget(path);
+      if (!result.ok) throw new Error(result.error.message);
+      expect(result.value).toMatchObject({ kind: "artifact", format: "ne" });
+    },
+  );
+
+  it.each(["LE", "LX"] as const)(
     "reports unsupported %s executables without path advice",
     async (signature) => {
       const directory = await createTestTempDirectory(

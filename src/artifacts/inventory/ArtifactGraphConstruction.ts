@@ -707,6 +707,8 @@ export const classifyArtifactHeader = (
           };
         }
       }
+      if (windowsHeader.signature === "NE" && windowsOffset >= 64)
+        return only("ne");
       return only("unknown");
     }
     if (mzEvidence.dos.ok) return only("dos-mz");

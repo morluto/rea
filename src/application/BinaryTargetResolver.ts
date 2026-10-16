@@ -9,6 +9,7 @@ import {
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
 import { createCachedPrefixReader } from "../filesystem/readFileHandleRange.js";
+import { hasDosMzMagic, observeMzWindowsHeader } from "../domain/dosMz.js";
 import { hasXarMagic } from "../domain/binaryContainer.js";
 import {
   readExecutableMetadata,
@@ -799,6 +800,7 @@ const detectArtifactFormat = async (
       recognition.index,
     );
   }
+  if (await declaresNeHeader(magic, initial.size, readCachedRange)) return "ne";
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
@@ -847,6 +849,28 @@ const detectArtifactFormat = async (
       );
   }
   return undefined;
+};
+
+/** Whether an MZ image declares an NE new header, reading its signature if it lies past the prefix. */
+const declaresNeHeader = async (
+  prefix: Buffer,
+  fileSize: number,
+  readRange: (position: number, length: number) => Promise<Buffer>,
+): Promise<boolean> => {
+  if (!hasDosMzMagic(prefix)) return false;
+  let header = observeMzWindowsHeader(prefix, fileSize);
+  if (header.state === "signature-needed") {
+    const { offset } = header;
+    header = observeMzWindowsHeader(prefix, fileSize, {
+      offset,
+      bytes: await readRange(offset, Math.min(4, fileSize - offset)),
+    });
+  }
+  return (
+    header.state === "declared" &&
+    header.signature === "NE" &&
+    header.offset >= 64
+  );
 };
 
 const isArchiveFormat = (

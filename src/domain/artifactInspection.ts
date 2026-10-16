@@ -574,6 +574,15 @@ const directoryProbes = (
 const probesForFormat = (
   format: ArtifactInventoryResult["manifest"]["root_format"],
 ): ArtifactInspectionResult["next_probes"] => {
+  if (format === "ne")
+    return [
+      {
+        operation: "inspect_ne_executable",
+        rationale:
+          "Read the NE header, segments, resources, exported names and module references without a session provider.",
+        authority: "artifact-bytes",
+      },
+    ];
   if (format === "bun-standalone")
     return [
       {

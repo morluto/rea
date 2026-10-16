@@ -378,6 +378,11 @@ entries without their `INT 3Fh` thunk fail as malformed or truncated targets,
 rather than returning partial inventories. A refusal after the read keeps the
 read file's path, byte count and SHA-256.
 
+Inventory classifies an observed NE header as `ne`, and `inspect_artifact`
+proposes this operation as its next probe. NE images resolve as artifacts, not
+session targets: no session provider loads them, so `open_binary` reports the
+provider rejections.
+
 `max_file_bytes` defaults to 64 MiB (maximum 512 MiB); `max_rows` defaults to
 131072 table rows (maximum 1048576). CLI options are `--max-file-bytes` and
 `--max-rows`. Metadata is bounded to 8 MiB; exceeding any budget fails without
