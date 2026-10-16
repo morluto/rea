@@ -6,6 +6,7 @@ import {
   appendCallerPath,
 } from "../filesystem/callerPath.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { windowsAppDataRoots } from "./MsixPackageStorage.js";
 
 /** An unresolved Hermes profile must not be configured as the default home. */
 export class HermesClientPathError extends Error {
@@ -26,10 +27,7 @@ const defaultDirectory = (
 ): string => {
   const suffix = env.HERMES_DATA_DIR_SUFFIX ?? "";
   return platform === "win32"
-    ? join(
-        env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
-        `hermes${suffix}`,
-      )
+    ? join(windowsAppDataRoots(home, env).local, `hermes${suffix}`)
     : appendCallerPath(home, `.hermes${suffix}`, platform);
 };
 const expandedDirectory = (
