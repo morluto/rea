@@ -1,6 +1,7 @@
 import { access, lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { ghidraBridgeTransportSchema } from "../config/ghidraBridgeTransport.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { readWindowsPrivateRuntimeFile } from "../windows/WindowsPrivateRuntime.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -22,7 +23,7 @@ import {
 } from "./GhidraSessionError.js";
 
 /** Local bridge transports used by the current Ghidra session. */
-export type GhidraTransportKind = "unix-socket" | "authenticated-loopback-tcp";
+export type GhidraTransportKind = z.infer<typeof ghidraBridgeTransportSchema>;
 
 /** Private runtime coordinate used to discover one bridge listener. */
 export interface GhidraEndpoint {

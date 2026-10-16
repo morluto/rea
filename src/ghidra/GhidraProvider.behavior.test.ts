@@ -47,6 +47,10 @@ import {
   GHIDRA_MUTATING_OPERATIONS,
   GHIDRA_SESSION_CAPABILITIES,
 } from "./GhidraSessionValues.js";
+import {
+  LOOPBACK_TRANSPORT_MUTATION_REASON,
+  loopbackTransportLimitations,
+} from "./GhidraProviderCapabilities.js";
 import type { Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
 import { silentLogger } from "../logger.js";
@@ -3749,6 +3753,140 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     expect(failed.ok).toBe(false);
     if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
     expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
+  });
+});
+
+describe("Ghidra bridge transport selection", () => {
+  const transportProvider = (
+    environment: Record<string, string>,
+    host: GhidraInstallationHost,
+    seen: unknown[],
+  ): GhidraProvider => {
+    const config = parseConfig({ GHIDRA_INSTALL_DIR: INSTALL, ...environment });
+    if (!config.ok) throw config.error;
+    return new GhidraProvider(
+      config.value,
+      silentLogger,
+      {},
+      host,
+      (options) => {
+        seen.push(options);
+        return {
+          start: () => Promise.resolve(ok(sessionInfo())),
+          callTool: () => Promise.resolve(ok([])),
+          close: () => Promise.resolve(ok(null)),
+        };
+      },
+    );
+  };
+  const annotation = (ghidra: GhidraProvider) =>
+    ghidra
+      .capabilities()
+      .find(({ operation }) => operation === "annotate_native_function");
+
+  it("keeps the Unix socket and full authority on POSIX hosts without a selection", async () => {
+    const seen: unknown[] = [];
+    const ghidra = transportProvider({}, installationHost(), seen);
+    const client = await createElfClient(ghidra);
+    const listed = await client.execute("list_procedures", {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw listed.error;
+    expect(seen).toEqual([
+      expect.objectContaining({ transport: "unix-socket", platform: "linux" }),
+    ]);
+    expect(listed.value.limitations).not.toEqual(
+      expect.arrayContaining([loopbackTransportLimitations[0]]),
+    );
+    expect(annotation(ghidra)).toMatchObject({ available: true });
+    await client.close();
+  });
+
+  it("selects loopback on a POSIX host only through REA_GHIDRA_BRIDGE_TRANSPORT", async () => {
+    const seen: unknown[] = [];
+    const ghidra = transportProvider(
+      { REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp" },
+      installationHost(),
+      seen,
+    );
+    const client = await createElfClient(ghidra);
+    const listed = await client.execute("list_procedures", {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw listed.error;
+    expect(seen).toEqual([
+      expect.objectContaining({
+        transport: "authenticated-loopback-tcp",
+        platform: "linux",
+      }),
+    ]);
+    expect(listed.value.limitations).toEqual(
+      expect.arrayContaining([...loopbackTransportLimitations]),
+    );
+    expect(annotation(ghidra)).toMatchObject({
+      available: false,
+      reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
+    });
+    expect(annotation(ghidra)).not.toHaveProperty("availabilityCode");
+    const withheld = (
+      capabilities: ReturnType<GhidraProvider["capabilities"]>,
+    ) =>
+      capabilities
+        .filter(({ available }) => !available)
+        .map(({ operation }) => operation)
+        .sort();
+    expect(withheld(ghidra.capabilities())).toEqual([
+      "annotate_native_function",
+      "set_address_name",
+      "set_addresses_names",
+    ]);
+    expect(withheld(ghidra.inspectReadinessSnapshot().capabilities)).toEqual(
+      withheld(ghidra.capabilities()),
+    );
+    expect(
+      ghidra
+        .capabilities()
+        .find(({ operation }) => operation === "procedure_pseudo_code"),
+    ).toMatchObject({
+      available: true,
+      limitations: expect.arrayContaining([...loopbackTransportLimitations]),
+    });
+    await client.close();
+  });
+
+  it("refuses an explicit Unix socket on Windows before any readiness check", async () => {
+    const seen: unknown[] = [];
+    const target = peTarget("x86_64");
+    const resolved = await transportProvider(
+      {},
+      installationHost("win32"),
+      seen,
+    ).resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected an admitted PE profile");
+    const refused = transportProvider(
+      { REA_GHIDRA_BRIDGE_TRANSPORT: "unix-socket" },
+      installationHost("win32"),
+      seen,
+    );
+    // Windows capabilities keep the P0 wording; the setting changes nothing there.
+    expect(annotation(refused)).toMatchObject({
+      available: false,
+      reason: "Windows Ghidra P0 does not admit database mutation.",
+      availabilityCode: "unsupported_host",
+    });
+    const failed = await refused
+      .createClient(target, resolved.value.profile)
+      .execute("health", {});
+    expect(failed.ok).toBe(false);
+    if (failed.ok) return;
+    expect(failed.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: {
+        reason: expect.stringContaining(
+          "unset REA_GHIDRA_BRIDGE_TRANSPORT or select authenticated-loopback-tcp",
+        ),
+      },
+    });
+    expect(seen).toHaveLength(0);
   });
 });
 

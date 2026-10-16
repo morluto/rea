@@ -74,6 +74,7 @@ import {
   CAPABILITIES,
   existingProjectCapabilities,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+  loopbackTransportCapabilities,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
@@ -162,7 +163,14 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       ? existingProjectCapabilities(platform)
       : platform === "win32"
         ? windowsP0Capabilities()
-        : CAPABILITIES;
+        : this.#posixCapabilities();
+  }
+
+  /** POSIX hosts keep full authority unless loopback was selected explicitly. */
+  #posixCapabilities(): readonly CapabilityDescriptor[] {
+    return this.config.ghidraBridgeTransport === "authenticated-loopback-tcp"
+      ? loopbackTransportCapabilities()
+      : CAPABILITIES;
   }
 
   async inspectAvailability(
@@ -205,7 +213,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         this.config.ghidraExistingProject !== undefined
           ? existingProjectCapabilities(installation.platform)
           : readiness === undefined
-            ? CAPABILITIES
+            ? this.#posixCapabilities()
             : windowsP0Capabilities(readiness),
     };
   }

@@ -28,6 +28,10 @@ REA authenticates its Hopper and Ghidra bridges with per-session random
 capability tokens. POSIX uses current-user Unix sockets; Windows Ghidra uses
 authenticated loopback TCP with a private NTFS runtime whose DACL admits only
 the current user and SYSTEM. See [Windows Ghidra P0](docs/windows-ghidra-p0.md#private-runtime-transport-and-lifecycle).
+A POSIX host can select that loopback transport with
+`REA_GHIDRA_BRIDGE_TRANSPORT`; the listener is then reachable by any local
+process, the per-session token remains the only authentication, and the bridge
+serves read-only operations. See [Ghidra bridge transport](docs/installation.md#ghidra-bridge-transport).
 Tokens are transferred through private session descriptors rather than process
 arguments or environment variables.
 This is not a sandbox and does not protect against malicious processes already
