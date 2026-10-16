@@ -58,6 +58,7 @@ const artifact = async () => {
     target,
     "linux",
     resources,
+    "unix-socket",
   );
   if (!resolved.ok || resolved.value[0] === undefined)
     throw new Error("expected fixture artifact");
@@ -87,6 +88,7 @@ describe("optional Ghidra extension refusals", () => {
       target,
       "darwin",
       resources,
+      "unix-socket",
     );
     expect(host.ok).toBe(false);
     if (!host.ok)
@@ -112,6 +114,7 @@ describe("optional Ghidra extension refusals", () => {
       },
       "linux",
       resources,
+      "unix-socket",
     );
     expect(architecture.ok).toBe(false);
     if (!architecture.ok)
@@ -132,7 +135,13 @@ describe("optional Ghidra extension refusals", () => {
 describe("optional Ghidra extension boundary", () => {
   it("keeps ordinary profiles free of unconfigured extensions", async () => {
     expect(
-      await resolveGhidraExtensions(config(), target, "linux", resources),
+      await resolveGhidraExtensions(
+        config(),
+        target,
+        "linux",
+        resources,
+        "unix-socket",
+      ),
     ).toEqual({
       ok: true,
       value: [],
@@ -199,6 +208,7 @@ describe("optional Ghidra extension boundary", () => {
         target,
         "linux",
         resources,
+        "unix-socket",
       );
       expect(resolved.ok).toBe(false);
       if (!resolved.ok)
@@ -212,6 +222,7 @@ describe("optional Ghidra extension boundary", () => {
       target,
       "linux",
       resources,
+      "unix-socket",
     );
     expect(absent.ok).toBe(false);
     if (!absent.ok)
@@ -246,6 +257,7 @@ describe("optional Ghidra extension boundary", () => {
           target,
           "linux",
           resources,
+          "unix-socket",
         );
         expect(resolved.ok).toBe(false);
         if (!resolved.ok)
@@ -259,6 +271,9 @@ describe("optional Ghidra extension boundary", () => {
       }
     },
   );
+});
+
+describe("Ghidra extension cancellation", () => {
   it("honors cancellation before artifact I/O", async () => {
     const controller = new AbortController();
     controller.abort();
@@ -267,6 +282,7 @@ describe("optional Ghidra extension boundary", () => {
       target,
       "linux",
       resources,
+      "unix-socket",
       controller.signal,
     );
     expect(resolved.ok).toBe(false);
@@ -275,17 +291,19 @@ describe("optional Ghidra extension boundary", () => {
   });
 });
 
-it("refuses traversal identities in an imported extension profile", () => {
-  expect(
-    ghidraExtensionSchema.safeParse({
-      id: "../escape",
-      path: "/fixture.jar",
-      configured_path: "/fixture.jar",
-      sha256: "a".repeat(64),
-      integration_api: 1,
-      entry_class: "ignored",
-    }).success,
-  ).toBe(false);
+describe("Ghidra extension identity schema", () => {
+  it("refuses traversal identities in an imported extension profile", () => {
+    expect(
+      ghidraExtensionSchema.safeParse({
+        id: "../escape",
+        path: "/fixture.jar",
+        configured_path: "/fixture.jar",
+        sha256: "a".repeat(64),
+        integration_api: 1,
+        entry_class: "ignored",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("Ghidra extension profile and producer validation", () => {
@@ -325,10 +343,17 @@ describe("Ghidra extension profile and producer validation", () => {
         config(path),
         target,
         "linux",
+        "unix-socket",
       ),
     ).toBeNull();
     expect(
-      validateGhidraExtensionProfile([extension], config(), target, "linux"),
+      validateGhidraExtensionProfile(
+        [extension],
+        config(),
+        target,
+        "linux",
+        "unix-socket",
+      ),
     ).toBe(
       "Configured Ghidra extension inventory differs from the resolved analysis profile.",
     );
@@ -338,6 +363,7 @@ describe("Ghidra extension profile and producer validation", () => {
         config(path),
         target,
         "darwin",
+        "unix-socket",
       ),
     ).toBe(
       "NativeAOT recovery is verified on Linux only; omit REA_GHIDRA_NATIVEAOT_JAR for ordinary native analysis.",
@@ -348,6 +374,7 @@ describe("Ghidra extension profile and producer validation", () => {
         config(path),
         target,
         "linux",
+        "unix-socket",
       ),
     ).toBe(
       "Ghidra extension profile lacks matching explicit local configuration: nativeaot",
@@ -358,6 +385,7 @@ describe("Ghidra extension profile and producer validation", () => {
         config(path),
         target,
         "linux",
+        "unix-socket",
       ),
     ).toBe(
       "Ghidra extension profile lacks matching explicit local configuration: nativeaot",
@@ -369,6 +397,7 @@ describe("Ghidra extension profile and producer validation", () => {
       { ...target, format: "pe", managed: true, executableRole: "application" },
       "linux",
       resources,
+      "unix-socket",
     );
     expect(resolved.ok).toBe(false);
     if (!resolved.ok)
@@ -414,6 +443,50 @@ describe("Ghidra extension profile and producer validation", () => {
         reason: "unregistered",
       },
     });
+  });
+});
+
+describe("Ghidra extension transport withholding", () => {
+  it("withholds a configured extension when the transport cannot serve it", async () => {
+    const directory = await root();
+    const path = join(directory, "fixture.jar");
+    await writeFile(path, Buffer.from([0x50, 0x4b, 3, 4, 0, 1, 2, 3]));
+    // A supported Linux x86-64 target still admits nothing over a transport the
+    // Ghidra bridge cannot serve extensions on; the session is kept read-only.
+    expect(
+      await resolveGhidraExtensions(
+        config(path),
+        target,
+        "linux",
+        resources,
+        "authenticated-loopback-tcp",
+      ),
+    ).toEqual({ ok: true, value: [] });
+  });
+  it("expects no committed extension over a transport that withholds them", async () => {
+    const { extension, path } = await artifact();
+    // Loopback commits no extension, so an empty profile is the valid state...
+    expect(
+      validateGhidraExtensionProfile(
+        [],
+        config(path),
+        target,
+        "linux",
+        "authenticated-loopback-tcp",
+      ),
+    ).toBeNull();
+    // ...and an extension the transport cannot serve is an inventory mismatch.
+    expect(
+      validateGhidraExtensionProfile(
+        [extension],
+        config(path),
+        target,
+        "linux",
+        "authenticated-loopback-tcp",
+      ),
+    ).toBe(
+      "Configured Ghidra extension inventory differs from the resolved analysis profile.",
+    );
   });
 });
 

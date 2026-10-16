@@ -67,6 +67,10 @@ export const ghidraHealthLimitations = (
 export const LOOPBACK_TRANSPORT_MUTATION_REASON =
   "The authenticated loopback bridge transport does not admit database mutation; unset REA_GHIDRA_BRIDGE_TRANSPORT to use the Unix socket transport.";
 
+/** Reason a configured analysis extension stays unloaded under loopback. */
+export const LOOPBACK_TRANSPORT_EXTENSION_REASON =
+  "A configured analysis extension (for example NativeAOT metadata recovery) loads executable code into the Ghidra process and is not served over the authenticated loopback bridge transport; it is withheld while every other operation keeps its session. Unset REA_GHIDRA_BRIDGE_TRANSPORT to use the Unix socket transport.";
+
 /** Additional limitations applied when REA_GHIDRA_BRIDGE_TRANSPORT selects loopback on a POSIX host. */
 export const loopbackTransportLimitations = Object.freeze([
   "REA_GHIDRA_BRIDGE_TRANSPORT selects authenticated IPv4 loopback instead of the current-user Unix socket. Any local process can reach the listener but cannot authenticate without the per-session token; the endpoint file contains no bearer token.",
