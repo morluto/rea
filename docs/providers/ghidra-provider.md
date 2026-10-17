@@ -363,12 +363,23 @@ snapshots cannot replay unqualified results.
 
 On non-Windows hosts, the ephemeral import repair clears no-return flags on the
 known returning external ABI names `malloc`, `__tls_get_addr`, `memcpy`, `memset`,
-`strlen`, and `__errno_location`. This relies on their expected ABI behavior;
-external implementations are not inspected. The repair re-disassembles affected
-terminal calls and refits their owning functions, preserving independent function
-entries. If a recovered caller reveals a decoded return, its propagated no-return
-flag and affected callers are repaired in the same pass. Unknown imports and
-genuine no-return imports keep their flags. Analysis profiles version this repair
+`strlen`, and `__errno_location`, and on the Itanium C++ ABI runtime entry points:
+every standard replaceable global `operator new`/`new[]` (plain, nothrow, aligned,
+and aligned nothrow) and `operator delete`/`delete[]` (plain, sized, nothrow,
+aligned, sized aligned, and aligned nothrow), with `size_t` as `unsigned long`,
+`unsigned int`, or `unsigned long long` (64-bit MinGW PE), plus
+`__cxa_guard_acquire`/`release`/`abort`, `__cxa_atexit`,
+`__cxa_allocate_exception`, and `__cxa_begin_catch`/`__cxa_end_catch`. C++ imports
+are matched by their original imported symbol (for example `_Znwm`), because
+Ghidra demangles them to names such as `operator.new` that every overload shares.
+This relies on their expected ABI behavior; external implementations are not
+inspected. `__cxa_throw`, `__cxa_rethrow` and `_Unwind_Resume` keep their flags.
+The repair re-disassembles affected terminal calls and refits their owning
+functions, preserving independent function entries, so calls to these imports
+no longer end a function or carry the inferred no-return limitation above. If a
+recovered caller reveals a decoded return, its propagated no-return flag and
+affected callers are repaired in the same pass. Unknown imports and genuine
+no-return imports keep their flags. Analysis profiles version this repair
 so snapshots produced before it are not reused. Windows P0 does not run it.
 
 Ghidra applies most loader relocations, but it cannot apply some, such as an

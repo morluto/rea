@@ -50,8 +50,13 @@ public class ReaNoReturnProbe extends GhidraScript {
     }
 
     private Function external(String name) {
-        for (Function f : currentProgram.getFunctionManager().getExternalFunctions())
+        for (Function f : currentProgram.getFunctionManager().getExternalFunctions()) {
             if (matchesSymbol(f, name)) return f;
+            // Demangled C++ imports keep their ABI symbol as the original imported name.
+            String original = f.getExternalLocation() == null ? null
+                : f.getExternalLocation().getOriginalImportedName();
+            if (original != null && (original.equals(name) || original.equals("_" + name))) return f;
+        }
         throw new IllegalStateException("Missing imported function " + name);
     }
 
@@ -207,7 +212,10 @@ public class ReaNoReturnProbe extends GhidraScript {
         Map<String, String> imports = Map.of(
             "rea_malloc", "malloc", "rea_tls", "__tls_get_addr",
             "rea_memcpy", "memcpy", "rea_memset", "memset",
-            "rea_strlen", "strlen", "rea_errno", "__errno_location");
+            "rea_strlen", "strlen", "rea_errno", "__errno_location",
+            "rea_operator_new", "_Znwm", "rea_guard_acquire", "__cxa_guard_acquire",
+            "rea_operator_new_aligned_nothrow", "_ZnwmSt11align_val_tRKSt9nothrow_t",
+            "rea_operator_new_llp64", "_Znwy");
         for (var item : imports.entrySet()) truncate(function(item.getKey()), item.getValue());
         truncate(function("rea_tls_chain"), function("rea_tls"));
         truncate(function("rea_tls_outer"), function("rea_tls_chain"));
