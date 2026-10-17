@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 import { runtimeFunctionParameters } from "./javascriptAstValues.js";
 import { JavaScriptSymbolicBindings } from "./javascriptSymbolicBindings.js";
+import { referencesElectronModule } from "./javascriptElectronMemberWrites.js";
 import {
   symbolicVariants,
   symbolicTruth,
@@ -254,6 +255,7 @@ export function* collectElectronWrappedCallPathsSteps(
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
 ): Generator<void, readonly ElectronCallPath[]> {
+  if (!referencesElectronModule(accumulator.references)) return [];
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
   let remainingVisits = 1_000_000;
