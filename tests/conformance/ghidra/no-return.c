@@ -6,6 +6,14 @@ extern void *__tls_get_addr(void *);
 extern int *__errno_location(void);
 extern void rea_unknown_stop(void);
 extern void _Unwind_Resume(void *) __attribute__((noreturn));
+/* C-linkage declarations of Itanium C++ ABI runtime symbols: Ghidra demangles
+   _Znwm to operator.new, so only the original imported name identifies it. */
+extern void *_Znwm(unsigned long);
+/* operator new(size_t, std::align_val_t, const std::nothrow_t&) */
+extern void *_ZnwmSt11align_val_tRKSt9nothrow_t(unsigned long, unsigned long, const void *);
+/* operator new(unsigned long long): the LLP64 spelling 64-bit MinGW PE imports use */
+extern void *_Znwy(unsigned long long);
+extern int __cxa_guard_acquire(long long *);
 volatile unsigned long rea_after_call;
 
 void *rea_malloc(size_t n) {
@@ -45,6 +53,26 @@ void *rea_memset(void *out, int c, size_t n) {
 }
 size_t rea_strlen(const char *p) {
     size_t value = strlen(p);
+    rea_after_call++;
+    return value;
+}
+void *rea_operator_new(unsigned long n) {
+    void *value = _Znwm(n);
+    rea_after_call++;
+    return value;
+}
+void *rea_operator_new_aligned_nothrow(unsigned long n, unsigned long align, const void *tag) {
+    void *value = _ZnwmSt11align_val_tRKSt9nothrow_t(n, align, tag);
+    rea_after_call++;
+    return value;
+}
+void *rea_operator_new_llp64(unsigned long long n) {
+    void *value = _Znwy(n);
+    rea_after_call++;
+    return value;
+}
+int rea_guard_acquire(long long *guard) {
+    int value = __cxa_guard_acquire(guard);
     rea_after_call++;
     return value;
 }
