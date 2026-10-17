@@ -124,6 +124,10 @@ export class JavaScriptSymbolicBindings {
   #depth = 0;
   truncated = false;
   unresolved = false;
+  /** An evaluated require named an Electron module. */
+  reachedElectron = false;
+  /** An evaluated require left its module name unresolved. */
+  unresolvedRequire = false;
 
   constructor(
     readonly state: JavaScriptSemanticAnalysisState,
@@ -1194,18 +1198,21 @@ export class JavaScriptSymbolicBindings {
           value.path.join(".") === "require"
         ) {
           const spec = args[0];
-          result =
-            spec?.kind === "literal" && typeof spec.value === "string"
-              ? {
-                  kind: "external",
-                  path: [spec.value],
-                  ...(semanticRequireOriginCandidate(node, this.state)?.origin
-                    .loaderAuthority === "candidate" ||
-                  value.loaderAuthority === "candidate"
-                    ? { loaderAuthority: "candidate" as const }
-                    : {}),
-                }
-              : symbolicUnknown("dynamic require");
+          if (spec?.kind === "literal" && typeof spec.value === "string") {
+            if (ELECTRON_MODULE.test(spec.value)) this.reachedElectron = true;
+            result = {
+              kind: "external",
+              path: [spec.value],
+              ...(semanticRequireOriginCandidate(node, this.state)?.origin
+                .loaderAuthority === "candidate" ||
+              value.loaderAuthority === "candidate"
+                ? { loaderAuthority: "candidate" as const }
+                : {}),
+            };
+          } else {
+            this.unresolvedRequire = true;
+            result = symbolicUnknown("dynamic require");
+          }
         } else if (
           value.kind !== "function" ||
           this.#activeFunctions.has(value.node)
