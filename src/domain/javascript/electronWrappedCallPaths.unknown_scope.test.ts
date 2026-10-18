@@ -238,6 +238,77 @@ describe("later initializer loader proof", () => {
     expect(result.parse_status).toBe("partial");
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
+});
+
+describe("later initializer loader input proof", () => {
+  it("keeps the unknown when a late forwarding wrapper receives a loader parameter", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      function register() {
+        load(require).ipcMain.on("ping", () => {});
+      }
+      var load = (loader) => loader(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late forwarding wrapper reads a catch binding", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => {
+        try {
+          run();
+        } catch (loader) {
+          return loader(name);
+        }
+      };
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late forwarding wrapper reads arguments", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      function register() {
+        load(require).ipcMain.on("ping", () => {});
+      }
+      var load = function () {
+        return arguments[0](name);
+      };
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late forwarding wrapper receives a loader in rest arguments", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const req = require;
+      const moduleName = "electron";
+      function register() {
+        load("safe", req).ipcMain.on("ping", () => {});
+      }
+      var load = (...loaders) => loaders[1](moduleName);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
 
   it("keeps the module complete when a late forwarding wrapper calls a loader-free module function", () => {
     const result = analyzeJavaScriptStaticSource(`
@@ -255,7 +326,9 @@ describe("later initializer loader proof", () => {
     expect(result.parse_status).toBe("complete");
     expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
+});
 
+describe("later initializer loader proof bounds", () => {
   it("bounds the loader proof for a long late alias chain", () => {
     const aliases = Array.from({ length: 15_000 }, (_, index) =>
       index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
@@ -266,6 +339,24 @@ describe("later initializer loader proof", () => {
       }
       ${aliases}
       var load = a14999;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("bounds the loader proof for a deeply nested late initializer", () => {
+    const initializer = Array.from(
+      { length: 15_000 },
+      (_, index) => `value${index}`,
+    ).join(" + ");
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = ${initializer};
       register();
     `);
 
