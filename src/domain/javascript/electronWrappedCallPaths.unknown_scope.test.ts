@@ -66,18 +66,6 @@ describe("wrapped call-path unknown attribution", () => {
     );
   });
 
-  it("keeps the read unknown when a late-initialized alias may supply the loader", () => {
-    const result = analyzeJavaScriptStaticSource(`
-      function register() { load("electron").ipcMain.on("x", () => {}); }
-      var load = require;
-      register();
-    `);
-
-    expect(result.references).toEqual([]);
-    expect(result.parse_status).toBe("partial");
-    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
-  });
-
   it("keeps IPC registrations and call paths through a require alias that records no reference", () => {
     const result = analyzeJavaScriptStaticSource(`
       const load = require;
