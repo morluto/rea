@@ -198,6 +198,10 @@ export const flavorSchema = z.looseObject({
   detection_confidence: z.string().min(1).nullable().optional(),
 });
 
+export const projectListSchema = z.looseObject({
+  projects: z.array(z.looseObject({ project_id: z.string().min(1) })),
+});
+
 export const closeProjectSchema = z.looseObject({
   project_id: z.string(),
   closed: z.boolean(),

@@ -28,6 +28,8 @@ export interface AngrMcpConnection {
   serverInfo(): JsonValue;
   /** Unref an owned stdio child and its pipes while retaining the live connection for retry. */
   detach?(): Result<null, ProviderAdapterError>;
+  /** Register a listener for the transport closing, including a server exit. */
+  onClose?(listener: () => void): void;
   close(): Promise<void>;
 }
 
@@ -118,6 +120,11 @@ export const createAngrMcpConnection = (
   environment: Readonly<NodeJS.ProcessEnv>,
 ): AngrMcpConnection => {
   const client = new Client({ name: "rea-angr-provider", version: "1" });
+  const closeListeners: (() => void)[] = [];
+  // The SDK reports a closed transport here, whether REA or the server ended it.
+  client.onclose = () => {
+    for (const listener of closeListeners) listener();
+  };
   let stderrTail = "";
   const transportFailure = (cause: unknown): never => {
     const failure = redactAngrTransportFailure(cause, config);
@@ -206,6 +213,9 @@ export const createAngrMcpConnection = (
       );
     },
     serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
+    onClose: (listener) => {
+      closeListeners.push(listener);
+    },
     detach,
     close: () => client.close().catch(transportFailure),
   };

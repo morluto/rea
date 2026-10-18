@@ -1,4 +1,7 @@
 import { rm } from "node:fs/promises";
+import { parseConfig } from "../../src/config/parseConfig.js";
+import { AngrProvider } from "../../src/angr/AngrProvider.js";
+import { createTestBinarySession } from "../fixtures/binarySession.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
 import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
@@ -682,6 +685,86 @@ describe("failed disassembly", () => {
       );
     } finally {
       await client.close();
+    }
+  });
+});
+
+describe("dead session detection", () => {
+  it("reports an exited owned server so a reopen replaces the client", async () => {
+    const { producer, client } = await open();
+    try {
+      expect(client.operationHealthSnapshot()).toBeUndefined();
+      await client.execute("list_procedures", {});
+      expect(client.operationHealthSnapshot()?.state).toBe("idle");
+      producer.simulateServerExit();
+      expect(client.operationHealthSnapshot()).toMatchObject({
+        state: "exited",
+        stage: "connection",
+      });
+      const after = await client.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(after.ok).toBe(false);
+      if (!after.ok)
+        expect(JSON.stringify(after.error.diagnostics)).toContain(
+          "Reopen the target",
+        );
+    } finally {
+      await client.close();
+    }
+  });
+  it("probes the project in health and marks an externally closed project unreachable", async () => {
+    const { target, producer } = await open();
+    const client = new AngrSessionClient(
+      { ...configuration(), mode: "attached" },
+      target,
+      producer,
+    );
+    try {
+      expect((await client.execute("health", {})).ok).toBe(true);
+      producer.openProjects.clear();
+      const health = await client.execute("health", {});
+      expect(health.ok).toBe(false);
+      expect(client.operationHealthSnapshot()?.state).toBe("unreachable");
+    } finally {
+      await client.close();
+    }
+  });
+  it("does not treat its own close as a lost server", async () => {
+    const { client } = await open();
+    await client.execute("list_procedures", {});
+    expect((await client.close()).ok).toBe(true);
+    expect(client.operationHealthSnapshot()).toBeUndefined();
+  });
+  it("replaces a dead client when the same target is reopened", async () => {
+    const { target } = await createAngrTarget().then((created) => {
+      roots.push(created.root);
+      return created;
+    });
+    const config = parseConfig({ REA_ANGR_PYTHON: process.execPath });
+    if (!config.ok) throw config.error;
+    const producers: RecordingAngrMcp[] = [];
+    const session = createTestBinarySession(
+      new AngrProvider(config.value, {}, () => {
+        const producer = new RecordingAngrMcp(target);
+        producers.push(producer);
+        return producer;
+      }),
+    );
+    try {
+      expect((await session.open(target.path)).ok).toBe(true);
+      expect(
+        (await session.execute("procedure_address", { procedure: "main" })).ok,
+      ).toBe(true);
+      producers[0]?.simulateServerExit();
+      expect((await session.open(target.path)).ok).toBe(true);
+      const after = await session.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(after.ok && after.value.result).toBe("0x1000");
+      expect(producers.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      await session.close();
     }
   });
 });

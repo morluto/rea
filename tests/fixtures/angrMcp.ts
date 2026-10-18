@@ -85,7 +85,22 @@ export class RecordingAngrMcp implements AngrMcpConnection {
   }
   async connect() {
     this.connects += 1;
-    return this.tools ?? [...ANGR_REQUIRED_TOOLS, ...ANGR_FLAVOR_TOOLS];
+    return (
+      this.tools ?? [
+        ...ANGR_REQUIRED_TOOLS,
+        ...ANGR_FLAVOR_TOOLS,
+        "list_projects",
+      ]
+    );
+  }
+  readonly #closeListeners: (() => void)[] = [];
+  onClose(listener: () => void) {
+    this.#closeListeners.push(listener);
+  }
+  /** Model the server process exiting: its projects die and the transport closes. */
+  simulateServerExit() {
+    this.openProjects.clear();
+    for (const listener of this.#closeListeners) listener();
   }
   serverInfo() {
     return { name: "angr-mcp", version: "fixture" };
@@ -116,6 +131,11 @@ export class RecordingAngrMcp implements AngrMcpConnection {
         filename: this.loadedPath,
       };
     }
+    if (name === "list_projects")
+      return {
+        count: this.openProjects.size,
+        projects: [...this.openProjects].map((project_id) => ({ project_id })),
+      };
     if (name === "close_project") {
       const closed = this.openProjects.delete(String(args.project_id));
       return { project_id: args.project_id ?? null, closed };

@@ -22,6 +22,10 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { createEvidence } from "../domain/evidence.js";
+import {
+  providerRetryAction,
+  type ProviderOperationHealth,
+} from "../domain/providerOperationHealth.js";
 import type { AngrConfiguration } from "./AngrConfiguration.js";
 import type { AngrMcpConnection } from "./AngrMcpConnection.js";
 import { parseAngrInput } from "./AngrInput.js";
@@ -41,6 +45,7 @@ import {
   angrLoadOptions,
   cfgStatsSchema,
   closeProjectSchema,
+  projectListSchema,
   flavorSchema,
   loadBinarySchema,
   type AngrCallGraph,
@@ -96,6 +101,13 @@ export class AngrSessionClient implements AnalysisClient {
   readonly #limitations: string[] = [];
   /** Replies received while loading and preparing the project, retained for startup failures. */
   readonly #startupObservations: AngrRawObservation[] = [];
+  #listProjectsAvailable = false;
+  /** Requests currently dispatched to angr. */
+  #inFlight = 0;
+  /** Set once the server or project is observed gone; a reopen must replace this client. */
+  #lost:
+    | { readonly state: "exited" | "unreachable"; readonly reason: string }
+    | undefined;
 
   constructor(
     private readonly config: AngrConfiguration,
@@ -109,9 +121,14 @@ export class AngrSessionClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ) {
-    const call = this.#tail.then(() =>
-      this.#execute(operation, parameters, options),
-    );
+    const call = this.#tail.then(async () => {
+      this.#inFlight += 1;
+      try {
+        return await this.#execute(operation, parameters, options);
+      } finally {
+        this.#inFlight -= 1;
+      }
+    });
     this.#tail = call.then(
       () => undefined,
       () => undefined,
@@ -190,11 +207,13 @@ export class AngrSessionClient implements AnalysisClient {
           },
         ]),
       );
+    if (this.#lost !== undefined)
+      return err(this.#lostError(operation, this.#lost.reason));
     let runner: AngrOperationRunner | undefined;
     try {
       await this.#start();
       if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
-      if (operation === "health") return this.#health();
+      if (operation === "health") return await this.#health(options);
       if (!isAngrOperation(operation))
         throw new AnalysisProtocolError(
           "angr operation changed after validation.",
@@ -280,7 +299,23 @@ export class AngrSessionClient implements AnalysisClient {
     });
   }
 
-  #health() {
+  /**
+   * Answer from the server, not saved state: the owned process may have
+   * exited, or another client may have closed an attached project.
+   */
+  async #health(options: ExecutionOptions | undefined) {
+    const projectId = this.#projectId;
+    if (projectId !== undefined && this.#listProjectsAvailable) {
+      const listed = projectListSchema.parse(
+        await this.connection.call("list_projects", {}),
+      );
+      if (wasCancelled(options)) throw new AnalysisCancelledError("health");
+      if (!listed.projects.some(({ project_id }) => project_id === projectId))
+        throw new AnalysisProtocolError(
+          `angr no longer holds project ${projectId}; another client may have closed it.`,
+          { diagnostics: { project_id: projectId, reason: "project_missing" } },
+        );
+    }
     return ok(
       createAnalysisExecution(
         {
@@ -303,6 +338,58 @@ export class AngrSessionClient implements AnalysisClient {
     );
   }
 
+  /** Classify a failure that shows the server or project is gone. */
+  #observeLoss(cause: unknown, options: ExecutionOptions | undefined): void {
+    if (this.#lost !== undefined || this.#closing || wasCancelled(options))
+      return;
+    const projectMissing =
+      cause instanceof AnalysisError &&
+      (cause.diagnostics?.reason === "project_missing" ||
+        /Project not found|No project with ID/u.test(cause.message));
+    // A non-analysis error is a transport failure from the SDK.
+    const transportLost = !(cause instanceof AnalysisError);
+    if (!projectMissing && !transportLost) return;
+    this.#lost = {
+      state:
+        transportLost && this.config.mode === "headless"
+          ? "exited"
+          : "unreachable",
+      reason:
+        cause instanceof Error ? cause.message : "angr connection was lost",
+    };
+  }
+
+  #lostError(operation: string, reason: string): AnalysisError {
+    return new ProviderAdapterError("angr", operation, {
+      diagnostics: {
+        reason: `The angr session is no longer usable: ${reason}`,
+        recovery:
+          "Reopen the target with open_binary; REA starts a new angr project for it.",
+      },
+    });
+  }
+
+  /** Observed operation health; a lost server or project makes reuse fail. */
+  operationHealthSnapshot(): ProviderOperationHealth | undefined {
+    if (this.#startup === undefined || this.#closed) return undefined;
+    if (this.#lost !== undefined)
+      return {
+        state: this.#lost.state,
+        stage: "connection",
+        retryAction: providerRetryAction(this.#lost.state),
+        exitCode: null,
+        requests: [],
+      };
+    if (this.#loaded === undefined) return undefined;
+    return {
+      state: this.#inFlight > 0 ? "busy" : "idle",
+      stage: null,
+      retryAction: null,
+      exitCode: null,
+      requests: [],
+    };
+  }
+
   #failure(
     operation: string,
     cause: unknown,
@@ -312,6 +399,7 @@ export class AngrSessionClient implements AnalysisClient {
       readonly parameters: Readonly<Record<string, JsonValue>>;
     },
   ) {
+    this.#observeLoss(cause, options);
     const { runner, parameters } = context;
     let failure: AnalysisError;
     if (
@@ -390,7 +478,15 @@ export class AngrSessionClient implements AnalysisClient {
   }
 
   async #initialize(): Promise<void> {
+    this.connection.onClose?.(() => {
+      if (this.#closing || this.#closed || this.#lost !== undefined) return;
+      this.#lost = {
+        state: this.config.mode === "headless" ? "exited" : "unreachable",
+        reason: "the angr MCP connection closed unexpectedly",
+      };
+    });
     const tools = new Set(await this.connection.connect());
+    this.#listProjectsAvailable = tools.has("list_projects");
     const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
     if (missing.length > 0)
       throw new AnalysisProtocolError(
