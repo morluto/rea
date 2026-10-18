@@ -129,6 +129,7 @@ export class JavaScriptSymbolicBindings {
   readonly #aliasesByBinding = new Map<string, string[]>();
   readonly #loaderFreeBindings = new Map<string, boolean>();
   readonly #loaderFreeBindingsInProgress = new Set<string>();
+  #loaderProofDepth = 0;
   readonly #bootstrapTables: Array<{
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
@@ -854,6 +855,10 @@ export class JavaScriptSymbolicBindings {
     const cached = this.#loaderFreeBindings.get(binding.bindingId);
     if (cached !== undefined) return cached;
     if (this.#loaderFreeBindingsInProgress.has(binding.bindingId)) return false;
+    if (this.#loaderProofDepth >= 128) {
+      this.truncated = true;
+      return false;
+    }
     const initializer =
       binding.definitions.length === 1 &&
       ["variable", "function", "class"].includes(
@@ -867,11 +872,13 @@ export class JavaScriptSymbolicBindings {
       return false;
     }
     this.#loaderFreeBindingsInProgress.add(binding.bindingId);
+    this.#loaderProofDepth += 1;
     try {
       const loaderFree = this.#isLoaderFree(initializer.node);
       this.#loaderFreeBindings.set(binding.bindingId, loaderFree);
       return loaderFree;
     } finally {
+      this.#loaderProofDepth -= 1;
       this.#loaderFreeBindingsInProgress.delete(binding.bindingId);
     }
   }
@@ -892,7 +899,8 @@ export class JavaScriptSymbolicBindings {
       const binding = resolveSemanticBindingState(this.state, node, node.name);
       return binding !== undefined
         ? this.#isLoaderFreeBinding(binding)
-        : !MODULE_LOADER_HOSTS.has(node.name);
+        : !semanticResolutionBlocked(this.state, node, node.name) &&
+            !MODULE_LOADER_HOSTS.has(node.name);
     }
     if (t.isUnaryExpression(node))
       return node.operator === "typeof" || this.#isLoaderFree(node.argument);
@@ -928,8 +936,7 @@ export class JavaScriptSymbolicBindings {
         (element) =>
           element === null ||
           (t.isSpreadElement(element)
-            ? this.#chargeLoaderProof() &&
-              this.#isLoaderFree(element.argument)
+            ? this.#chargeLoaderProof() && this.#isLoaderFree(element.argument)
             : this.#isLoaderFree(element)),
       );
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
@@ -945,25 +952,30 @@ export class JavaScriptSymbolicBindings {
   }
 
   #isLoaderFreeFunction(node: t.Function): boolean {
+    const functionScope = this.state.scopeByNode.get(node);
+    if (functionScope === undefined) return false;
     let loaderFree = true;
-    traverseJavaScriptAst(node.body, {
+    traverseJavaScriptAst(node, {
       skip: () => !loaderFree,
-      enter: (child, parent) => {
+      enter: (child, parent, readAncestors) => {
         if (!this.#chargeLoaderProof()) {
           loaderFree = false;
           return;
         }
         if (
-          (t.isIdentifier(child) && child.name === "require") ||
+          (t.isIdentifier(child) &&
+            parent !== null &&
+            t.isReferenced(child, parent, readAncestors().at(-2)) &&
+            !this.#isLoaderFreeFunctionReference(
+              child,
+              functionScope.scopeId,
+            )) ||
           t.isImport(child) ||
           t.isImportExpression(child) ||
           (t.isMetaProperty(child) && child.meta.name === "import") ||
           (t.isStringLiteral(child) &&
             ELECTRON_MODULE.test(child.value) &&
-            !(t.isBinaryExpression(parent) && parent.operator === "+")) ||
-          ((t.isMemberExpression(child) ||
-            t.isOptionalMemberExpression(child)) &&
-            this.#hasLoaderHostRoot(child))
+            !(t.isBinaryExpression(parent) && parent.operator === "+"))
         )
           loaderFree = false;
       },
@@ -971,17 +983,20 @@ export class JavaScriptSymbolicBindings {
     return loaderFree;
   }
 
-  #hasLoaderHostRoot(
-    node: t.MemberExpression | t.OptionalMemberExpression,
+  #isLoaderFreeFunctionReference(
+    node: t.Identifier,
+    functionScopeId: string,
   ): boolean {
-    let root: t.Node = node.object;
-    for (;;) {
-      root = unwrapJavaScriptExpression(root).node;
-      if (!t.isMemberExpression(root) && !t.isOptionalMemberExpression(root))
-        break;
-      root = root.object;
-    }
-    return t.isIdentifier(root) && MODULE_LOADER_HOSTS.has(root.name);
+    const binding = resolveSemanticBindingState(this.state, node, node.name);
+    if (binding === undefined)
+      return (
+        !semanticResolutionBlocked(this.state, node, node.name) &&
+        !MODULE_LOADER_HOSTS.has(node.name)
+      );
+    return (
+      this.#scopeContains(binding.scopeId, functionScopeId) ||
+      this.#isLoaderFreeBinding(binding)
+    );
   }
 
   #chargeLoaderProof(): boolean {
