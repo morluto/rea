@@ -82,6 +82,21 @@ const containsOwnedReturn = (root: t.Node): boolean => {
   return found;
 };
 
+// A later initializer that names require, import() or the Electron module
+// could still hand the read a loader or an Electron value.
+const mayLoadModule = (node: t.Node): boolean => {
+  let found = false;
+  t.traverseFast(node, (child) => {
+    if (found) return;
+    found =
+      (t.isIdentifier(child) && child.name === "require") ||
+      t.isImport(child) ||
+      t.isImportExpression(child) ||
+      (t.isStringLiteral(child) && ELECTRON_MODULE.test(child.value));
+  });
+  return found;
+};
+
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
@@ -128,6 +143,8 @@ export class JavaScriptSymbolicBindings {
   reachedElectron = false;
   /** An evaluated require left its module name unresolved. */
   unresolvedRequire = false;
+  /** A read gave up before an initializer that may supply a module loader. */
+  unresolvedLoader = false;
 
   constructor(
     readonly state: JavaScriptSemanticAnalysisState,
@@ -819,6 +836,7 @@ export class JavaScriptSymbolicBindings {
         initializer.node.end > point)
     ) {
       this.unresolved = true;
+      if (mayLoadModule(initializer.node)) this.unresolvedLoader = true;
       return symbolicUnknown("initializer not available at this read");
     }
     if (this.state.conditionallySkippedExpressions.has(initializer.node))
