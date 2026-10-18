@@ -1599,13 +1599,15 @@ export function* collectElectronWrappedCallPathsSteps(
   if (resolver.unresolved) unknownFindings += 1;
   // Every path starts at an Electron exposure or IPC registration, and the
   // resolver reaches an Electron value only through a require or import of
-  // the Electron module. Where none of that happened and no budget ran out,
-  // the walk could not have hidden a path, so its unresolved reads describe
-  // no fact this analysis could have found.
+  // the Electron module. Where none of that happened, no read gave up before
+  // an initializer that could supply a loader, and no budget ran out, the
+  // walk could not have hidden a path, so its unresolved reads describe no
+  // fact this analysis could have found.
   if (
     identity.bindings.size > 0 ||
     resolver.reachedElectron ||
     resolver.unresolvedRequire ||
+    resolver.unresolvedLoader ||
     accumulator.electronCallPathLimitReached === true ||
     referencesElectronModule(accumulator.references) ||
     referencesUnresolvedModule(accumulator.references)
