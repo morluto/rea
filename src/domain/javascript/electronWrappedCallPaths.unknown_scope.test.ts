@@ -209,4 +209,68 @@ describe("later initializer loader proof", () => {
     expect(result.parse_status).toBe("complete");
     expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
+
+  it("keeps the unknown when a late function has a loader default parameter", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load()("electron").ipcMain.on("ping", () => {});
+      }
+      var load = (req = require) => req;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late forwarding wrapper closes over a loader", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const req = require;
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = (name) => req(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the module complete when a late forwarding wrapper calls a loader-free module function", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function identity(value) {
+        return value;
+      }
+      function register() {
+        load("value");
+      }
+      var load = (value) => identity(value);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("bounds the loader proof for a long late alias chain", () => {
+    const aliases = Array.from({ length: 15_000 }, (_, index) =>
+      index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+    ).join("\n");
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      ${aliases}
+      var load = a14999;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
 });
