@@ -66,6 +66,18 @@ describe("wrapped call-path unknown attribution", () => {
     );
   });
 
+  it("keeps the read unknown when a late-initialized alias may supply the loader", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() { load("electron").ipcMain.on("x", () => {}); }
+      var load = require;
+      register();
+    `);
+
+    expect(result.references).toEqual([]);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps IPC registrations and call paths through a require alias that records no reference", () => {
     const result = analyzeJavaScriptStaticSource(`
       const load = require;
@@ -75,7 +87,11 @@ describe("wrapped call-path unknown attribution", () => {
 
     expect(result.references).toEqual([]);
     expect(result.electron.ipc).toContainEqual(
-      expect.objectContaining({ side: "main", operation: "on", channel: "ping" }),
+      expect.objectContaining({
+        side: "main",
+        operation: "on",
+        channel: "ping",
+      }),
     );
     expect(result.electron.call_paths).toContainEqual(
       expect.objectContaining({
@@ -84,5 +100,33 @@ describe("wrapped call-path unknown attribution", () => {
         terminal: "ipc-event.sender.send",
       }),
     );
+  });
+
+  it("keeps the unknown when a hoisted read precedes a loader alias that could supply Electron", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = require;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the module complete when the later initializer of the called alias cannot load a module", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = (name) => ({ ipcMain: { on() { return name; } } });
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
 });
