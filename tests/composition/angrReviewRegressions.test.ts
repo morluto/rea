@@ -10,9 +10,12 @@ import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
 import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
 import {
+  AngrTransportError,
   decodeAngrToolResult,
+  isConnectionLoss,
   redactAngrCredentials,
 } from "../../src/angr/AngrMcpConnection.js";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -765,6 +768,96 @@ describe("dead session detection", () => {
       expect(producers.length).toBeGreaterThanOrEqual(2);
     } finally {
       await session.close();
+    }
+  });
+});
+
+describe("connection-loss classification", () => {
+  it("classifies only closed or unreachable connections as lost", () => {
+    expect(
+      isConnectionLoss(
+        new SdkError(SdkErrorCode.ConnectionClosed, "Connection closed"),
+      ),
+    ).toBe(true);
+    expect(
+      isConnectionLoss(
+        new SdkError(SdkErrorCode.NotConnected, "Not connected"),
+      ),
+    ).toBe(true);
+    expect(
+      isConnectionLoss(new SdkError(SdkErrorCode.SendFailed, "Send failed")),
+    ).toBe(true);
+    expect(isConnectionLoss(new TypeError("fetch failed"))).toBe(true);
+    expect(
+      isConnectionLoss(
+        new SdkError(SdkErrorCode.RequestTimeout, "Request timed out"),
+      ),
+    ).toBe(false);
+    expect(
+      isConnectionLoss(
+        new SdkError(SdkErrorCode.InvalidResult, "Invalid result"),
+      ),
+    ).toBe(false);
+    expect(isConnectionLoss(new Error("MCP error -32603: internal"))).toBe(
+      false,
+    );
+  });
+  it("keeps a live session usable after a malformed reply", async () => {
+    const { producer, client } = await open();
+    try {
+      await client.execute("list_procedures", {});
+      producer.overrideCall = (name) =>
+        name === "get_function_info"
+          ? { address: "not-a-function-reply" }
+          : undefined;
+      const malformed = await client.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(malformed.ok).toBe(false);
+      expect(client.operationHealthSnapshot()?.state).toBe("idle");
+      delete producer.overrideCall;
+      const recovered = await client.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(recovered.ok && recovered.value.result).toBe("0x1000");
+    } finally {
+      await client.close();
+    }
+  });
+  it("keeps a live session usable after a request timeout", async () => {
+    const { producer, client } = await open();
+    try {
+      await client.execute("list_procedures", {});
+      producer.overrideCall = (name) => {
+        if (name === "decompile_function")
+          throw new AngrTransportError("MCP error: Request timed out", false);
+        return undefined;
+      };
+      const timedOut = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      expect(timedOut.ok).toBe(false);
+      expect(client.operationHealthSnapshot()?.state).toBe("idle");
+    } finally {
+      await client.close();
+    }
+  });
+  it("marks the session lost when the transport reports a closed connection", async () => {
+    const { producer, client } = await open();
+    try {
+      await client.execute("list_procedures", {});
+      producer.overrideCall = (name) => {
+        if (name === "decompile_function")
+          throw new AngrTransportError("Connection closed", true);
+        return undefined;
+      };
+      const failed = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      expect(failed.ok).toBe(false);
+      expect(client.operationHealthSnapshot()?.state).toBe("exited");
+    } finally {
+      await client.close();
     }
   });
 });

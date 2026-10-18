@@ -1,6 +1,8 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   Client,
+  SdkError,
+  SdkErrorCode,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import {
@@ -32,6 +34,34 @@ export interface AngrMcpConnection {
   onClose?(listener: () => void): void;
   close(): Promise<void>;
 }
+
+/**
+ * A failure in the MCP transport, classified where it happens: only a closed
+ * or unreachable connection means the session is gone. A timeout or a
+ * server-side error reply leaves the server and its project usable.
+ */
+export class AngrTransportError extends Error {
+  constructor(
+    message: string,
+    readonly connectionLost: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "AngrTransportError";
+  }
+}
+
+const LOST_CONNECTION_CODES: ReadonlySet<string> = new Set([
+  SdkErrorCode.ConnectionClosed,
+  SdkErrorCode.NotConnected,
+  SdkErrorCode.SendFailed,
+]);
+
+/** Whether an SDK or fetch failure shows the connection itself is gone. */
+export const isConnectionLoss = (cause: unknown): boolean =>
+  (cause instanceof SdkError && LOST_CONNECTION_CODES.has(cause.code)) ||
+  // An HTTP endpoint that stopped listening surfaces as a fetch failure.
+  (cause instanceof TypeError && /fetch failed/u.test(cause.message));
 
 /** Bound retained upstream error text so diagnostics stay caller-safe in size. */
 const UPSTREAM_REASON_LIMIT = 4_096;
@@ -128,14 +158,18 @@ export const createAngrMcpConnection = (
   let stderrTail = "";
   const transportFailure = (cause: unknown): never => {
     const failure = redactAngrTransportFailure(cause, config);
-    if (stderrTail.length === 0) throw failure;
+    const lost = isConnectionLoss(cause);
+    if (stderrTail.length === 0)
+      throw new AngrTransportError(failure.message, lost, { cause: failure });
     const safeTail = redactAngrTransportFailure(
       new Error(stderrTail),
       config,
     ).message;
-    throw new Error(`${failure.message}\nangr MCP stderr tail:\n${safeTail}`, {
-      cause: failure,
-    });
+    throw new AngrTransportError(
+      `${failure.message}\nangr MCP stderr tail:\n${safeTail}`,
+      lost,
+      { cause: failure },
+    );
   };
   const transport =
     "command" in config

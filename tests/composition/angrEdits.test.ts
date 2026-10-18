@@ -259,6 +259,7 @@ describe("angr without decompilation-flavor tools", () => {
       "rename",
       "set_type",
       "set_comments",
+      "list_projects",
     ];
     const client = new AngrSessionClient(configuration(), target, producer);
     try {

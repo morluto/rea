@@ -67,6 +67,7 @@ export const ANGR_REQUIRED_TOOLS = Object.freeze([
   "get_basic_blocks",
   "get_callgraph",
   "close_project",
+  "list_projects",
   "rename",
   "set_type",
   "set_comments",

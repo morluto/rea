@@ -27,7 +27,10 @@ import {
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
 import type { AngrConfiguration } from "./AngrConfiguration.js";
-import type { AngrMcpConnection } from "./AngrMcpConnection.js";
+import {
+  AngrTransportError,
+  type AngrMcpConnection,
+} from "./AngrMcpConnection.js";
 import { parseAngrInput } from "./AngrInput.js";
 import {
   AngrOperationRunner,
@@ -101,7 +104,6 @@ export class AngrSessionClient implements AnalysisClient {
   readonly #limitations: string[] = [];
   /** Replies received while loading and preparing the project, retained for startup failures. */
   readonly #startupObservations: AngrRawObservation[] = [];
-  #listProjectsAvailable = false;
   /** Requests currently dispatched to angr. */
   #inFlight = 0;
   /** Set once the server or project is observed gone; a reopen must replace this client. */
@@ -305,7 +307,7 @@ export class AngrSessionClient implements AnalysisClient {
    */
   async #health(options: ExecutionOptions | undefined) {
     const projectId = this.#projectId;
-    if (projectId !== undefined && this.#listProjectsAvailable) {
+    if (projectId !== undefined) {
       const listed = projectListSchema.parse(
         await this.connection.call("list_projects", {}),
       );
@@ -346,8 +348,10 @@ export class AngrSessionClient implements AnalysisClient {
       cause instanceof AnalysisError &&
       (cause.diagnostics?.reason === "project_missing" ||
         /Project not found|No project with ID/u.test(cause.message));
-    // A non-analysis error is a transport failure from the SDK.
-    const transportLost = !(cause instanceof AnalysisError);
+    // Only a transport failure classified as a lost connection counts; a
+    // malformed reply or a timeout leaves the server and project usable.
+    const transportLost =
+      cause instanceof AngrTransportError && cause.connectionLost;
     if (!projectMissing && !transportLost) return;
     this.#lost = {
       state:
@@ -486,7 +490,6 @@ export class AngrSessionClient implements AnalysisClient {
       };
     });
     const tools = new Set(await this.connection.connect());
-    this.#listProjectsAvailable = tools.has("list_projects");
     const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
     if (missing.length > 0)
       throw new AnalysisProtocolError(
