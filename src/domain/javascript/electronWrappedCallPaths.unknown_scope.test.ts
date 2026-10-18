@@ -103,6 +103,98 @@ describe("wrapped call-path unknown attribution", () => {
     expect(result.parse_status).toBe("partial");
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
+});
+
+describe("later initializer loader proof", () => {
+  it("keeps the unknown when a late loader alias resolves through another binding", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const req = require;
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = req;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late loader alias resolves through two bindings", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var base = require;
+      var load = base;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late loader alias comes from a function call", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = pick();
+      function pick() {
+        return require;
+      }
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late loader alias resolves to a host member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const req = window.require;
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = req;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late initializer can hand out require", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = typeof require === "function" ? require : function () {};
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the module complete when a later function only returns a string containing electron", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        format("value");
+      }
+      var format = (value) => value + "electron";
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
 
   it("keeps the module complete when the later initializer of the called alias cannot load a module", () => {
     const result = analyzeJavaScriptStaticSource(`
