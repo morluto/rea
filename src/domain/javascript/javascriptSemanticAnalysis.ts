@@ -1179,6 +1179,13 @@ function* collectDefinitionsSteps(
         t.isFunction(node)
       )
         needsPrototypeFacts = true;
+      if (
+        (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
+        (t.isLiteral(unwrapJavaScriptExpression(node.object).node) ||
+          t.isObjectExpression(unwrapJavaScriptExpression(node.object).node) ||
+          t.isArrayExpression(unwrapJavaScriptExpression(node.object).node))
+      )
+        needsPrototypeFacts = true;
       let parentScope = currentSemanticScope(stack);
       if (
         semanticMethodDefinitionExpression(parent ?? undefined, node) &&
