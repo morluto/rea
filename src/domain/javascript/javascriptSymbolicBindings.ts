@@ -81,15 +81,11 @@ const containsOwnedReturn = (root: t.Node): boolean => {
   return found;
 };
 
-const MODULE_LOADER_HOSTS: ReadonlySet<string> = new Set([
-  "arguments",
-  "require",
-  "module",
-  "process",
-  "globalThis",
-  "window",
-  "self",
-  "global",
+const LOADER_FREE_AMBIENT_VALUES: ReadonlySet<string> = new Set([
+  "Boolean",
+  "String",
+  "setTimeout",
+  "undefined",
 ]);
 
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
@@ -126,6 +122,8 @@ export class JavaScriptSymbolicBindings {
   readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
   readonly #aliasesByBinding = new Map<string, string[]>();
+  readonly #aliasSourcesByBinding = new Map<string, string[]>();
+  readonly #bindingAliasGroups = new Map<string, ReadonlySet<string>>();
   readonly #loaderFreeBindings = new Map<string, boolean>();
   readonly #loaderFreeBindingsInProgress = new Set<string>();
   readonly #loaderFreeFunctionCalls = new WeakMap<
@@ -925,27 +923,58 @@ export class JavaScriptSymbolicBindings {
             callerParameterLoaderFree,
           )
         : !semanticResolutionBlocked(this.state, node, node.name) &&
-            !MODULE_LOADER_HOSTS.has(node.name);
+            !this.state.ambientBindingWrites.has(node.name) &&
+            LOADER_FREE_AMBIENT_VALUES.has(node.name);
     }
     if (t.isUnaryExpression(node))
       return (
         node.operator === "typeof" ||
         this.#isLoaderFree(node.argument, depth + 1)
       );
-    if (t.isBinaryExpression(node) || t.isLogicalExpression(node))
+    if (t.isBinaryExpression(node))
       return (
         this.#isLoaderFree(node.left, depth + 1) &&
         this.#isLoaderFree(node.right, depth + 1)
       );
+    if (t.isLogicalExpression(node))
+      return (
+        this.#isLoaderFree(
+          node.left,
+          depth + 1,
+          invocation,
+          callerParameterLoaderFree,
+        ) &&
+        this.#isLoaderFree(
+          node.right,
+          depth + 1,
+          invocation,
+          callerParameterLoaderFree,
+        )
+      );
     if (t.isConditionalExpression(node))
       return (
         this.#isLoaderFree(node.test, depth + 1) &&
-        this.#isLoaderFree(node.consequent, depth + 1) &&
-        this.#isLoaderFree(node.alternate, depth + 1)
+        this.#isLoaderFree(
+          node.consequent,
+          depth + 1,
+          invocation,
+          callerParameterLoaderFree,
+        ) &&
+        this.#isLoaderFree(
+          node.alternate,
+          depth + 1,
+          invocation,
+          callerParameterLoaderFree,
+        )
       );
     if (t.isSequenceExpression(node))
-      return node.expressions.every((expression) =>
-        this.#isLoaderFree(expression, depth + 1),
+      return node.expressions.every((expression, index) =>
+        this.#isLoaderFree(
+          expression,
+          depth + 1,
+          index === node.expressions.length - 1 ? invocation : undefined,
+          callerParameterLoaderFree,
+        ),
       );
     if (t.isObjectExpression(node))
       return node.properties.every((property) => {
@@ -1065,7 +1094,6 @@ export class JavaScriptSymbolicBindings {
           t.isThisExpression(child) ||
           t.isImport(child) ||
           t.isImportExpression(child) ||
-          (t.isMetaProperty(child) && child.meta.name === "import") ||
           (t.isStringLiteral(child) &&
             ELECTRON_MODULE.test(child.value) &&
             !(t.isBinaryExpression(parent) && parent.operator === "+"))
@@ -1091,7 +1119,8 @@ export class JavaScriptSymbolicBindings {
     if (binding === undefined)
       return (
         !semanticResolutionBlocked(this.state, node, node.name) &&
-        !MODULE_LOADER_HOSTS.has(node.name)
+        !this.state.ambientBindingWrites.has(node.name) &&
+        LOADER_FREE_AMBIENT_VALUES.has(node.name)
       );
     if (binding.kind === "parameter")
       return parameterLoaderFree.get(binding.bindingId) ?? false;
@@ -1747,7 +1776,28 @@ export class JavaScriptSymbolicBindings {
       const aliases = this.#aliasesByBinding.get(source.bindingId) ?? [];
       aliases.push(binding.bindingId);
       this.#aliasesByBinding.set(source.bindingId, aliases);
+      const sources = this.#aliasSourcesByBinding.get(binding.bindingId) ?? [];
+      sources.push(source.bindingId);
+      this.#aliasSourcesByBinding.set(binding.bindingId, sources);
     }
+  }
+
+  #bindingAliasGroup(bindingId: string): ReadonlySet<string> {
+    const cached = this.#bindingAliasGroups.get(bindingId);
+    if (cached !== undefined) return cached;
+    const group = new Set<string>();
+    const pending = [bindingId];
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (group.has(current)) continue;
+      group.add(current);
+      pending.push(
+        ...(this.#aliasesByBinding.get(current) ?? []),
+        ...(this.#aliasSourcesByBinding.get(current) ?? []),
+      );
+    }
+    for (const member of group) this.#bindingAliasGroups.set(member, group);
+    return group;
   }
 
   #invalidateBootstrapTable(
@@ -1798,10 +1848,13 @@ export class JavaScriptSymbolicBindings {
     }
     if (dynamic && t.isIdentifier(root)) {
       const binding = resolveSemanticBindingState(this.state, root, root.name);
-      if (binding)
-        this.#mutated.add(
-          this.#exportAliases.get(binding.bindingId) ?? binding.bindingId,
-        );
+      if (binding) {
+        const alias = this.#exportAliases.get(binding.bindingId);
+        for (const key of alias === undefined
+          ? this.#bindingAliasGroup(binding.bindingId)
+          : [alias])
+          this.#mutated.add(key);
+      }
       return;
     }
     if (t.isIdentifier(root)) this.#addWrite(root, path, value, site);
@@ -1818,7 +1871,6 @@ export class JavaScriptSymbolicBindings {
     const alias = this.#exportAliases.get(binding.bindingId);
     if (this.#moduleBindings.has(binding.bindingId) && path[0] !== "exports")
       return;
-    const key = alias ?? binding.bindingId;
     const selected = this.#moduleBindings.has(binding.bindingId)
       ? path.slice(1)
       : path;
@@ -1838,14 +1890,18 @@ export class JavaScriptSymbolicBindings {
           t.isSwitchCase(parent) ||
           t.isTryStatement(parent)
         ) {
-          if (selected.length === 0) this.#mutated.add(key);
-          else this.#unsafeExports.add(`${key}:${selected[0] ?? ""}`);
+          if (selected.length === 0) this.#mutated.add(alias);
+          else this.#unsafeExports.add(`${alias}:${selected[0] ?? ""}`);
           return;
         }
       }
     }
-    const writes = this.#writes.get(key) ?? [];
-    writes.push({ path: selected, value, site });
-    this.#writes.set(key, writes);
+    for (const key of alias === undefined
+      ? this.#bindingAliasGroup(binding.bindingId)
+      : [alias]) {
+      const writes = this.#writes.get(key) ?? [];
+      writes.push({ path: selected, value, site });
+      this.#writes.set(key, writes);
+    }
   }
 }
