@@ -868,6 +868,11 @@ export class JavaScriptSymbolicBindings {
     invocation?: t.CallExpression | t.OptionalCallExpression,
     callerParameterLoaderFree?: ReadonlyMap<string, boolean>,
   ): boolean {
+    if (
+      this.#mutated.has(binding.bindingId) ||
+      this.#writes.has(binding.bindingId)
+    )
+      return false;
     if (invocation === undefined) {
       const cached = this.#loaderFreeBindings.get(binding.bindingId);
       if (cached !== undefined) return cached;
@@ -1077,6 +1082,7 @@ export class JavaScriptSymbolicBindings {
               parameterLoaderFree,
               parent,
             )) ||
+          t.isThisExpression(child) ||
           t.isImport(child) ||
           t.isImportExpression(child) ||
           (t.isMetaProperty(child) && child.meta.name === "import") ||
