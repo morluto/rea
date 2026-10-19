@@ -326,6 +326,52 @@ describe("later initializer loader input proof", () => {
     expect(result.parse_status).toBe("complete");
     expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
+
+  it("keeps the unknown when a late function returns its loader receiver", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load.call(require)("electron").ipcMain.on("ping", () => {});
+      }
+      var load = function () { return this; };
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late function reads a loader from its receiver", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      function register() {
+        load.call({ r: require }).ipcMain.on("ping", () => {});
+      }
+      var load = function () { return this.r(name); };
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late function reads a loader from a changed object", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      const holder = {};
+      holder.load = require;
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => holder.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
 });
 
 describe("later initializer loader proof bounds", () => {
