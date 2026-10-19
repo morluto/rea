@@ -445,6 +445,44 @@ describe("later initializer loader input proof", () => {
   });
 });
 
+describe("later initializer mutation proof", () => {
+  it("keeps the unknown when a called function changes a late function's object", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      const holder = {};
+      function install(target) {
+        target.load = require;
+      }
+      install(holder);
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => holder.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late loader can come from a changed prototype", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      Object.prototype.load = require;
+      function register() {
+        load(name).ipcMain.on("ping", () => {});
+      }
+      var load = ({}).load;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
 describe("later initializer loader proof bounds", () => {
   it("bounds the loader proof for a long late alias chain", () => {
     const aliases = Array.from({ length: 15_000 }, (_, index) =>

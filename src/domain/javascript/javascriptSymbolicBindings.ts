@@ -848,7 +848,9 @@ export class JavaScriptSymbolicBindings {
   ): boolean {
     if (
       this.#mutated.has(binding.bindingId) ||
-      this.#writes.has(binding.bindingId)
+      this.#writes.has(binding.bindingId) ||
+      binding.memberWrites.length > 0 ||
+      binding.escapedPaths.length > 0
     )
       return false;
     if (invocation === undefined) {
@@ -1001,14 +1003,28 @@ export class JavaScriptSymbolicBindings {
               this.#isLoaderFree(element.argument, depth + 1)
             : this.#isLoaderFree(element, depth + 1)),
       );
-    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      const object = unwrapJavaScriptExpression(node.object).node;
+      const key = semanticStaticPropertyKey(node.property, node.computed);
+      const ownObjectProperty =
+        key !== null &&
+        t.isObjectExpression(object) &&
+        object.properties.some(
+          (property) =>
+            !t.isSpreadElement(property) &&
+            !isObjectPrototypeSetter(property, key) &&
+            semanticStaticPropertyKey(property.key, property.computed) === key,
+        );
       return (
-        (t.isLiteral(node.object) ||
-          t.isObjectExpression(node.object) ||
-          t.isArrayExpression(node.object)) &&
-        this.#isLoaderFree(node.object, depth + 1) &&
-        (!node.computed || this.#isLoaderFree(node.property, depth + 1))
+        (t.isLiteral(object) ||
+          t.isObjectExpression(object) ||
+          t.isArrayExpression(object)) &&
+        this.#isLoaderFree(object, depth + 1) &&
+        (!node.computed || this.#isLoaderFree(node.property, depth + 1)) &&
+        (ownObjectProperty ||
+          this.state.prototypeRequireMutationObserved === false)
       );
+    }
     if (t.isFunction(node))
       return this.#isLoaderFreeFunction(
         node,

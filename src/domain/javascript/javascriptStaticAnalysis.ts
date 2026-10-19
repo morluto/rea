@@ -159,6 +159,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     finishPartialNetworkEndpoints(findings, bindings, index);
     finishSqliteStorageCalls(findings, bindings, index);
   }
+  yield* index.indexMemberMutationFactsSteps();
   accumulator.electronCallPaths = yield* collectElectronWrappedCallPathsSteps(
     file.program,
     bindings,
