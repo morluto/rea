@@ -121,6 +121,20 @@ describe("later initializer loader proof", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it("keeps the unknown when a late loader resolves to an ambient loader alias", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function register() {
+        load("electron").ipcMain.on("ping", () => {});
+      }
+      var load = __non_webpack_require__;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps the unknown when a late loader alias resolves through two bindings", () => {
     const result = analyzeJavaScriptStaticSource(`
       function register() {
@@ -209,7 +223,46 @@ describe("later initializer loader proof", () => {
     expect(result.parse_status).toBe("complete");
     expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
   });
+});
 
+describe("later initializer selected value proof", () => {
+  it.each([
+    ["conditional", "true ? value => value : value => value"],
+    ["logical", "(value => value) || (value => value)"],
+    ["sequence", "(0, value => value)"],
+  ])(
+    "keeps the module complete through a %s callable selection",
+    (_kind, initializer) => {
+      const result = analyzeJavaScriptStaticSource(`
+        function run() {
+          format("value");
+        }
+        var format = ${initializer};
+        run();
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("complete");
+      expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps the module complete when a late function returns import.meta.url", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function run() {
+        moduleUrl();
+      }
+      var moduleUrl = () => import.meta.url;
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
+describe("later initializer loader proof", () => {
   it("keeps the unknown when a late function has a loader default parameter", () => {
     const result = analyzeJavaScriptStaticSource(`
       function register() {
@@ -361,6 +414,24 @@ describe("later initializer loader input proof", () => {
       const name = "electron";
       const holder = {};
       holder.load = require;
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => holder.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when an alias changes a late function's object", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      const holder = {};
+      const alias = holder;
+      alias.load = require;
       function register() {
         load().ipcMain.on("ping", () => {});
       }
