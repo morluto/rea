@@ -69,7 +69,6 @@ const sameHostPath = (left: string, right: string): boolean =>
 /** A failed cleanup retains the upstream project and reports it for retry. */
 class AngrCleanupError extends ProviderAdapterError {
   override readonly cleanupIncomplete = true;
-  override readonly cleanupResources: readonly string[];
   constructor(resource: string, cause: unknown) {
     super("angr", "close", {
       cause,
@@ -80,7 +79,7 @@ class AngrCleanupError extends ProviderAdapterError {
         resource,
       },
     });
-    this.cleanupResources = [resource];
+    this.setCleanupResources([resource]);
   }
 }
 
