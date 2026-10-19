@@ -385,6 +385,9 @@ export class AngrSessionClient implements AnalysisClient {
         requests: [],
       };
     if (this.#loaded === undefined) return undefined;
+    // Another client can close an attached project without any event reaching
+    // REA. Give no verdict, so a reopen runs the live health probe instead.
+    if (this.config.mode === "attached") return undefined;
     return {
       state: this.#inFlight > 0 ? "busy" : "idle",
       stage: null,

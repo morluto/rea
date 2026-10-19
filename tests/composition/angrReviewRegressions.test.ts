@@ -861,3 +861,71 @@ describe("connection-loss classification", () => {
     }
   });
 });
+
+describe("attached project closed by another client", () => {
+  it("replaces the client on the first reopen after an external close", async () => {
+    const { target } = await createAngrTarget().then((created) => {
+      roots.push(created.root);
+      return created;
+    });
+    const path = `${roots[roots.length - 1]}/attached.json`;
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }));
+    const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const producers: RecordingAngrMcp[] = [];
+    const session = createTestBinarySession(
+      new AngrProvider(config.value, {}, () => {
+        const producer = new RecordingAngrMcp(target);
+        producer.projectId = `p${producers.length + 1}`;
+        producers.push(producer);
+        return producer;
+      }),
+    );
+    try {
+      expect((await session.open(target.path)).ok).toBe(true);
+      expect(
+        (await session.execute("procedure_address", { procedure: "main" })).ok,
+      ).toBe(true);
+      // Another client closes the project; no event reaches REA.
+      producers[0]?.openProjects.clear();
+      expect((await session.open(target.path)).ok).toBe(true);
+      const after = await session.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(after.ok && after.value.result).toBe("0x1000");
+      expect(producers.length).toBe(2);
+    } finally {
+      await session.close();
+    }
+  });
+  it("reuses a live attached client on reopen", async () => {
+    const { target } = await createAngrTarget().then((created) => {
+      roots.push(created.root);
+      return created;
+    });
+    const path = `${roots[roots.length - 1]}/attached.json`;
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, JSON.stringify({ url: "http://127.0.0.1:8000/mcp" }));
+    const config = parseConfig({ REA_ANGR_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    let created = 0;
+    const session = createTestBinarySession(
+      new AngrProvider(config.value, {}, () => {
+        created += 1;
+        return new RecordingAngrMcp(target);
+      }),
+    );
+    try {
+      await session.open(target.path);
+      await session.execute("procedure_address", { procedure: "main" });
+      await session.open(target.path);
+      expect(
+        (await session.execute("procedure_address", { procedure: "main" })).ok,
+      ).toBe(true);
+      expect(created).toBe(1);
+    } finally {
+      await session.close();
+    }
+  });
+});
