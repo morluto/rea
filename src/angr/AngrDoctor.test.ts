@@ -73,38 +73,43 @@ it("contributes angr's startup and request budgets to the client tool deadline",
     idaFile,
     JSON.stringify({ command: "python", timeoutMs: 9_000_000 }),
   );
-  const budget = (
+  const budget = async (
     provider: "angr" | "auto" | "ida",
     env: Record<string, string>,
   ) =>
-    createSystemDoctorHost(env).resolveProviderRequestBudget?.(provider, env);
+    await createSystemDoctorHost(env).resolveProviderRequestBudget?.(
+      provider,
+      env,
+    );
 
   // Defaults: load_binary and get_cfg at 600 s each, then a 300 s request.
-  const defaults = budget("angr", { REA_ANGR_PYTHON: process.execPath });
+  const defaults = await budget("angr", { REA_ANGR_PYTHON: process.execPath });
   expect(defaults).toEqual({ ok: true, value: 1_500_000 });
-  expect(budget("angr", { REA_ANGR_MCP_CONFIG: angrFile })).toEqual({
+  expect(await budget("angr", { REA_ANGR_MCP_CONFIG: angrFile })).toEqual({
     ok: true,
     value: 5_000,
   });
   // auto takes the largest configured provider budget.
   expect(
-    budget("auto", {
+    await budget("auto", {
       REA_ANGR_MCP_CONFIG: angrFile,
       REA_IDA_MCP_CONFIG: idaFile,
     }),
   ).toEqual({ ok: true, value: 9_000_000 });
-  expect(budget("auto", { REA_ANGR_PYTHON: process.execPath })).toEqual({
+  expect(await budget("auto", { REA_ANGR_PYTHON: process.execPath })).toEqual({
     ok: true,
     value: 1_500_000,
   });
   // Explicitly selected, an invalid registration is an error; under auto it is skipped.
   await writeFile(angrFile, JSON.stringify({ url: "https://example.com/mcp" }));
-  expect(budget("angr", { REA_ANGR_MCP_CONFIG: angrFile })?.ok).toBe(false);
-  expect(budget("auto", { REA_ANGR_MCP_CONFIG: angrFile })).toEqual({
+  expect((await budget("angr", { REA_ANGR_MCP_CONFIG: angrFile }))?.ok).toBe(
+    false,
+  );
+  expect(await budget("auto", { REA_ANGR_MCP_CONFIG: angrFile })).toEqual({
     ok: true,
     value: undefined,
   });
-  expect(budget("angr", {})).toEqual({ ok: true, value: undefined });
+  expect(await budget("angr", {})).toEqual({ ok: true, value: undefined });
 
   // The recommended client deadline covers angr's budget instead of the 450 s default.
   if (!defaults?.ok || defaults.value === undefined)
