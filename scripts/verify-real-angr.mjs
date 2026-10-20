@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, lstat, writeFile } from "node:fs/promises";
+import { chmod, lstat, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
@@ -39,7 +39,7 @@ const [
   { toolContract },
   { evidenceSchema },
   { functionDossierSchema },
-  { readAngrConfiguration },
+  { readAngrConfiguration, angrRequestBudgetMs },
   { createAngrMcpConnection },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
@@ -54,6 +54,9 @@ const registration = readAngrConfiguration({
 });
 if (!registration.ok) throw registration.error;
 const config = registration.value;
+// A first request runs load_binary and get_cfg, each up to startupTimeoutMs,
+// then a function analysis makes several more angr requests.
+const firstRequestBudgetMs = angrRequestBudgetMs(config) + 2 * config.timeoutMs;
 const environment = Object.fromEntries(
   Object.entries({
     ...process.env,
@@ -61,6 +64,23 @@ const environment = Object.fromEntries(
     REA_LOG_LEVEL: "error",
   }).filter(([, value]) => value !== undefined),
 );
+/** Reject a report destination that is the target file under any name. */
+const assertReportIsNotTarget = async (reportPath) => {
+  let reportInfo;
+  try {
+    reportInfo = await stat(reportPath);
+  } catch (cause) {
+    if (cause?.code === "ENOENT") return;
+    throw cause;
+  }
+  const targetInfo = await stat(target);
+  if (reportInfo.dev === targetInfo.dev && reportInfo.ino === targetInfo.ino)
+    throw new Error(
+      "--report must not name the target binary or a link to it; choose another report path.",
+    );
+};
+if (values.report !== undefined)
+  await assertReportIsNotTarget(resolve(values.report));
 const report = {
   passed: false,
   mode: config.mode,
@@ -112,7 +132,7 @@ const cli = async () => {
     ],
     {
       env: environment,
-      timeout: config.startupTimeoutMs + config.timeoutMs * 3,
+      timeout: firstRequestBudgetMs,
       maxBuffer: 64 * 1024 * 1024,
     },
   ).catch((cause) => {
@@ -140,7 +160,7 @@ const mcp = async (cliDossier) => {
     phase = `production MCP ${name}`;
     const result = await client.callTool(
       { name, arguments: args },
-      { timeout: config.startupTimeoutMs + config.timeoutMs },
+      { timeout: firstRequestBudgetMs },
     );
     if (result.isError === true) report.failed_tool_result = result;
     assert.notEqual(result.isError, true);
@@ -420,6 +440,7 @@ try {
 } finally {
   if (values.report !== undefined) {
     const reportPath = resolve(values.report);
+    await assertReportIsNotTarget(reportPath);
     try {
       const info = await lstat(reportPath);
       if (!info.isFile())
