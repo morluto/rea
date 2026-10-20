@@ -949,3 +949,66 @@ describe("attached project closed by another client", () => {
     }
   });
 });
+
+describe("failed startup", () => {
+  it("reports a failed startup so a reopen closes the project and starts fresh", async () => {
+    const { target } = await createAngrTarget().then((created) => {
+      roots.push(created.root);
+      return created;
+    });
+    const config = parseConfig({ REA_ANGR_PYTHON: process.execPath });
+    if (!config.ok) throw config.error;
+    const producers: RecordingAngrMcp[] = [];
+    const session = createTestBinarySession(
+      new AngrProvider(config.value, {}, () => {
+        const producer = new RecordingAngrMcp(target);
+        producer.projectId = `p${producers.length + 1}`;
+        // The first server fails CFG recovery after loading the project.
+        if (producers.length === 0)
+          producer.overrideCall = (name) => {
+            if (name === "get_cfg")
+              throw new AnalysisProtocolError(
+                "angr MCP tool failed: CFG recovery crashed",
+              );
+            return undefined;
+          };
+        producers.push(producer);
+        return producer;
+      }),
+    );
+    try {
+      expect((await session.open(target.path)).ok).toBe(true);
+      const failed = await session.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(failed.ok).toBe(false);
+      expect((await session.open(target.path)).ok).toBe(true);
+      const recovered = await session.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(recovered.ok && recovered.value.result).toBe("0x1000");
+      expect(producers.length).toBe(2);
+      // The failed client's loaded project was closed when it was replaced.
+      expect(producers[0]?.openProjects.size).toBe(0);
+    } finally {
+      await session.close();
+    }
+  });
+  it("snapshots a failed startup as not started", async () => {
+    const { producer, client } = await open();
+    try {
+      producer.overrideCall = (name) => {
+        if (name === "get_cfg")
+          throw new AnalysisProtocolError("angr MCP tool failed: boom");
+        return undefined;
+      };
+      expect((await client.execute("list_procedures", {})).ok).toBe(false);
+      expect(client.operationHealthSnapshot()).toMatchObject({
+        state: "not_started",
+        retryAction: "retry",
+      });
+    } finally {
+      await client.close();
+    }
+  });
+});

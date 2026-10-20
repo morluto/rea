@@ -103,6 +103,8 @@ export class AngrSessionClient implements AnalysisClient {
   readonly #limitations: string[] = [];
   /** Replies received while loading and preparing the project, retained for startup failures. */
   readonly #startupObservations: AngrRawObservation[] = [];
+  /** Set when startup failed; the session can never serve requests again. */
+  #startupFailure: string | undefined;
   /** Requests currently dispatched to angr. */
   #inFlight = 0;
   /** Set once the server or project is observed gone; a reopen must replace this client. */
@@ -375,6 +377,16 @@ export class AngrSessionClient implements AnalysisClient {
   /** Observed operation health; a lost server or project makes reuse fail. */
   operationHealthSnapshot(): ProviderOperationHealth | undefined {
     if (this.#startup === undefined || this.#closed) return undefined;
+    // A failed startup is permanent for this client: a project may be loaded
+    // but CFG recovery or flavor setup never completed. Reopen must replace it.
+    if (this.#startupFailure !== undefined)
+      return {
+        state: "not_started",
+        stage: "launch",
+        retryAction: providerRetryAction("not_started", true),
+        exitCode: null,
+        requests: [],
+      };
     if (this.#lost !== undefined)
       return {
         state: this.#lost.state,
@@ -479,7 +491,11 @@ export class AngrSessionClient implements AnalysisClient {
   }
 
   #start(): Promise<void> {
-    this.#startup ??= this.#initialize();
+    this.#startup ??= this.#initialize().catch((cause: unknown) => {
+      this.#startupFailure =
+        cause instanceof Error ? cause.message : "angr startup failed";
+      throw cause;
+    });
     return this.#startup;
   }
 

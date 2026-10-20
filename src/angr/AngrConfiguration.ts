@@ -66,6 +66,13 @@ export interface AngrConfigurationSources {
   readonly pythonPath?: string | undefined;
 }
 
+/**
+ * Longest single REA request against angr: a first request runs load_binary
+ * and get_cfg, each bounded by startupTimeoutMs, before the request itself.
+ */
+export const angrRequestBudgetMs = (config: AngrConfiguration): number =>
+  2 * config.startupTimeoutMs + config.timeoutMs;
+
 /** Read one explicit registration without starting or installing a provider. */
 export const readAngrConfiguration = (
   sources: AngrConfigurationSources,
