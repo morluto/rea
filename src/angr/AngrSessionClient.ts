@@ -14,6 +14,7 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
   AnalysisOutputError,
+  AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -103,6 +104,10 @@ export class AngrSessionClient implements AnalysisClient {
   readonly #limitations: string[] = [];
   /** Replies received while loading and preparing the project, retained for startup failures. */
   readonly #startupObservations: AngrRawObservation[] = [];
+  /** Tools the server advertised; set once the connection is established. */
+  #tools: ReadonlySet<string> | undefined;
+  /** Whether the registration's flavor has been applied to the project. */
+  #flavorApplied = false;
   /** Set when startup failed; the session can never serve requests again. */
   #startupFailure: string | undefined;
   /** Requests currently dispatched to angr. */
@@ -214,7 +219,7 @@ export class AngrSessionClient implements AnalysisClient {
       return err(this.#lostError(operation, this.#lost.reason));
     let runner: AngrOperationRunner | undefined;
     try {
-      await this.#start();
+      await this.#start(operation, options?.signal);
       if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
       if (operation === "health") return await this.#health(options);
       if (!isAngrOperation(operation))
@@ -408,6 +413,24 @@ export class AngrSessionClient implements AnalysisClient {
     };
   }
 
+  /** Report an upstream request timeout against the REA operation that waited on it. */
+  #timeoutFor(
+    operation: string,
+    cause: AnalysisTimeoutError,
+  ): AnalysisTimeoutError {
+    if (cause.operation === operation) return cause;
+    return new AnalysisTimeoutError(operation, cause.timeoutMs, {
+      cause,
+      diagnostics: {
+        ...cause.diagnostics,
+        upstream_operation: cause.operation,
+      },
+      ...(cause.remediationAction === undefined
+        ? {}
+        : { remediationAction: cause.remediationAction }),
+    });
+  }
+
   #failure(
     operation: string,
     cause: unknown,
@@ -418,6 +441,8 @@ export class AngrSessionClient implements AnalysisClient {
     },
   ) {
     this.#observeLoss(cause, options);
+    if (cause instanceof AnalysisTimeoutError && !wasCancelled(options))
+      cause = this.#timeoutFor(operation, cause);
     const { runner, parameters } = context;
     let failure: AnalysisError;
     if (
@@ -490,75 +515,100 @@ export class AngrSessionClient implements AnalysisClient {
     return err(failure);
   }
 
-  #start(): Promise<void> {
-    this.#startup ??= this.#initialize().catch((cause: unknown) => {
-      this.#startupFailure =
-        cause instanceof Error ? cause.message : "angr startup failed";
-      throw cause;
-    });
+  #start(operation: string, signal: AbortSignal | undefined): Promise<void> {
+    this.#startup ??= this.#initialize(operation, signal).catch(
+      (cause: unknown) => {
+        // A cancelled startup is resumable; only a real failure is permanent.
+        if (cause instanceof AnalysisCancelledError) this.#startup = undefined;
+        else
+          this.#startupFailure =
+            cause instanceof Error ? cause.message : "angr startup failed";
+        throw cause;
+      },
+    );
     return this.#startup;
   }
 
-  async #initialize(): Promise<void> {
-    this.connection.onClose?.(() => {
-      if (this.#closing || this.#closed || this.#lost !== undefined) return;
-      this.#lost = {
-        state: this.config.mode === "headless" ? "exited" : "unreachable",
-        reason: "the angr MCP connection closed unexpectedly",
-      };
-    });
-    const tools = new Set(await this.connection.connect());
-    const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
-    if (missing.length > 0)
-      throw new AnalysisProtocolError(
-        `angr MCP server is missing tools: ${missing.join(", ")}. Install a current angr release with its MCP extra; see docs/angr-provider.md.`,
+  /**
+   * Bring the session to a ready project, one step at a time. Each step runs
+   * only once and first checks for cancellation, so a cancelled startup stops
+   * after draining its current reply and a later request resumes from the
+   * first incomplete step, reusing the project that was already loaded.
+   */
+  async #initialize(operation: string, signal: AbortSignal | undefined) {
+    const step = () => {
+      if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    };
+    if (this.#tools === undefined) {
+      this.connection.onClose?.(() => {
+        if (this.#closing || this.#closed || this.#lost !== undefined) return;
+        this.#lost = {
+          state: this.config.mode === "headless" ? "exited" : "unreachable",
+          reason: "the angr MCP connection closed unexpectedly",
+        };
+      });
+      step();
+      const tools = new Set(await this.connection.connect());
+      const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
+      if (missing.length > 0)
+        throw new AnalysisProtocolError(
+          `angr MCP server is missing tools: ${missing.join(", ")}. Install a current angr release with its MCP extra; see docs/angr-provider.md.`,
+        );
+      this.#tools = tools;
+    }
+    const tools = this.#tools;
+    if (this.#loaded === undefined) {
+      step();
+      const reply = await this.#loadBinary();
+      this.#projectId = z
+        .object({ project_id: z.string().min(1) })
+        .parse(reply).project_id;
+      const loaded = loadBinarySchema.parse(reply);
+      this.#loaded = loaded;
+      await this.#verifyLoadedTarget(loaded);
+    }
+    const projectId = this.#loaded.project_id;
+    if (this.#cfg === null) {
+      step();
+      const cfg = cfgStatsSchema.parse(
+        await this.#startupCall(
+          "get_cfg",
+          { project_id: projectId, normalize: true, data_references: true },
+          { timeoutMs: this.config.startupTimeoutMs },
+        ),
       );
-    const reply = await this.#loadBinary();
-    this.#projectId = z
-      .object({ project_id: z.string().min(1) })
-      .parse(reply).project_id;
-    const loaded = loadBinarySchema.parse(reply);
-    this.#loaded = loaded;
-    await this.#verifyLoadedTarget(loaded);
-    const cfg = cfgStatsSchema.parse(
-      await this.#startupCall(
-        "get_cfg",
-        {
-          project_id: loaded.project_id,
-          normalize: true,
-          data_references: true,
-        },
-        { timeoutMs: this.config.startupTimeoutMs },
-      ),
-    );
-    if (cfg.project_id !== loaded.project_id)
-      throw new AnalysisProtocolError(
-        "angr CFG recovery answered for a different project than the loaded target.",
-      );
-    this.#cfg = jsonValueSchema.parse(cfg);
+      if (cfg.project_id !== projectId)
+        throw new AnalysisProtocolError(
+          "angr CFG recovery answered for a different project than the loaded target.",
+        );
+      this.#cfg = jsonValueSchema.parse(cfg);
+    }
     this.#flavorToolsAvailable = ANGR_FLAVOR_TOOLS.every((name) =>
       tools.has(name),
     );
-    if (this.#flavorToolsAvailable) {
+    if (this.#flavorToolsAvailable && this.#flavor === null) {
+      step();
       const current = flavorSchema.parse(
         await this.#startupCall("get_decompilation_flavor", {
-          project_id: loaded.project_id,
+          project_id: projectId,
         }),
       );
       this.#flavor = current.flavor;
     }
-    if (this.config.flavor !== undefined) {
+    if (this.config.flavor !== undefined && !this.#flavorApplied) {
       if (!this.#flavorToolsAvailable)
         throw new AnalysisProtocolError(
           `The angr registration selects flavor ${this.config.flavor}, but the connected server has no decompilation-flavor tools; upgrade angr or remove the flavor setting.`,
         );
+      step();
       const changed = flavorSchema.parse(
         await this.#startupCall("set_decompilation_flavor", {
-          project_id: loaded.project_id,
+          project_id: projectId,
           flavor: this.config.flavor,
         }),
       );
       this.#flavor = changed.flavor;
+      this.#flavorApplied = true;
     }
   }
 

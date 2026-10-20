@@ -12,7 +12,10 @@ import {
 import { z } from "zod";
 import type { AngrConfiguration } from "./AngrConfiguration.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisProtocolError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ChildProcess } from "node:child_process";
 import { detachOwnedProcessHandles } from "../process/OwnedProcessDetach.js";
@@ -236,13 +239,25 @@ export const createAngrMcpConnection = (
       return catalog.tools.map(({ name }) => name);
     },
     async call(name, args, options) {
+      const timeoutMs = options?.timeoutMs ?? config.timeoutMs;
       return decodeAngrToolResult(
         await client
-          .callTool(
-            { name, arguments: args },
-            { timeout: options?.timeoutMs ?? config.timeoutMs },
-          )
-          .catch(transportFailure),
+          .callTool({ name, arguments: args }, { timeout: timeoutMs })
+          .catch((cause: unknown) => {
+            // A deadline is a retryable timeout, not a broken provider; the
+            // connection and project stay usable.
+            if (
+              cause instanceof SdkError &&
+              cause.code === SdkErrorCode.RequestTimeout
+            )
+              throw new AnalysisTimeoutError(name, timeoutMs, {
+                cause,
+                diagnostics: { upstream_tool: name },
+                remediationAction:
+                  "Retry, or raise timeoutMs (startupTimeoutMs for load_binary and get_cfg) in the angr registration.",
+              });
+            return transportFailure(cause);
+          }),
         (text) => redactAngrCredentials(text, config),
       );
     },

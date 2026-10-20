@@ -7,7 +7,10 @@ import { AngrSessionClient } from "../../src/angr/AngrSessionClient.js";
 import { readAngrConfiguration } from "../../src/angr/AngrConfiguration.js";
 import { ANGR_PROVIDER_IDENTITY } from "../../src/angr/AngrProviderCapabilities.js";
 import { createAnalysisProfile } from "../../src/domain/analysisProfile.js";
-import { AnalysisProtocolError } from "../../src/domain/analysisErrorCore.js";
+import {
+  AnalysisProtocolError,
+  AnalysisTimeoutError,
+} from "../../src/domain/analysisErrorCore.js";
 import { createAngrTarget, RecordingAngrMcp } from "../fixtures/angrMcp.js";
 import {
   AngrTransportError,
@@ -1007,6 +1010,97 @@ describe("failed startup", () => {
         state: "not_started",
         retryAction: "retry",
       });
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("startup cancellation and request timeouts", () => {
+  const count = (producer: RecordingAngrMcp, tool: string) =>
+    producer.calls.filter(({ name }) => name === tool).length;
+  it("stops after load_binary when cancelled and resumes with the same project", async () => {
+    const { producer, client } = await open();
+    try {
+      const controller = new AbortController();
+      producer.beforeCall = async (name) => {
+        if (name === "load_binary") controller.abort();
+      };
+      const cancelled = await client.execute(
+        "procedure_address",
+        { procedure: "main" },
+        { signal: controller.signal },
+      );
+      expect(cancelled.ok).toBe(false);
+      if (!cancelled.ok)
+        expect(cancelled.error._tag).toBe("AnalysisCancelledError");
+      expect(count(producer, "get_cfg")).toBe(0);
+      expect(client.operationHealthSnapshot()).toBeUndefined();
+      delete producer.beforeCall;
+      const resumed = await client.execute("procedure_address", {
+        procedure: "main",
+      });
+      expect(resumed.ok && resumed.value.result).toBe("0x1000");
+      expect(count(producer, "load_binary")).toBe(1);
+      expect(count(producer, "get_cfg")).toBe(1);
+    } finally {
+      await client.close();
+    }
+    expect(producer.openProjects.size).toBe(0);
+  });
+  it("stops after get_cfg when cancelled and does not repeat it", async () => {
+    const { producer, client } = await open();
+    try {
+      const controller = new AbortController();
+      producer.beforeCall = async (name) => {
+        if (name === "get_cfg") controller.abort();
+      };
+      const cancelled = await client.execute(
+        "procedure_address",
+        { procedure: "main" },
+        { signal: controller.signal },
+      );
+      expect(cancelled.ok).toBe(false);
+      expect(count(producer, "get_decompilation_flavor")).toBe(0);
+      delete producer.beforeCall;
+      expect(
+        (await client.execute("procedure_address", { procedure: "main" })).ok,
+      ).toBe(true);
+      expect(count(producer, "get_cfg")).toBe(1);
+      expect(count(producer, "get_decompilation_flavor")).toBe(1);
+    } finally {
+      await client.close();
+    }
+  });
+  it("reports an upstream timeout as a retryable provider timeout for the REA operation", async () => {
+    const { producer, client } = await open();
+    try {
+      await client.execute("list_procedures", {});
+      producer.overrideCall = (name) => {
+        if (name === "decompile_function")
+          throw new AnalysisTimeoutError("decompile_function", 300_000, {
+            diagnostics: { upstream_tool: "decompile_function" },
+          });
+        return undefined;
+      };
+      const timedOut = await client.execute("procedure_pseudo_code", {
+        procedure: "main",
+      });
+      expect(timedOut.ok).toBe(false);
+      if (!timedOut.ok) {
+        expect(timedOut.error).toBeInstanceOf(AnalysisTimeoutError);
+        expect(timedOut.error).toMatchObject({
+          operation: "procedure_pseudo_code",
+          timeoutMs: 300_000,
+          diagnostics: { upstream_tool: "decompile_function" },
+        });
+      }
+      expect(client.operationHealthSnapshot()?.state).toBe("idle");
+      delete producer.overrideCall;
+      expect(
+        (await client.execute("procedure_pseudo_code", { procedure: "main" }))
+          .ok,
+      ).toBe(true);
     } finally {
       await client.close();
     }
