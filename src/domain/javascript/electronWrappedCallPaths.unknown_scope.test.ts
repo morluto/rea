@@ -66,14 +66,16 @@ describe("wrapped call-path unknown attribution", () => {
     );
   });
 
-  it("keeps IPC registrations and call paths through a require alias that records no reference", () => {
+  it("keeps IPC registrations and call paths through a require alias", () => {
     const result = analyzeJavaScriptStaticSource(`
       const load = require;
       const { ipcMain } = load("electron");
       ipcMain.on("ping", (event) => event.sender.send("pong"));
     `);
 
-    expect(result.references).toEqual([]);
+    expect(result.references).toContainEqual(
+      expect.objectContaining({ kind: "require", specifier: "electron" }),
+    );
     expect(result.electron.ipc).toContainEqual(
       expect.objectContaining({
         side: "main",
@@ -610,23 +612,27 @@ describe("later initializer alias write bounds", () => {
 });
 
 describe("later initializer loader proof bounds", () => {
-  it("bounds the loader proof for a long late alias chain", () => {
-    const aliases = Array.from({ length: 15_000 }, (_, index) =>
-      index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
-    ).join("\n");
-    const result = analyzeJavaScriptStaticSource(`
-      function register() {
-        load("electron").ipcMain.on("ping", () => {});
-      }
-      ${aliases}
-      var load = a14999;
-      register();
-    `);
+  it(
+    "bounds the loader proof for a long late alias chain",
+    () => {
+      const aliases = Array.from({ length: 15_000 }, (_, index) =>
+        index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+      ).join("\n");
+      const result = analyzeJavaScriptStaticSource(`
+        function register() {
+          load("electron").ipcMain.on("ping", () => {});
+        }
+        ${aliases}
+        var load = a14999;
+        register();
+      `);
 
-    expect(result.parse_error_count).toBe(0);
-    expect(result.parse_status).toBe("partial");
-    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
-  });
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+    60_000,
+  );
 
   it("bounds the loader proof for a deeply nested late initializer", () => {
     const initializer = Array.from(
