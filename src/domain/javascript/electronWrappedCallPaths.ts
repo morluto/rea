@@ -264,6 +264,7 @@ export function* collectElectronWrappedCallPathsSteps(
   source: string,
   accumulator: JavaScriptAnalysisAccumulator,
   identity: JavaScriptElectronIdentity,
+  indexMemberMutationFacts: () => void,
 ): Generator<void, readonly ElectronCallPath[]> {
   // Bounds repeated interprocedural expansion independently of bundle bytes.
   // Exhaustion is reported as unknown coverage, never as a negative finding.
@@ -275,7 +276,12 @@ export function* collectElectronWrappedCallPathsSteps(
     () => --remainingVisits >= 0,
     state.parentsByNode,
   );
-  const resolver = new JavaScriptSymbolicBindings(state, program, identity);
+  const resolver = new JavaScriptSymbolicBindings(
+    state,
+    program,
+    identity,
+    indexMemberMutationFacts,
+  );
   const paths: ElectronCallPath[] = [];
   const seen = new Set<string>();
   const unconditionalRegistrations = new Set<string>();
