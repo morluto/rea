@@ -14,7 +14,7 @@ import {
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
 
-const resolverFor = (source: string) => {
+const resolverFor = (source: string, indexMemberMutationFacts?: () => void) => {
   const parsed = parseJavaScriptSource(source);
   if (parsed === null) throw new Error("symbolic source fixture did not parse");
   const state = completeSemanticSteps(
@@ -22,7 +22,12 @@ const resolverFor = (source: string) => {
   );
   return {
     parsed,
-    resolver: new JavaScriptSymbolicBindings(state, parsed.program),
+    resolver: new JavaScriptSymbolicBindings(
+      state,
+      parsed.program,
+      undefined,
+      indexMemberMutationFacts,
+    ),
   };
 };
 
@@ -33,8 +38,9 @@ const inspectFixture = (
     resolver: JavaScriptSymbolicBindings,
     node: t.CallExpression,
   ) => SymbolicValue = (resolver, node) => resolver.evaluate(node.arguments[0]),
+  indexMemberMutationFacts?: () => void,
 ) => {
-  const { parsed, resolver } = resolverFor(source);
+  const { parsed, resolver } = resolverFor(source, indexMemberMutationFacts);
   const values: SymbolicValue[] = [];
   traverseJavaScriptAst(parsed.program, {
     enter: (node) => {
@@ -48,6 +54,26 @@ const inspectFixture = (
   });
   return { parsed, resolver, values };
 };
+
+it("requests member-mutation facts only for a late initializer proof", () => {
+  const indexMemberMutationFacts = vi.fn();
+  inspectFixture(
+    `function run() { inspect(format("value")); }
+    var format = value => value;
+    run();`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).toHaveBeenCalledOnce();
+
+  indexMemberMutationFacts.mockClear();
+  inspectFixture(
+    `const value = "ready"; inspect(value);`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).not.toHaveBeenCalled();
+});
 
 const inspectedValues = (source: string): SymbolicValue[] =>
   inspectFixture(source).values;
