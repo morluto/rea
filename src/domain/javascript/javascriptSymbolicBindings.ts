@@ -109,10 +109,7 @@ const literalPrototypeOwner = (
 /** Demand-driven substitutions for local bindings, closures and literal module tables. */
 export class JavaScriptSymbolicBindings {
   readonly #writes = new Map<string, PropertyWrite[]>();
-  readonly #aliasMemberWrites = new Map<
-    ReadonlySet<string>,
-    PropertyWrite[]
-  >();
+  readonly #aliasMemberWrites = new Map<ReadonlySet<string>, PropertyWrite[]>();
   readonly #environments = new WeakMap<t.Node, SymbolicEnvironment>();
   readonly #cache = new WeakMap<
     SymbolicEnvironment,
@@ -846,7 +843,10 @@ export class JavaScriptSymbolicBindings {
       const value = e.values.get(binding.bindingId);
       if (value) return value;
     }
-    if (electronOrigin === undefined && this.#bindingHasWrites(binding.bindingId))
+    if (
+      electronOrigin === undefined &&
+      this.#bindingHasWrites(binding.bindingId)
+    )
       return symbolicUnknown("overwritten object members");
     const initializer =
       binding.initializers.length === 1 ? binding.initializers[0] : undefined;
@@ -1901,7 +1901,10 @@ export class JavaScriptSymbolicBindings {
   #bindingHasWrites(bindingId: string): boolean {
     if ((this.#writes.get(bindingId)?.length ?? 0) > 0) return true;
     const group = this.#bindingAliasGroups.get(bindingId);
-    return group !== undefined && (this.#aliasMemberWrites.get(group)?.length ?? 0) > 0;
+    return (
+      group !== undefined &&
+      (this.#aliasMemberWrites.get(group)?.length ?? 0) > 0
+    );
   }
 
   #bindingWrites(bindingId: string): readonly PropertyWrite[] {
