@@ -612,13 +612,11 @@ describe("later initializer alias write bounds", () => {
 });
 
 describe("later initializer loader proof bounds", () => {
-  it(
-    "bounds the loader proof for a long late alias chain",
-    () => {
-      const aliases = Array.from({ length: 15_000 }, (_, index) =>
-        index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
-      ).join("\n");
-      const result = analyzeJavaScriptStaticSource(`
+  it("bounds the loader proof for a long late alias chain", () => {
+    const aliases = Array.from({ length: 15_000 }, (_, index) =>
+      index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+    ).join("\n");
+    const result = analyzeJavaScriptStaticSource(`
         function register() {
           load("electron").ipcMain.on("ping", () => {});
         }
@@ -627,12 +625,10 @@ describe("later initializer loader proof bounds", () => {
         register();
       `);
 
-      expect(result.parse_error_count).toBe(0);
-      expect(result.parse_status).toBe("partial");
-      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
-    },
-    60_000,
-  );
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
 
   it("bounds the loader proof for a deeply nested late initializer", () => {
     const initializer = Array.from(

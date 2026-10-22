@@ -139,6 +139,7 @@ export class JavaScriptSymbolicBindings {
   readonly #mutated = new Set<string>();
   readonly #mutatedAliasGroups = new Set<ReadonlySet<string>>();
   readonly #electronIdentity: JavaScriptElectronIdentity;
+  readonly #indexMemberMutationFacts: () => void;
   readonly #namespaceOwners = new Map<string, t.Function>();
   readonly #moduleFactories = new WeakSet<t.Function>();
   readonly #unsafeExports = new Set<string>();
@@ -152,6 +153,7 @@ export class JavaScriptSymbolicBindings {
     Map<string, boolean>
   >();
   #loaderProofDepth = 0;
+  #memberMutationFactsIndexed = false;
   readonly #bootstrapTables: Array<{
     readonly tableAliases: ReadonlySet<string>;
     readonly modules: Map<string, SymbolicValue>;
@@ -173,6 +175,7 @@ export class JavaScriptSymbolicBindings {
     electronIdentity = completeSemanticSteps(
       indexJavaScriptElectronIdentitySteps(program, state),
     ),
+    indexMemberMutationFacts: () => void = () => {},
   ) {
     this.#electronIdentity = electronIdentity;
     const shapes = createSemanticExpressionShapeResolver(state);
@@ -180,6 +183,7 @@ export class JavaScriptSymbolicBindings {
       "Object",
       "defineProperty",
     ]);
+    this.#indexMemberMutationFacts = indexMemberMutationFacts;
     this.#indexBindingAliases();
     traverseJavaScriptAst(program, {
       enter: (node) => {
@@ -863,6 +867,10 @@ export class JavaScriptSymbolicBindings {
     callerParameterLoaderFree?: ReadonlyMap<string, boolean>,
     proofInvocation?: t.CallExpression | t.OptionalCallExpression,
   ): boolean {
+    if (!this.#memberMutationFactsIndexed) {
+      this.#indexMemberMutationFacts();
+      this.#memberMutationFactsIndexed = true;
+    }
     if (
       this.#bindingMutated(binding.bindingId) ||
       this.#bindingHasWrites(binding.bindingId) ||
