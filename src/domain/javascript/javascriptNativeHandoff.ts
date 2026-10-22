@@ -8,14 +8,22 @@ import type { ApplicationFeatureTraceResult } from "./javascriptFeatureTraceSche
 
 type NativeHandoff = ApplicationFeatureTraceResult["native_handoffs"][number];
 
-/** Build provider-neutral addon targets and link exact-subject native Evidence. */
+/**
+ * Build provider-neutral addon targets and link exact-subject native Evidence.
+ * `addonCandidates` selects which add-ons receive a handoff; their requested
+ * exports come from the source application graph, so a directional trace that
+ * omits an add-on's binding edges does not erase its known members.
+ */
 export const buildJavaScriptNativeHandoffs = (
-  nodes: readonly ApplicationNode[],
-  edges: readonly ApplicationEdge[],
+  addonCandidates: readonly ApplicationNode[],
+  source: {
+    readonly nodes: readonly ApplicationNode[];
+    readonly edges: readonly ApplicationEdge[];
+  },
   nativeEvidence: readonly Evidence[],
 ): NativeHandoff[] => {
   let nodeById: Map<string, ApplicationNode> | undefined;
-  return nodes
+  return addonCandidates
     .filter(({ kind }) => kind === "native-addon")
     .flatMap((node) => {
       // Observations may describe only a containing archive. A native target
@@ -27,9 +35,9 @@ export const buildJavaScriptNativeHandoffs = (
         ({ subject }) => subject?.digest.sha256 === digest,
       );
       nodeById ??= new Map(
-        nodes.map((candidate) => [candidate.node_id, candidate]),
+        source.nodes.map((candidate) => [candidate.node_id, candidate]),
       );
-      const exportNodes = nativeExportNodes(node, edges, nodeById);
+      const exportNodes = nativeExportNodes(node, source.edges, nodeById);
       return [
         {
           native_node_id: node.node_id,

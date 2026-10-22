@@ -59,7 +59,7 @@ export const traceApplicationFeature = (
   const paths = terminalPaths(traversal, seedMatches);
   const nativeHandoffs = buildJavaScriptNativeHandoffs(
     traversal.nodes,
-    traversal.edges,
+    input.graph,
     input.nativeEvidence,
   );
   const evidenceLinks = uniqueSorted([

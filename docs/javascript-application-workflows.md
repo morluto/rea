@@ -149,7 +149,9 @@ matching seeds and the complete graph reachable in the selected direction.
 The result contains the matching basis, complete reachable subgraph, terminal
 paths, authority summaries, and native handoffs. A handoff binds
 the exact native artifact digest and requested exports from the application
-graph. Existing Hopper or Ghidra Evidence is linked only when its subject digest
+graph. The direction selects which add-ons are reached; a reached add-on's
+requested exports come from the source graph, so its export node IDs may lie
+outside an incoming trace's subgraph. Existing Hopper or Ghidra Evidence is linked only when its subject digest
 matches exactly. Otherwise the result recommends provider-neutral follow-up
 tools and reports `requires-provider-analysis`; it never starts or switches a
 provider implicitly.

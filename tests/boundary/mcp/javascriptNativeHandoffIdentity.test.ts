@@ -1,18 +1,20 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import type { JavaScriptApplicationAnalysisResult } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import {
   applicationFeatureTraceResultSchema,
   type ApplicationFeatureTraceResult,
 } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
 const client = new Client({ name: "native-handoff-identity", version: "1" });
@@ -221,3 +223,76 @@ for (const available of [false, true]) {
     },
   );
 }
+
+cliTest(
+  "keeps known requested add-on exports in every trace direction",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-native-direction-");
+    const app = join(root, "app");
+    await mkdir(app);
+    await writeFile(
+      join(app, "main.js"),
+      'const { openProject } = require("./addon.node"); openProject();\n',
+    );
+    await writeFile(join(app, "addon.node"), "inert native addon fixture");
+    const analysis = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        app,
+        "--artifact-format",
+        "directory",
+        "--json",
+      ],
+    });
+    expect(analysis.exitCode, analysis.stderr).toBe(0);
+    const parent = toolContract(
+      "analyze_javascript_application",
+    ).outputSchema.parse(analysis.json);
+    const { graph } =
+      parent.normalized_result as unknown as JavaScriptApplicationAnalysisResult;
+    const addonNode = graph.nodes.find(({ kind }) => kind === "native-addon");
+    const exportNode = graph.nodes.find(({ kind }) => kind === "native-export");
+    expect(addonNode?.identity.strategy).toBe("content-digest");
+    expect(exportNode).toBeDefined();
+    for (const direction of ["outgoing", "incoming", "both"] as const) {
+      const request = join(root, `${direction}.json`);
+      await writeFile(
+        request,
+        JSON.stringify({
+          application: parent,
+          seed: {
+            kind: "node-id",
+            value: addonNode?.node_id,
+            match: "exact",
+            case_sensitive: true,
+          },
+          direction,
+        }),
+      );
+      const traced = await cli.run({
+        arguments: ["trace-application-feature", request, "--json"],
+      });
+      expect(traced.exitCode, traced.stderr).toBe(0);
+      const trace = applicationFeatureTraceResultSchema.parse(
+        toolContract("trace_application_feature").outputSchema.parse(
+          traced.json,
+        ).normalized_result,
+      );
+      expect(trace.native_handoffs, direction).toEqual([
+        expect.objectContaining({
+          native_node_id: addonNode?.node_id,
+          export_node_ids: [exportNode?.node_id],
+          requested_exports: ["openProject"],
+        }),
+      ]);
+      // The direction still selects the traced subgraph; only the handoff
+      // binds the add-on's requested members from the source graph.
+      expect(
+        trace.graph?.nodes.some(
+          ({ node_id: id }) => id === exportNode?.node_id,
+        ),
+        direction,
+      ).toBe(direction !== "incoming");
+    }
+  },
+);

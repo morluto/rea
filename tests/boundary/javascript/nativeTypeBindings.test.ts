@@ -39,7 +39,7 @@ it("does not request native-addon members from erased TypeScript names", async (
   expect(
     buildJavaScriptNativeHandoffs(
       typeImport.graph.nodes,
-      typeImport.graph.edges,
+      typeImport.graph,
       [],
     ).flatMap((handoff) => handoff.requested_exports),
   ).toEqual([]);
@@ -54,7 +54,7 @@ it("does not request native-addon members from erased TypeScript names", async (
   expect(
     buildJavaScriptNativeHandoffs(
       typeReexport.graph.nodes,
-      typeReexport.graph.edges,
+      typeReexport.graph,
       [],
     ).flatMap((handoff) => handoff.requested_exports),
   ).toEqual([]);
@@ -71,7 +71,7 @@ it("does not request native-addon members from erased TypeScript names", async (
     mixedExports[0]?.observations[0]?.properties.requested_members,
   ).toEqual(["load"]);
   expect(
-    buildJavaScriptNativeHandoffs(mixed.graph.nodes, mixed.graph.edges, []).map(
+    buildJavaScriptNativeHandoffs(mixed.graph.nodes, mixed.graph, []).map(
       (handoff) => handoff.requested_exports,
     ),
   ).toEqual([["load"]]);
