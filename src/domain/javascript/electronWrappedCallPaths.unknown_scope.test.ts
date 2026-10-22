@@ -537,10 +537,8 @@ describe("later initializer precision", () => {
       "scheduleMicrotask",
       'typeof queueMicrotask === "function" ? queueMicrotask : undefined',
     ],
-  ])(
-    "keeps a late %s shim complete",
-    (_ambient, local, initializer) => {
-      const result = analyzeJavaScriptStaticSource(`
+  ])("keeps a late %s shim complete", (_ambient, local, initializer) => {
+    const result = analyzeJavaScriptStaticSource(`
         function run(value) {
           return ${local}(value);
         }
@@ -548,11 +546,10 @@ describe("later initializer precision", () => {
         run(() => {});
       `);
 
-      expect(result.parse_error_count).toBe(0);
-      expect(result.parse_status).toBe("complete");
-      expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
-    },
-  );
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
 
   it("keeps an alias rebinding separate from its original object", () => {
     const result = analyzeJavaScriptStaticSource(`
@@ -587,28 +584,24 @@ describe("later initializer precision", () => {
 });
 
 describe("later initializer alias write bounds", () => {
-  it(
-    "indexes 8,000 aliases and writes without exhausting the worker heap",
-    () => {
-      const aliases = Array.from(
-        { length: 8_000 },
-        (_, index) => `const alias${index} = value;`,
-      ).join("\n");
-      const writes = Array.from(
-        { length: 8_000 },
-        (_, index) => `value.property${index} = ${index};`,
-      ).join("\n");
-      const result = analyzeJavaScriptStaticSource(`
+  it("indexes 8,000 aliases and writes without exhausting the worker heap", () => {
+    const aliases = Array.from(
+      { length: 8_000 },
+      (_, index) => `const alias${index} = value;`,
+    ).join("\n");
+    const writes = Array.from(
+      { length: 8_000 },
+      (_, index) => `value.property${index} = ${index};`,
+    ).join("\n");
+    const result = analyzeJavaScriptStaticSource(`
         const value = {};
         ${aliases}
         ${writes}
       `);
 
-      expect(result.parse_error_count).toBe(0);
-      expect(result.parse_status).toBe("complete");
-    },
-    30_000,
-  );
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+  }, 30_000);
 });
 
 describe("later initializer loader proof bounds", () => {
