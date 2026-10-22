@@ -483,6 +483,132 @@ describe("later initializer mutation proof", () => {
   });
 });
 
+describe("later initializer literal prototype proof", () => {
+  it.each([
+    ["Array", "Array.prototype", "[]"],
+    ["String", "String.prototype", '("")'],
+  ])(
+    "keeps the unknown when %s.prototype can supply a late loader",
+    (_owner, prototype, literal) => {
+      const result = analyzeJavaScriptStaticSource(`
+        const name = "electron";
+        ${prototype}.load = require;
+        function register() {
+          load(name).ipcMain.on("ping", () => {});
+        }
+        var load = ${literal}.load;
+        register();
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps the unknown when a late function reads a changed prototype", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      Object.prototype.load = require;
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => ({}).load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
+describe("later initializer precision", () => {
+  it.each([
+    [
+      "clearTimeout",
+      "cancelTimeout",
+      'typeof clearTimeout === "function" ? clearTimeout : undefined',
+    ],
+    [
+      "queueMicrotask",
+      "scheduleMicrotask",
+      'typeof queueMicrotask === "function" ? queueMicrotask : undefined',
+    ],
+  ])(
+    "keeps a late %s shim complete",
+    (_ambient, local, initializer) => {
+      const result = analyzeJavaScriptStaticSource(`
+        function run(value) {
+          return ${local}(value);
+        }
+        var ${local} = ${initializer};
+        run(() => {});
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("complete");
+      expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps an alias rebinding separate from its original object", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const base = {};
+      let alias = base;
+      alias = {};
+      function run() {
+        format("value");
+      }
+      var format = (value) => base;
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps a sequence-wrapped late callee complete", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      function run() {
+        (0, format)("value");
+      }
+      var format = (value) => value;
+      run();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
+describe("later initializer alias write bounds", () => {
+  it(
+    "indexes 8,000 aliases and writes without exhausting the worker heap",
+    () => {
+      const aliases = Array.from(
+        { length: 8_000 },
+        (_, index) => `const alias${index} = value;`,
+      ).join("\n");
+      const writes = Array.from(
+        { length: 8_000 },
+        (_, index) => `value.property${index} = ${index};`,
+      ).join("\n");
+      const result = analyzeJavaScriptStaticSource(`
+        const value = {};
+        ${aliases}
+        ${writes}
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("complete");
+    },
+    30_000,
+  );
+});
+
 describe("later initializer loader proof bounds", () => {
   it("bounds the loader proof for a long late alias chain", () => {
     const aliases = Array.from({ length: 15_000 }, (_, index) =>
