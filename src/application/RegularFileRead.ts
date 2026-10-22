@@ -52,6 +52,31 @@ export class InvalidUtf8FileError extends TypeError {
   }
 }
 
+/**
+ * A close that still failed after its retained-owner retry. The scope keeps the
+ * descriptor; `cleanupLease` lets the consumer bind its typed error to that
+ * exact owner without another close attempt.
+ */
+export class RegularFileRetainedCleanupFailure<
+  Value = unknown,
+> extends RegularFileCleanupFailure<Value> {
+  constructor(
+    failure: RegularFileCleanupFailure<Value>,
+    readonly cleanupLease: AnalysisCleanupLease,
+    readonly cleanup: AnalysisCleanupObservation,
+  ) {
+    super(
+      failure.path,
+      failure.owner,
+      failure.outcome,
+      failure.cleanupCause,
+      failure.retention,
+      failure.completionCancellation,
+      failure.operationFailure,
+    );
+  }
+}
+
 /** Retry a failed close through its retained owner and report any remaining cleanup. */
 export const retryRegularFileCleanup = async <Value>(
   failure: RegularFileCleanupFailure<Value>,
@@ -179,7 +204,14 @@ export const withRegularFile = async <Value>(
       if (cause instanceof RegularFileCleanupFailure) {
         if (resources === undefined) throw cause;
         const retry = await retryRegularFileCleanup(cause, resources, signal);
-        if (retry.cleanup !== undefined) throw cause;
+        if (retry.cleanup !== undefined)
+          throw retry.cleanupLease === undefined
+            ? cause
+            : new RegularFileRetainedCleanupFailure(
+                cause,
+                retry.cleanupLease,
+                retry.cleanup,
+              );
         if (retry.outcome.kind === "failed") {
           if (
             cause.operationFailure === undefined &&
