@@ -1,5 +1,6 @@
 import {
   AnalysisCancelledError,
+  AnalysisOutputError,
   AnalysisProtocolError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -272,6 +273,34 @@ export const packageChangeRefusal = (
         }),
       );
 };
+
+/**
+ * A zero-exit package change without a recognized verdict establishes neither
+ * the change nor a device refusal, so the outcome stays unknown.
+ */
+export const packageChangeVerdictUnknown = (
+  operation: string,
+  serial: string,
+  output: {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly stdoutBytes: number;
+  },
+): AnalysisOutputError =>
+  new AnalysisOutputError(operation, "package_change_verdict_unknown", {
+    userMessage: `adb exited successfully for ${operation} on ${serial} without a Success or Failure verdict; whether the package changed is unknown.`,
+    remediationAction:
+      "Review details.captured_output and check the package state on the device before repeating the package change.",
+    diagnostics: { package_change: "unknown" },
+    capturedOutput: {
+      stdout: output.stdout,
+      stderr: output.stderr,
+      stdout_bytes: output.stdoutBytes,
+      exit_code: 0,
+      signal: null,
+      truncated: false,
+    },
+  });
 
 /** Only the clean false result of test -e establishes absence. */
 export const probeAdbPathExistence = async (

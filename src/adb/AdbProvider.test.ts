@@ -1851,6 +1851,35 @@ exit 1`,
   expect(projected).toMatchObject({ code: "unreadable_output" });
 });
 
+it("keeps a zero-exit package change without a verdict unknown", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "install" ]; then printf 'Performing Streamed Install\\n'; exit 0; fi
+exit 0`,
+  );
+  const apk = join(root, "app.apk");
+  await writeFile(apk, "apk");
+  const install = await refusedBy(providerOver(binary), {
+    operation: "install_adb_package",
+    input: { serial: "emulator-5554", apk_path: apk, replace: false },
+  });
+  const uninstall = await refusedBy(providerOver(binary), {
+    operation: "uninstall_adb_package",
+    input: { serial: "emulator-5554", package: "com.example" },
+  });
+  for (const projected of [install, uninstall]) {
+    expect(projected).toMatchObject({
+      code: "unreadable_output",
+      details: {
+        reason: "package_change_verdict_unknown",
+        diagnostics: { package_change: "unknown" },
+      },
+    });
+    expect(projected.message).toContain("without a Success or Failure verdict");
+    expect(projected.message).not.toContain("refused");
+  }
+});
+
 it("starts an app through resolved launcher component and force-stops it", async () => {
   const { binary } = await writeAdbStub(
     shellStub({

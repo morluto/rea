@@ -175,7 +175,11 @@ and during shutdown.
   `sha256sum` verifies the transfer. A missing command or output without a
   recognizable digest reports `device_digest_source: "unavailable"` with an
   unverified-transfer limitation; installs preserve the
-  device's `Failure [...]` reason verbatim.
+  device's `Failure [...]` reason verbatim. An install or uninstall that exits
+  successfully without a `Success` or `Failure [...]` verdict returns
+  `unreadable_output` with `details.reason: "package_change_verdict_unknown"`,
+  `details.diagnostics.package_change: "unknown"` and the retained output in
+  `details.captured_output`; it is not reported as a device refusal.
 - **Producer identity stays attached.** Every result embeds the producing
   adb client (`binary_path`, `path_source`, `version`, `installed_path`).
 

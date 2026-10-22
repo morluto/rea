@@ -81,6 +81,7 @@ import {
   runAdb,
   runAdbCapture,
   packageChangeRefusal,
+  packageChangeVerdictUnknown,
   probeAdbPathExistence,
   type AdbRunLimits,
 } from "./AdbCommand.js";
@@ -2627,12 +2628,20 @@ export class AdbProvider {
             installed
           );
         const verdict = parsePackageChangeOutput(installed.value.stdout);
+        if (verdict.status === "unknown")
+          return err(
+            packageChangeVerdictUnknown(
+              operation,
+              input.serial,
+              installed.value,
+            ),
+          );
         if (verdict.status === "failure")
           return err(
             new AnalysisUnsupportedTargetError(
               operation,
               input.serial,
-              verdict.reason ?? "the device refused the installation",
+              verdict.reason,
             ),
           );
         return ok(
@@ -2691,12 +2700,16 @@ export class AdbProvider {
         uninstalled
       );
     const verdict = parsePackageChangeOutput(uninstalled.value.stdout);
+    if (verdict.status === "unknown")
+      return err(
+        packageChangeVerdictUnknown(operation, input.serial, uninstalled.value),
+      );
     if (verdict.status === "failure")
       return err(
         new AnalysisUnsupportedTargetError(
           operation,
           input.serial,
-          verdict.reason ?? "the device refused the removal",
+          verdict.reason,
         ),
       );
     return ok(

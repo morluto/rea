@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseAmStartOutput,
   parseDumpsysPackageOutput,
+  parsePackageChangeOutput,
   parseWmDensityOutput,
   parseWindowFocusOutput,
 } from "./AdbShellOutput.js";
@@ -357,6 +358,24 @@ describe("parseAmStartOutput", () => {
       status: "refused",
       startedActivity: null,
       reportedStatus: "ok",
+    });
+  });
+});
+
+describe("parsePackageChangeOutput", () => {
+  it("reads Success and Failure verdicts", () => {
+    expect(
+      parsePackageChangeOutput("Performing Streamed Install\nSuccess\n"),
+    ).toEqual({ status: "success" });
+    expect(
+      parsePackageChangeOutput("Failure [INSTALL_FAILED_ALREADY_EXISTS]\n"),
+    ).toEqual({ status: "failure", reason: "INSTALL_FAILED_ALREADY_EXISTS" });
+  });
+
+  it("keeps output without a verdict unknown instead of refused", () => {
+    expect(parsePackageChangeOutput("")).toEqual({ status: "unknown" });
+    expect(parsePackageChangeOutput("Performing Streamed Install\n")).toEqual({
+      status: "unknown",
     });
   });
 });

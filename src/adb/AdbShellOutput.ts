@@ -406,22 +406,22 @@ export const packageChangeFailureReason = (output: string): string | null =>
 
 /**
  * Parse `adb install`/`adb uninstall` output. adb can print `Failure [...]`
- * with a zero exit code, so the text decides, not the exit status.
+ * with a zero exit code, so the text decides, not the exit status. Output
+ * without either verdict, such as an empty reply or progress lines alone,
+ * leaves the package change unknown rather than refused.
  */
 export const parsePackageChangeOutput = (
   stdout: string,
-): {
-  readonly status: "success" | "failure";
-  readonly reason: string | null;
-} => {
+):
+  | { readonly status: "success" }
+  | { readonly status: "failure"; readonly reason: string }
+  | { readonly status: "unknown" } => {
   const text = stdout.trim();
-  if (/^Success$/mu.test(text)) return { status: "success", reason: null };
-  return {
-    status: "failure",
-    reason:
-      packageChangeFailureReason(text) ??
-      (text === "" ? null : text.slice(0, 512)),
-  };
+  if (/^Success$/mu.test(text)) return { status: "success" };
+  const reason = packageChangeFailureReason(text);
+  return reason === null
+    ? { status: "unknown" }
+    : { status: "failure", reason };
 };
 
 /**
