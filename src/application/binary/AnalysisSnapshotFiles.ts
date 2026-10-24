@@ -12,16 +12,26 @@ import {
   EvidenceIntegrityError,
 } from "../../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import {
+  type AnalysisInputError,
+  type AnalysisResourceConstraintError,
+  AnalysisCancelledError,
+} from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { readJsonObjectMembersFile, writeTextFile } from "../JsonFiles.js";
+import {
+  jsonFileCleanupPrimary,
+  readJsonObjectMembersFile,
+  writeTextFile,
+} from "../JsonFiles.js";
 import { RegularFileRetainedCleanupFailure } from "../RegularFileRead.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
 import type { JsonObjectMemberReader } from "../JsonInputFile.js";
 import { AnalysisCleanupLeaseGroup } from "../../artifacts/AnalysisCleanupLease.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+
+const READ_OPERATION = "open_binary";
 
 type SnapshotFailure = EvidenceFileError | EvidenceIntegrityError;
 
@@ -61,20 +71,33 @@ export const readAnalysisSnapshot = async (
         ]),
         metadata,
       ],
+      () => {
+        try {
+          return ok(
+            parsePreparedAnalysisSnapshot(
+              header,
+              entries.finish(),
+              workflows.finish(),
+            ),
+          );
+        } catch (cause: unknown) {
+          return err(
+            new EvidenceIntegrityError(snapshotValidationMessage(cause), {
+              cause,
+            }),
+          );
+        }
+      },
       signal,
       resources,
+      READ_OPERATION,
     );
     if (!loaded.ok) return loaded;
     signal?.throwIfAborted();
-    const snapshot = parsePreparedAnalysisSnapshot(
-      header,
-      entries.finish(),
-      workflows.finish(),
-    );
     // Deliver queued cancellation before handing a complete cache to the session.
     await setImmediate();
     signal?.throwIfAborted();
-    return ok(snapshot);
+    return loaded;
   } catch (cause: unknown) {
     if (cause instanceof RegularFileRetainedCleanupFailure)
       return err(snapshotCleanupFailure(cause, signal));
@@ -89,7 +112,7 @@ const snapshotReadFailure = (
   signal: AbortSignal | undefined,
 ): EvidenceIntegrityError | AnalysisCancelledError =>
   signal?.aborted === true
-    ? new AnalysisCancelledError("read_evidence_file", { cause })
+    ? new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason })
     : new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause });
 
 /**
@@ -98,7 +121,14 @@ const snapshotReadFailure = (
  * resources clear only when the scope later releases the descriptor.
  */
 const snapshotCleanupFailure = (
-  failure: RegularFileRetainedCleanupFailure,
+  failure: RegularFileRetainedCleanupFailure<
+    Result<
+      AnalysisSnapshot,
+      | AnalysisInputError
+      | AnalysisResourceConstraintError
+      | EvidenceIntegrityError
+    >
+  >,
   signal: AbortSignal | undefined,
 ): AnalysisError => {
   const cleanup = new ProviderCleanupError(
@@ -107,19 +137,16 @@ const snapshotCleanupFailure = (
     { reason: failure.cleanup.reason },
     {
       cause: failure,
-      operation: "read_evidence_file",
+      operation: READ_OPERATION,
       remediationAction:
-        "The snapshot file handle is still retained and its close is retried when the REA server releases its resources. Restart the REA server to release it before reusing the snapshot.",
+        "The snapshot file handle is still retained. Call close_binary to retry cleanup before opening another target.",
     },
   );
+  const primary = jsonFileCleanupPrimary(failure, READ_OPERATION, signal);
   const error =
-    failure.outcome.kind === "failed"
-      ? analysisErrorWithCleanupFailure(
-          snapshotReadFailure(failure.outcome.cause, signal),
-          cleanup,
-          "read_evidence_file",
-        )
-      : cleanup;
+    primary === undefined
+      ? cleanup
+      : analysisErrorWithCleanupFailure(primary, cleanup, READ_OPERATION);
   new AnalysisCleanupLeaseGroup(error, [failure.cleanupLease]);
   return error;
 };

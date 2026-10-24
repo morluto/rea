@@ -33,7 +33,12 @@ import { AnalysisSnapshotCache } from "./AnalysisSnapshotCache.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { writeAnalysisSnapshot as writeSnapshotFile } from "./AnalysisSnapshotFiles.js";
+import {
+  readAnalysisSnapshot as readSnapshotFile,
+  writeAnalysisSnapshot as writeSnapshotFile,
+} from "./AnalysisSnapshotFiles.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import { workflowAnalysisProfile } from "../InvestigationProviders.js";
 import {
   hasOnlyProfilelessNativeDispatchEntries,
@@ -63,10 +68,10 @@ export interface WorkflowSnapshotRecordInput {
 /** Own binary snapshots and coordinate the composed investigation records. */
 export abstract class BinarySessionRecords {
   readonly #records: InvestigationRecords;
-  readonly #writeResources = new ArtifactResourceScope();
+  readonly #fileResources = new ArtifactResourceScope();
 
   protected get hasPendingFileResources(): boolean {
-    return this.#writeResources.hasPending;
+    return this.#fileResources.hasPending;
   }
   readonly #snapshot = new AnalysisSnapshotCache();
   #snapshotInvalidated = false;
@@ -112,6 +117,11 @@ export abstract class BinarySessionRecords {
     return this.#records.evidenceBundleForSerialization();
   }
 
+  /** Read one snapshot while retaining failed descriptors under this session. */
+  readAnalysisSnapshot(path: string, signal?: AbortSignal) {
+    return readSnapshotFile(path, signal, this.#fileResources);
+  }
+
   /** Persist one provider-neutral snapshot under this session's resource owner. */
   writeAnalysisSnapshot(
     snapshot: AnalysisSnapshot,
@@ -120,28 +130,27 @@ export abstract class BinarySessionRecords {
   ): Promise<
     Result<{ readonly path: string; readonly bytes: number }, AnalysisError>
   > {
-    return writeSnapshotFile(snapshot, path, overwrite, this.#writeResources);
+    return writeSnapshotFile(snapshot, path, overwrite, this.#fileResources);
   }
 
-  /** Retry and release staged snapshot files at the owning session shutdown. */
-  async closeWriteResources(): Promise<Result<null, AnalysisError>> {
+  /** Retry and release retained snapshot files at the owning session shutdown. */
+  async closeFileResources(): Promise<Result<null, AnalysisError>> {
     try {
-      await this.#writeResources.retryCleanup();
+      await this.#fileResources.retryCleanup();
       return ok(null);
     } catch (cause: unknown) {
       const observation = ArtifactReaderFailure.cleanupObservation(
         cause,
         "analysis snapshot staging",
       );
-      return err(
-        new EvidenceFileError("write", "io", {
-          cause,
-          cleanup: {
-            reason: observation.reason,
-            resources: observation.resources,
-          },
-        }),
+      const error = new ProviderCleanupError(
+        "rea",
+        observation.resources,
+        { reason: observation.reason },
+        { cause, operation: "close_binary" },
       );
+      bindArtifactFileCleanup(cause, error);
+      return err(error);
     }
   }
 

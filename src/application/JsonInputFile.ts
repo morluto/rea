@@ -39,6 +39,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 
 type JsonInputFileFailure =
   | AnalysisInputError
@@ -142,13 +143,17 @@ export interface JsonObjectMemberReader {
 }
 
 /** Scan selected members without retaining skipped subtrees or prior array items. */
-export const readJsonObjectFile = (
+export const readJsonObjectFile = <
+  Value,
+  Failure extends AnalysisError = never,
+>(
   path: string,
   operation: string,
   scans: readonly ReadonlyMap<string, JsonObjectMemberReader>[],
+  complete: () => Result<Value, Failure>,
   signal?: AbortSignal,
   resources?: ArtifactResourceScope,
-): Promise<Result<void, JsonInputFileFailure>> =>
+): Promise<Result<Value, JsonInputFileFailure | Failure>> =>
   withJsonInputFile(
     path,
     async (handle, stats) => {
@@ -199,7 +204,7 @@ export const readJsonObjectFile = (
                 }
               }
             }
-          return ok(undefined);
+          return complete();
         }
         for (const members of scans) {
           const hash = createHash("sha256");
@@ -288,7 +293,7 @@ export const readJsonObjectFile = (
             throw new RegularFileChangedError(path);
           previousDigest = digest;
         }
-        return ok(undefined);
+        return complete();
       } catch (cause: unknown) {
         if (physicalRead.failure !== undefined) throw physicalRead.failure;
         const failure = jsonReadFailure(cause, operation, stats.size, path);

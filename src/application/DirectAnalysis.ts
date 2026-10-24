@@ -484,7 +484,7 @@ const runAnalysis = async (
         const recovered =
           written.error instanceof EvidenceFileError &&
           written.error.published !== undefined &&
-          (await session.closeWriteResources()).ok;
+          (await session.closeFileResources()).ok;
         if (!recovered)
           return err(written.error.retainPartialObservation(evidence));
       }

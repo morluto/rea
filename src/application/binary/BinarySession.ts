@@ -183,6 +183,8 @@ export class BinarySession
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
+      const files = await this.closeFileResources();
+      if (!files.ok) return files;
       if (isAborted(options.signal))
         return err(
           new AnalysisCancelledError("open_bundle_resources", {
@@ -498,6 +500,8 @@ export class BinarySession
     options: BinarySessionOpenOptions,
   ): Promise<Result<BinaryTarget, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
+      const files = await this.closeFileResources();
+      if (!files.ok) return files;
       const admitted = await this.#withLoadedSnapshot(options);
       if (!admitted.ok) return admitted;
       return this.#openWithinTransition(
@@ -828,7 +832,7 @@ export class BinarySession
           });
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
-    const fileResources = await this.closeWriteResources();
+    const fileResources = await this.closeFileResources();
     if (!fileResources.ok) onCleanupFailure?.(fileResources.error);
     const candidateResources = await this.#providerRouter.closeOwnedResources();
     if (!candidateResources.ok) onCleanupFailure?.(candidateResources.error);
