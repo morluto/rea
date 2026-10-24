@@ -239,6 +239,29 @@ describe("tool effects", () => {
     expect(annotationsFromEffects(effects).destructiveHint).toBe(true);
   });
 
+  it("advertises attached IDA navigation UI and network effects", () => {
+    for (const name of [
+      "procedure_pseudo_code",
+      "procedure_assembly",
+      "read_function_instructions",
+      "analyze_function",
+    ]) {
+      expect(TOOL_EFFECTS[name], name).toMatchObject({
+        mutatesSession: true,
+        changesUiState: true,
+        accessesNetwork: true,
+      });
+      const contract = TOOL_CONTRACTS.find(
+        (candidate) => candidate.name === name,
+      );
+      expect(contract?.annotations, name).toMatchObject({
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      });
+    }
+  });
+
   it("publishes the advertised annotations derived from canonical effects", () => {
     for (const contract of TOOL_CONTRACTS)
       expect(contract.annotations, contract.name).toEqual(

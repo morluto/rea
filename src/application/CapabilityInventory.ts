@@ -27,6 +27,7 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
+  toolSessionEffects,
   type ToolEffects,
 } from "../contracts/toolEffects.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
@@ -277,7 +278,7 @@ export const buildCapabilityInventory = (
     const clientBlocked = clientRequirements.missing_required.length > 0;
     const effects = composedEffects(
       contract.name,
-      contract.effects,
+      toolSessionEffects(contract.name),
       status.capabilities,
     );
     const annotations = annotationsFromEffects(effects);
