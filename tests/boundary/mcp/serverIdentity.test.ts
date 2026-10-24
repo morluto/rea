@@ -149,7 +149,7 @@ describe("server and catalog identity", () => {
   it("binds output schema profile and canonical output contracts into identity", () => {
     const profiles = createCatalogDigestProfiles();
     expect(FULL_CATALOG_IDENTITY.digests).toEqual(profiles.full.full);
-    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.full);
+    expect(DEFAULT_CATALOG_IDENTITY.digests).toEqual(profiles.compact.off);
     const changedOutput = TOOL_CONTRACTS.map((contract, index) =>
       index === 0
         ? {
@@ -551,9 +551,10 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         },
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
-        catalog: createCatalogIdentity({
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
-        }),
+        catalog: createCatalogIdentity(
+          { budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES },
+          "off",
+        ),
         alignment: { state: "unknown" },
       },
     },

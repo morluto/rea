@@ -79,6 +79,9 @@ const environment = () => {
       : {}),
     REA_LOG_LEVEL: "silent",
     REA_ANALYSIS_PROVIDER: "auto",
+    // Artifact verification validates client-side against the advertised
+    // output schema, so it must select the full output advertisement.
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     // Artifact workflows have no deep-provider prerequisite or GUI authority.
     HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
   };

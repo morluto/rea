@@ -8,6 +8,10 @@ import { realpathSync } from "node:fs";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
+import {
+  parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
+} from "./config/mcpOutputSchemaProfile.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
 import { runDeferred } from "./main/deferredRuntime.js";
@@ -95,14 +99,24 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const fullOutputCatalog =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+  /**
+   * The recorded catalog keeps complete output schemas, and its transport
+   * strips them only while the resolved selection is the default `off`.
+   * Explicit output-profile `full` selections, and unparseable selections the
+   * eager runtime reports as typed configuration errors, load eagerly.
+   */
+  const recordedOutputCatalog = (): boolean => {
+    const configured = parseMcpOutputSchemaProfile(
+      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+    );
+    if (!configured.ok) return false;
+    return resolveMcpOutputSchemaProfile(configured.value) === "off";
+  };
   if (
     RECORDED_MCP_CATALOG_SHA256 !== undefined &&
     dependencies.transport !== "http" &&
     config.value.hopperTargetPath === undefined &&
-    fullOutputCatalog &&
+    recordedOutputCatalog() &&
     dependencies.createServer === undefined &&
     dependencies.loadOptionalProviders === undefined
   ) {

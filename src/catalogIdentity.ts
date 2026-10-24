@@ -16,6 +16,7 @@ import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
 } from "./contracts/compactInputSchema.js";
+import { resolveMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import type { McpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
@@ -200,4 +201,5 @@ export const FULL_CATALOG_IDENTITY = createCatalogIdentity();
 /** Default MCP advertisement; explicit full/custom selections have their own identity. */
 export const DEFAULT_CATALOG_IDENTITY = createCatalogIdentity(
   compactPresentationForMcpInputSchemaProfile(undefined),
+  resolveMcpOutputSchemaProfile(undefined),
 );

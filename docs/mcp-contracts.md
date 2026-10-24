@@ -1279,10 +1279,14 @@ have distinct identities even though `off` keeps the same canonical output
 validation on the server.
 
 Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=off` setting omits `outputSchema`
-from the advertised catalog for hosts with a small frame limit (the measured
-pi-web-ui failure and catalog breakdown are in [#2512](https://github.com/morluto/rea/issues/2512)).
-The default `full` profile is unchanged. With `off`, REA validates successful
+tools. Setting the server's `REA_MCP_OUTPUT_SCHEMA_PROFILE` environment
+variable to `off` (the default) omits `outputSchema` from the advertised
+catalog; the measured pi-web-ui failure and catalog breakdown are in
+[#2512](https://github.com/morluto/rea/issues/2512). Explicitly select `full`
+to retain complete advertised output contracts for client-side discovery and
+validation. The setting is read at startup; restart the server to apply
+changes, as with `REA_MCP_MAX_RESPONSE_BYTES`. Existing explicit output-profile
+choices are preserved. With `off`, REA validates successful
 structured results against the same named canonical tool contract before
 delivery; it still returns complete `structuredContent` and text results.
 Only client-side schema discovery and validation are omitted, so hosts using

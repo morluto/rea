@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { PromptCompletionSource } from "./promptCompletion.js";
 import type { RecordedMcpCatalog } from "../recordedMcpCatalog.js";
+import type { createCatalogIdentity } from "../catalogIdentity.js";
 import type { ToolResultDelivery } from "./toolResult.js";
 import {
   EvidenceMcpServerCore,
@@ -60,6 +61,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     private readonly initialize: (
       server: DeferredEvidenceMcpServer,
     ) => Promise<void>,
+    presentation: {
+      readonly identity: ReturnType<typeof createCatalogIdentity>;
+      readonly omitOutputSchemas?: boolean;
+    },
   ) {
     super(
       catalog.info,
@@ -70,8 +75,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       undefined,
-      false,
-      catalog.identity,
+      presentation.omitOutputSchemas ?? false,
+      presentation.identity,
     );
     for (const tool of catalog.tools) {
       const { name, inputSchema, outputSchema, ...metadata } = tool;

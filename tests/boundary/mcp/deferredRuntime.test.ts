@@ -64,8 +64,13 @@ it.each([
     eager: false,
   },
   {
-    name: "output-off eager",
+    name: "output-off deferred",
     environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
+    eager: false,
+  },
+  {
+    name: "full output eager",
+    environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "full" },
     eager: true,
   },
 ])(
@@ -143,7 +148,11 @@ it.each([
       REA_MCP_INPUT_SCHEMA_PROFILE: profile,
     });
     const before = await client.listTools();
-    expect(before.tools).toEqual(recorded.tools);
+    const omittedOutputSchemas = (tool: Record<string, unknown>) => {
+      const { outputSchema: _outputSchema, ...advertisedTool } = tool;
+      return advertisedTool;
+    };
+    expect(before.tools).toEqual(recorded.tools.map(omittedOutputSchemas));
     const contractProjection = (tool: {
       name: string;
       title?: string | undefined;
@@ -156,7 +165,6 @@ it.each([
       title: tool.title,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      outputSchema: tool.outputSchema,
       annotations: tool.annotations,
     });
     if (profile === "full")
@@ -570,13 +578,12 @@ it.each([
     ),
   );
   expect(before.tools).toHaveLength(catalog.tools.length);
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools;
-  expect(before.tools).toEqual(expected);
+  expect(before.tools).toEqual(
+    catalog.tools.map(
+      ({ outputSchema: _outputSchema, ...tool }: Record<string, unknown>) =>
+        tool,
+    ),
+  );
   const result = await client.callTool({
     name: "list_unknowns",
     arguments: {},

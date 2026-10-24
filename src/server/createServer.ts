@@ -93,7 +93,10 @@ import {
   type ToolResultDelivery,
 } from "./toolResult.js";
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
-import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import {
+  parseMcpOutputSchemaProfile,
+  resolveMcpOutputSchemaProfile,
+} from "../config/mcpOutputSchemaProfile.js";
 import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
@@ -866,7 +869,7 @@ const outputSchemasOmitted = (
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
   );
   if (!configured.ok) throw configured.error;
-  return configured.value === "off";
+  return resolveMcpOutputSchemaProfile(configured.value) === "off";
 };
 
 const selectCompactInputSchemaPresentation = (

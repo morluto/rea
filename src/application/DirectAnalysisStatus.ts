@@ -8,6 +8,7 @@ import { providerCapabilitySet } from "../contracts/toolOutputSchemaPrimitives.j
 import { providerCapabilitySets } from "./binary/BinarySessionStatus.js";
 import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
+import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { createCatalogIdentity } from "../catalogIdentity.js";
 import { compactPresentationForMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import {
@@ -46,7 +47,9 @@ export const runSessionStatus = async (
             compactPresentationForMcpInputSchemaProfile(
               config.value.mcpInputSchemaProfile,
             ),
-            config.value.mcpOutputSchemaProfile ?? "full",
+            resolveMcpOutputSchemaProfile(
+              config.value.mcpOutputSchemaProfile,
+            ),
           ),
         }),
       };

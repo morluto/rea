@@ -13,6 +13,7 @@ import {
   resolveMcpInputSchemaProfile,
   type McpInputSchemaProfile,
 } from "../config/mcpInputSchemaProfile.js";
+import { resolveMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { DeferredEvidenceMcpServer } from "../server/DeferredEvidenceMcpServer.js";
 import { ToolResultDelivery } from "../server/ToolResultDelivery.js";
 import { createLogger } from "../logger.js";
@@ -20,6 +21,37 @@ import { reportMcpShutdownFailure } from "./shutdown.js";
 import type { McpServerHandle, RuntimeDependencies } from "./types.js";
 import { MCP_CONNECTION_LOST, SERVER_START_FAILED } from "./messages.js";
 import { OwnedMcpServers } from "./OwnedMcpServers.js";
+import { CLI_COMMAND_NAMES } from "../cliCommandNames.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "../recordedCatalogDigests.js";
+import type { createCatalogIdentity } from "../catalogIdentity.js";
+import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+
+/** The identity shape deferred and eager compositions share. */
+type CatalogIdentity = ReturnType<typeof createCatalogIdentity>;
+
+/**
+ * Identity of a recorded selection without the contract graph. The recorded
+ * digest profiles bind the same compiled contracts, so digests match eager
+ * composition while deferred startup keeps contracts unloaded; the counts read
+ * the already-verified catalog artifact.
+ */
+const recordedCatalogIdentity = (
+  catalog: RecordedMcpCatalog,
+  profile: McpInputSchemaProfile,
+  outputProfile: McpOutputSchemaProfile,
+): CatalogIdentity => ({
+  counts: {
+    cli_commands: CLI_COMMAND_NAMES.length,
+    mcp_tools: catalog.tools.length,
+    mcp_prompts: catalog.prompts.length,
+  },
+  get digests() {
+    const digests =
+      RECORDED_CATALOG_DIGEST_PROFILES?.[profile]?.[outputProfile];
+    if (digests === undefined) throw new Error(SERVER_START_FAILED);
+    return digests;
+  },
+});
 
 /** Verify the build-owned artifact before trusting its exact typed projection. */
 const readCatalog = (profile: McpInputSchemaProfile): RecordedMcpCatalog => {
@@ -125,6 +157,9 @@ export const runDeferred = async (
     layer: "server",
   });
   const profile = resolveMcpInputSchemaProfile(config.mcpInputSchemaProfile);
+  const outputProfile = resolveMcpOutputSchemaProfile(
+    config.mcpOutputSchemaProfile,
+  );
   let firstCatalog: RecordedMcpCatalog | undefined = readCatalog(profile);
   const servers = new OwnedMcpServers<DeferredEvidenceMcpServer>();
   let handle: McpServerHandle | undefined;
@@ -204,6 +239,14 @@ export const runDeferred = async (
                   dependencies.setExitCode(1);
                   throw cause;
                 }),
+              {
+                identity: recordedCatalogIdentity(
+                  catalog,
+                  profile,
+                  outputProfile,
+                ),
+                omitOutputSchemas: outputProfile === "off",
+              },
             );
             return server;
           });

@@ -33,6 +33,9 @@ const execute = promisify(execFile);
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, v]) => typeof v === "string"),
 );
+// Schema advertisement is verified client-side here, so keep the full output
+// catalog regardless of the caller's own default.
+environment.REA_MCP_OUTPUT_SCHEMA_PROFILE ??= "full";
 
 const sdkRoots = [
   environment.ANDROID_HOME,

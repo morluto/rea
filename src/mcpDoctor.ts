@@ -18,6 +18,7 @@ import {
   parseMcpInputSchemaProfile,
 } from "./config/mcpInputSchemaProfile.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+import { resolveMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
 import { err, ok } from "./domain/result.js";
@@ -572,7 +573,9 @@ const catalogIdentityForEnvironment = (
     compactPresentationForMcpInputSchemaProfile(
       inputProfile.ok ? inputProfile.value : undefined,
     ),
-    outputProfile.ok ? (outputProfile.value ?? "full") : "full",
+    outputProfile.ok
+      ? resolveMcpOutputSchemaProfile(outputProfile.value)
+      : "full",
   );
 };
 

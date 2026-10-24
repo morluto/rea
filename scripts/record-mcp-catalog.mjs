@@ -27,6 +27,10 @@ const recordCatalog = async (profile) => {
   const home = await mkdtemp(join(tmpdir(), "rea-mcp-catalog-"));
   const environment = {
     REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+    // Recorded tools must keep their output contracts so the deferred runtime
+    // retains canonical output validation; advertisement stripping stays the
+    // transport's decision, keyed by the caller's resolved profile.
+    REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
     HOME: home,
     USERPROFILE: home,
     XDG_CONFIG_HOME: join(home, "config"),

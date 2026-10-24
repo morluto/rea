@@ -132,6 +132,7 @@ const fixture = async (
         );
       });
     },
+    { identity: catalog.identity },
   );
   const client = new Client({ name: "deferred-fixture-client", version: "1" });
   const [clientTransport, serverTransport] =

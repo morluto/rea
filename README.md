@@ -92,9 +92,13 @@ manual MCP registration.
 
 MCP uses compact input schemas by default to reduce context overhead. Set
 `REA_MCP_INPUT_SCHEMA_PROFILE=full` in your MCP registration when you need the
-complete advertised field guidance and nested validation details. Both profiles
-keep the full tool set and canonical server validation. See
-"Compact input schema profile" in the MCP contracts guide.
+complete advertised field guidance and nested validation details. MCP also
+omits advertised output schemas from `tools/list` by default; REA validates
+every structured result against its canonical contracts before delivery. Set
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=full` when your client discovers or validates
+output schemas locally. Both profiles keep the full tool set and canonical
+server validation. See "Compact input schema profile" and "Output schemas" in
+the MCP contracts guide.
 
 ### Ask your agent
 
