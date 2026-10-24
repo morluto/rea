@@ -26,6 +26,42 @@ const add = (
   if (!result.ok) throw result.error;
 };
 
+it("admits selected response unknown ordinals before growing either coverage array", () => {
+  const accumulator = new WebNetworkApiSurfaceAccumulator(
+    64 * 1024,
+    false,
+    true,
+  );
+  let accepted = 0;
+  for (; accepted < 1000; accepted += 1) {
+    const sample = record(accepted, "/same", "GET", "");
+    sample.reported = {
+      request: { method: "GET", url: "https://api.test/same" },
+      response: { status: 0 },
+    };
+    const before = accumulator.page(0, 1);
+    const added = accumulator.add(sample);
+    if (added.ok) continue;
+    expect(added.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+    });
+    expect(accumulator.page(0, 1)).toEqual(before);
+    break;
+  }
+  expect(accepted).toBeGreaterThan(0);
+  expect(accepted).toBeLessThan(1000);
+  expect(accumulator.page(0, 1).groups[0]?.response_coverage).toEqual({
+    unavailable_status_ordinals: Array.from(
+      { length: accepted },
+      (_, ordinal) => ordinal,
+    ),
+    unavailable_content_type_ordinals: Array.from(
+      { length: accepted },
+      (_, ordinal) => ordinal,
+    ),
+  });
+});
+
 it("bounds query parser expansion before publishing or merging observed names", () => {
   const accumulator = new WebNetworkApiSurfaceAccumulator(64 * 1024, true);
   add(accumulator, record(0, "/products?kept=1"));

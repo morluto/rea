@@ -179,10 +179,7 @@ export const inspectAnalysisViewValidated = (
 ): Result<Evidence, AnalysisError> => {
   const apiSurfaceAccumulator =
     input.view.kind === "api-surface"
-      ? new WebNetworkApiSurfaceAccumulator(
-          undefined,
-          input.view.include_query_parameter_names === true,
-        )
+      ? WebNetworkApiSurfaceAccumulator.forView(input.view)
       : undefined;
   const manifestAccumulator =
     input.view.kind === "environment-manifest"

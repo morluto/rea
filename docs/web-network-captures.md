@@ -375,6 +375,17 @@ are 0 and 50. The view groups request lines by method, WHATWG URL origin and
 path template, sorted by origin, template and method. Query strings, fragments,
 credentials, headers and bodies are not copied into groups.
 
+Select `include_response_coverage: true` to locate unavailable response facts
+within each group. Its `response_coverage` contains
+`unavailable_status_ordinals` and `unavailable_content_type_ordinals`, using
+original record ordinals in the parent's selected order. These reuse the
+status/MIME availability rules that produce the global unknown warning;
+they do not reinterpret response bytes. An empty array means those facts were
+available for that group's retained records, not that unobserved responses or
+the server schema are known. Consult parent record coverage for omitted records.
+Default and explicit `false` omit `response_coverage`. This selection composes
+with query-name selection and group paging without reopening the capture.
+
 Select `include_query_parameter_names: true` in the view to include distinct
 observed query names per group. The default and explicit `false` omit the
 `query_parameter_names` field. Selected groups include an array of

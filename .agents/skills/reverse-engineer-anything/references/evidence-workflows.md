@@ -82,6 +82,10 @@ When the connected schema advertises `include_query_parameter_names`, select
 it in the view for distinct observed names with original record ordinals. Query
 values are omitted; the names establish neither required parameters nor a
 complete server schema. Keep the original parent Evidence for exact URLs.
+When advertised, select `include_response_coverage` to locate each group's
+unavailable status and MIME facts by original record ordinal. Empty unknown
+lists cover only retained records; consult parent coverage before inferring
+completeness. Use those ordinals to inspect the original capture records.
 
 Use `inspect_analysis_view` with `view: {kind: "environment-manifest"}` on the
 same retained HAR Evidence to project the primary origin's request lines into

@@ -22,6 +22,7 @@ import {
   analysisViewLayoutEvidence,
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
+  analysisViewResponseCoverageFixture,
   analysisViewObjectDenseCapture,
   analysisViewJavaScriptEvidence,
   analysisViewJavaScriptAnalysisWithSource,
@@ -43,6 +44,49 @@ import {
   parseEvidenceBundle,
 } from "../../../src/domain/evidenceBundle.js";
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
+
+cliTest(
+  "locates selected response unknowns through compiled CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-response-coverage-cli-");
+    const path = join(root, "view.json");
+    const parent = analysisViewCaptureEvidence(
+      analysisViewResponseCoverageFixture(),
+    );
+    await writeFile(
+      path,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: {
+          kind: "api-surface",
+          include_response_coverage: true,
+          offset: 1,
+          limit: 1,
+        },
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-analysis-view", path, "--json"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(parseEvidence(result.json).normalized_result).toMatchObject({
+      parent_evidence_id: parent.evidence_id,
+      records: { examined: 5, total: 50, excluded: 1 },
+      view: { offset: 1, limit: 1 },
+      coverage: { total: 2, exhausted: true },
+      groups: [
+        {
+          record_ordinals: [8],
+          response_coverage: {
+            unavailable_status_ordinals: [8],
+            unavailable_content_type_ordinals: [8],
+          },
+        },
+      ],
+    });
+    expect(result.stdout).not.toContain("private-value");
+  },
+);
 
 cliTest(
   "authenticates an exact portable parent for non-managed views and rejects ambiguous or altered sources",

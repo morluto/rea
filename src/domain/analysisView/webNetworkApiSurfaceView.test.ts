@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
+  analysisViewResponseCoverageFixture,
 } from "../../../tests/fixtures/analysisView.js";
 import {
   analysisViewRequestSchema,
@@ -15,6 +16,7 @@ const project = (
   limit = 50,
   parameters: unknown = { sensitive_value_count: 0 },
   includeQueryParameterNames?: boolean,
+  includeResponseCoverage?: boolean,
 ) => {
   const parent = analysisViewCaptureEvidence(capture);
   return projectAnalysisView(
@@ -29,6 +31,9 @@ const project = (
       kind: "api-surface",
       offset,
       limit,
+      ...(includeResponseCoverage === undefined
+        ? {}
+        : { include_response_coverage: includeResponseCoverage }),
       ...(includeQueryParameterNames === undefined
         ? {}
         : {
@@ -37,6 +42,101 @@ const project = (
     },
   );
 };
+
+it("locates independent response unknowns by group without renumbering selected records", () => {
+  const capture = analysisViewResponseCoverageFixture();
+  const selected = project(
+    capture,
+    0,
+    1,
+    { sensitive_value_count: 0 },
+    true,
+    true,
+  );
+  const next = project(
+    capture,
+    1,
+    1,
+    { sensitive_value_count: 0 },
+    false,
+    true,
+  );
+  const legacy = project(capture);
+  const disabled = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    false,
+  );
+  if (
+    !selected.ok ||
+    selected.value.kind !== "api-surface" ||
+    !next.ok ||
+    next.value.kind !== "api-surface" ||
+    !legacy.ok ||
+    legacy.value.kind !== "api-surface" ||
+    !disabled.ok ||
+    disabled.value.kind !== "api-surface"
+  )
+    throw new Error("Expected surfaces");
+  expect(selected.value).toMatchObject({
+    records: { examined: 5, total: 50, excluded: 1 },
+    excluded_records: [{ ordinal: 9, reason: "url-redacted" }],
+    coverage: { total: 2, exhausted: false, next_offset: 1 },
+    groups: [
+      {
+        record_ordinals: [42, 3, 19],
+        response_coverage: {
+          unavailable_status_ordinals: [3],
+          unavailable_content_type_ordinals: [19],
+        },
+        query_parameter_names: [{ name: "page", record_ordinals: [42, 3, 19] }],
+      },
+    ],
+  });
+  expect(next.value.groups[0]).toMatchObject({
+    record_ordinals: [8],
+    response_coverage: {
+      unavailable_status_ordinals: [8],
+      unavailable_content_type_ordinals: [8],
+    },
+  });
+  expect(disabled.value.groups).toEqual(legacy.value.groups);
+  expect(selected.value.unknowns).toEqual(legacy.value.unknowns);
+  expect(JSON.stringify(selected.value)).not.toContain("private-value");
+  expect(capture.records.map((record) => record.ordinal)).toEqual([
+    42, 3, 19, 8, 9,
+  ]);
+});
+
+it("reports empty unknown lists for available retained responses without changing default groups", () => {
+  const selected = project(
+    undefined,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    false,
+    true,
+  );
+  const legacy = project();
+  if (
+    !selected.ok ||
+    selected.value.kind !== "api-surface" ||
+    !legacy.ok ||
+    legacy.value.kind !== "api-surface"
+  )
+    throw new Error("Expected surfaces");
+  for (const [index, group] of selected.value.groups.entries()) {
+    const { response_coverage, ...facts } = group;
+    expect(response_coverage).toEqual({
+      unavailable_status_ordinals: [],
+      unavailable_content_type_ordinals: [],
+    });
+    expect(facts).toEqual(legacy.value.groups[index]);
+  }
+});
 
 it("selects query names without values, retains source ordinals and leaves default groups unchanged", () => {
   const capture = analysisViewCaptureFixture();

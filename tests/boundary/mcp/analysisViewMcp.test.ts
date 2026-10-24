@@ -40,6 +40,7 @@ import {
   analysisViewLayoutFixture,
   analysisViewCaptureFixture,
   analysisViewCaptureEvidence,
+  analysisViewResponseCoverageFixture,
   analysisViewObjectDenseCapture,
   analysisViewNativeEvidence,
   environmentManifestCaptureFixture,
@@ -66,6 +67,7 @@ afterAll(() => schemaValidation.clear());
 const connect = async (
   binaryLayout?: BinaryLayoutService,
   webNetworkCapture?: WebNetworkCaptureService,
+  schemaProfile: "full" | "compact" = "full",
 ) => {
   const session = createTestBinarySession(() => {
     throw new Error("selected views must not start a deep provider");
@@ -73,8 +75,11 @@ const connect = async (
   const server = createServer(
     { kind: "session", session },
     {
-      // These schema conformance cases exercise full nested constraints.
-      environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
+      // Full schemas retain nested negative controls; selection cases also exercise compact delivery.
+      environment: {
+        ...process.env,
+        REA_MCP_INPUT_SCHEMA_PROFILE: schemaProfile,
+      },
       ...(binaryLayout === undefined ? {} : { binaryLayout }),
       ...(webNetworkCapture === undefined ? {} : { webNetworkCapture }),
     },
@@ -94,6 +99,75 @@ const connect = async (
   await client.connect(clientTransport);
   return { client, session };
 };
+
+it.each(["full", "compact"] as const)(
+  "advertises response coverage and preserves unknown ordinals through portable and retained MCP (%s)",
+  async (schemaProfile) => {
+    const { client, session } = await connect(
+      undefined,
+      undefined,
+      schemaProfile,
+    );
+    const parent = analysisViewCaptureEvidence(
+      analysisViewResponseCoverageFixture(),
+    );
+    const retained = session.recordEvidence(parent);
+    if (!retained.ok) throw retained.error;
+    const schemas = await advertisedMcpToolSchemas(
+      client,
+      "inspect_analysis_view",
+      schemaValidation.assertions,
+    );
+    const outputs = [];
+    for (const source of [
+      { kind: "inline", evidence: parent },
+      { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    ]) {
+      const args = {
+        source,
+        view: {
+          kind: "api-surface",
+          include_response_coverage: true,
+          include_query_parameter_names: true,
+        },
+      };
+      expect(schemas.ajv.validate(schemas.inputSchema, args)).toBe(true);
+      const response = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: args,
+      });
+      expect(response.isError).not.toBe(true);
+      expect(
+        schemas.ajv.validate(schemas.outputSchema, response.structuredContent),
+      ).toBe(true);
+      const value = parseEvidence(response.structuredContent).normalized_result;
+      expect(value).toMatchObject({
+        parent_evidence_id: parent.evidence_id,
+        records: { examined: 5, total: 50, excluded: 1 },
+        groups: [
+          {
+            record_ordinals: [42, 3, 19],
+            response_coverage: {
+              unavailable_status_ordinals: [3],
+              unavailable_content_type_ordinals: [19],
+            },
+          },
+          {
+            record_ordinals: [8],
+            response_coverage: {
+              unavailable_status_ordinals: [8],
+              unavailable_content_type_ordinals: [8],
+            },
+          },
+        ],
+      });
+      outputs.push(value);
+      expect(JSON.stringify(value)).not.toContain("private-value");
+    }
+    expect(outputs[0]).toEqual(outputs[1]);
+    expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
+  },
+);
 
 it("selects every IL2CPP native type reference by rendered name with stable row identity", async () => {
   const { client } = await connect();

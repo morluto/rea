@@ -21,6 +21,12 @@ export const apiSurfaceViewSchema = z.strictObject({
     .describe(
       "Include distinct observed query parameter names and their original record ordinals; names do not establish required parameters or a complete API schema.",
     ),
+  include_response_coverage: z
+    .boolean()
+    .optional()
+    .describe(
+      "Locate unavailable status and content type facts using original record ordinals in each group; coverage applies only to retained records.",
+    ),
 });
 const ruleSchema = z.enum(ROUTE_RULES);
 const groupSchema = z.strictObject({
@@ -38,6 +44,14 @@ const groupSchema = z.strictObject({
   record_ordinals: z.array(z.int().nonnegative()),
   statuses: z.array(z.number()),
   content_types: z.array(z.string()),
+  response_coverage: z
+    .strictObject({
+      unavailable_status_ordinals: z.array(z.number().int().nonnegative()),
+      unavailable_content_type_ordinals: z.array(
+        z.number().int().nonnegative(),
+      ),
+    })
+    .optional(),
   query_parameter_names: z
     .array(
       z.strictObject({
@@ -79,10 +93,7 @@ export const apiSurfaceFields = {
 export const projectWebNetworkApiSurfaceView = (
   parent: AnalysisViewParent,
   view: AnalysisViewRequest,
-  accumulator = new WebNetworkApiSurfaceAccumulator(
-    undefined,
-    view.kind === "api-surface" && view.include_query_parameter_names === true,
-  ),
+  accumulator = WebNetworkApiSurfaceAccumulator.forView(view),
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   if (view.kind !== "api-surface")
     return err(

@@ -276,6 +276,47 @@ export const analysisViewCaptureEvidence = (
     },
   );
 
+/** Selected, nonconsecutive producer ordinals with independently missing response facts. */
+export const analysisViewResponseCoverageFixture = () => {
+  const capture = analysisViewCaptureFixture();
+  capture.total_records = 50;
+  capture.records = [
+    {
+      ordinal: 42,
+      path: "alpha",
+      response: { status: 200, content: { mimeType: "application/json" } },
+    },
+    {
+      ordinal: 3,
+      path: "alpha",
+      response: { status: 0, content: { mimeType: "application/json" } },
+    },
+    {
+      ordinal: 19,
+      path: "alpha",
+      response: { status: 200, content: { mimeType: "invalid MIME" } },
+    },
+    { ordinal: 8, path: "beta", response: {} },
+    { ordinal: 9, path: null, response: {} },
+  ].map(({ ordinal, path, response }) => ({
+    ...capture.records[0]!,
+    ordinal,
+    location: {
+      kind: "json-pointer" as const,
+      pointer: `/log/entries/${ordinal}`,
+    },
+    reported: {
+      request: {
+        method: "GET",
+        url:
+          path === null ? null : `https://api.test/${path}?page=private-value`,
+      },
+      response,
+    },
+  }));
+  return capture;
+};
+
 /** A small encoded capture whose many short objects expand during validation. */
 export const analysisViewObjectDenseCapture = (headerCount = 100_000) => {
   const capture = analysisViewCaptureFixture();
