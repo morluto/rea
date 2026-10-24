@@ -6,7 +6,10 @@ import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
 import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
-import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+} from "../../domain/analysisErrorCore.js";
 import { isPathWithinRoot } from "../../domain/localPath.js";
 import { err, ok } from "../../domain/result.js";
 import type { SelectedWebScriptInput } from "../../domain/webScriptArtifacts.js";
@@ -15,7 +18,6 @@ import {
   decodeWebArtifact,
   readWebArtifactJson,
   webArtifactReadError,
-  WebArtifactFormatFailure,
   type WebArtifactReadContext,
 } from "./WebArtifactReads.js";
 
@@ -64,9 +66,24 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
       const manifest = webScriptExportManifestSchema.parse(manifestBytes.value);
       field = ["script_index"];
       const selected = manifest.scripts[input.script_index];
+      // A valid manifest without this index is a caller selection fault.
       if (selected === undefined)
-        throw new WebArtifactFormatFailure(
-          `No script at index ${String(input.script_index)}; manifest contains ${String(manifest.scripts.length)} scripts.`,
+        return err(
+          new AnalysisInputError(this.operation, undefined, [
+            manifest.scripts.length === 0
+              ? {
+                  path: ["script_index"],
+                  reason: "invalid_value",
+                  message: "The selected manifest contains no scripts.",
+                }
+              : {
+                  path: ["script_index"],
+                  reason: "out_of_range",
+                  minimum: 0,
+                  maximum: manifest.scripts.length - 1,
+                  message: `No script at index ${String(input.script_index)}; the manifest contains ${String(manifest.scripts.length)} scripts.`,
+                },
+          ]),
         );
       if (selected.content.state !== "exported")
         return err(
