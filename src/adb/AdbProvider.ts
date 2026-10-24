@@ -22,6 +22,7 @@ import type {
   ExecutionOptions,
   ProviderAvailability,
 } from "../application/AnalysisProvider.js";
+import { awaitPredecessor } from "../application/awaitPredecessor.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
   createAnalysisExecution,
@@ -75,6 +76,7 @@ import {
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { createEvidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
 import {
   PrivateRuntimeRoot,
   type PrivateRuntimeRootOptions,
@@ -110,6 +112,7 @@ import {
   parsePmPathOutput,
 } from "./AdbDeviceOutput.js";
 import { adbHostFileName } from "./AdbHostFileName.js";
+import { AdbUiRunner } from "./AdbUiRunner.js";
 import {
   AdbInputSnapshotFailure,
   snapshotAdbInput,
@@ -687,6 +690,8 @@ const publishBugreport = async (
 
 export interface AdbProviderOptions {
   readonly environment?: Readonly<Record<string, string | undefined>>;
+  /** Persist UI Evidence discovered by a cleanup retry after MCP delivery. */
+  readonly onLateUiEvidence?: (evidence: Evidence) => void;
   /** Override runtime-root creation at the provider's owned-resource boundary. */
   readonly createRuntimeRoot?: (
     options?: PrivateRuntimeRootOptions,
@@ -859,29 +864,40 @@ const reservePackageDestinations = async (
  *
  * Every operation composes fixed adb argument vectors: caller values occupy
  * positional arguments, escaped when adb forwards them to the device shell. The provider never
- * starts an emulator, installs platform tools, or drives the device UI; the
- * only device mutation is the caller-requested file push, which requires an
- * explicit overwrite choice and verifies its transfer digest.
+ * starts an emulator or installs platform tools. Explicit UI operations use
+ * the caller-started UI Automator runner; package/file mutations remain
+ * separately selected operations.
  */
 export class AdbProvider {
   private readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly #ui: AdbUiRunner;
+  readonly #uiCleanup: AnalysisCleanupLease;
   readonly #createRuntimeRoot: (
     options?: PrivateRuntimeRootOptions,
   ) => Promise<AdbRuntimeRoot>;
   readonly #resources = new ArtifactResourceScope();
-  readonly #outputDirectoryRetryLeases = new WeakMap<
+  readonly #cleanupRetryLeases = new WeakMap<
     AnalysisError,
     readonly AnalysisCleanupLease[]
   >();
   readonly #pendingOutputDirectoryCleanup =
     new Set<PendingOutputDirectoryCleanup>();
-  readonly #activeOperations = new Set<Promise<void>>();
+  /** All accepted device work, including discovery and finalization, has one owner. */
+  #tail: Promise<void> = Promise.resolve();
   #closing = false;
   #closePromise: Promise<void> | undefined;
   #outputCleanupPromise: Promise<void> | undefined;
 
   constructor(options: AdbProviderOptions = {}) {
     this.environment = options.environment ?? process.env;
+    this.#ui = new AdbUiRunner(
+      this.environment,
+      undefined,
+      undefined,
+      undefined,
+      options.onLateUiEvidence,
+    );
+    this.#uiCleanup = new AnalysisCleanupLease(() => this.#ui.close());
     this.#createRuntimeRoot =
       options.createRuntimeRoot ??
       ((rootOptions) => PrivateRuntimeRoot.create(rootOptions));
@@ -919,13 +935,14 @@ export class AdbProvider {
     this.#closing = true;
     if (this.#closePromise !== undefined) return this.#closePromise;
     const closing = (async () => {
-      await Promise.all(this.#activeOperations);
+      await this.#tail;
       const failures: unknown[] = [];
       const failedLeases = new Set<AnalysisCleanupLease>();
       let allFailuresHaveExactLeaseOwners = true;
       // Directory errors may also depend on a retained digest descriptor.
       // Settle those owners before deciding whether the directory error resolved.
       for (const cleanup of [
+        () => this.#closeUi(),
         () => this.#resources.close(),
         () => this.#retryOutputDirectoryCleanup(),
       ]) {
@@ -935,7 +952,7 @@ export class AdbProvider {
           failures.push(cause);
           const leases =
             (cause instanceof AnalysisError
-              ? this.#outputDirectoryRetryLeases.get(cause)
+              ? this.#cleanupRetryLeases.get(cause)
               : undefined) ??
             (cause instanceof ArtifactResourceRetryFailure
               ? cause.cleanupLeases
@@ -975,6 +992,25 @@ export class AdbProvider {
     });
     this.#closePromise = closing;
     return this.#closePromise;
+  }
+
+  async #closeUi(): Promise<void> {
+    try {
+      await this.#uiCleanup.release();
+    } catch (cause) {
+      const error =
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderCleanupError(
+              ADB_PROVIDER_IDENTITY.id,
+              this.#ui.pendingResources,
+              { reason: describeAdbFailure(cause) },
+              { cause },
+            );
+      this.#uiCleanup.bindCleanupError(error);
+      this.#cleanupRetryLeases.set(error, [this.#uiCleanup]);
+      throw error;
+    }
   }
 
   #cleanupResources(cause: unknown, resource: string): readonly string[] {
@@ -1255,7 +1291,7 @@ export class AdbProvider {
       const leases = [...this.#pendingOutputDirectoryCleanup].map(
         ({ lease }) => lease,
       );
-      this.#outputDirectoryRetryLeases.set(error, leases);
+      this.#cleanupRetryLeases.set(error, leases);
       if (failures.length > 1) new AnalysisCleanupLeaseGroup(error, leases);
       throw error;
     }
@@ -1267,21 +1303,36 @@ export class AdbProvider {
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     if (this.#closing)
       return err(new AnalysisCancelledError(request.operation));
+    const predecessor = this.#tail;
     let release!: () => void;
-    const active = new Promise<void>((resolve) => {
+    const completed = new Promise<void>((resolve) => {
       release = resolve;
     });
-    this.#activeOperations.add(active);
+    // Reserve before the first await. Even if this caller abandons its wait,
+    // its successor must still join the predecessor, not overtake it.
+    this.#tail = predecessor.then(() => completed);
     try {
       try {
+        await awaitPredecessor(predecessor, request.operation, options?.signal);
+        // Retained UI work can still affect the device. Reconcile it before
+        // any later operation, not only before another UI request or shutdown.
+        const recovered = await this.#ui.reconcile(
+          request.operation,
+          options?.signal,
+        );
+        if (recovered !== undefined) return err(recovered);
         await this.#resources.retryCleanup();
       } catch (cause: unknown) {
+        if (cause instanceof AnalysisCancelledError && !cause.cleanupIncomplete)
+          return err(cause);
         const error = this.#cleanupError(
           request.operation,
           jsonObjectSchema.parse(request.input),
           [cause],
           this.#cleanupResources(cause, "ADB provider-owned resource"),
         );
+        if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+          error.bindCleanupDependencies([cause]);
         const leases =
           cause instanceof ArtifactResourceRetryFailure
             ? cause.cleanupLeases
@@ -1312,7 +1363,6 @@ export class AdbProvider {
       }
       return await this.#executeOperation(request, options);
     } finally {
-      this.#activeOperations.delete(active);
       release();
     }
   }
@@ -1377,6 +1427,17 @@ export class AdbProvider {
         signal,
       );
     switch (operation) {
+      case "inspect_adb_ui":
+      case "find_adb_ui_elements":
+      case "wait_for_adb_ui":
+      case "perform_adb_ui_action":
+        return this.#ui.execute(
+          request,
+          selection.binary,
+          client,
+          provider,
+          signal,
+        );
       case "inspect_adb_client":
         return ok(
           createAnalysisExecution(

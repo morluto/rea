@@ -13,6 +13,7 @@ import {
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { retainedEvidenceReference } from "../../fixtures/mcpRetainedEvidence.js";
 
 it("retains completed Android Evidence through the MCP cancellation delivery path", async () => {
   const fixture = await createJadxProtocolFixture();
@@ -92,14 +93,7 @@ it("retains completed Android Evidence through the MCP cancellation delivery pat
   // recording/delivery boundary rather than treating client rejection as proof.
   const { error } = parseMcpToolError(await delivered.promise);
   expect(error.code).toBe("cancelled");
-  const reference = z
-    .object({
-      partial_observation: z.object({
-        kind: z.literal("retained-evidence"),
-        evidence_id: z.string(),
-      }),
-    })
-    .parse(error.details).partial_observation;
+  const reference = retainedEvidenceReference(error);
   expect(session.evidenceById(reference.evidence_id)).toMatchObject({
     operation: control.operation,
     normalized_result: control.normalized_result,

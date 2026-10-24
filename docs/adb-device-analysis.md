@@ -11,6 +11,11 @@ The adb client may start its local server on first device query; that is adb
 client behavior, recorded in the tool result when observed.
 `inspect_adb_client` probes only the binary and never contacts the server.
 
+[UI discovery](adb-ui-automation.md) uses a separately installed, caller-started
+UI Automator runner. The normal CLI/MCP tools are `inspect_adb_ui`,
+`find_adb_ui_elements` and `wait_for_adb_ui`. Input actions remain an unshipped
+source-tree experiment pending a maintainer scope decision.
+
 ## Supply tools
 
 Use any Android platform-tools `adb` (verified with 34.0.5). Select it
@@ -212,7 +217,8 @@ and during shutdown.
 ## Resource and lifecycle limits
 
 - Caller values reach adb only as positional arguments in fixed vectors;
-  no tool accepts an arbitrary shell command line, `input`, or `monkey`.
+  no tool accepts an arbitrary shell command line. UI actions use typed requests
+  to the UI Automator runner, with explicit element and package selection.
   The app/activity lifecycle tools use `am start -W` and `am force-stop`.
 - Per-invocation budgets: client/devices 10-20 s, shell reads 20-60 s with
   64 KiB-8 MiB capture caps (logcat 4 MiB, screen 32 MiB), transfers and
@@ -244,12 +250,10 @@ and during shutdown.
 
 ## Related capability and follow-up lanes
 
-UI interaction beyond intent starts (tapping, typing, monkey fuzzing, screen
-recording) remains a separate lane: candidates such as
-[mobile-device-mcp](https://github.com/srmorete/mobile-device-mcp) install
-driver software on the device and pair with the Frida instrumentation lane
-(#1359) behind explicit mutation-authority contracts. Network transports
-beyond already-connected devices (`adb connect`) are not exposed yet.
+UI hierarchy, text/button discovery and explicit input primitives are described
+in the [UI Automator guide](adb-ui-automation.md). Screen recording and fuzzing
+remain separate capabilities. Network transports beyond already-connected
+devices (`adb connect`) are not exposed yet.
 
 ## Real verification
 

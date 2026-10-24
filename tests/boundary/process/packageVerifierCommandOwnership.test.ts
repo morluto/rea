@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -102,6 +103,107 @@ const stopReceiptSchema = z.object({
   rootExists: z.boolean(),
   reason: z.string().optional(),
 });
+
+processTest
+  .skipIf(process.platform !== "linux")
+  .for(["package", "shared"] as const)(
+  "releases the cold TypeScript compiler across package/%s scopes before reporting cleanup",
+  { timeout: 30_000 },
+  async (secondScope, { processes }) => {
+    const root = await createTestTempDirectory("rea-package-loader-owner-");
+    const driver = join(root, "driver.mjs");
+    const commandsModule = pathToFileURL(
+      resolve("scripts/lib/verify-package-commands.mjs"),
+    ).href;
+    const lineageModule = pathToFileURL(
+      resolve("scripts/lib/verifier-run.mjs"),
+    ).href;
+    const sharedCommandsModule = pathToFileURL(
+      resolve("scripts/lib/verify-commands.mjs"),
+    ).href;
+    const sourceLoaderModule = pathToFileURL(
+      resolve("scripts/lib/verifier-source-loader.mjs"),
+    ).href;
+    const cleanupModule = pathToFileURL(
+      resolve("scripts/lib/verifier-cleanup.mjs"),
+    ).href;
+    const tsxModule = pathToFileURL(
+      createRequire(import.meta.url).resolve("tsx/esm/api"),
+    ).href;
+    const tsxPackage = pathToFileURL(
+      createRequire(import.meta.url).resolve("tsx/package.json"),
+    ).href;
+    const lateSource = join(root, "late.ts");
+    await writeFile(lateSource, "export const value: number = 42;\n");
+    await writeFile(
+      driver,
+      `import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { createRequire } from "node:module";
+import { createPackageVerifierCommands } from ${JSON.stringify(commandsModule)};
+import { createVerifierCommands } from ${JSON.stringify(sharedCommandsModule)};
+import { importVerifierSource } from ${JSON.stringify(sourceLoaderModule)};
+import { createVerifierRun, completeVerifierRun } from ${JSON.stringify(lineageModule)};
+import { withVerifierCleanup, closeVerifierResources } from ${JSON.stringify(cleanupModule)};
+import { tsImport } from ${JSON.stringify(tsxModule)};
+const run = createVerifierRun();
+const workspaces = await Promise.all([0, 1].map(async index => ({
+  path: await mkdtemp(join(${JSON.stringify(root)}, "scope-" + index + "-")),
+  async close() { await rm(this.path, { recursive: true, force: true }); },
+})));
+let owners = [], output, lateValues, peerResult, releasePeer;
+await withVerifierCleanup(async () => {
+  owners = await Promise.all([
+    createPackageVerifierCommands({ workspace: workspaces[0] }),
+    ${secondScope === "package" ? "createPackageVerifierCommands({ workspace: workspaces[1] })" : "createVerifierCommands()"},
+  ]);
+  output = await Promise.all(owners.map((owner, index) => owner.exec(
+    process.execPath, ["-e", "process.stdout.write(" + JSON.stringify(String(index)) + ")"],
+    { timeout: 5000 },
+  )));
+  const compiler = createRequire(${JSON.stringify(tsxPackage)})("esbuild");
+  let acknowledgePeer;
+  const peerReady = new Promise(resolve => { acknowledgePeer = resolve; });
+  const peerGate = new Promise(resolve => { releasePeer = resolve; });
+  const peer = compiler.build({
+    stdin: { contents: "export const peer: number = 7;", loader: "ts" },
+    write: false,
+    plugins: [{ name: "hold-peer", setup(build) {
+      build.onStart(async () => { acknowledgePeer(); await peerGate; });
+    } }],
+  }).then(
+    value => ({ ok: true, code: value.outputFiles[0].text }),
+    cause => ({ ok: false, reason: cause.message }),
+  );
+  await peerReady;
+  await owners[0].close();
+  const tracked = await importVerifierSource(${JSON.stringify(pathToFileURL(lateSource).href)}, import.meta.url);
+  releasePeer();
+  peerResult = await peer;
+  const late = await tsImport(${JSON.stringify(pathToFileURL(lateSource).href)}, import.meta.url);
+  lateValues = [tracked.value, late.value];
+}, [async () => {
+  releasePeer?.();
+  await closeVerifierResources(owners.map(owner => () => owner.close()));
+  await closeVerifierResources(workspaces.map(workspace => () => workspace.close()));
+}]);
+console.log(JSON.stringify({ output: output.map(item => item.stdout), lateValues, peerResult, verifier: await completeVerifierRun(run) }));
+`,
+    );
+    const result = await processes.run(process.execPath, [driver], {
+      timeoutMs: 25_000,
+      env: { ...process.env, TSX_DISABLE_CACHE: "1" },
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      output: ["0", "1"],
+      lateValues: [42, 42],
+      peerResult: { ok: true, code: expect.stringContaining("peer = 7") },
+      verifier: { process_lineage: { status: "verified", descendants: [] } },
+    });
+  },
+);
 
 const releaseDescendant = async (release: string, receipt: string) => {
   await writeFile(release, "release this authored descendant");

@@ -40,6 +40,8 @@ const abiSelectorSchema = z
     },
     { message: ABI_SELECTOR_MESSAGE, abort: true },
   )
+  // Hex-encode '/' so the advertised pattern also compiles in Unicode-sets
+  // mode without relying on a slash escape that JS autofix considers useless.
   .regex(/^[^\x2f]*$/u, ABI_SELECTOR_MESSAGE)
   .meta({ maxLength: ABI_SELECTOR_MAX_CHARACTERS });
 

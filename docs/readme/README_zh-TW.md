@@ -171,6 +171,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 | PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
 | Android APK           | 清單聲明、類別、反編譯的方法和引用                                           | Linux/macOS/Windows x64 上的無界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
 | Android 裝置          | 裝置、套件、程序、日誌、傾印、螢幕擷取以及 APK/檔案傳輸                      | 呼叫端提供的 adb（模擬器或實體裝置）；[ADB 指南](../adb-device-analysis.md)                                        |
+| Android 介面          | 尋找文字和按鈕、檢查階層及等待；輸入操作尚未發布                             | 呼叫端啟動的 UI Automator 2.4 執行器，透過 adb 通訊；[介面指南](../adb-ui-automation.md)                           |
 | JEB 專案              | 引擎支援的專案單元、成品摘要和型別/方法的虛擬碼                              | 由呼叫端啟動、提供 MCP 的 JEB 用戶端，透過 REA_JEB_MCP_URL 選擇；[JEB 指南](../jeb-analysis.md)                    |
 | Android 資源          | 解碼後的清單、字串表、語系和版本資訊                                         | 呼叫端提供的 Apktool 啟動器；[資源指南](../apktool-resource-analysis.md)                                           |
 | Flutter 應用          | Dart 快照雜湊、依 ABI 的程式庫雜湊及引擎建置來源                             | 無（靜態 APK 解析）；[Flutter 指南](../flutter-analysis.md)                                                        |

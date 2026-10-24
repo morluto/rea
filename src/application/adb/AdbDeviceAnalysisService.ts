@@ -8,6 +8,8 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
 import { executeProviderOperation } from "../ProviderOperationExecution.js";
+import { adbEvidenceParameters } from "../../domain/adb/adbEvidenceParameters.js";
+import { adbUiInputSchemas } from "../../domain/adb/adbUiAnalysis.js";
 
 /** Shared CLI/MCP admission, execution, and Evidence composition for ADB. */
 export class AdbDeviceAnalysisService {
@@ -26,6 +28,14 @@ export class AdbDeviceAnalysisService {
       adbRequestSchema,
       this.provider,
       "observed",
+      {
+        parameters: (request, execution) =>
+          adbEvidenceParameters(request, execution.result),
+        authority: (request) =>
+          Object.hasOwn(adbUiInputSchemas, request.operation)
+            ? "controlled-replay"
+            : "shipped-artifact",
+      },
     );
   }
 }

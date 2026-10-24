@@ -22,7 +22,11 @@ import { verifyManaged } from "./verify-package-managed.mjs";
 import { verifyUnknownProvider } from "./verify-package-unknown-provider.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import {
   createVerifiedPackageMetadata,
   retainVerifiedPackage,
@@ -276,6 +280,10 @@ await withVerifierCleanup(async () => {
 const verifierLineage = await runStage("verifier lineage", () =>
   completeVerifierRun(verifierRun),
 );
+// POSIX lineage is a required cleanup receipt. Windows command ownership is
+// established by the native Job Object checks instead of this observer.
+if (process.platform !== "win32")
+  assertVerifierCleanupComplete(verifierLineage.process_lineage);
 if (retainedPackage !== undefined)
   await writeVerifiedPackageManifest(
     retainedPackage.directory,

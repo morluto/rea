@@ -9,7 +9,7 @@ import {
   rizinCommand,
   RIZIN_PROVIDER_IDENTITY,
 } from "../rizin/RizinCommand.js";
-import { resolveWindowsProviderExecutable } from "./resolveWindowsProviderExecutable.js";
+import { resolveWindowsProviderExecutable } from "../process/WindowsProviderExecutable.js";
 
 export const createReverseEngineeringCommandPort = (
   environment: Readonly<NodeJS.ProcessEnv>,

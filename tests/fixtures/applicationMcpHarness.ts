@@ -24,6 +24,10 @@ export async function createApplicationMcpHarness(
   options: {
     readonly session?: BinarySession;
     readonly serverOptions?: Parameters<typeof createServer>[1];
+    readonly configureServer?: (
+      server: ReturnType<typeof createServer>,
+      session: BinarySession,
+    ) => void;
     readonly clientIdentity?: McpClientIdentity;
     readonly registerCleanup?: (close: ApplicationMcpHarness["close"]) => void;
   } = {},
@@ -62,6 +66,7 @@ export async function createApplicationMcpHarness(
       { kind: "session", session },
       options.serverOptions,
     );
+    options.configureServer?.(server, session);
     const client = await mcp.connect(
       server,
       options.clientIdentity ?? {

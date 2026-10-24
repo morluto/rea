@@ -44,13 +44,14 @@ const {
   ).href,
   import.meta.url,
 );
-const { agentEvaluationPassed, summarizeFactualCorrectness } = await tsImport(
-  new URL(
-    "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+const { assertAgentEvaluationsPassed, summarizeFactualCorrectness } =
+  await tsImport(
+    new URL(
+      "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+      import.meta.url,
+    ).href,
     import.meta.url,
-  ).href,
-  import.meta.url,
-);
+  );
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();
@@ -413,11 +414,7 @@ await withVerifierCleanup(
       await writeFile(resolve(reportPath), encoded);
     }
 
-    const failed = results.filter((result) => !agentEvaluationPassed(result));
-    if (failed.length > 0)
-      throw new Error(
-        `Agent routing/workflow/answer checks failed: ${failed.map(({ id }) => id).join(", ")}`,
-      );
+    assertAgentEvaluationsPassed(results);
   },
   // Even a deliberately retained fixture directory must never retain auth.
   [

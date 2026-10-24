@@ -8,6 +8,7 @@ import { ReverseEngineeringService } from "../../src/application/reverse/Reverse
 import { analysisErrorProjectionSchema } from "../../src/contracts/errorSchemas.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "../../src/contracts/reverseEngineeringToolContracts.js";
+import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
 import { execFileOutput } from "../../src/process/ExecFileOutput.js";
 
 type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
@@ -15,6 +16,17 @@ type ExecFileOutputOptions = NonNullable<Parameters<typeof execFileOutput>[2]>;
 it("documents the shared combined capture limit for both command tools", () => {
   for (const contract of REVERSE_ENGINEERING_TOOL_CONTRACTS)
     expect(contract.description).toContain("shared 16 MiB combined limit");
+});
+
+it("passes a caller-selected Windows executable through provider composition", () => {
+  const commands = createReverseEngineeringCommandPort(
+    { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },
+    "win32",
+  );
+  expect(
+    commands.objdump({ path: "artifact", operation: "file_headers" })
+      .executable,
+  ).toBe("C:\\tools\\objdump.exe");
 });
 
 it("uses provider profiles supplied through the application port", async () => {

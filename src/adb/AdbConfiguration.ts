@@ -30,8 +30,10 @@ export interface AdbBinarySelection {
 
 /**
  * Resolve the caller-supplied adb binary. `REA_ADB_PATH` must be absolute so
- * the selection stays explicit; without it, adb is resolved from `PATH` by
- * the platform exec at run time, like any bring-your-own tool.
+ * the selection stays explicit; without it, adb is resolved from `PATH` by the
+ * process that starts it, like any bring-your-own tool: the platform exec for
+ * ordinary invocations, and the shared Windows provider-executable lookup for
+ * the UI transport, which owns its own processes.
  */
 export const resolveAdbBinary = (
   environment: Readonly<Record<string, string | undefined>>,

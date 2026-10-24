@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import type { FlutterBuildAnalysisPort } from "../../../src/application/flutter/FlutterBuildAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
@@ -219,7 +220,16 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   if (tool === undefined) throw new Error("Missing AOT tool");
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+  const abiSchema = z
+    .object({
+      properties: z.object({ abi: z.object({ pattern: z.string() }) }),
+    })
+    .parse(tool.inputSchema).properties.abi;
+  const unicodeSetsPattern = new RegExp(abiSchema.pattern, "v");
+  expect(unicodeSetsPattern.test("lib/x86_64")).toBe(false);
   for (const abi of [
+    "abi\\label",
+    "abi\u0000label",
     "😀".repeat(1010),
     "l".repeat(1010),
     "😀".repeat(1009) + "\n",
@@ -229,6 +239,7 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
   ]) {
     const arguments_ = { path: "/fixture.apk", abi };
     expect(ajv.validate(tool.inputSchema, arguments_)).toBe(true);
+    expect(unicodeSetsPattern.test(abi)).toBe(true);
     expect(
       (
         await harness.client.callTool({

@@ -52,6 +52,12 @@ export interface OwnedProviderProcessSpawnOptions {
   readonly sweepTokenOwnedProcesses?: boolean;
   /** Cancels native ownership preparation before provider process creation. */
   readonly signal?: AbortSignal;
+  /**
+   * Synchronous launch-boundary observation; must not throw. Preparation does
+   * not emit an event. `attempting` means execution may begin; `not_started`
+   * follows only when the launcher proves that process creation failed.
+   */
+  readonly onLaunchState?: (state: "attempting" | "not_started") => void;
 }
 
 /** Spawned process paired with the identity proof required for group cleanup. */
@@ -273,6 +279,9 @@ export const spawnOwnedProviderProcess = async (
     REA_PROCESS_RUN_ID: options.runId,
   };
   if (platform === "win32" && process.platform === "win32") {
+    // A native constructor failure can occur after execution begins. Retain
+    // the attempted state unless the native boundary supplies no-start proof.
+    options.onLaunchState?.("attempting");
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -301,16 +310,25 @@ export const spawnOwnedProviderProcess = async (
     throw new Error(
       "Owned process memory limits require the Windows Job Object launcher; no limit can be enforced on this host.",
     );
-  const child = spawn(options.command, [...options.arguments], {
-    shell: false,
-    windowsHide: true,
-    stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
-    detached: platform !== "win32",
-    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
-    env: environment,
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-  });
-  await waitForSpawn(child);
+  let child: ChildProcess;
+  options.onLaunchState?.("attempting");
+  try {
+    child = spawn(options.command, [...options.arguments], {
+      shell: false,
+      windowsHide: true,
+      stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
+      detached: platform !== "win32",
+      windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+      env: environment,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    });
+    await waitForSpawn(child);
+  } catch (cause) {
+    // Node's pre-spawn error means the command did not execute. Errors after
+    // the spawn event are handled by the supervisor and cannot prove absence.
+    options.onLaunchState?.("not_started");
+    throw cause;
+  }
   const pid = child.pid;
   if (pid === undefined) throw new Error("Provider launcher has no process ID");
   const ownership: OwnedProcessGroup = {

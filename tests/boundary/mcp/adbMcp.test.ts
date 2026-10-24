@@ -1,14 +1,20 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it, onTestFinished } from "vitest";
 
+import { z } from "zod";
+
 import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../../../src/domain/analysisObservation.js";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { ok } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { retainedEvidenceReference } from "../../fixtures/mcpRetainedEvidence.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
+import { registerAdbUiExperiment } from "../../fixtures/adbUiExperiment.js";
 
 const identity = { id: "adb", name: "Android Debug Bridge", version: null };
 
@@ -286,16 +292,26 @@ const results: Readonly<Record<string, unknown>> = {
   },
 };
 
-it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
-  const provider: AdbDeviceAnalysisPort = {
-    async inspectAvailability() {
-      return { status: "available", code: null, reason: null, diagnostics: {} };
-    },
-    async close() {},
-    async execute(request) {
-      return ok(createAnalysisExecution(results[request.operation], identity));
-    },
-  };
+/** A provider double that answers every ADB operation from the recorded results. */
+const adbProvider = (
+  execute: AdbDeviceAnalysisPort["execute"],
+): AdbDeviceAnalysisPort => ({
+  async inspectAvailability() {
+    return { status: "available", code: null, reason: null, diagnostics: {} };
+  },
+  async close() {},
+  execute,
+});
+
+/** Connect one MCP client to an ADB provider over an in-memory session. */
+const connectAdbMcpClient = async (
+  provider: AdbDeviceAnalysisPort,
+  name: string,
+  proposedUiAction = false,
+): Promise<{
+  readonly client: Client;
+  readonly session: ReturnType<typeof createTestBinarySession>;
+}> => {
   const session = createTestBinarySession(() => {
     throw new Error("deep provider must not start");
   });
@@ -303,13 +319,22 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
     { kind: "session", session },
     { adbDeviceAnalysis: provider },
   );
+  if (proposedUiAction) registerAdbUiExperiment(server, provider, session);
   onTestFinished(() => server.close());
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
-  const client = new Client({ name: "adb-boundary", version: "0.0.0" });
+  const client = new Client({ name, version: "0.0.0" });
   onTestFinished(() => client.close());
   await client.connect(clientTransport);
+  return { client, session };
+};
+
+it("advertises exact valid ADB schemas and records inline evidence through MCP", async () => {
+  const provider = adbProvider(async (request) =>
+    ok(createAnalysisExecution(results[request.operation], identity)),
+  );
+  const { client } = await connectAdbMcpClient(provider, "adb-boundary");
 
   const { tools } = await client.listTools();
   const names = tools.map((tool) => tool.name);
@@ -330,6 +355,9 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
     "list_adb_services",
     "inspect_adb_display",
     "inspect_adb_window",
+    "inspect_adb_ui",
+    "find_adb_ui_elements",
+    "wait_for_adb_ui",
     "read_adb_setting",
     "collect_adb_bugreport",
     "resolve_adb_packages",
@@ -365,15 +393,9 @@ it("advertises exact valid ADB schemas and records inline evidence through MCP",
 });
 
 it("rejects invalid tool input before reaching the provider", async () => {
-  const provider: AdbDeviceAnalysisPort = {
-    async inspectAvailability() {
-      return { status: "available", code: null, reason: null, diagnostics: {} };
-    },
-    async close() {},
-    async execute() {
-      throw new Error("must not execute");
-    },
-  };
+  const provider = adbProvider(async () => {
+    throw new Error("must not execute");
+  });
   const server = createServer(
     {
       kind: "session",
@@ -415,5 +437,101 @@ it("rejects invalid tool input before reaching the provider", async () => {
         ],
       },
     },
+  });
+});
+
+it("withholds the proposed UI mutation tool from the production MCP surface", async () => {
+  let calls = 0;
+  const provider = adbProvider(async () => {
+    calls++;
+    throw new Error("Unapproved UI mutation must not reach the provider");
+  });
+  const { client } = await connectAdbMcpClient(provider, "adb-scope-gate");
+  const { tools } = await client.listTools();
+  expect(tools.map(({ name }) => name)).not.toContain("perform_adb_ui_action");
+  expect(tools.map(({ name }) => name)).toContain("inspect_adb_ui");
+  await expect(
+    client.callTool({
+      name: "perform_adb_ui_action",
+      arguments: {
+        serial: "emulator-5554",
+        package: "com.example.app",
+        snapshot_id: "00000000-0000-4000-8000-000000000002",
+        element_id: "0",
+        action: { kind: "tap" },
+      },
+    }),
+  ).rejects.toThrow("not advertised");
+  expect(calls).toBe(0);
+});
+
+it("exports recovered UI action Evidence recorded from a failed action", async () => {
+  const input = {
+    serial: "emulator-5554",
+    package: "com.example.app",
+    snapshot_id: "00000000-0000-4000-8000-000000000002",
+    element_id: "0",
+    action: { kind: "tap" },
+  };
+  // The producer composes the recovered observation into the same Evidence a
+  // successful call returns; this test covers the session's recording of it.
+  const recovered = createAnalysisExecutionEvidence(
+    "perform_adb_ui_action",
+    input,
+    createAnalysisExecution(
+      {
+        client: clientIdentity,
+        serial: input.serial,
+        runner: {
+          package_name: "dev.rea.uiautomator",
+          instance_id: "00000000-0000-4000-8000-000000000001",
+          version: "0.2.0",
+          ui_automator_version: "2.4.0",
+          sdk_int: 36,
+        },
+        before: { id: input.snapshot_id, captured_at_ms: 1 },
+        selected_element: null,
+        dispatch_attempted: true,
+        action_completed: true,
+        action_error: null,
+        text_verified: null,
+        can_scroll_more: null,
+        after: null,
+        observation_failure: null,
+      },
+      identity,
+    ),
+    "observed",
+    { authority: "controlled-replay" },
+  );
+  const provider = adbProvider(async (request) => {
+    if (request.operation !== "perform_adb_ui_action")
+      return ok(createAnalysisExecution(results[request.operation], identity));
+    return err(
+      new AnalysisCancelledError("perform_adb_ui_action", {
+        cause: new Error("cancelled during final acknowledgement"),
+        partialObservation: recovered,
+      }),
+    );
+  });
+  const { client, session } = await connectAdbMcpClient(
+    provider,
+    "adb-recovered-evidence",
+    true,
+  );
+
+  const reply = await client.callTool({
+    name: "perform_adb_ui_action",
+    arguments: input,
+  });
+  const { error } = parseMcpToolError(reply);
+  expect(error.code).toBe("cancelled");
+  const reference = retainedEvidenceReference(error);
+  expect(session.evidenceById(reference.evidence_id)).toMatchObject({
+    operation: "perform_adb_ui_action",
+    authority: "controlled-replay",
+    confidence: "observed",
+    parameters: input,
+    normalized_result: { dispatch_attempted: true, action_completed: true },
   });
 });

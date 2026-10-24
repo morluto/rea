@@ -35,7 +35,11 @@ const isRegularFile = (path: string): boolean => {
   }
 };
 
-/** Resolve Windows bare command names against the captured child environment. */
+/**
+ * Resolve Windows bare command names against the captured child environment.
+ * The native Windows owned-process launcher starts a drive-path executable
+ * directly, so every provider that launches through it must resolve first.
+ */
 export const resolveWindowsProviderExecutable = (
   executable: string,
   environment: Readonly<NodeJS.ProcessEnv>,

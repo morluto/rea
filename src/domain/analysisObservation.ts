@@ -33,7 +33,9 @@ export const createAnalysisExecutionEvidence = (
   input: unknown,
   execution: AnalysisObservation,
   confidence: "observed" | "derived",
-  options?: EvidenceCreationOptions,
+  options?: EvidenceCreationOptions & {
+    readonly authority?: Evidence["authority"];
+  },
 ): Evidence =>
   createEvidence(
     execution.subject === undefined
@@ -54,6 +56,9 @@ export const createAnalysisExecutionEvidence = (
         : { relationshipCoverage: execution.relationshipCoverage }),
       locations: execution.locations,
       confidence,
+      ...(options?.authority === undefined
+        ? {}
+        : { authority: options.authority }),
     },
     options,
   );

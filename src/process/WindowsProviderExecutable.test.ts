@@ -2,8 +2,7 @@ import { win32 } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveWindowsProviderExecutable } from "../../src/composition/resolveWindowsProviderExecutable.js";
-import { createReverseEngineeringCommandPort } from "../../src/composition/reverseEngineering.js";
+import { resolveWindowsProviderExecutable } from "./WindowsProviderExecutable.js";
 
 const windowsLookup = (cwd: string, files: readonly string[]) => {
   const existingFiles = new Set(
@@ -80,16 +79,5 @@ describe("resolveWindowsProviderExecutable", () => {
         windowsLookup("C:\\work", []),
       ),
     ).toBe("missing-tool");
-  });
-
-  it("passes an absolute selected command through provider composition", () => {
-    const commands = createReverseEngineeringCommandPort(
-      { REA_OBJDUMP_COMMAND: "C:\\tools\\objdump.exe" },
-      "win32",
-    );
-    expect(
-      commands.objdump({ path: "artifact", operation: "file_headers" })
-        .executable,
-    ).toBe("C:\\tools\\objdump.exe");
   });
 });
