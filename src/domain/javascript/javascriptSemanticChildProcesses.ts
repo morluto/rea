@@ -235,21 +235,67 @@ const childInteraction = (
   };
 };
 
-// Only an omitted argument or the unshadowed global undefined selects the
-// SIGTERM default; an unresolved argument leaves the signal unknown.
+// Node applies SIGTERM when kill() receives no runtime argument or undefined.
+// Array-literal spreads are expanded to find that argument, and immutable
+// aliases resolve to their initializer; anything else leaves the signal unknown.
 const killSignalName = (
   args: t.CallExpression["arguments"],
   state: JavaScriptSemanticAnalysisState,
 ): string | null => {
-  const [signal] = args;
-  if (signal === undefined) return "SIGTERM";
-  const expression = unwrapJavaScriptExpression(signal).node;
+  const signal = firstRuntimeArgument(args);
+  if (signal === "unknown") return null;
+  if (signal === "none" || signal === "undefined") return "SIGTERM";
+  const expression = immutableAliasValue(signal, state);
   if (
     t.isUnaryExpression(expression, { operator: "void" }) ||
     isUnshadowedGlobal(expression, state, "undefined")
   )
     return "SIGTERM";
-  return dataEffectLiteralString(signal);
+  return t.isExpression(expression)
+    ? dataEffectLiteralString(expression)
+    : null;
+};
+
+/**
+ * Select the first runtime argument through array-literal spreads. "none"
+ * means no argument, and an array hole passes a runtime "undefined".
+ */
+const firstRuntimeArgument = (
+  args: readonly (t.Node | null)[],
+): t.Expression | "none" | "undefined" | "unknown" => {
+  for (const arg of args) {
+    if (arg === null) return "undefined";
+    if (!t.isSpreadElement(arg)) return t.isExpression(arg) ? arg : "unknown";
+    const spread = unwrapJavaScriptExpression(arg.argument).node;
+    if (!t.isArrayExpression(spread)) return "unknown";
+    const element = firstRuntimeArgument(spread.elements);
+    if (element !== "none") return element;
+  }
+  return "none";
+};
+
+/** Follow const aliases whose only write is one unconditional initializer. */
+const immutableAliasValue = (
+  node: t.Expression,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node => {
+  const seen = new Set<string>();
+  let expression: t.Node = unwrapJavaScriptExpression(node).node;
+  while (t.isIdentifier(expression)) {
+    const binding = resolveSemanticBindingState(
+      state,
+      expression,
+      expression.name,
+    );
+    if (binding === undefined || binding.mutable || seen.has(binding.bindingId))
+      return expression;
+    seen.add(binding.bindingId);
+    const initializer = semanticStableInitializer(binding, state);
+    if (initializer === undefined || initializer.projection.length > 0)
+      return expression;
+    expression = unwrapJavaScriptExpression(initializer.node).node;
+  }
+  return expression;
 };
 
 const classifyInteraction = (
