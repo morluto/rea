@@ -997,9 +997,13 @@ Target admission preserves recognized PE/NE/LE/LX signatures separately from
 reader layout support. A Windows header overlapping the first 64 DOS-header
 bytes remains an unsupported layout in this release; it is not reported as an
 invalid offset. Tiny PE files with short optional headers have additional
-unverified loader requirements. Unconfirmed nonzero DOS padding remains an
-unresolved Windows-header candidate, with independently validated DOS facts in
-the target error diagnostics; those facts do not prove a Windows header absent.
+unverified loader requirements. A nonzero Windows-header pointer without a
+recognized signature remains an unresolved candidate, with independently
+validated DOS facts in the target error diagnostics; those facts do not prove a
+Windows header absent. When a nonempty relocation table ends inside a complete
+DOS header, the remaining header bytes are DOS padding, so a nonzero dword
+there is not a Windows declaration. An unread signature beyond the current
+probe is requested before that padding rule applies.
 On Linux and macOS, `annotate_native_function` also edits a function name and/or
 entry comments atomically and returns refreshed analysis, and `set_address_name`
 and `set_addresses_names` name a function entry or any other mapped address

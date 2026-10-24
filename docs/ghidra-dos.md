@@ -33,8 +33,10 @@ usually remains an unresolved candidate, even when the DOS structure validates:
 automatic target selection fails closed and reports both observations. When a
 nonempty relocation table ends inside a complete DOS header, the remaining
 header bytes belong to DOS padding; a nonzero dword there is not a Windows
-declaration. This avoids manufacturing a Windows header from original DOS
-padding while preserving rejection of damaged Windows declarations.
+declaration. An unread signature beyond the current probe is requested before
+that padding rule applies. This avoids manufacturing a Windows header from
+original DOS padding while preserving rejection of damaged Windows
+declarations.
 Inventory classification is a bounded-prefix format hint; it returns `unknown`
 for an unresolved candidate or when its prefix cannot establish the format.
 That result is distinct from complete DOS validation and does not decide target
