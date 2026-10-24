@@ -111,6 +111,13 @@ describe("curated Windows test lane", () => {
     );
   });
 
+  it("keeps the Windows-only caller path separator regression in the lane", async () => {
+    // It runs only on Windows, so outside this lane CI never executes it.
+    expect(await explicitPaths("windows")).toContain(
+      "tests/boundary/filesystem/windowsTargetSeparators.test.ts",
+    );
+  });
+
   it("keeps Windows runner cancellation coverage in the lane", async () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([
