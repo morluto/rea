@@ -44,7 +44,7 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
-it("keeps an ambiguous DOS MZ inventory candidate unknown", () => {
+it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(128, 2);
@@ -54,8 +54,8 @@ it("keeps an ambiguous DOS MZ inventory candidate unknown", () => {
   bytes.writeUInt16LE(28, 24);
   bytes.write("ABCD", 60, "ascii");
   expect(classifyArtifactBytesAtPath("legacy.exe", bytes)).toEqual({
-    kind: "unknown",
-    format: "unknown",
+    kind: "executable",
+    format: "dos-mz",
   });
 });
 

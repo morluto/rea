@@ -19,7 +19,7 @@ it("classifies a confirmed overlapping PE as an unsupported layout", () => {
   }
 });
 
-it("keeps a DOS-valid but unsigned Windows-header candidate unresolved", () => {
+it("reports complete DOS MZ images as outside the PE reader", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(128, 2);
@@ -29,7 +29,7 @@ it("keeps a DOS-valid but unsigned Windows-header candidate unresolved", () => {
   bytes.writeUInt16LE(28, 24);
   bytes.write("ABCD", 60, "ascii");
   expect(() => readPeImage(bytes)).toThrow(
-    "MZ Windows new-header candidate is unresolved",
+    "DOS MZ images are outside the supported ELF, PE and thin Mach-O formats",
   );
 });
 

@@ -72,11 +72,12 @@ export const observeMzWindowsHeader = (
   const headerBytes = bytes.readUInt16LE(8) * 16;
   const relocationCount = bytes.readUInt16LE(6);
   const tableStart = bytes.readUInt16LE(24);
+  const tableEnd = tableStart + relocationCount * 4;
   if (
     headerBytes !== 0 &&
     relocationCount > 0 &&
     tableStart < 64 &&
-    tableStart + relocationCount * 4 > 60
+    tableEnd > 60
   )
     return { state: "absent" };
   const offset = bytes.readUInt32LE(60);
@@ -92,6 +93,11 @@ export const observeMzWindowsHeader = (
   const signature = windowsHeaderSignature(available);
   if (signature !== "other" && signature !== "unobserved")
     return { state: "declared", offset, signature };
+  // A relocation table that ends inside a complete DOS header owns the rest of
+  // that header as padding. Without a recognized Windows signature, a dword in
+  // that padding is DOS data rather than a Windows new-header declaration.
+  if (headerBytes >= 64 && relocationCount > 0 && tableEnd <= 60)
+    return { state: "absent" };
   if (headerBytes === 0 || headerBytes >= 64) {
     const remaining = fileSize - offset;
     const needsMore =
