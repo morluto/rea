@@ -13,12 +13,37 @@ import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImag
 import { parseGhidraInventoryResult } from "./GhidraInventoryValues.js";
 import { prepareGhidraDosLoadImage } from "./GhidraLoadImageValues.js";
 
-it("does not interpret an ambiguous Windows-header candidate as a DOS image", () => {
+it("accepts DOS header padding after a complete relocation table", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt16LE(128, 2);
   bytes.writeUInt16LE(1, 4);
   bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.write("ABCD", 60, "ascii");
+  expect(prepareGhidraDosLoadImage(bytes, bytes.length)).toMatchObject({
+    ok: true,
+    value: {
+      header: {
+        headerBytes: 64,
+        imageBytes: 128,
+        moduleBytes: 64,
+        overlayBytes: 0,
+        relocationCount: 2,
+        relocationTableOffset: 28,
+      },
+      loadSegment: 0x1000,
+    },
+  });
+});
+
+it("does not interpret an unresolved Windows-header candidate as a DOS image", () => {
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(0, 6);
   bytes.writeUInt16LE(4, 8);
   bytes.writeUInt16LE(28, 24);
   bytes.write("ABCD", 60, "ascii");
