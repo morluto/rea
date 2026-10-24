@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 import secrets
 import select
+import socket
 import stat
 import subprocess
 import tempfile
@@ -347,7 +348,9 @@ def is_wsl() -> bool:
 
 def socket_directory_state() -> tuple[str | None, bool | None, bool]:
     try:
-        value = X11_SOCKET_DIRECTORY.lstat()
+        # WSLg exposes this path through a symlink. Inspect the directory used
+        # by mount, statvfs, and Xvfb, including after the private tmpfs mount.
+        value = X11_SOCKET_DIRECTORY.stat()
     except FileNotFoundError:
         try:
             read_only = bool(os.statvfs(X11_SOCKET_DIRECTORY.parent).f_flag & os.ST_RDONLY)
@@ -578,6 +581,10 @@ def start_xvfb(
     args: argparse.Namespace,
 ) -> tuple[subprocess.Popen[bytes], str, Path, CapturedStderr]:
     authority = session / "Xauthority"
+    # Xtrans rejects WSLg's symlink when creating filesystem listeners. Linux
+    # abstract Unix sockets use the same Xauthority authentication and require
+    # no changes to the shared WSLg directory.
+    abstract_only = X11_SOCKET_DIRECTORY.is_symlink()
     collision: AdapterFailure | None = None
     for _ in range(3):
         display_number = (
@@ -608,6 +615,7 @@ def start_xvfb(
                     "1280x1024x24",
                     "-nolisten",
                     "tcp",
+                    *(["-nolisten", "unix"] if abstract_only else []),
                     "-auth",
                     str(authority),
                 ],
@@ -630,9 +638,8 @@ def start_xvfb(
             )
         capture = CapturedStderr(process.stderr)
         deadline = time.monotonic() + 2
-        socket = Path(f"/tmp/.X11-unix/X{display_number}")
         while time.monotonic() < deadline and process.poll() is None:
-            if socket.is_socket():
+            if display_socket_ready(display_number, abstract_only):
                 return process, display_name, authority, capture
             time.sleep(0.05)
         stop_process(process)
@@ -646,6 +653,19 @@ def start_xvfb(
         "address_collision",
         "private display address collision",
     )
+
+
+def display_socket_ready(display_number: int, abstract_only: bool) -> bool:
+    address = str(X11_SOCKET_DIRECTORY / f"X{display_number}")
+    if not abstract_only:
+        return Path(address).is_socket()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(0.05)
+        try:
+            connection.connect("\0" + address)
+            return True
+        except OSError:
+            return False
 
 
 def run_probe(args: argparse.Namespace) -> dict[str, object]:

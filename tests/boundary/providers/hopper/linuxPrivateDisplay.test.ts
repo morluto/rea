@@ -181,6 +181,56 @@ describe("Hopper demo explicit display number", () => {
 });
 
 describe("Linux private display selection", () => {
+  it.skipIf(process.platform !== "linux")(
+    "checks the resolved WSLg socket directory and preserves unusable targets",
+    () => {
+      const result = spawnSync(
+        "/usr/bin/python3",
+        [
+          "-c",
+          `
+import runpy, socket, sys, tempfile
+from pathlib import Path
+helper = runpy.run_path(sys.argv[1])
+inspect = helper["socket_directory_state"]
+with tempfile.TemporaryDirectory() as temporary:
+    root = Path(temporary)
+    target = root / "wslg"
+    target.mkdir()
+    link = root / "X11"
+    link.symlink_to(target, target_is_directory=True)
+    inspect.__globals__["X11_SOCKET_DIRECTORY"] = link
+    target.chmod(0o1777)
+    assert inspect() == ("1777", False, True), inspect()
+    target.chmod(0o755)
+    assert inspect() == ("0755", False, True), inspect()
+    target.rmdir()
+    assert inspect() == (None, False, False), inspect()
+    target.write_text("not a directory")
+    assert inspect()[2] is False, inspect()
+    ready = helper["display_socket_ready"]
+    ready.__globals__["X11_SOCKET_DIRECTORY"] = root
+    assert ready(123, True) is False
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind("\\0" + str(root / "X123"))
+        listener.listen(1)
+        assert ready(123, True) is True
+        assert ready(123, False) is False
+    assert ready(123, True) is False
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(str(root / "X123"))
+        listener.listen(1)
+        assert ready(123, False) is True
+        assert ready(123, True) is False
+`,
+          helperPath,
+        ],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+    },
+  );
+
   it("prefers a successful direct Xvfb probe", async () => {
     const calls: LinuxPrivateDisplayRunnableStrategy[] = [];
     const runProbe: LinuxPrivateDisplayProbeRunner = (strategy) => {
