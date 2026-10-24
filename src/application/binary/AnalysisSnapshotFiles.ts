@@ -93,12 +93,14 @@ export const readAnalysisSnapshot = async (
       READ_OPERATION,
     );
     if (!loaded.ok) return loaded;
-    signal?.throwIfAborted();
     // Deliver queued cancellation before handing a complete cache to the session.
     await setImmediate();
-    signal?.throwIfAborted();
+    if (signal?.aborted === true) return err(snapshotCancelled(signal));
     return loaded;
   } catch (cause: unknown) {
+    // Caller reasons are opaque, including objects shaped like file failures.
+    if (signal?.aborted === true && cause === signal.reason)
+      return err(snapshotCancelled(signal));
     if (cause instanceof RegularFileRetainedCleanupFailure)
       return err(snapshotCleanupFailure(cause, signal));
     // Without a retaining scope this failure is the descriptor's only owner.
@@ -107,12 +109,15 @@ export const readAnalysisSnapshot = async (
   }
 };
 
+const snapshotCancelled = (signal: AbortSignal): AnalysisCancelledError =>
+  new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason });
+
 const snapshotReadFailure = (
   cause: unknown,
   signal: AbortSignal | undefined,
 ): EvidenceIntegrityError | AnalysisCancelledError =>
   signal?.aborted === true
-    ? new AnalysisCancelledError(READ_OPERATION, { cause: signal.reason })
+    ? snapshotCancelled(signal)
     : new EvidenceIntegrityError(snapshotValidationMessage(cause), { cause });
 
 /**

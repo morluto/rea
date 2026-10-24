@@ -136,7 +136,12 @@ const readJsonFileInput = async <Value, Failure extends AnalysisError = never>(
   try {
     return decodedJsonFileResult(await read(requestedPath), requestedPath);
   } catch (cause: unknown) {
-    if (cause instanceof RegularFileCleanupFailure) throw cause;
+    // Caller reasons are opaque, including objects shaped like file failures.
+    if (
+      !isJsonReadCancellation(cause, signal) &&
+      cause instanceof RegularFileCleanupFailure
+    )
+      throw cause;
     return err(jsonFileReadFailure(cause, requestedPath, operation, signal));
   }
 };
@@ -177,6 +182,9 @@ const jsonFileReadFailure = (
   operation: string,
   signal?: AbortSignal,
 ): JsonFileReadFailure => {
+  // Check the caller's own reason first so its shape grants no other meaning.
+  if (isJsonReadCancellation(cause, signal))
+    return new AnalysisCancelledError(operation, { cause: signal?.reason });
   if (cause instanceof AnalysisResourceConstraintError) return cause;
   if (cause instanceof JsonInputCancellationFailure)
     return new AnalysisCancelledError(operation, { cause: cause.reason });
@@ -185,8 +193,6 @@ const jsonFileReadFailure = (
       cause: cause.physicalCause,
       path: requestedPath,
     });
-  if (isJsonReadCancellation(cause, signal))
-    return new AnalysisCancelledError(operation, { cause: signal?.reason });
   return new EvidenceFileError(
     "read",
     cause instanceof NonRegularFileReadError ? "not-file" : missingOrIo(cause),

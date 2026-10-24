@@ -96,7 +96,7 @@ export interface BinarySessionPort
   status(options?: { readonly signal?: AbortSignal }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   /** Retry session file cleanup, also used by server shutdown. */
-  closeFileResources(): Promise<Result<null, AnalysisError>>;
+  closeFileResources(operation?: string): Promise<Result<null, AnalysisError>>;
   readAnalysisSnapshot(
     path: string,
     signal?: AbortSignal,

@@ -132,7 +132,12 @@ it("recovers a retained snapshot descriptor through close_binary on the same con
     expect(
       statusText?.type === "text" ? JSON.parse(statusText.text) : null,
     ).toMatchObject({ result: { cleanup_pending: true } });
-    expect((await openTarget(false)).isError).toBe(true);
+    const gated = parseMcpToolError(await openTarget(false));
+    expect(gated.error).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { operation: "open_binary", resources: [injected.path] },
+    });
+    expect(gated.error.remediation.action).toContain("close_binary");
     expect(session.activeTarget()).toBeUndefined();
     const retry = parseMcpToolError(
       await client.callTool({

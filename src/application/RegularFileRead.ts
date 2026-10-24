@@ -160,7 +160,13 @@ const failureMessage = (cause: unknown): string =>
 export const withRegularFile = async <Value>(
   path: string,
   read: (handle: FileHandle, stats: Stats) => Promise<Value>,
-  options: RegularFileReadOptions = {},
+  options: RegularFileReadOptions & {
+    /**
+     * Identifies a completed value that is itself the consumer's failure. It
+     * was settled before the final close, so later cancellation cannot replace it.
+     */
+    readonly completedFailure?: (value: Value) => boolean;
+  } = {},
 ): Promise<Value> => {
   const { signal, resources } = options;
   let admitted: FileHandle | undefined;
@@ -201,6 +207,11 @@ export const withRegularFile = async <Value>(
         cause.owner.handle !== admitted
       )
         throw cause;
+      if (
+        cause instanceof RegularFileCancelled &&
+        options.completedFailure?.(cause.outcome.value as Value) === true
+      )
+        return cause.outcome.value as Value;
       if (cause instanceof RegularFileCleanupFailure) {
         if (resources === undefined) throw cause;
         const retry = await retryRegularFileCleanup(cause, resources, signal);
@@ -254,6 +265,8 @@ export const withRegularFile = async <Value>(
     : resources.run(operation));
   // A retained close may have recovered after the descriptor owner's outcome
   // was captured. Include that retry and the scope's finalization in cancellation.
+  if (signal?.aborted === true && options.completedFailure?.(value) === true)
+    return value;
   if (signal?.aborted === true && options.cancellationFailure !== undefined)
     throw options.cancellationFailure(signal.reason);
   signal?.throwIfAborted();

@@ -87,7 +87,7 @@ const readPhysicalJsonInput = async <Value>(
   }
 };
 
-const withJsonInputFile = <Value>(
+const withJsonInputFile = <Value extends Result<unknown, AnalysisError>>(
   path: string,
   read: (handle: FileHandle, stats: Stats) => Promise<Value>,
   options: Pick<RegularFileReadOptions, "signal" | "resources">,
@@ -95,6 +95,8 @@ const withJsonInputFile = <Value>(
   withRegularFile(path, read, {
     ...options,
     cancellationFailure: (reason) => new JsonInputCancellationFailure(reason),
+    // Syntax and semantic failures are decided before close; they stay primary.
+    completedFailure: (value) => !value.ok,
   }).catch((cause: unknown) => {
     if (cause instanceof RegularFileReadFailure) throw cause.operationCause;
     throw cause;

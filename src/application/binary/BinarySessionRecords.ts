@@ -133,8 +133,10 @@ export abstract class BinarySessionRecords {
     return writeSnapshotFile(snapshot, path, overwrite, this.#fileResources);
   }
 
-  /** Retry and release retained snapshot files at the owning session shutdown. */
-  async closeFileResources(): Promise<Result<null, AnalysisError>> {
+  /** Retry and release retained snapshot files for the calling lifecycle operation. */
+  async closeFileResources(
+    operation = "close_binary",
+  ): Promise<Result<null, AnalysisError>> {
     try {
       await this.#fileResources.retryCleanup();
       return ok(null);
@@ -147,7 +149,12 @@ export abstract class BinarySessionRecords {
         "rea",
         observation.resources,
         { reason: observation.reason },
-        { cause, operation: "close_binary" },
+        {
+          cause,
+          operation,
+          remediationAction:
+            "Snapshot file handles are still retained. Call close_binary to retry their cleanup; opening another target stays blocked until it succeeds.",
+        },
       );
       bindArtifactFileCleanup(cause, error);
       return err(error);
