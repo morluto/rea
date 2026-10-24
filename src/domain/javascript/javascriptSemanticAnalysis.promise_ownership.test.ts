@@ -2,6 +2,25 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
+it.each(["pending", "(0, pending)"])(
+  "links an awaited stable result through %s",
+  (value) => {
+    const ir = analyzeJavaScriptSemantics(
+      `const pending = Promise.resolve(1); const alias = ${value}; await alias;`,
+    );
+    const producer = ir.promiseOperations.find(
+      ({ method }) => method === "resolve",
+    );
+    if (producer === undefined) throw new Error("Missing promise producer");
+    expect(
+      ir.promiseOperations.find(({ method }) => method === "await"),
+    ).toMatchObject({
+      sourcePromiseIds: [producer.promiseId],
+      sourceResolution: "complete",
+    });
+  },
+);
+
 it.each([
   {
     source: "const value = (Promise.resolve(1) as Promise<number>);",
@@ -198,3 +217,38 @@ it("does not assign a return site to a Promise owned by a binding", () => {
     returnSiteId: null,
   });
 });
+
+it.each([
+  "(async () => pending)()",
+  "(async () => { return pending; })()",
+  "(async () => await pending)()",
+])("links settlement through a distinct async wrapper: %s", (wrapper) => {
+  const ir = analyzeJavaScriptSemantics(
+    `const pending=new Promise(resolve=>resolve(1));const wrapped=${wrapper};await wrapped;`,
+  );
+  const producer = ir.promiseOperations.find(({ method }) => method === "new");
+  if (producer === undefined) throw new Error("Missing promise producer");
+  expect(
+    ir.promiseOperations.find(({ method }) => method === "await"),
+  ).toMatchObject({
+    sourcePromiseIds: [producer.promiseId],
+    sourceResolution: "complete",
+  });
+});
+
+it.each(["(async () => pending)()", "(async () => { return pending; })()"])(
+  "keeps constructor identity unknown after an ambient receiver escape: %s",
+  (wrapper) => {
+    // A proven native static operation does not expose its namespace receiver.
+    // An unknown method still can mutate Promise.prototype before adoption.
+    const ir = analyzeJavaScriptSemantics(
+      `const pending=Promise.resolve(1);Promise.custom();const wrapped=${wrapper};await wrapped;`,
+    );
+    expect(
+      ir.promiseOperations.find(({ method }) => method === "await"),
+    ).toMatchObject({
+      sourcePromiseIds: [],
+      sourceResolution: "unresolved",
+    });
+  },
+);

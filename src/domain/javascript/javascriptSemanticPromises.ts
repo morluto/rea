@@ -20,6 +20,9 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticInitializerPrecedesRead } from "./javascriptSemanticEvaluationOrder.js";
+import { webSocketExecutionContexts } from "./javascriptWebSocketExecution.js";
+import { semanticPromiseSettlementDependency } from "./javascriptSemanticPromiseIdentity.js";
 import {
   assignedSemanticResultBindings,
   dataEffectMemberCallee,
@@ -53,7 +56,6 @@ interface PromiseExpressionResolutionContext {
   readonly current: PromiseCandidate;
   readonly candidateByNode: WeakMap<t.Node, PromiseCandidate>;
   readonly state: JavaScriptSemanticAnalysisState;
-  readonly seenBindings: ReadonlySet<string>;
 }
 
 interface PromiseOwnershipContext {
@@ -434,31 +436,59 @@ const resolvePromiseExpression = (
   rawNode: t.Node,
   context: PromiseExpressionResolutionContext,
 ): PromiseResolution => {
-  const { current, candidateByNode, state, seenBindings } = context;
-  const node = unwrapJavaScriptExpression(rawNode).node;
-  const direct = candidateByNode.get(node);
-  if (direct !== undefined && direct.promiseId !== current.promiseId)
-    return { promiseIds: [direct.promiseId], status: "complete" };
-  if (!t.isIdentifier(node)) return unresolvedPromise();
-  const binding = resolveSemanticBindingState(state, node, node.name);
-  if (binding === undefined || seenBindings.has(binding.bindingId))
-    return unresolvedPromise();
-  const read = semanticBindingAtRead(binding, node, state.parentsByNode);
-  if (
-    read.status !== "ordered" ||
-    !read.hasDefiniteInitializer ||
-    read.binding.initializers.length !== 1
-  )
-    return unresolvedPromise();
-  const initializer = read.binding.initializers[0];
-  if (initializer === undefined || initializer.projection.length > 0)
-    return unresolvedPromise();
-  const nestedSeen = new Set(seenBindings);
-  nestedSeen.add(binding.bindingId);
-  return resolvePromiseExpression(initializer.node, {
-    ...context,
-    seenBindings: nestedSeen,
-  });
+  const { current, candidateByNode, state } = context;
+  const seenBindings = new Set<string>();
+  let node = rawNode;
+  for (;;) {
+    const result = semanticPromiseSettlementDependency(node, state);
+    if (
+      result?.aliases.some(({ read, initializer }) => {
+        const binding = resolveSemanticBindingState(state, read, read.name);
+        if (binding === undefined) return true;
+        const selected = semanticBindingAtRead(
+          binding,
+          read,
+          state.parentsByNode,
+        );
+        // Reads inside an adopted async wrapper use its invocation frame; lexical
+        // ordering alone cannot establish initialization across that boundary.
+        return selected.status === "ordered"
+          ? !selected.hasDefiniteInitializer
+          : semanticInitializerPrecedesRead({
+              initializer: initializer.node,
+              read,
+              parents: state.parentsByNode,
+              initializerContexts: webSocketExecutionContexts(
+                initializer.node,
+                state,
+              ),
+              readContexts: webSocketExecutionContexts(read, state),
+            }) !== true;
+      })
+    )
+      return unresolvedPromise();
+    const direct =
+      result === undefined ? undefined : candidateByNode.get(result.node);
+    if (direct !== undefined && direct.promiseId !== current.promiseId)
+      return { promiseIds: [direct.promiseId], status: "complete" };
+    node = unwrapJavaScriptExpression(node).node;
+    if (!t.isIdentifier(node)) return unresolvedPromise();
+    const binding = resolveSemanticBindingState(state, node, node.name);
+    if (binding === undefined || seenBindings.has(binding.bindingId))
+      return unresolvedPromise();
+    const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+    if (
+      read.status !== "ordered" ||
+      !read.hasDefiniteInitializer ||
+      read.binding.initializers.length !== 1
+    )
+      return unresolvedPromise();
+    const initializer = read.binding.initializers[0];
+    if (initializer === undefined || initializer.projection.length > 0)
+      return unresolvedPromise();
+    seenBindings.add(binding.bindingId);
+    node = initializer.node;
+  }
 };
 
 const promiseResolutionContext = (
@@ -469,7 +499,6 @@ const promiseResolutionContext = (
   current,
   candidateByNode,
   state,
-  seenBindings: new Set(),
 });
 
 const combinePromiseResolutions = (

@@ -48,17 +48,33 @@ it("retains common copy exclusions and the union of array prefixes", () => {
   expect(joinSemanticPropertyPaths(exact, ["1"])).toBe(exact);
 });
 
-const memberAliasSource = (count: number) => `
+const memberAliasSource = (count: number, alternative = "child") => `
   import { Worker } from "node:worker_threads";
   const alias0 = globalThis;
   ${Array.from(
     { length: count },
     (_, index) =>
-      `const alias${index + 1} = flag${index} ? alias${index}.globalThis : alias${index}.window;`,
+      `const alias${index + 1} = flag${index} ? alias${index}.globalThis : alias${index}.${alternative};`,
   ).join("\n")}
   alias${count}.URL = replacement;
   new Worker(new URL("./worker.js", import.meta.url));
 `;
+
+// Distinct child projections still require the alias-selection budget. Global
+// self names all identify one receiver and must not fabricate lost coverage.
+it("normalizes equivalent global self alternatives without losing their write", () => {
+  const source = memberAliasSource(16, "window");
+  const ir = analyzeJavaScriptSemantics(source);
+  expect(ir.coverage).toMatchObject({ status: "complete", omittedCount: 0 });
+  expect(ir.limitations).not.toContain(
+    semanticResourceLimitReason("alias-selections"),
+  );
+  expect(
+    analyzeJavaScriptStaticSource(source).references.filter(
+      ({ kind }) => kind === "worker",
+    ),
+  ).toMatchObject([{ specifier: null }]);
+});
 
 it("joins overflowing member-alias histories into disclosed possible effects", () => {
   const source = memberAliasSource(16);

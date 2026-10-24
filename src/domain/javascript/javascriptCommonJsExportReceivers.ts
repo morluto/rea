@@ -34,8 +34,8 @@ const commonJsExportInvocation = (
   let interop = exportInvocations.get(state);
   if (interop === undefined) {
     interop = createSemanticModuleInterop(state);
-    for (const { node: write, path } of state.ambientWriteEffects)
-      if (write !== undefined && path[0] === "global")
+    for (const { node: write, path, kind } of state.ambientReferenceEffects)
+      if (kind === "write" && write !== undefined && path[0] === "global")
         interop.retainWrite(write, [
           "intrinsic",
           ...path
@@ -400,8 +400,9 @@ export function* indexCommonJsExportReceiversSteps(
   const publicCallWrites = new WeakSet<t.Node>();
   // Consume the shared write owner's resolved aliases, intrinsic invocation
   // and keyed mutator facts instead of reinterpreting call names here.
-  for (const { node, path } of state.ambientWriteEffects) {
+  for (const { node, path, kind } of state.ambientReferenceEffects) {
     if (
+      kind === "write" &&
       (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
       path[0] === "commonjs-module" &&
       path.length <= 2 &&

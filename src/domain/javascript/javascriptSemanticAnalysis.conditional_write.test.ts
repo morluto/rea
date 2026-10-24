@@ -70,4 +70,15 @@ describe("JavaScript semantic analysis: conditionally skipped writes", () => {
       value: 1,
     });
   });
+
+  it("keeps inherited optional member keys conditional without extending grouped chains", () => {
+    for (const member of ["foo?.bar[value = 1]", "foo?.bar?.[value = 1]"])
+      expect(bindingValue(`let value; ${member};`, "value")?.status).toBe(
+        "unknown",
+      );
+    expect(bindingValue("let value; (foo?.bar)[value = 1];", "value")).toEqual({
+      status: "literal",
+      value: 1,
+    });
+  });
 });

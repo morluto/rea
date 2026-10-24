@@ -24,17 +24,14 @@ export const semanticCommonJsRequireOwnEnumerableAt = (
 ): boolean => {
   const selected = ["commonjs-module", "require"];
   const mayAffect = (
-    effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+    effect: JavaScriptSemanticAnalysisState["ambientReferenceEffects"][number],
   ) =>
     effect.path.length <= selected.length &&
     effect.path.every((key, index) =>
       semanticPropertyPathKeyMatches(key, selected[index] ?? ""),
     ) &&
     semanticEffectTiming(capture, effect.node, state) !== "after";
-  return (
-    state.ambientWriteEffects.some(mayAffect) ||
-    state.ambientEscapeEffects.some(mayAffect)
-  );
+  return state.ambientReferenceEffects.some(mayAffect);
 };
 
 interface ReferenceSource {

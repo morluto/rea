@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
+import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 /** Type-only class fields neither initialize own slots nor shadow inherited members. */
@@ -7,6 +8,23 @@ export const isRuntimeJavaScriptClassProperty = (
   node: t.Node,
 ): node is t.ClassProperty =>
   t.isClassProperty(node) && node.declare !== true && node.abstract !== true;
+
+/** Runtime class fields share value timing; erased declarations evaluate no key. */
+export const javaScriptClassField = (
+  node: t.Node | null | undefined,
+): node is t.ClassProperty | t.ClassPrivateProperty | t.ClassAccessorProperty =>
+  (node != null && isRuntimeJavaScriptClassProperty(node)) ||
+  t.isClassPrivateProperty(node) ||
+  t.isClassAccessorProperty(node);
+
+/** Only ordinary functions and classes have a syntactic [[Construct]] body. */
+export const javaScriptFunctionCanConstruct = (
+  node: t.Function | t.Class,
+): boolean =>
+  t.isClass(node) ||
+  ((t.isFunctionDeclaration(node) || t.isFunctionExpression(node)) &&
+    !node.async &&
+    !node.generator);
 
 /** TypeScript receiver annotations occupy no positional runtime parameter slot. */
 export const runtimeFunctionParameters = (
@@ -58,6 +76,46 @@ export const unwrapJavaScriptExpression = (
   return { node: current, depth };
 };
 
+/** Result identity follows only one syntax-proven selected operand. */
+export const javaScriptExactResultOperand = (
+  node: t.Node,
+  assignmentCompletes?: (node: t.AssignmentExpression) => boolean,
+  evaluationCompletes?: (node: t.Node) => boolean,
+): t.Node | undefined => {
+  node = unwrapJavaScriptExpression(node).node;
+  if (t.isSequenceExpression(node)) return node.expressions.at(-1);
+  if (t.isConditionalExpression(node)) {
+    const test = readExactJavaScriptNormalResult(
+      node.test,
+      evaluationCompletes,
+    );
+    return test.found
+      ? test.value
+        ? node.consequent
+        : node.alternate
+      : undefined;
+  }
+  if (t.isLogicalExpression(node)) {
+    const left = readExactJavaScriptNormalResult(
+      node.left,
+      evaluationCompletes,
+    );
+    if (!left.found) return undefined;
+    const right =
+      node.operator === "??"
+        ? left.value === null || left.value === undefined
+        : node.operator === "&&"
+          ? Boolean(left.value)
+          : !left.value;
+    return right ? node.right : node.left;
+  }
+  return t.isAssignmentExpression(node) &&
+    node.operator === "=" &&
+    assignmentCompletes?.(node) === true
+    ? node.right
+    : undefined;
+};
+
 /** Read one syntax-level primitive only when its value is exact. */
 export const readExactJavaScriptLiteral = (
   node: t.Node,
@@ -83,6 +141,39 @@ export const readExactJavaScriptLiteral = (
   return { found: false };
 };
 
+/** Undefined is an exact control result, not a serializable constant-lattice value. */
+export const readExactJavaScriptNormalResult = (
+  raw: t.Node,
+  evaluationCompletes?: (node: t.Node) => boolean,
+):
+  | {
+      readonly found: true;
+      readonly value: JavaScriptSemanticPrimitive | undefined;
+    }
+  | { readonly found: false } => {
+  const node = unwrapJavaScriptExpression(raw).node;
+  const literal = readExactJavaScriptLiteral(node);
+  if (literal.found) return literal;
+  // Richer consumers supply the shared completion owner; literal syntax is the fallback.
+  return t.isUnaryExpression(node, { operator: "void" }) &&
+    (evaluationCompletes?.(node.argument) ??
+      readExactJavaScriptLiteral(node.argument).found)
+    ? { found: true, value: undefined }
+    : { found: false };
+};
+
+/** Unary plus cannot convert a syntactically proven BigInt operand. */
+export const javaScriptUnaryAlwaysThrows = (node: t.Node): boolean => {
+  if (!t.isUnaryExpression(node, { operator: "+" })) return false;
+  const argument = unwrapJavaScriptExpression(node.argument).node;
+  return (
+    t.isBigIntLiteral(argument) ||
+    (t.isUnaryExpression(argument) &&
+      ["-", "~"].includes(argument.operator) &&
+      t.isBigIntLiteral(unwrapJavaScriptExpression(argument.argument).node))
+  );
+};
+
 /** Read an identifier or literal property name without evaluating syntax. */
 export const propertyName = (node: t.Node): string => {
   if (t.isIdentifier(node)) return node.name;
@@ -96,6 +187,42 @@ export const semanticStaticPropertyName = (
   property: t.Node,
   computed: boolean,
 ): string => semanticStaticPropertyKey(property, computed) ?? "";
+
+/** A simple return or empty body; async settlement consumers opt in explicitly. */
+export const semanticDirectFunctionResult = (
+  node: t.Node,
+  options?: { readonly allowAsync: boolean },
+):
+  | { readonly kind: "value"; readonly node: t.Node }
+  | { readonly kind: "undefined" | "unknown" } => {
+  if (
+    !t.isFunction(node) ||
+    (node.async && options?.allowAsync !== true) ||
+    node.generator ||
+    !runtimeFunctionParameters(node).every((parameter) =>
+      t.isIdentifier(parameter),
+    )
+  )
+    return { kind: "unknown" };
+  if (!t.isBlockStatement(node.body)) return { kind: "value", node: node.body };
+  const statements = node.body.body.filter((item) => !t.isEmptyStatement(item));
+  const statement = statements[0];
+  if (statements.length === 0) return { kind: "undefined" };
+  return statements.length === 1 && t.isReturnStatement(statement)
+    ? statement.argument == null
+      ? { kind: "undefined" }
+      : { kind: "value", node: statement.argument }
+    : { kind: "unknown" };
+};
+
+/** Value-only consumers deliberately do not substitute an implicit undefined result. */
+export const semanticDirectFunctionReturn = (
+  node: t.Node,
+  options?: { readonly allowAsync: boolean },
+): t.Node | undefined => {
+  const result = semanticDirectFunctionResult(node, options);
+  return result.kind === "value" ? result.node : undefined;
+};
 
 /** Read an exact property key, preserving the legal empty-string key. */
 export const semanticStaticPropertyKey = (
@@ -299,13 +426,176 @@ export const staticObjectPropertyNames = (
     : { status: "partial", names: [...names] };
 };
 
-/** Later properties own a key; an intervening dynamic write leaves it unknown. */
+/** Accessor halves survive only until a data definition replaces the descriptor. */
+export const semanticFinalObjectSlot = (
+  node: t.ObjectExpression,
+  key: string,
+  access: "get" | "set" = "get",
+):
+  | {
+      readonly kind: "member";
+      readonly node: t.ObjectProperty | t.ObjectMethod;
+    }
+  | { readonly kind: "undefined" | "missing" | "unknown" } => {
+  let accessor = false;
+  for (let index = node.properties.length - 1; index >= 0; index -= 1) {
+    const property = node.properties[index];
+    if (property === undefined || t.isSpreadElement(property))
+      return { kind: "unknown" };
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === null) return { kind: "unknown" };
+    if (name !== key) continue;
+    if (
+      t.isObjectMethod(property) &&
+      property.kind === (access === "get" ? "set" : "get")
+    ) {
+      accessor = true;
+      continue;
+    }
+    return !accessor || (t.isObjectMethod(property) && property.kind === access)
+      ? { kind: "member", node: property }
+      : { kind: "undefined" };
+  }
+  return { kind: accessor ? "undefined" : "missing" };
+};
+
+/** Node-only consumers must not substitute an absent accessor for an invocation. */
+export const semanticFinalObjectMember = (
+  node: t.ObjectExpression,
+  key: string,
+  access: "get" | "set" = "get",
+): t.ObjectProperty | t.ObjectMethod | undefined => {
+  const slot = semanticFinalObjectSlot(node, key, access);
+  return slot.kind === "member" ? slot.node : undefined;
+};
+
+/** Select a data value without substituting a getter or method for that value. */
 export const semanticFinalObjectProperty = (
   node: t.ObjectExpression,
   key: string,
 ): t.Node | undefined => {
   const property = staticObjectProperty(node, key);
   return property.status === "explicit" ? property.property.value : undefined;
+};
+
+/** Class fields initialize after all method definitions, in field order. */
+export const semanticFinalClassMember = (
+  node: t.ClassExpression,
+  key: string,
+  isStatic = true,
+  access: "get" | "set" = "get",
+  symbolKey?: (node: t.Node) => boolean,
+): t.ClassMethod | t.ClassProperty | undefined => {
+  if (!isStatic && node.superClass != null) return undefined;
+  if (node.decorators != null && node.decorators.length !== 0) return undefined;
+  let method: t.ClassMethod | undefined;
+  let field: t.ClassProperty | undefined;
+  for (const member of node.body.body) {
+    if (
+      t.isStaticBlock(member) ||
+      (!isStatic && t.isClassMethod(member) && member.kind === "constructor")
+    )
+      return undefined;
+    // Static field evaluation can replace instance prototype members before
+    // construction. It is not skipped merely because the selected slot is an
+    // instance member; only inert field values preserve that selection.
+    if (
+      !isStatic &&
+      javaScriptClassField(member) &&
+      member.static &&
+      member.value != null &&
+      !readExactJavaScriptLiteral(member.value).found &&
+      !t.isFunctionExpression(member.value) &&
+      !t.isArrowFunctionExpression(member.value)
+    )
+      return undefined;
+    if (
+      (!t.isClassMethod(member) && !javaScriptClassField(member)) ||
+      member.static !== isStatic
+    )
+      continue;
+    // Accessor definitions and private names are not public data selections.
+    if (t.isClassPrivateProperty(member)) {
+      if (
+        member.value != null &&
+        !readExactJavaScriptLiteral(member.value).found &&
+        !t.isFunctionExpression(member.value) &&
+        !t.isArrowFunctionExpression(member.value)
+      )
+        return undefined;
+      continue;
+    }
+    if (t.isClassAccessorProperty(member)) return undefined;
+    // Proven symbol slots cannot replace a string-named member. Their field
+    // initializers still need the same side-effect checks below.
+    const name =
+      member.computed && symbolKey?.(member.key)
+        ? undefined
+        : semanticStaticPropertyKey(member.key, member.computed);
+    if (
+      name === null ||
+      (member.decorators != null && member.decorators.length !== 0)
+    )
+      return undefined;
+    if (t.isClassProperty(member)) {
+      if (
+        member.value != null &&
+        !readExactJavaScriptLiteral(member.value).found &&
+        !t.isFunctionExpression(member.value) &&
+        !t.isArrowFunctionExpression(member.value)
+      )
+        return undefined;
+      if (name === key) field = member;
+    } else if (name === key) {
+      // Accessor definitions update only their own descriptor half.
+      method =
+        member.kind === (access === "get" ? "set" : "get")
+          ? method?.kind === access
+            ? method
+            : undefined
+          : member;
+    }
+  }
+  return field ?? method;
+};
+
+/** Preserve allocation identity through expressions with one exact result. */
+export const semanticLiteralContainer = (
+  rawNode: t.Node,
+  exactResult: (
+    node: t.Node,
+  ) => t.Node | undefined = javaScriptExactResultOperand,
+): t.ObjectExpression | t.ArrayExpression | undefined => {
+  let node = unwrapJavaScriptExpression(rawNode).node;
+  for (;;) {
+    const result = exactResult(node);
+    if (result === undefined) break;
+    node = unwrapJavaScriptExpression(result).node;
+  }
+  return t.isObjectExpression(node) || t.isArrayExpression(node)
+    ? node
+    : undefined;
+};
+
+/** Project literal syntax; callers separately prove mutation and iteration. */
+export const semanticLiteralProperty = (
+  rawNode: t.Node,
+  key: string | number,
+  exactResult?: (node: t.Node) => t.Node | undefined,
+): t.Node | undefined => {
+  const node = semanticLiteralContainer(rawNode, exactResult);
+  // Numeric projections denote array-pattern iteration, not property lookup.
+  // Object patterns retain string keys, including a numeric property's spelling.
+  if (typeof key === "number" && !t.isArrayExpression(node)) return undefined;
+  if (t.isObjectExpression(node))
+    return semanticFinalObjectProperty(node, String(key));
+  if (!t.isArrayExpression(node)) return undefined;
+  const index = semanticArrayIndex(key);
+  if (index === null || index >= node.elements.length) return undefined;
+  // Earlier spreads make the selected position uncertain; later spreads do not.
+  if (node.elements.slice(0, index + 1).some((item) => t.isSpreadElement(item)))
+    return undefined;
+  return node.elements[index] ?? undefined;
 };
 
 export const semanticFinalObjectStringProperty = (
@@ -397,6 +687,57 @@ export function* semanticWriteTargets(
  */
 export const javascriptDisplayText = (value: string): string =>
   value === "" ? '""' : value;
+
+/** A target leaf writes without a value read unless its owning operation reads first. */
+const semanticValueTargetSite = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): t.Node | undefined => {
+  let current = node;
+  for (;;) {
+    const parent = parents.get(current);
+    if (parent === undefined) return undefined;
+    const target = semanticWriteSiteTarget(parent);
+    if (target !== null) {
+      for (const leaf of semanticWriteTargets(target))
+        if (leaf === node) return parent;
+      return undefined;
+    }
+    if (
+      !(
+        unwrapJavaScriptExpression(parent).node === current ||
+        (t.isArrayPattern(parent) &&
+          parent.elements.includes(current as t.Pattern)) ||
+        (t.isRestElement(parent) && parent.argument === current) ||
+        (t.isAssignmentPattern(parent) && parent.left === current) ||
+        (t.isObjectProperty(parent) &&
+          parent.value === current &&
+          t.isObjectPattern(parents.get(parent))) ||
+        t.isObjectPattern(parent)
+      )
+    )
+      return undefined;
+    current = parent;
+  }
+};
+
+/** Getter reads and setter writes share one target-role interpretation. */
+export const semanticValueIsRead = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  const site = semanticValueTargetSite(node, parents);
+  return site === undefined || semanticWriteSiteReadsFirst(site);
+};
+
+/** Delete removes a descriptor; it does not call its setter. */
+export const semanticValueWriteSite = (
+  node: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): t.Node | undefined => {
+  const site = semanticValueTargetSite(node, parents);
+  return t.isUnaryExpression(site, { operator: "delete" }) ? undefined : site;
+};
 
 /** Strip a static member chain, returning its root expression and member path. */
 export const semanticMemberChain = (

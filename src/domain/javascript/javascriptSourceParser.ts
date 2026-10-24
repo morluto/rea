@@ -118,12 +118,18 @@ const parseWithRuntimeContext = (
  * - `sourcePhaseImports` retains Node-supported WASM source imports as AST data.
  * - `decorators-legacy` always present: without it decorated sources fail
  *   hard instead of reporting recovered syntax, losing every derived fact.
+ * - `decoratorAutoAccessors` retains class accessor fields as inert syntax;
+ *   their values follow the same static/instance timing as ordinary fields.
  * - Unknown paths retain the existing JSX- and TypeScript-capable contract
  *   (best-effort parse; failures surface via `errorRecovery`).
  */
 export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
-  const syntax: ParserPlugin[] = ["decorators-legacy", "sourcePhaseImports"];
+  const syntax: ParserPlugin[] = [
+    "decorators-legacy",
+    "decoratorAutoAccessors",
+    "sourcePhaseImports",
+  ];
   if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return [...syntax, "jsx"];
   const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
   const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);

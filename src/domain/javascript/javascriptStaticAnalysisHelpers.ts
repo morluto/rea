@@ -1,3 +1,4 @@
+import { semanticExactResultOperand } from "./javascriptSemanticExpressionResults.js";
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,21 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticAnalysis.js";
+import {
+  resolveSemanticBindingState,
+  semanticStableInitializer,
+  type JavaScriptSemanticAnalysisState,
+} from "./javascriptSemanticState.js";
+import {
+  isUnmodifiedGlobalReference,
+  isUnmodifiedRequiredWebSocketReference,
+  semanticRequiredWebSocketProjection,
+} from "./javascriptSemanticAmbientWrites.js";
+import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { semanticAwaitedImportOrigin } from "./javascriptSemanticImportOrigin.js";
+import { semanticLiteralInitializerProjection } from "./javascriptSemanticLiteralProjection.js";
+import { webSocketInitializerDominatesRead } from "./javascriptWebSocketExecution.js";
 import {
   compareUnicodeCodePoints,
   compositeKey,
@@ -608,27 +624,181 @@ export interface JavaScriptEndpointArgument {
   readonly value: string;
 }
 
+/**
+ * Resolve only stable constructor captures and exact runtime ws imports.
+ * The definitions phase uses this to select ambient indexing; endpoint reads
+ * repeat the same proof after that index has collected all visible writes.
+ */
+export const isWebSocketEndpointCandidate = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  onLiteralProjection?: () => void,
+): boolean => {
+  const visited = new Set<string>();
+  let current = callee;
+  let selected: readonly string[] = [];
+  let selectedCapture: t.Node | undefined;
+  for (;;) {
+    current = unwrapJavaScriptExpression(current).node;
+    if (
+      isUnmodifiedGlobalReference(
+        current,
+        state,
+        "WebSocket",
+        selected,
+        selectedCapture ?? current,
+      )
+    )
+      return true;
+    const required = semanticRequireOrigin(current, state)?.origin;
+    if (required !== undefined) {
+      const path = semanticRequiredWebSocketProjection([
+        ...required.importedPath,
+        ...selected,
+      ]);
+      return (
+        required.specifier === "ws" &&
+        path !== undefined &&
+        isUnmodifiedRequiredWebSocketReference(
+          selectedCapture ?? current,
+          state,
+          path,
+        )
+      );
+    }
+    const imported = semanticAwaitedImportOrigin(
+      current,
+      state,
+      onLiteralProjection,
+    );
+    if (imported !== undefined) {
+      const path = [...imported.importedPath, ...selected];
+      return (
+        imported.specifier === "ws" &&
+        path.length === 1 &&
+        (path[0] === "default" || path[0] === "WebSocket")
+      );
+    }
+    const { root, members } = electronMemberPath(current);
+    const result = semanticExactResultOperand(root, state);
+    if (result !== undefined) {
+      if (!members.every((key): key is string => typeof key === "string"))
+        return false;
+      if (selectedCapture === undefined && members.length > 0)
+        selectedCapture = current;
+      selected = [...members, ...selected];
+      current = result;
+      continue;
+    }
+    if (!t.isIdentifier(root)) return false;
+    const binding = resolveSemanticBindingState(state, root, root.name);
+    if (binding === undefined || visited.has(binding.bindingId)) return false;
+    const [origin] = binding.directOrigins;
+    if (binding.runtimeImport) {
+      const path = [...(origin?.importedPath ?? []), ...members, ...selected];
+      return (
+        binding.definitions.length === 1 &&
+        binding.directOrigins.length === 1 &&
+        origin?.specifier === "ws" &&
+        path.length === 1 &&
+        (path[0] === "default" || path[0] === "WebSocket")
+      );
+    }
+    // Import-equals records its exact runtime require as a direct origin.
+    // It is evaluated at its declaration, unlike hoisted ECMAScript imports.
+    if (origin !== undefined) {
+      const definition = binding.definitionNodes[0];
+      const declaration =
+        definition === undefined
+          ? undefined
+          : state.parentsByNode.get(definition);
+      const initialized =
+        t.isTSImportEqualsDeclaration(declaration) &&
+        webSocketInitializerDominatesRead(
+          declaration.moduleReference,
+          root,
+          state,
+          definition,
+        );
+      const rawPath = [...origin.importedPath, ...members, ...selected];
+      const path = rawPath.every(
+        (key): key is string => typeof key === "string",
+      )
+        ? semanticRequiredWebSocketProjection(rawPath)
+        : undefined;
+      return (
+        binding.scopeId === state.scopes[0]?.scopeId &&
+        binding.definitions.length === 1 &&
+        binding.directOrigins.length === 1 &&
+        binding.initializers.length === 0 &&
+        origin.resolutionMode === "require" &&
+        origin.specifier === "ws" &&
+        path !== undefined &&
+        initialized &&
+        isUnmodifiedRequiredWebSocketReference(
+          selectedCapture ?? current,
+          state,
+          path,
+        )
+      );
+    }
+    const initializer = semanticStableInitializer(binding, state);
+    if (
+      initializer === undefined ||
+      binding.referenceInitializers.length !== 0 ||
+      !members.every((key): key is string => typeof key === "string") ||
+      !webSocketInitializerDominatesRead(
+        initializer.node,
+        root,
+        state,
+        initializer.bindingNode,
+      )
+    )
+      return false;
+    visited.add(binding.bindingId);
+    const selection = semanticLiteralInitializerProjection(
+      initializer,
+      state,
+      onLiteralProjection,
+    );
+    if (selection === undefined) return false;
+    const projected = selection.node;
+    const projection = selection.projection;
+    // Numeric pattern positions require a fresh array; string keys select properties.
+    // never infer a mutable aliased array or an unknown/rest projection.
+    if (!projection.every((key): key is string => typeof key === "string"))
+      return false;
+    // Namespace aliases do not capture a member. Save the point at which the
+    // constructor itself is selected, including destructuring at initialization.
+    if (selectedCapture === undefined) {
+      if (members.length > 0) selectedCapture = current;
+      else if (projection.length > 0)
+        selectedCapture = initializer.bindingNode ?? initializer.node;
+    }
+    selected = [...projection, ...members, ...selected];
+    current = projected;
+  }
+};
+
 /** Classify one literal without treating a generic method name as network identity. */
 export const endpointArgument = (
   name: string,
-  args: readonly (
-    | t.Expression
-    | t.SpreadElement
-    | t.JSXNamespacedName
-    | t.ArgumentPlaceholder
-  )[],
-  callee: t.Node,
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  bindings: JavaScriptSemanticAnalysisState,
   receiverFact?: JavaScriptOpenReceiverFact,
 ): JavaScriptEndpointArgument | undefined => {
+  const args = node.arguments;
+  const callee = node.callee;
   const literal = (
     value: string | undefined,
   ): JavaScriptEndpointArgument | undefined =>
     value === undefined ? undefined : { kind: "endpoint", value };
   if (receiverFact === "window") return undefined;
+  if (t.isNewExpression(node) && isWebSocketEndpointCandidate(callee, bindings))
+    return literal(stringValue(args[0]));
   if (
     name === "fetch" ||
     name.endsWith(".fetch") ||
-    name === "WebSocket" ||
     name === "EventSource" ||
     name.endsWith(".EventSource")
   )

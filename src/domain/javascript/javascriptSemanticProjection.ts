@@ -11,6 +11,7 @@ import {
   semanticResolutionBlocked,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticScopeState,
+  type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -184,6 +185,13 @@ export const collectSemanticReferences = (
 ): JavaScriptSemanticReference[] =>
   completeSemanticSteps(collectSemanticReferencesSteps(program, state, name));
 
+/** Erased lexical names block ambient fallback without claiming runtime bindings. */
+const hasRuntimeDefinition = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  binding.definitionNodes.some((node) => !state.erasedSyntaxNodes.has(node));
+
 /** Collect lexical references in steps while preserving resolution and visit order. */
 export function* collectSemanticReferencesSteps(
   program: t.Program,
@@ -226,10 +234,15 @@ export function* collectSemanticReferencesSteps(
           name: node.name,
           role: resolvedRole,
           location: range(node),
-          bindingId: binding?.bindingId ?? null,
+          bindingId:
+            binding !== undefined && hasRuntimeDefinition(binding, state)
+              ? binding.bindingId
+              : null,
           resolution:
             binding !== undefined
-              ? "resolved"
+              ? hasRuntimeDefinition(binding, state)
+                ? "resolved"
+                : "unknown"
               : blocked
                 ? "unknown"
                 : "unbound",
@@ -251,6 +264,7 @@ export const immutableSemanticScopes = (
     location: scope.location,
     bindingsComplete: scope.bindingsComplete,
     bindingIds: [...scope.bindings.values()]
+      .filter((binding) => hasRuntimeDefinition(binding, state))
       .map(({ bindingId }) => bindingId)
       .sort(compareUnicodeCodePoints),
   }));
@@ -260,6 +274,7 @@ export const immutableSemanticBindings = (
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticBinding[] =>
   [...state.bindingsById.values()]
+    .filter((binding) => hasRuntimeDefinition(binding, state))
     .map((binding) => ({
       bindingId: binding.bindingId,
       scopeId: binding.scopeId,

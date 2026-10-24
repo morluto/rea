@@ -9,6 +9,7 @@ import {
   indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import * as semanticProjection from "./javascriptSemanticProjection.js";
+import { semanticAssignmentTargetCompletion } from "./javascriptSemanticExpressionResults.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 import {
@@ -16,6 +17,43 @@ import {
   traverseJavaScriptAst,
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
+
+it.each([false, true])(
+  "requires completed member effects after interrupted indexing (frozen: %s)",
+  (frozen) => {
+    const parsed = parseJavaScriptSource(
+      `'use strict';const box={};${frozen ? "Object.freeze(box);" : ""}const Socket=(box.x=globalThis.WebSocket);new Socket('wss://example.test/index');`,
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    let target: t.MemberExpression | undefined;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (t.isAssignmentExpression(node) && t.isMemberExpression(node.left))
+          target = node.left;
+      },
+    });
+    if (target === undefined) throw new Error("Expected assignment target");
+    const writeTarget = target;
+    expect(index.receivers.requiresWebSocketValueEffects).toBe(true);
+    const completion = () =>
+      semanticAssignmentTargetCompletion(
+        writeTarget,
+        writeTarget,
+        index.bindings,
+      );
+    expect(completion()).toBe("unknown");
+    const steps = index.indexMemberMutationFactsSteps();
+    expect(steps.next().done).toBe(false);
+    expect(completion()).toBe("unknown");
+    steps.return(undefined);
+    expect(completion()).toBe("unknown");
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    expect(completion()).toBe(frozen ? "unknown" : "completed");
+  },
+);
 
 it("bounds repeated capture checks while preserving unindexed and escaped unknowns", () => {
   const count = 128;
@@ -186,6 +224,7 @@ export function local(ambient, NativeWindow) {
 }
 ambient.open("/global");
 new NativeWindow();
+globalThis.WebSocket = replacement;
 `;
   const parsed = parseJavaScriptSource(text, "receivers.js");
   if (parsed === null) throw new Error("Expected parsed source");
@@ -197,6 +236,10 @@ new NativeWindow();
     [text.indexOf('ambient.open("/local")'), "local"],
     [text.indexOf('ambient.open("/global")'), "window"],
   ]);
+  completeSemanticSteps(openStep.value.indexAmbientWritesSteps());
+  expect(
+    openStep.value.bindings.ambientWrites.covers(["global", "WebSocket"]),
+  ).toBe(true);
 
   const electronSteps = classifyParsedJavaScriptElectronBindingsSteps(parsed);
   let electronStep = electronSteps.next();

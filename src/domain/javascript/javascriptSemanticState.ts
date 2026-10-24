@@ -34,6 +34,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding event in a declaration pattern, distinct from the RHS spelling. */
+  readonly bindingNode?: t.Node;
   readonly entryBody?: t.BlockStatement;
   readonly iterationSources?: readonly {
     readonly node: t.Node;
@@ -88,6 +90,10 @@ export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemant
   readonly kind: "write" | "escape";
 }
 
+export interface JavaScriptSemanticLiteralMemberEffect extends JavaScriptSemanticMemberEffect {
+  readonly kind: "write" | "escape";
+}
+
 export interface JavaScriptSemanticBindingState {
   readonly hostOrigin?: "commonjs-wrapper";
   readonly bindingId: string;
@@ -100,6 +106,8 @@ export interface JavaScriptSemanticBindingState {
   readonly memberWrites: JavaScriptSemanticMemberEffect[];
   readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
+  /** Declaration syntax retains binding completion independently of its RHS value. */
+  readonly definitionNodes: t.Node[];
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
   readonly directOrigins: JavaScriptModuleOrigin[];
@@ -135,6 +143,15 @@ export interface JavaScriptSemanticAnalysisState {
   /** Callee sites whose possible local returns needed a broader projection. */
   readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** Await sites retained by the definitions pass for lazy promise-result indexing. */
+  readonly awaitSites: t.AwaitExpression[];
+  /** Calls and template tags retained once for exact local activation ownership. */
+  readonly callSites: (
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.NewExpression
+    | t.TaggedTemplateExpression
+  )[];
   /** TypeScript syntax omitted from JavaScript value evaluation. */
   readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
@@ -144,6 +161,13 @@ export interface JavaScriptSemanticAnalysisState {
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
   /** Resolved identifier writes retained at their exact source sites. */
   readonly bindingWrites: Map<string, t.Node[]>;
+  /** Allocation effects produced by the shared alias-aware mutation pass. */
+  literalMemberEffects?: WeakMap<
+    t.ObjectExpression | t.ArrayExpression | t.Function | t.Class,
+    JavaScriptSemanticLiteralMemberEffect[]
+  >;
+  /** Demand and readiness belong to the shared member-effects index, not its consumers. */
+  memberMutationFactsPhase?: "requested" | "indexing" | "indexed";
   /** Source evidence that Object.prototype may supply a `require` property. */
   prototypeRequireMutationObserved: boolean | undefined;
   /** Source evidence that Object.prototype may add inherited enumerable keys. */
@@ -179,10 +203,10 @@ export interface JavaScriptSemanticAnalysisState {
   readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
   /** Ambient object identities passed to calls whose effects are not evaluated. */
   readonly ambientEscapes: SemanticPropertyPathCoverage;
-  /** Capture sites keep later opaque effects from changing earlier copies. */
-  readonly ambientEscapeEffects: JavaScriptSemanticMemberEffect[];
-  /** Source sites distinguish replacement before an ambient identity capture from later writes. */
-  readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
+  /** Writes and opaque escapes share source-site ordering at identity captures. */
+  readonly ambientReferenceEffects: (JavaScriptSemanticMemberEffect & {
+    readonly kind: "write" | "escape";
+  })[];
 }
 
 /** Record one producer outcome without traversing or retaining its value graph. */

@@ -105,3 +105,17 @@ it("keeps TypeScript syntax available for TypeScript and unnamed sources", () =>
   expect(parseJavaScriptSource(source, "value.ts")?.errors).toEqual([]);
   expect(parseJavaScriptSource(source)?.errors).toEqual([]);
 });
+
+it.each(["client.js", "client.ts", "client.tsx", undefined])(
+  "parses auto-accessor fields as inert class syntax for %s",
+  (path) => {
+    const source = "class Client { accessor socket = missing(); }";
+    const parsed = parseJavaScriptSource(source, path);
+    expect(parsed?.errors).toEqual([]);
+    const declaration = parsed?.program.body[0];
+    expect(declaration?.type).toBe("ClassDeclaration");
+    if (declaration?.type !== "ClassDeclaration")
+      throw new Error("Missing class");
+    expect(declaration.body.body[0]?.type).toBe("ClassAccessorProperty");
+  },
+);

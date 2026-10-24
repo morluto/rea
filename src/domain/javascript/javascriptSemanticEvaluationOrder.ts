@@ -4,11 +4,239 @@ import {
   readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
+  javaScriptClassField,
+  javaScriptUnaryAlwaysThrows,
 } from "./javascriptAstValues.js";
 
 import { childNodes } from "./javascriptSemanticTraversal.js";
 
 const preserveGrouping = { stopAtParentheses: true } as const;
+
+/** One lexical activation and the evaluation point it contributes to a read. */
+export interface SemanticExecutionFrame {
+  readonly owner: t.Node;
+  readonly point: t.Node;
+}
+
+/** Compare initialization only in the nearest shared, proven activation. */
+export const semanticInitializerPrecedesRead = ({
+  initializer,
+  read,
+  bindingNode,
+  parents,
+  initializerContexts,
+  readContexts,
+  readFailureCanRecover,
+}: {
+  readonly initializer: t.Node;
+  readonly read: t.Node;
+  readonly bindingNode?: t.Node;
+  readonly parents: WeakMap<t.Node, t.Node>;
+  readonly initializerContexts: readonly SemanticExecutionFrame[];
+  readonly readContexts: readonly SemanticExecutionFrame[];
+  /** An invalid earlier activation may throw and recover before a valid one. */
+  readonly readFailureCanRecover?: (
+    initializer: SemanticExecutionFrame,
+    read: SemanticExecutionFrame,
+  ) => boolean;
+}): boolean | undefined => {
+  // No compatible activation is unreachable, not an unknown source order.
+  if (readContexts.length === 0) return false;
+  let current: t.Node | undefined = initializer;
+  while (
+    current !== undefined &&
+    !t.isFunction(current) &&
+    !t.isProgram(current)
+  ) {
+    if (t.isSwitchCase(current)) {
+      let ancestor: t.Node | undefined = read;
+      while (ancestor !== undefined && ancestor !== current)
+        ancestor = parents.get(ancestor);
+      if (ancestor === undefined) return false;
+    }
+    current = parents.get(current);
+  }
+  // A lexical iteration head is uninitialized throughout iterable evaluation.
+  // Source order alone would incorrectly place its bare declarator before RHS.
+  if (t.isVariableDeclarator(initializer)) {
+    const declaration = parents.get(initializer);
+    const loop =
+      declaration === undefined ? undefined : parents.get(declaration);
+    if (
+      (t.isForOfStatement(loop) || t.isForInStatement(loop)) &&
+      loop.left === declaration
+    ) {
+      let ancestor: t.Node | undefined = read;
+      while (ancestor !== undefined && ancestor !== loop) {
+        if (ancestor === loop.right) return false;
+        ancestor = parents.get(ancestor);
+      }
+    }
+  }
+  const shared = readContexts.find(({ owner }) =>
+    initializerContexts.some((frame) => frame.owner === owner),
+  );
+  if (shared === undefined) return undefined;
+  const patternOrder =
+    bindingNode === undefined
+      ? undefined
+      : semanticPatternInitializationPrecedesRead(bindingNode, read, parents);
+  if (patternOrder !== undefined) return patternOrder;
+  const before = initializerContexts.filter(
+    (frame) => frame.owner === shared.owner,
+  );
+  const after = readContexts.filter((frame) => frame.owner === shared.owner);
+  const precedes = (
+    initialization: SemanticExecutionFrame,
+    activation: SemanticExecutionFrame,
+  ): boolean =>
+    (initialization.point.end ?? Infinity) < (activation.point.start ?? -1);
+  if (
+    after.every((activation) =>
+      before.every((initialization) => precedes(initialization, activation)),
+    )
+  )
+    return true;
+  // Initialization validity remains universal by default. A caller that owns
+  // failed-read recovery can retain a distinct later successful activation;
+  // merely finding one later source position is not sufficient.
+  return (
+    readFailureCanRecover !== undefined &&
+    after.some((activation) =>
+      before.every((initialization) => precedes(initialization, activation)),
+    ) &&
+    after.every((activation) =>
+      before.every(
+        (initialization) =>
+          precedes(initialization, activation) ||
+          readFailureCanRecover(initialization, activation),
+      ),
+    )
+  );
+};
+
+/** Order a binding event against evaluation in the same declaration pattern. */
+export const semanticPatternInitializationPrecedesRead = (
+  binding: t.Node,
+  read: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean | undefined => {
+  if (!t.isIdentifier(binding) || t.isVariableDeclarator(parents.get(binding)))
+    return undefined;
+  const path = new Map<t.Node, t.Node>();
+  let child: t.Node = binding;
+  let declarator: t.VariableDeclarator | undefined;
+  for (;;) {
+    const parent = parents.get(child);
+    if (parent === undefined || t.isFunction(parent) || t.isProgram(parent))
+      break;
+    path.set(parent, child);
+    if (t.isVariableDeclarator(parent)) {
+      if (parent.id !== child) return undefined;
+      declarator = parent;
+      break;
+    }
+    child = parent;
+  }
+  if (declarator === undefined) return undefined;
+  child = read;
+  for (;;) {
+    const parent = parents.get(child);
+    if (parent === undefined) return undefined;
+    const boundChild = path.get(parent);
+    if (boundChild !== undefined) {
+      const siblings: readonly (t.Node | null)[] | undefined =
+        t.isObjectPattern(parent)
+          ? parent.properties
+          : t.isArrayPattern(parent)
+            ? parent.elements
+            : undefined;
+      if (siblings !== undefined) {
+        const before = siblings.indexOf(boundChild);
+        const after = siblings.indexOf(child);
+        return before >= 0 && after >= 0 ? before < after : undefined;
+      }
+      // RHS, computed key and a selected default all precede their own binding.
+      if (
+        t.isVariableDeclarator(parent) ||
+        t.isAssignmentPattern(parent) ||
+        t.isObjectProperty(parent)
+      )
+        return false;
+      return undefined;
+    }
+    child = parent;
+  }
+};
+
+/** Whether call arguments or an optional member key may be short-circuited. */
+export const javaScriptOptionalOperandsMayBeSkipped = (
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.OptionalMemberExpression,
+): boolean =>
+  ((t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
+    optionalOperationMaySkip(node)) ||
+  optionalChainMayShortCircuit(
+    t.isOptionalMemberExpression(node) ? node.object : node.callee,
+  );
+
+/** A definitely nullish link skips the rest of its ungrouped optional chain. */
+export const javaScriptOptionalOperandsAlwaysSkipped = (
+  node:
+    | t.CallExpression
+    | t.OptionalCallExpression
+    | t.OptionalMemberExpression,
+): boolean => {
+  const skips = (
+    link: t.OptionalCallExpression | t.OptionalMemberExpression,
+  ) => {
+    if (!link.optional) return false;
+    const receiver = unwrapJavaScriptExpression(
+      t.isOptionalCallExpression(link) ? link.callee : link.object,
+    ).node;
+    return (
+      t.isNullLiteral(receiver) ||
+      t.isUnaryExpression(receiver, { operator: "void" })
+    );
+  };
+  return (
+    ((t.isOptionalCallExpression(node) || t.isOptionalMemberExpression(node)) &&
+      skips(node)) ||
+    optionalChainMayShortCircuit(
+      t.isOptionalMemberExpression(node) ? node.object : node.callee,
+      skips,
+    )
+  );
+};
+
+/** Normal completion of these syntax forms cannot produce a nullish receiver. */
+const optionalOperationMaySkip = (
+  node: t.OptionalCallExpression | t.OptionalMemberExpression,
+): boolean => {
+  if (!node.optional) return false;
+  const receiver = unwrapJavaScriptExpression(
+    t.isOptionalCallExpression(node) ? node.callee : node.object,
+  ).node;
+  if (javaScriptUnaryAlwaysThrows(receiver)) return true;
+  const literal = readExactJavaScriptLiteral(receiver);
+  return (
+    !(literal.found && literal.value !== null) &&
+    !t.isObjectExpression(receiver) &&
+    !t.isArrayExpression(receiver) &&
+    !t.isFunctionExpression(receiver) &&
+    !t.isArrowFunctionExpression(receiver) &&
+    !t.isClassExpression(receiver) &&
+    !t.isRegExpLiteral(receiver) &&
+    !t.isBigIntLiteral(receiver) &&
+    !(
+      t.isUnaryExpression(receiver) &&
+      ["+", "-", "~", "!", "typeof", "delete"].includes(receiver.operator)
+    ) &&
+    !t.isNewExpression(receiver)
+  );
+};
 
 export type JavaScriptSemanticIterationCardinality =
   | "empty"
@@ -86,11 +314,7 @@ export const delayedInstanceFieldValue = (
   parent: t.Node | undefined,
   child: t.Node | undefined,
 ): boolean =>
-  (t.isClassProperty(parent) ||
-    t.isClassPrivateProperty(parent) ||
-    t.isClassAccessorProperty(parent)) &&
-  !parent.static &&
-  parent.value === child;
+  javaScriptClassField(parent) && !parent.static && parent.value === child;
 
 /** Shared branch facts for binding writes and their possible execution positions. */
 export const semanticBranchMayBeSkipped = (
@@ -120,19 +344,21 @@ export const semanticBranchMayBeSkipped = (
   if (t.isOptionalCallExpression(parent) || t.isCallExpression(parent))
     return (
       parent.arguments.includes(child as t.Expression) &&
-      ((t.isOptionalCallExpression(parent) && parent.optional) ||
-        optionalChainMayShortCircuit(parent.callee))
+      javaScriptOptionalOperandsMayBeSkipped(parent)
     );
   if (t.isOptionalMemberExpression(parent))
     return (
       parent.computed &&
       child === parent.property &&
-      (parent.optional || optionalChainMayShortCircuit(parent.object))
+      javaScriptOptionalOperandsMayBeSkipped(parent)
     );
   return false;
 };
 
-const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
+const optionalChainMayShortCircuit = (
+  expression: t.Node,
+  skips = optionalOperationMaySkip,
+): boolean => {
   let current = expression;
   while (true) {
     // Parentheses terminate optional-chain short-circuiting. In particular,
@@ -147,11 +373,11 @@ const optionalChainMayShortCircuit = (expression: t.Node): boolean => {
       continue;
     }
     if (t.isOptionalMemberExpression(current)) {
-      if (current.optional) return true;
+      if (skips(current)) return true;
       current = current.object;
     } else if (t.isMemberExpression(current)) current = current.object;
     else if (t.isOptionalCallExpression(current)) {
-      if (current.optional) return true;
+      if (skips(current)) return true;
       current = current.callee;
     } else if (t.isCallExpression(current)) current = current.callee;
     else return false;

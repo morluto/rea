@@ -87,6 +87,20 @@ export const semanticPropertyPathKeyMatches = (
   return index !== null && index >= key.startIndex;
 };
 
+/** Only prototype links and the selected terminal slot can change a lookup. */
+export const semanticPrototypeLookupMayChange = (
+  path: JavaScriptSemanticPropertyPath,
+  property: string,
+): boolean => {
+  for (const [index, key] of path.entries()) {
+    const prototype = semanticPropertyPathKeyMatches(key, "__proto__");
+    if (index === path.length - 1)
+      return prototype || semanticPropertyPathKeyMatches(key, property);
+    if (!prototype) return false;
+  }
+  return true;
+};
+
 interface PropertyPathCoverageNode {
   terminal: boolean;
   readonly exact: Map<string, PropertyPathCoverageNode>;

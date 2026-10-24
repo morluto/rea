@@ -672,17 +672,18 @@ const selectedRequireSourcesAt = (
 const loaderInvocationInterops = new WeakMap<
   JavaScriptSemanticAnalysisState,
   {
-    readonly writes: number;
+    readonly ambientEffects: number;
     readonly interop: ReturnType<typeof createSemanticModuleInterop>;
   }
 >();
 
 const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
   const prior = loaderInvocationInterops.get(state);
-  if (prior?.writes === state.ambientWriteEffects.length) return prior.interop;
+  if (prior?.ambientEffects === state.ambientReferenceEffects.length)
+    return prior.interop;
   const interop = createSemanticModuleInterop(state);
-  for (const effect of state.ambientWriteEffects)
-    if (effect.path[0] === "global")
+  for (const effect of state.ambientReferenceEffects)
+    if (effect.kind === "write" && effect.path[0] === "global")
       interop.retainWrite(effect.node ?? state.program, [
         "intrinsic",
         ...effect.path
@@ -692,7 +693,7 @@ const loaderInvocationInterop = (state: JavaScriptSemanticAnalysisState) => {
           ),
       ]);
   loaderInvocationInterops.set(state, {
-    writes: state.ambientWriteEffects.length,
+    ambientEffects: state.ambientReferenceEffects.length,
     interop,
   });
   return interop;
@@ -1496,9 +1497,10 @@ export const semanticOriginalGlobalProcessAt = (
   let replacements = globalProcessReplacements.get(state);
   if (replacements === undefined) {
     replacements = [
-      ...state.ambientWriteEffects
+      ...state.ambientReferenceEffects
         .filter(
-          ({ path }) =>
+          ({ path, kind }) =>
+            kind === "write" &&
             path.length <= 2 &&
             path.every((key, index) =>
               semanticPropertyPathKeyMatches(
