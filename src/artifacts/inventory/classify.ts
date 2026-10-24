@@ -7,6 +7,8 @@ import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.j
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 
 import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
+import { decodeNodeSeaBlob } from "../nodeSea/NodeSeaBlob.js";
+import { locateNodeSea, readNodeSeaBlob } from "../nodeSea/NodeSeaLocation.js";
 import { classifyArtifactContent } from "./ArtifactGraphConstruction.js";
 import { abortIfNeeded } from "../ArtifactHash.js";
 import { claimsExecutableHeader } from "../../domain/binaryTarget.js";
@@ -130,7 +132,8 @@ export const classifyAndHashRootForInventory = async (
       isZipPackageFormat(format) ||
       format === "mach-o-universal" ||
       format === "godot-pck" ||
-      format === "pyinstaller";
+      format === "pyinstaller" ||
+      format === "node-sea";
     outcome = {
       kind: "completed",
       value: {
@@ -221,6 +224,14 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
+    const sea = await locateNodeSea(handle, archiveBytes, signal);
+    abortIfNeeded(signal);
+    if (sea !== undefined) {
+      decodeNodeSeaBlob(
+        await readNodeSeaBlob(handle, sea, archiveBytes, signal),
+      );
+      return "node-sea";
+    }
     const packaged = await containsPyInstallerArchive(
       handle,
       archiveBytes,

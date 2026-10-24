@@ -175,6 +175,7 @@ export interface ArtifactReader {
     | "asar"
     | "godot-pck"
     | "pyinstaller"
+    | "node-sea"
     | "file";
   entries(
     signal?: AbortSignal,

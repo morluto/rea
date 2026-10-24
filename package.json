@@ -188,6 +188,7 @@
     "verify:keyed-archive": "npm run build:cached && node scripts/verify/apple/keyed-archive.mjs",
     "verify:macos-bundle": "npm run build:cached && node scripts/verify/apple/macos-bundle.mjs",
     "verify:legacy-simulator": "npm run build:cached && node scripts/verify/apple/legacy-simulator.mjs",
+    "verify:node-sea": "npm run build:cached && node scripts/verify-node-sea.mjs",
     "verify:architecture-guards": "node scripts/verify/architecture-guards.mjs",
     "verify:apktool": "npm run build:cached && node scripts/verify-apktool.mjs",
     "verify:pcap": "npm run build:cached && node scripts/verify-pcap.mjs",

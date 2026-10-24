@@ -264,7 +264,8 @@ export const projectArtifactInventoryView = (
   const includeHashCounts =
     view.kind === "inventory" ||
     inventory.manifest.root_format === "godot-pck" ||
-    inventory.manifest.root_format === "pyinstaller";
+    inventory.manifest.root_format === "pyinstaller" ||
+    inventory.manifest.root_format === "node-sea";
   const counts = inventoryCounts(source);
   const limitations = uniqueSorted([
     ...parent.limitations,

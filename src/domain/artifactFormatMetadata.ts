@@ -89,6 +89,39 @@ export type PyInstallerEntryMetadata = z.infer<
   typeof pyInstallerEntryMetadataSchema
 >;
 
+/**
+ * Node.js single-executable blob facts. Lengths follow the Node 24 64-bit
+ * little-endian `size_t` reader. The fuse sentinel is a separate carrier scan.
+ */
+export const nodeSeaMetadataSchema = z.strictObject({
+  kind: z.literal("node-sea"),
+  magic: z.literal(0x143da20),
+  flags: uint32,
+  disable_experimental_sea_warning: z.boolean(),
+  use_snapshot: z.boolean(),
+  use_code_cache: z.boolean(),
+  include_assets: z.boolean(),
+  include_exec_argv: z.boolean(),
+  exec_argv_extension: z.enum(["none", "env", "cli"]),
+  exec_argv: z.array(z.string()),
+  code_path: z.string(),
+  carrier: z.enum(["mach-o", "elf", "pe"]),
+  blob_offset: offset,
+  blob_length: offset,
+  fuse_state: z.enum(["set", "unset", "absent", "conflicting"]),
+  fuse_sentinel: z.string().nullable(),
+  fuse_contradiction: z.string().nullable(),
+});
+export type NodeSeaMetadata = z.infer<typeof nodeSeaMetadataSchema>;
+
+/** One injected script, snapshot, code cache, or asset. Bytes stay opaque. */
+export const nodeSeaEntryMetadataSchema = z.strictObject({
+  kind: z.literal("node-sea-entry"),
+  role: z.enum(["main-script", "snapshot", "code-cache", "asset"]),
+  source_path: z.string(),
+  index: uint32,
+});
+
 /** Declaration identity that is stable across archive layout changes. */
 export const pyInstallerEntryDeclaration = (
   metadata: PyInstallerEntryMetadata,
@@ -104,6 +137,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   godotPckEntryMetadataSchema,
   pyInstallerMetadataSchema,
   pyInstallerEntryMetadataSchema,
+  nodeSeaMetadataSchema,
+  nodeSeaEntryMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema

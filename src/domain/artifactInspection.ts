@@ -17,6 +17,7 @@ import {
   type ArtifactInventoryResult,
 } from "./artifactGraph.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
+import { isJavaScriptSourcePath } from "./javascript/javascriptArtifactFiles.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { evidenceSchema, parseEvidence, type Evidence } from "./evidence.js";
 import { jsonValueSchema } from "./jsonValue.js";
@@ -298,6 +299,24 @@ const probesFor = (
   inventory: ArtifactInventoryResult,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
+  // The JavaScript analyzer selects extracted files by source suffix, so a
+  // main script such as `main` has no follow-up it can read.
+  if (format === "node-sea")
+    return inventory.occurrences.some(
+      (row) =>
+        row.format_metadata?.kind === "node-sea-entry" &&
+        row.format_metadata.role === "main-script" &&
+        isJavaScriptSourcePath(row.logical_path),
+    )
+      ? [
+          {
+            operation: "analyze_javascript_application",
+            rationale:
+              "Extract the SEA main script with extract_artifact, then analyze the extracted JavaScript application.",
+            authority: "ast-static-analysis",
+          },
+        ]
+      : [];
   return format === "directory"
     ? directoryProbes(inventory)
     : probesForFormat(format);

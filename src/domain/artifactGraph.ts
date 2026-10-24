@@ -85,6 +85,7 @@ const artifactFormatSchema = z.enum([
   "directory",
   "file",
   "pyinstaller",
+  "node-sea",
   "unknown",
 ]);
 

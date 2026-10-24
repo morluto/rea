@@ -30,8 +30,10 @@ import { SafeOutputTreeCreationFailure } from "../SafeOutputTreeCreationFailure.
 import { ZipArtifactReader } from "../ZipArtifactReader.js";
 import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
+import { NodeSeaArtifactReader } from "../NodeSeaArtifactReader.js";
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { containsPyInstallerArchive } from "../pyinstaller/CArchiveLayout.js";
+import { locateNodeSea } from "../nodeSea/NodeSeaLocation.js";
 import {
   artifactExtractionResultSchema,
   type ArtifactExtractionResult,
@@ -499,6 +501,8 @@ const requireExtractableFormat = async (
         if (format !== "elf" && format !== "pe" && format !== "mach-o")
           return false;
         abortIfNeeded(signal);
+        if (await locateNodeSea(handle, size, signal)) return true;
+        abortIfNeeded(signal);
         const packaged = await containsPyInstallerArchive(handle, size, signal);
         abortIfNeeded(signal);
         return packaged;
@@ -527,6 +531,7 @@ const createReader = async (
   if (containerFormat === "godot-pck") return new GodotPckArtifactReader(path);
   if (containerFormat === "pyinstaller")
     return new PyInstallerArtifactReader(path);
+  if (containerFormat === "node-sea") return new NodeSeaArtifactReader(path);
   if (await requireExtractableFormat(path, input, signal))
     return new DirectoryArtifactReader(path);
   if (format === "asar")

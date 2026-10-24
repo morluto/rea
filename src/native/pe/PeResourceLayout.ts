@@ -8,13 +8,19 @@ export const requirePeRange = (
   bytes: Buffer,
   offset: number,
   length: number,
+): void => requirePeExtent(bytes.length, offset, length);
+
+const requirePeExtent = (
+  fileSize: number,
+  offset: number,
+  length: number,
 ): void => {
   if (
     !Number.isSafeInteger(offset) ||
     !Number.isSafeInteger(length) ||
     offset < 0 ||
     length < 0 ||
-    offset > bytes.length - length
+    offset > fileSize - length
   )
     peFailure(
       `PE range ${String(offset)} + ${String(length)} leaves the artifact.`,
@@ -51,8 +57,13 @@ const intersectsResource = (
   );
 };
 
-/** Shared PE header admission: signature, optional header, data directories, and a section table that fits inside SizeOfHeaders. */
-export const readPeHeaders = (bytes: Buffer) => {
+/**
+ * Shared PE header admission: signature, optional header, data directories,
+ * and a section table that fits inside SizeOfHeaders. `bytes` may be a file
+ * prefix that holds the header structures; file-space ranges are checked
+ * against `fileSize`.
+ */
+export const readPeHeaders = (bytes: Buffer, fileSize = bytes.length) => {
   requirePeRange(bytes, 0, 64);
   if (bytes.readUInt16LE(0) !== 0x5a4d) peFailure("Expected an MZ PE image.");
   const pe = bytes.readUInt32LE(60);
@@ -76,7 +87,7 @@ export const readPeHeaders = (bytes: Buffer) => {
   const headerSize = bytes.readUInt32LE(optional + 60);
   const table = optional + optionalSize;
   requirePeRange(bytes, table, sectionCount * 40);
-  if (headerSize < table + sectionCount * 40 || headerSize > bytes.length)
+  if (headerSize < table + sectionCount * 40 || headerSize > fileSize)
     peFailure("Invalid PE SizeOfHeaders.");
   return {
     pe,
@@ -91,7 +102,10 @@ export const readPeHeaders = (bytes: Buffer) => {
 };
 
 /** Header admission and unambiguous file-backed RVA mapping, independent of section names. */
-export const readPeResourceLayout = (bytes: Buffer) => {
+export const readPeResourceLayout = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+) => {
   const {
     pe,
     sectionCount,
@@ -101,7 +115,7 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     directoryCount,
     headerSize,
     table,
-  } = readPeHeaders(bytes);
+  } = readPeHeaders(bytes, fileSize);
   const sections: Section[] = [];
   for (let index = 0; index < sectionCount; index++) {
     const at = table + index * 40;
@@ -114,7 +128,7 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     if (section.rva + virtualExtent(section) > 0x100000000)
       peFailure("PE section RVA range overflows.");
     if (section.size > 0) {
-      requirePeRange(bytes, section.offset, section.size);
+      requirePeExtent(fileSize, section.offset, section.size);
       if (section.offset < headerSize)
         peFailure("PE section raw bytes overlap headers.");
     }
@@ -156,7 +170,7 @@ export const readPeResourceLayout = (bytes: Buffer) => {
         size > headerSize - rva
       )
         peFailure("Ambiguous resource header RVA mapping.");
-      requirePeRange(bytes, rva, size);
+      requirePeExtent(fileSize, rva, size);
       return rva;
     }
     if (candidates.length !== 1)
@@ -177,7 +191,7 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     )
       peFailure("Resource interval intersects overlapping virtual sections.");
     const offset = section.offset + within;
-    requirePeRange(bytes, offset, size);
+    requirePeExtent(fileSize, offset, size);
     return offset;
   };
   const directoryAt = optional + directoriesAt + 16;
@@ -193,4 +207,65 @@ export const readPeResourceLayout = (bytes: Buffer) => {
     size,
     map,
   };
+};
+
+/**
+ * Bounded admission probe: whether the root type directory holds a `typeId`
+ * subdirectory naming `name`. Reads only the header prefix and the
+ * directories on that path; an unadmitted layout or malformed tree reports
+ * false so callers can leave full resource parsing to confirmed carriers.
+ */
+export const hasPeResourceName = async (
+  headers: Buffer,
+  fileSize: number,
+  read: (offset: number, length: number) => Promise<Buffer | undefined>,
+  typeId: number,
+  name: string,
+  maxEntries: number,
+): Promise<boolean> => {
+  let layout: ReturnType<typeof readPeResourceLayout>;
+  let root: number;
+  try {
+    layout = readPeResourceLayout(headers, fileSize);
+    if (layout.size < 16) return false;
+    root = layout.map(layout.rva, layout.size);
+  } catch (cause) {
+    if (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+      return false;
+    throw cause;
+  }
+  const { size } = layout;
+  const relative = (at: number, length: number) =>
+    at < 0 || at > size - length
+      ? Promise.resolve(undefined)
+      : read(root + at, length);
+  let examined = 0;
+  const directory = async (at: number): Promise<Buffer | undefined> => {
+    const header = await relative(at, 16);
+    if (header === undefined) return undefined;
+    const entries = header.readUInt16LE(12) + header.readUInt16LE(14);
+    if (entries > maxEntries - examined) return undefined;
+    examined += entries;
+    return relative(at + 16, entries * 8);
+  };
+  const types = await directory(0);
+  if (types === undefined) return false;
+  const expected = Buffer.from(name, "utf16le");
+  for (let at = 0; at < types.length; at += 8) {
+    if (types.readUInt32LE(at) !== typeId) continue;
+    const target = types.readUInt32LE(at + 4);
+    if ((target & 0x80000000) === 0) continue;
+    const names = await directory(target & 0x7fffffff);
+    if (names === undefined) continue;
+    for (let entry = 0; entry < names.length; entry += 8) {
+      const encoded = names.readUInt32LE(entry);
+      if ((encoded & 0x80000000) === 0) continue;
+      const nameAt = encoded & 0x7fffffff;
+      const length = await relative(nameAt, 2);
+      if (length?.readUInt16LE(0) !== name.length) continue;
+      const candidate = await relative(nameAt + 2, expected.length);
+      if (candidate?.equals(expected)) return true;
+    }
+  }
+  return false;
 };
