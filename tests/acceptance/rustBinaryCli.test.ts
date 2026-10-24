@@ -267,7 +267,8 @@ cliTest(
     );
     for (const fixture of [
       { name: "zlib", type: 1, supported: true },
-      { name: "unknown", type: 2, supported: false },
+      { name: "zstd", type: 2, supported: true },
+      { name: "unknown", type: 3, supported: false },
     ]) {
       const path = join(root, `${fixture.name}.elf`);
       await writeFile(
@@ -297,7 +298,7 @@ cliTest(
       } else {
         expect(report.auditable_metadata).toBeNull();
         expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 2 is unsupported",
+          "ELF section names are unavailable because compression type 3 is unsupported",
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",

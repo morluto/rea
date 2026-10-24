@@ -24,8 +24,8 @@ requires an absolute filesystem path and preserves that exact selection:
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 `tables` lists each declared note program header or section, including the
-section name when a string table is present. Zlib-compressed section-name
-tables are decompressed within the selected file-size budget. An unsupported
+section name when a string table is present. Zlib- and Zstandard-compressed
+section-name tables are decompressed within the selected file-size budget. An unsupported
 compression type leaves section names unknown and adds a limitation; note bytes
 remain independently examined. Each `entries[]` item reports owner, type,
 descriptor SHA-256, and a hex preview for descriptors of 64 bytes or less.
@@ -57,6 +57,8 @@ note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
 recovery.
+
+Zstandard section-name tables also use a 128 MiB decoder window limit.
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

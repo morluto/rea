@@ -30,24 +30,28 @@ cliTest("reports a GNU build-id through the public CLI", async ({ cli }) => {
 });
 
 cliTest(
-  "resolves section note names from a compressed string table through the CLI",
+  "resolves section note names from zlib and Zstandard string tables through the CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-compressed-cli-");
-    const path = join(root, "program");
-    await writeFile(path, compressedElfNoteFixture());
-    const result = await cli.run({
-      arguments: ["inspect-elf-notes", path, "--json"],
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
-      result.json,
-    );
-    expect(evidence.normalized_result.tables[0]?.name).toBe(
-      ".note.gnu.build-id",
-    );
-    expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
-      "0123456789abcdef0123456789abcdef01234567",
-    );
+    for (const compressionType of [1, 2]) {
+      const path = join(root, `program-${String(compressionType)}`);
+      const bytes = compressedElfNoteFixture(64, true, compressionType);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-elf-notes", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        result.json,
+      );
+      expect(evidence.normalized_result.tables[0]?.name).toBe(
+        ".note.gnu.build-id",
+      );
+      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+        "0123456789abcdef0123456789abcdef01234567",
+      );
+      expect(await readFile(path)).toEqual(bytes);
+    }
   },
 );
 

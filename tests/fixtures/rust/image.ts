@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 /** zlib payload matching the embedded dependency JSON shape. */
 export const rustDependencyPayload = (
@@ -31,7 +31,8 @@ export const compressRustElfSectionNames = (
   const names = Buffer.from(
     bytes.subarray(namesOffset, namesOffset + namesSize),
   );
-  const compressed = deflateSync(names);
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
   const compressionHeader = Buffer.alloc(24);
   compressionHeader.writeUInt32LE(compressionType, 0);
   compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
