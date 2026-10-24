@@ -3,13 +3,13 @@
 Run REA, connect your selected agents, and check the tools needed for your task.
 Setup previews configuration changes and asks for approval before applying them.
 
-| Task                              | Section                                                                                             |
-| --------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Connect an agent                  | [Start setup](#start-setup), then [review changes](#review-setup-changes)                           |
-| Diagnose one task                 | [Scoped readiness checks](#check-readiness-for-your-task)                                           |
-| Configure an analysis engine      | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), or [Kuna](kuna-provider.md) |
-| Update or remove REA              | [Maintenance](#diagnose-update-and-remove)                                                          |
-| Resolve a client-specific problem | [Client configuration](client-configuration.md)                                                     |
+| Task                              | Section                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Connect an agent                  | [Start setup](#start-setup), then [review changes](#review-setup-changes)                                                             |
+| Diagnose one task                 | [Scoped readiness checks](#check-readiness-for-your-task)                                                                             |
+| Configure an analysis engine      | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), the [JEB guide](jeb-analysis.md), or [Kuna](kuna-provider.md) |
+| Update or remove REA              | [Maintenance](#diagnose-update-and-remove)                                                                                            |
+| Resolve a client-specific problem | [Client configuration](client-configuration.md)                                                                                       |
 
 ## Start setup
 
@@ -45,14 +45,15 @@ with those integrations by default; use `--skill=false` to omit it. If no agent
 is selected, setup offers the workflow separately for CLI use, with No as the
 default. Hopper is a separate optional choice: setup shows its proposed
 installation or connection and requires its own explicit approval. It can also
-save verified paths for an existing Ghidra installation.
+save verified paths for an existing Ghidra installation and the endpoint of
+a running JEB client (`REA_JEB_MCP_URL`).
 
 After selection, review the plan's exact paths and changes and approve before
 REA writes files or installs Hopper. You can cancel at any prompt.
 
 Before applying changes, REA checks your current configuration. The plan lists:
 
-- an existing Hopper installation, a verified existing Ghidra installation, or the official Hopper package it proposes to install;
+- an existing Hopper installation, a verified existing Ghidra installation, a configured JEB endpoint, or the official Hopper package it proposes to install;
 - each detected agent configuration path;
 - each selected REA skill destination;
 - external software, network origins, integrity evidence, and package-manager
@@ -375,6 +376,7 @@ Select the part you want to check:
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.           |
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`)               |
+| JEB registration syntax             | `rea doctor --provider jeb --json`                                       |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents)) |
 | Installed workflow instructions     | `rea doctor --skill --json`                                              |
 
@@ -382,6 +384,12 @@ A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
 `environment_healthy` summarizes the full audit. `--target` adds a target check,
 but the report remains audit-wide unless a scope option is also supplied.
+
+JEB's doctor inspection is syntax-only and makes no network request. A valid
+registration still reports availability as `unknown` and does not pass the JEB
+readiness scope or enter setup's ready-provider list. Use `rea inspect-jeb-client`
+or MCP `binary_session` for a live service query; a later syntax-only doctor run
+does not inherit that probe's readiness result.
 
 An invalid `REA_LOG_LEVEL` fails every scope, including one client or the
 installed skill, because the executable rejects it before any command. A

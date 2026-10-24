@@ -2,6 +2,7 @@ import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadat
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AppConfig } from "../config/types.js";
 import type { BinarySession } from "../application/binary/BinarySession.js";
+import { assertBinaryLaneProviderIds } from "../application/binary/BinaryProviderIds.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { GhidraProvider } from "../ghidra/GhidraProvider.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
@@ -22,6 +23,11 @@ import {
  * Compose the target-switching runtime shared directly by CLI and MCP adapters.
  * This is the sole production wiring point, so both adapters share identical
  * provider selection, profile, lifecycle, and Evidence semantics.
+ *
+ * The binary lane membership is published for
+ * startup-safe consumers as `BINARY_ANALYSIS_PROVIDER_IDS` in
+ * `application/binary/BinaryProviderIds.ts`, and the wiring below is
+ * validated against it so the two cannot drift silently.
  */
 export const createBinarySession = (
   config: AppConfig,
@@ -57,6 +63,10 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
+  const laneProviders = [hopper, ghidra, ida, kuna];
+  assertBinaryLaneProviderIds(
+    laneProviders.map((provider) => provider.identity().id),
+  );
   const auxiliaryDeclarations =
     auxiliaryAnalysisProviderDeclarations(environment);
   const nativeInspectionAvailable =
@@ -68,7 +78,7 @@ const composeDeepBinarySession = (
     );
   return composeBinarySession(
     new AnalysisProviderRegistry(
-      [hopper, ghidra, ida, kuna],
+      laneProviders,
       config.analysisProvider,
       nativeInspectionAvailable ? isAppleDispatchMetadataTarget : undefined,
     ),

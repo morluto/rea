@@ -17,6 +17,8 @@ import type {
 } from "../application/SetupTypes.js";
 import { SUPPORTED_CLIENT_DEFINITIONS } from "../application/SupportedClients.js";
 import { invokingPackageRunner } from "../application/ClientRegistrationIdentity.js";
+import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { BINARY_ANALYSIS_PROVIDER_IDS } from "../application/binary/BinaryProviderIds.js";
 
 const clientDisplayNames: ReadonlyMap<string, string> = new Map(
   SUPPORTED_CLIENT_DEFINITIONS.map(({ name, displayName }) => [
@@ -244,22 +246,51 @@ const renderReadyCapabilities = (
   readyClients: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  writeLine("◆  What you can do now");
+  for (const line of describeReadyCapabilities(
+    result,
+    readyClients,
+    cliInvocation(environment),
+  ))
+    writeLine(line);
+};
+
+/** Ready capabilities and configured JEB diagnostics, without probing any provider. */
+export const describeReadyCapabilities = (
+  result: SetupResult,
+  readyClients: readonly string[],
+  cli: string,
+): readonly string[] => {
   const providers = readyProviders(result);
-  if (providers.length > 0)
-    writeLine(`│  Deep analysis: ${humanList(providers)}`);
-  if (readyClients.length > 0)
-    writeLine(`│  Agent access: ${humanList(readyClients)}`);
-  if (result.doctor.identity?.skill.state === "aligned")
-    writeLine("│  Guided reverse-engineering workflows: installed");
-  writeLine(
-    `│  CLI: ${cliInvocation(environment)} ${providers.length > 0 ? "analyze /path/to/app" : "capabilities"}`,
+  const binaryReady = result.doctor.availableProviders.some((id) =>
+    BINARY_ANALYSIS_PROVIDER_IDS.has(id),
   );
-  const firstClient = readyClients[0];
-  if (firstClient !== undefined)
-    writeLine(
-      `│  Try in ${firstClient}: "Explain how a feature works in /path/to/app and show the evidence."`,
-    );
+  const jebReady = result.doctor.availableProviders.includes("jeb");
+  const jebConfigured = result.doctor.providerInspections?.some(
+    ({ id, configured }) => id === "jeb" && configured,
+  );
+  return [
+    "◆  What you can do now",
+    ...(providers.length > 0
+      ? [`│  Deep analysis: ${humanList(providers)}`]
+      : []),
+    ...(readyClients.length > 0
+      ? [`│  Agent access: ${humanList(readyClients)}`]
+      : []),
+    ...(result.doctor.identity?.skill.state === "aligned"
+      ? ["│  Guided reverse-engineering workflows: installed"]
+      : []),
+    `│  CLI: ${cli} ${binaryReady ? "analyze /path/to/app" : "capabilities"}`,
+    ...(jebReady
+      ? [`│  JEB: ${cli} ${CLI_COMMANDS.inspectJebClient}`]
+      : jebConfigured
+        ? [`│  JEB diagnostics: ${cli} ${CLI_COMMANDS.inspectJebClient}`]
+        : []),
+    ...(readyClients[0] === undefined
+      ? []
+      : [
+          `│  Try in ${readyClients[0]}: "Explain how a feature works in /path/to/app and show the evidence."`,
+        ]),
+  ];
 };
 
 const readyAgentClients = (

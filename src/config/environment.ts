@@ -100,7 +100,7 @@ const environmentSchema = z.object({
   REA_REFERENCE_SECRET_PATTERNS_JSON: z.string().default("[]"),
 });
 
-/** Parse the JEB-only timeout at its isolated provider-composition boundary. */
+/** Parse the JEB-only timeout independently of unrelated provider settings. */
 export const parseJebMcpTimeoutMs = (
   value: string | undefined,
 ): Result<number | undefined, ConfigurationError> => {

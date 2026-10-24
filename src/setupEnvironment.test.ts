@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -83,15 +83,63 @@ it("plans setup and uninstall against selected home and client overrides", async
 it("composes provider diagnostics from selected configuration rather than ambient configuration", async () => {
   vi.stubEnv("GHIDRA_INSTALL_DIR", "/ambient/ghidra");
   vi.stubEnv("REA_IDA_MCP_CONFIG", "/ambient/ida.json");
+  vi.stubEnv("REA_JEB_MCP_URL", "http://127.0.0.1:9999/mcp");
   const host = createSystemDoctorHost({
     GHIDRA_INSTALL_DIR: "/selected/ghidra",
     REA_IDA_MCP_CONFIG: "/selected/ida.json",
+    REA_JEB_MCP_URL: "http://127.0.0.1:8425/mcp",
   });
   const inspections = await host.providerInspections?.();
   expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(true);
+  expect(inspections?.find(({ id }) => id === "jeb")).toMatchObject({
+    configured: true,
+    available: false,
+  });
   expect(JSON.stringify(inspections)).toContain("/selected/ghidra");
   expect(JSON.stringify(inspections)).toContain("/selected/ida.json");
+  expect(JSON.stringify(inspections)).toContain("http://127.0.0.1:8425/mcp");
   expect(JSON.stringify(inspections)).not.toContain("/ambient/");
+  expect(JSON.stringify(inspections)).not.toContain("127.0.0.1:9999");
+});
+
+it("writes a configured JEB endpoint from the reviewed plan into the client registration", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rea-jeb-setup-"));
+  const endpoint = "http://127.0.0.1:9999/mcp";
+  const environment = {
+    HOME: join(root, "home"),
+    USERPROFILE: join(root, "home"),
+    CODEX_HOME: join(root, "codex"),
+    REA_JEB_MCP_URL: endpoint,
+    REA_JEB_MCP_TIMEOUT_MS: "900000",
+  };
+  vi.stubEnv("REA_JEB_MCP_URL", "http://127.0.0.1:8888/mcp");
+  vi.stubEnv("REA_JEB_MCP_TIMEOUT_MS", "1.5");
+  try {
+    const host = systemSetupHost(
+      createSystemDoctorHost(environment),
+      environment,
+    );
+    const result = await runSetup(
+      { ...options(true), clientIds: ["codex"], installSkill: false },
+      host,
+    );
+    expect(result.status).toBe("ready");
+    const plan = result.plannedActions.find(
+      ({ id }) => id === "configure_client:codex",
+    );
+    expect(plan?.detail).toContain(endpoint);
+    const saved = await readFile(
+      join(environment.CODEX_HOME, "config.toml"),
+      "utf8",
+    );
+    expect(saved).toContain("REA_JEB_MCP_URL");
+    expect(saved).toContain(endpoint);
+    expect(saved).toContain("REA_JEB_MCP_TIMEOUT_MS");
+    expect(saved).toContain("900000");
+    expect(saved).not.toContain("8888");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 it("includes the macOS Hopper installer diagnostic in setup remediation", async () => {

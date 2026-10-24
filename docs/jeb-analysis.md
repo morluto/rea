@@ -6,7 +6,7 @@ REA exposes JEB-backed project, unit, and decompilation inspection through the C
 
 Start a JEB client that serves MCP and point REA at it:
 
-- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]`; redirects, remote hosts, credentials, query strings, and fragments are rejected rather than silently dropped).
+- Default endpoint: `http://127.0.0.1:8425/mcp`. Override with `REA_JEB_MCP_URL` (absolute `http`/`https` URL with literal host `127.0.0.1` or `[::1]` and path exactly `/mcp` or `/mcp/`; redirects, remote hosts, credentials, other paths, query strings, and fragments are rejected rather than silently dropped).
 - In the JEB GUI client, start the MCP server from the _File_ menu (or via the VIBRE assistant).
 - Headless, the official Linux CE build `5.48.0.202610071539` supports `-c --mcp`. From the JEB installation directory, select JDK 21 or newer through `JAVA_HOME`, choose your target and bind explicitly to loopback:
 
@@ -23,7 +23,15 @@ For setup registration, set `REA_JEB_MCP_URL` in the REA process environment
 before running `rea setup`. The approved setup plan preserves the exact selected
 URL after validating its syntax. That validation does not establish that the
 JEB service is reachable or that a project is open; use the existing
-`inspect-jeb-client` command for a read-only service query.
+`inspect-jeb-client` command for a read-only service query. A configured but
+unprobed JEB endpoint is not included in setup's ready-provider list; setup can
+still save its validated registration and show dedicated diagnostic guidance.
+
+When `REA_JEB_MCP_URL` is omitted or empty, doctor validates the same default
+endpoint used by the runtime, including when only a timeout is selected. It
+reports that effective endpoint as configured but unprobed. Setup saves an
+endpoint override only when a nonempty value was explicitly selected; it does
+not write the implicit default into the client registration.
 
 MCP `binary_session` probes the live JEB service and its advertised tool catalog.
 Availability is reported per operation: a reachable headless client can support
@@ -75,3 +83,32 @@ start/configuration recovery as a direct request. If a primary reply completes
 before a later client-information lookup fails or is cancelled, the typed failure
 retains that reply as partial Evidence. Engine metadata stays unknown; this is not
 a claim that the full operation completed.
+
+## Connect an agent once
+
+Add the endpoint to the **REA** MCP entry's environment:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "npx",
+      "args": ["-y", "rea-agents@<version-with-jeb>", "mcp"],
+      "env": {
+        "REA_JEB_MCP_URL": "http://127.0.0.1:8425/mcp"
+      }
+    }
+  }
+}
+```
+
+Use a package version that actually includes this adapter; repository main can be ahead of the npm release. After reconnecting, call:
+
+```json
+{"name":"inspect_jeb_client","arguments":{}}
+{"name":"open_jeb_project","arguments":{"path":"/artifact/path/on/the/engine/host"}}
+{"name":"list_jeb_units","arguments":{"index":0,"count":50}}
+{"name":"decompile_jeb_item","arguments":{"item_address":"0x1000","item_kind":"method"}}
+```
+
+For guided registration, set `REA_JEB_MCP_URL` before `rea setup --client <client>`. Setup includes that endpoint reference in its reviewed plan and preserves it after approval. `rea doctor --provider jeb --json` validates the endpoint and any selected `REA_JEB_MCP_TIMEOUT_MS` without starting or contacting JEB. Even with valid configuration, it reports `available: false` and a `jeb-availability` check classified as `unknown`; the selected-provider readiness result is unhealthy because this inspection does not establish availability. This syntax-only doctor does not reuse a prior live probe or claim service availability, compatibility or project binding.
