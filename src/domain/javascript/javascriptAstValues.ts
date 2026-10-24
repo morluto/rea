@@ -313,7 +313,11 @@ export const semanticFinalObjectStringProperty = (
   key: string,
 ): string | undefined => {
   const value = semanticFinalObjectProperty(node, key);
-  return t.isStringLiteral(value) ? value.value : undefined;
+  if (value === undefined) return undefined;
+  const literal = readExactJavaScriptLiteral(value);
+  return literal.found && typeof literal.value === "string"
+    ? literal.value
+    : undefined;
 };
 
 /** Read exact consumed object-pattern keys, leaving dynamic keys unknown. */
