@@ -1,3 +1,4 @@
+import * as t from "@babel/types";
 import { expect, it } from "vitest";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsWithReceiversSteps } from "./javascriptSemanticAnalysis.js";
@@ -29,6 +30,70 @@ const analyze = (source: string, budget?: number) => {
   });
   return complete(scan.finishSteps());
 };
+
+it("reads route-record keys at most once beyond inspecting each property", () => {
+  const count = 128;
+  const source = ["candidate", "router"]
+    .map(
+      (name) =>
+        `const ${name} = { ${Array.from({ length: count }, (_, i) => `path: "${name}${String(i)}"`).join(", ")}${name === "router" ? ", component: Page" : ""} };`,
+    )
+    .join("\n");
+  const file = parseJavaScriptSource(source);
+  if (file === null) throw new Error("fixture must parse");
+  const index = complete(
+    indexJavaScriptBindingsWithReceiversSteps(file.program),
+  );
+  complete(index.indexAmbientWritesSteps());
+  const facts: { value: string; interpretation: "candidate" | undefined }[] =
+    [];
+  const scan = complete(
+    JavaScriptRouteScan.createSteps(file, index, (fact) => {
+      facts.push({ value: fact.value, interpretation: fact.interpretation });
+    }),
+  );
+  let inspecting = false;
+  let propertyCount = 0;
+  let keyReads = 0;
+  traverseJavaScriptAst(file, {
+    enter: (node) => {
+      if (!t.isObjectProperty(node)) return;
+      propertyCount += 1;
+      const key = node.key;
+      // Observe real parsed keys without changing their values. Count only
+      // owner work, excluding the AST walk's own reads and setup/indexing.
+      Object.defineProperty(node, "key", {
+        enumerable: true,
+        configurable: true,
+        get: () => {
+          if (inspecting) keyReads += 1;
+          return key;
+        },
+      });
+    },
+  });
+  traverseJavaScriptAst(file, {
+    enter: (node, parent) => {
+      inspecting = true;
+      try {
+        scan.inspect(node, parent);
+      } finally {
+        inspecting = false;
+      }
+    },
+  });
+  expect(facts).toEqual(
+    ["candidate", "router"].flatMap((name) =>
+      Array.from({ length: count }, (_, i) => ({
+        value: `${name}${String(i)}`,
+        interpretation: name === "candidate" ? "candidate" : undefined,
+      })),
+    ),
+  );
+  expect(propertyCount).toBe(count * 2 + 1);
+  expect(keyReads).toBeGreaterThanOrEqual(propertyCount);
+  expect(keyReads).toBeLessThanOrEqual(propertyCount * 2);
+});
 
 it.each(["true", "(true as const)", "INDEX"])(
   "retains an index route with flag %s",
