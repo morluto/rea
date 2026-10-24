@@ -1219,8 +1219,8 @@ describe("DOS binary target I/O", () => {
     });
   });
 
-  it("retains valid DOS facts while refusing automatic selection for an unresolved pointer", async () => {
-    const directory = await createTestTempDirectory("rea-ambiguous-mz-target-");
+  it("admits original DOS header padding after a relocation table", async () => {
+    const directory = await createTestTempDirectory("rea-dos-header-padding-");
     const path = join(directory, "legacy.exe");
     const bytes = Buffer.alloc(128);
     bytes.write("MZ", 0, "ascii");
@@ -1232,26 +1232,36 @@ describe("DOS binary target I/O", () => {
     bytes.write("ABCD", 60, "ascii");
     await writeFile(path, bytes);
 
-    const result = await parseBinaryTarget(path);
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        reason: "MZ Windows new-header candidate is unresolved",
-        diagnostics: {
-          mz_windows_header: {
-            state: "candidate",
-            offset: 0x44434241,
-            signature: "unobserved",
-          },
-          mz_dos: {
-            state: "valid",
-            header_bytes: 64,
-            image_bytes: 128,
-            module_bytes: 64,
-            relocation_count: 2,
-            relocation_table_offset: 28,
-          },
-        },
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86", kind: "executable" },
+    });
+  });
+
+  it("resolves a PE signature beyond the prefix when DOS padding follows a relocation table", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-padded-stub-pe-target-",
+    );
+    const path = join(directory, "padded-stub.dll");
+    const offset = 8192;
+    const stub = Buffer.alloc(offset);
+    stub.write("MZ", 0, "ascii");
+    stub.writeUInt16LE(offset % 512, 2);
+    stub.writeUInt16LE(Math.ceil(offset / 512), 4);
+    stub.writeUInt16LE(2, 6);
+    stub.writeUInt16LE(4, 8);
+    stub.writeUInt16LE(28, 24);
+    stub.writeUInt32LE(offset, 60);
+    const peRecord = pe(0x8664, offset, 0x2002).subarray(offset);
+    const bytes = Buffer.concat([stub, peRecord]);
+    await writeFile(path, bytes);
+
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: {
+        format: "pe",
+        architecture: "x86_64",
+        executableRole: "shared-library",
       },
     });
   });

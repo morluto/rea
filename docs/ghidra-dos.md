@@ -29,13 +29,18 @@ point using the available structural bytes and actual file length. It reports
 those DOS facts separately from Windows-header evidence. A recognized PE
 signature remains PE; recognized NE, LE, and LX headers are explicitly
 unsupported. A nonzero Windows-header pointer without a recognized signature
-remains an unresolved candidate, even when the DOS structure validates:
-automatic target selection fails closed and reports both observations.
-REA does not infer DOS intent from padding or infer a damaged Windows header
-from the pointer alone. Inventory classification is a bounded-prefix format
-hint; it returns `unknown` for that candidate or when its prefix cannot
-establish the format. That result is distinct from complete DOS validation and
-does not decide target admission.
+usually remains an unresolved candidate, even when the DOS structure validates:
+automatic target selection fails closed and reports both observations. When a
+nonempty relocation table ends inside a complete DOS header, the remaining
+header bytes belong to DOS padding; a nonzero dword there is not a Windows
+declaration. An unread signature beyond the current probe is requested before
+that padding rule applies. This avoids manufacturing a Windows header from
+original DOS padding while preserving rejection of damaged Windows
+declarations.
+Inventory classification is a bounded-prefix format hint; it returns `unknown`
+for an unresolved candidate or when its prefix cannot establish the format.
+That result is distinct from complete DOS validation and does not decide target
+admission.
 
 Ghidra imports a private target snapshot with `MzLoader`, language
 `x86:LE:16:Real Mode`, and compiler specification `default`. These settings,
