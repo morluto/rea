@@ -10,7 +10,10 @@ import { projectReferenceSourceImportError } from "../application/ReferenceSourc
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  type AnalysisInputIssue,
+} from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
@@ -268,6 +271,66 @@ const registerNativeCommands = (
   });
 };
 
+const referenceSourceExcludePathsSchema = z.object({
+  excludePaths: z.array(z.string().min(1)),
+});
+
+const EXCLUDE_PATHS_INPUT_MESSAGE =
+  "--exclude-paths must be a JSON array of nonempty Git-ignore rules. Each rule uses Git-ignore syntax, including wildcards, directory suffixes, and negations, rather than a literal path match.";
+
+const invalidReferenceSourceExcludePaths = (
+  issues: readonly AnalysisInputIssue[],
+) => ({
+  error: "Import failed" as const,
+  ...projectAnalysisError(
+    new AnalysisInputError(
+      CLI_COMMANDS.importReferenceSource,
+      { userMessage: EXCLUDE_PATHS_INPUT_MESSAGE },
+      issues,
+    ),
+  ),
+});
+
+/** Parse caller exclusions before the import opens the selected tree. */
+const parseReferenceSourceExcludePaths = (
+  encoded: string | undefined,
+):
+  | {
+      readonly ok: true;
+      readonly rules: readonly string[] | undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: ReturnType<typeof invalidReferenceSourceExcludePaths>;
+    } => {
+  if (encoded === undefined) return { ok: true, rules: undefined };
+  const decoded = safeParseJson(encoded);
+  if (!decoded.ok)
+    return {
+      ok: false,
+      failure: invalidReferenceSourceExcludePaths([
+        {
+          path: ["excludePaths"],
+          reason: "invalid_format",
+          expected: "JSON",
+        },
+      ]),
+    };
+  const parsed = referenceSourceExcludePathsSchema.safeParse({
+    excludePaths: decoded.value,
+  });
+  if (!parsed.success)
+    return {
+      ok: false,
+      failure: invalidReferenceSourceExcludePaths(
+        projectInputIssues(parsed.error.issues, {
+          excludePaths: decoded.value,
+        }),
+      ),
+    };
+  return { ok: true, rules: parsed.data.excludePaths };
+};
+
 const registerReferenceSourceCommand = (
   cli: CliInstance,
   logger: Logger,
@@ -281,6 +344,12 @@ const registerReferenceSourceCommand = (
         .describe("Local source directory to import as historical reference"),
     }),
     options: z.object({
+      excludePaths: z
+        .string()
+        .optional()
+        .describe(
+          "JSON array of Git-ignore rules to exclude. Rules use Git-ignore syntax, including wildcards, directory suffixes, and negations; they are not literal path matches. An empty array adds no caller exclusions.",
+        ),
       detail: z
         .enum(["full", "summary"])
         .default("full")
@@ -304,6 +373,10 @@ const registerReferenceSourceCommand = (
         logger,
         "import-reference-source",
         async () => {
+          const excludePaths = parseReferenceSourceExcludePaths(
+            options.excludePaths,
+          );
+          if (!excludePaths.ok) return excludePaths.failure;
           if (
             options.outlineDepth !== undefined &&
             options.detail !== "summary"
@@ -333,6 +406,7 @@ const registerReferenceSourceCommand = (
           return runReferenceSourceImport(
             args.root,
             config.value.referenceSourcePolicy,
+            excludePaths.rules,
             options.detail === "summary"
               ? (options.outlineDepth ?? 2)
               : undefined,
@@ -346,6 +420,7 @@ const registerReferenceSourceCommand = (
 const runReferenceSourceImport = async (
   root: string,
   policy: ReferenceSourcePolicy,
+  excludePaths: readonly string[] | undefined,
   outlineDepth: number | undefined,
 ): Promise<unknown> => {
   const resources = new ArtifactResourceScope();
@@ -365,6 +440,7 @@ const runReferenceSourceImport = async (
           policy,
           importer: PRODUCT_IDENTITY.packageName,
           importerVersion: PRODUCT_IDENTITY.packageVersion,
+          ...(excludePaths === undefined ? {} : { excludePaths }),
         },
         resources,
       ),
