@@ -49,7 +49,7 @@ export const createServerIdentity = (input: {
   if (
     input.expected?.server_path !== undefined &&
     serverPath !== undefined &&
-    resolve(input.expected.server_path) !== serverPath
+    resolve(input.expected.server_path) !== resolve(serverPath)
   )
     reasons.push("registration_path_mismatch");
   const observedExpectation =
