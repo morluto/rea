@@ -469,6 +469,57 @@ and top-level key when it upserts `rea`. WorkBuddy also reads a project-level
 user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
 
+## IBM Bob
+
+For IBM Bob, setup writes `mcpServers.rea` into the global
+`~/.bob/settings/mcp.json` (`%userprofile%\.bob\settings\mcp.json` on Windows).
+Entries carry `command`, `args`, and `env`; stdio is the default transport. Bob
+discovers personal skills from `~/.bob/skills`, so setup installs its skill copy
+there.
+
+Setup preserves every other server and top-level key when it upserts `rea`.
+Bob also reads a project-level `<project>/.bob/mcp.json`, which setup does not
+touch: it registers the user-level file only. Bob's documentation names
+`~/.bob/mcp.json` (IDE) and `~/.bob/mcp_settings.json` (Bob Shell) as global
+locations, while Bob installations and its marketplace write MCP servers under
+`~/.bob/settings/`. The documented paths do not match observed behavior:
+
+- On one Windows Bob IDE installation without `~/.bob/mcp.json`, the IDE loaded
+  a `rea` server registered in `~/.bob/settings/mcp.json`.
+- On Bob Shell 2.0.5 on Windows, `bob mcp list` run from an empty directory
+  listed `rea` with global scope. The only file containing it was
+  `~/.bob/settings/mcp.json`; `~/.bob/mcp_settings.json` existed with an empty
+  `mcpServers` object. In an interactive `bob chat` session, Shell listed REA's
+  `mcp__rea__*` tools and a call to `binary_session` returned the REA server
+  version.
+
+The interactive Bob Shell check used a `rea` entry that runs a local
+`scripts/rea.mjs mcp`, not the `npx` entry that setup writes. With a home
+directory containing only the `npx` entry in `~/.bob/settings/mcp.json`,
+`bob mcp list` on Bob Shell 2.0.5 listed it as an enabled, global stdio server,
+and an MCP `initialize` request through the same `cmd.exe /d /c npx -y
+rea-agents@6.7.0 mcp` command returned the REA server. A headless `bob run` in
+that home started the published 6.7.0 package and called `binary_session`, but
+only once `REA_MCP_INPUT_SCHEMA_PROFILE=compact` was in the entry's `env`.
+
+Bob Shell 2.0.5 does not expose a server's tools to the model when their
+advertised payload exceeds 300 KB. It logs `tool payload is too large` and the
+agent reports having no MCP tools. With the published 6.7.0 package, which
+advertises full input schemas by default, the payload was 742 KB. Setting only
+`REA_MCP_OUTPUT_SCHEMA_PROFILE=off` did not clear the warning;
+`REA_MCP_INPUT_SCHEMA_PROFILE=compact` did. For that reason setup adds
+`REA_MCP_INPUT_SCHEMA_PROFILE=compact` to the `env` of a new or refreshed Bob
+registration, as it does for Kimi Code, and keeps an existing
+`REA_MCP_INPUT_SCHEMA_PROFILE` value if the entry already sets one. Releases that
+include the compact input-schema default (#5975) do not need it, but that has
+not been checked against Bob Shell. To fix an existing registration, run
+`rea setup --client bob` or add `"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to
+the `env` object of the `mcpServers.rea` entry, then restart Bob.
+
+All of these checks were run on Windows only. Other Bob versions, macOS and
+Linux, and a Bob Shell session against a release that defaults to compact
+input schemas remain unverified.
+
 ## ZCode
 
 For [ZCode](https://zcode.z.ai/en/docs/mcp-services), setup registers `rea` in the nested `mcp.servers` table of the

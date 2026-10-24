@@ -617,6 +617,16 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    name: "bob",
+    displayName: "IBM Bob",
+    // Bob keeps global MCP servers in settings/mcp.json and discovers personal
+    // skills from ~/.bob/skills. The project .bob/mcp.json is never touched.
+    skillPath: [".bob", "skills"],
+    configPath: [".bob", "settings", "mcp.json"],
+    markerPath: [".bob"],
+    format: "json",
+  },
+  {
     name: "grok_build",
     displayName: "Grok Build",
     configPath: (context: ClientPathContext) =>

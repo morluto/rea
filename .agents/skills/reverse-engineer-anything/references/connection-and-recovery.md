@@ -125,7 +125,7 @@ rea doctor --client codex --json
 rea setup --client codex --dry-run --json
 ```
 
-Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
+Use the current supported client's ID: `bob`, `claude_code`, `claude_desktop`, `codex`,
 `cursor`, `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`,
 `copilot_cli`, `commandcode`, `qwen_code`, `vscode`, `trae`, `grok_build`, `omp`, `pi`,
 `hermes`, `qoder`, `droid`, `zcode`, `dsh`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a

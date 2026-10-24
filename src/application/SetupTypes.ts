@@ -91,6 +91,12 @@ export type ClientConfigurationInspection =
   | {
       readonly status: "create" | "update";
       readonly backupPath?: string;
+      /**
+       * Effective registration environment that setup will write (merged stored +
+       * provider + client defaults). When absent the plan falls back to the raw
+       * providerEnvironment (used by test fixtures).
+       */
+      readonly registrationEnvironment?: Readonly<Record<string, string>>;
     }
   | {
       readonly status: "invalid";

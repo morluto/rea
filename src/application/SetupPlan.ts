@@ -290,6 +290,9 @@ const plannedClientWrites = (
             inspection.backupPath !== undefined
               ? { backupPath: inspection.backupPath }
               : {}),
+            ...(inspection.status !== "already_current"
+              ? { registrationEnvironment: inspection.registrationEnvironment }
+              : {}),
           },
         ]
       : [],
@@ -308,6 +311,7 @@ const setupPlan = (input: {
     readonly client: SetupClient;
     readonly operation: "create" | "update";
     readonly backupPath?: string;
+    readonly registrationEnvironment?: Readonly<Record<string, string>>;
   }[];
   readonly providerEnvironment: SetupProviderEnvironment;
   readonly linuxPackageFamily?: LinuxPackageFamily;
@@ -342,7 +346,7 @@ const setupPlan = (input: {
     : []),
   ...input.clients
     .filter(({ client }) => client.format !== "unsupported")
-    .map(({ client, operation, backupPath }): SetupAction => ({
+    .map(({ client, operation, backupPath, registrationEnvironment }): SetupAction => ({
       id: `configure_client:${client.name}`,
       kind: "configure_client",
       label: client.displayName ?? client.name,
@@ -350,7 +354,7 @@ const setupPlan = (input: {
       detail: clientConfigurationDetail(
         client,
         input.command,
-        input.providerEnvironment,
+        registrationEnvironment ?? input.providerEnvironment,
         input.installHopper,
       ),
       external: false,
@@ -433,7 +437,7 @@ const hopperInstallEligibility = (
 const clientConfigurationDetail = (
   client: SetupClient,
   command: readonly string[],
-  environment: SetupProviderEnvironment,
+  environment: Readonly<Record<string, string>>,
   installHopper: boolean,
 ): string => {
   const entries = Object.entries(environment)

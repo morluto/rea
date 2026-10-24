@@ -85,8 +85,10 @@ Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
 configuration. Restart your agent afterward.
 
-Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
-[other agents](docs/installation.md#supported-agents). See
+Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build, IBM Bob and
+[other agents](docs/installation.md#supported-agents). For IBM Bob, setup
+writes `~/.bob/settings/mcp.json` and installs the skill into `~/.bob/skills`
+(`%USERPROFILE%\.bob` on Windows); restart Bob afterward. See
 [installation and setup](docs/installation.md) for provider configuration and
 manual MCP registration.
 

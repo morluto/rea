@@ -69,6 +69,7 @@ describe("client configuration filesystem lifecycle", () => {
       "vscode",
       "trae",
       "workbuddy",
+      "bob",
       "grok_build",
       "omp",
       "pi",

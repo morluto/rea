@@ -554,7 +554,14 @@ const inspectClientDocument = async (
         throwCleanupFailure(fallback.error);
         return { status: "invalid", remediation: fallback.error.detail };
       }
-      return { status: "create" };
+      return {
+        status: "create",
+        registrationEnvironment: planningRegistrationEnvironment(
+          client,
+          undefined,
+          providerEnvironment,
+        ),
+      };
     }
     return {
       status: "invalid",
@@ -614,10 +621,41 @@ const inspectClientDocument = async (
       status: "invalid",
       remediation: backupSelection.error.detail,
     };
+  const parsed = parseClientConfiguration(original, client.format);
   return {
     status: "update",
     backupPath: backupSelection.value.backupPath,
+    registrationEnvironment: planningRegistrationEnvironment(
+      client,
+      parsed,
+      providerEnvironment,
+    ),
   };
+};
+
+/**
+ * Compute the registration environment that setup will write for plan
+ * disclosure — merges the stored fragment with incoming provider overrides
+ * and applies client-specific defaults (e.g. compact schema for Bob/Kimi).
+ */
+const planningRegistrationEnvironment = (
+  client: SetupClient,
+  parsed: ClientConfigurationDocument | undefined,
+  providerEnvironment: SetupProviderEnvironment,
+): Readonly<Record<string, string>> => {
+  const environment = clientRegistrationEnvironment(
+    parsed,
+    providerEnvironment,
+    "fragment",
+  );
+  if (!environment.ok) return providerEnvironment;
+  if (
+    (client.name === "kimi" || client.name === "bob") &&
+    snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
+      undefined
+  )
+    return { ...environment.value, REA_MCP_INPUT_SCHEMA_PROFILE: "compact" };
+  return environment.value;
 };
 
 const isMissing = (cause: unknown): boolean =>
@@ -801,8 +839,10 @@ const clientConfigurationDesired = async (
     "fragment",
   );
   if (!environment.ok) throw environment.error;
+  // Kimi and IBM Bob both refuse or degrade on the full input-schema payload
+  // (Bob Shell drops a server whose tools exceed 300 KB), so default to compact.
   const registrationEnvironment =
-    client.name === "kimi" &&
+    (client.name === "kimi" || client.name === "bob") &&
     snapshotEnvironment(environment.value).REA_MCP_INPUT_SCHEMA_PROFILE ===
       undefined
       ? {
