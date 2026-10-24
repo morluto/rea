@@ -49,9 +49,8 @@ msgid ""
 "What manual RE and reconstructing TH08, TH095 and TH04 taught me about "
 "agents, verification and knowledge that compounds across projects."
 msgstr ""
-"TH08, TH095 ve TH04'NUN manuel olarak yeniden yapılandırılması ve yeniden "
-"yapılandırılması bana projeler arasında birleşen aracılar, doğrulama ve "
-"bilgi hakkında bilgi verdi."
+"TH08, TH095 ve TH04’ün manuel olarak yeniden yapılandırılması bana projeler "
+"arasında biriken ajanlar, doğrulama ve bilgi hakkında bilgi verdi."
 
 #: website/public/blog/index.html:212 website/public/blog/index.html:227
 msgctxt "page:blog/index.html"
@@ -61,7 +60,7 @@ msgstr "Makaleyi okuyun"
 #: website/public/blog/index.html:230
 msgctxt "page:blog/index.html"
 msgid "By N0zoM1z0 · 10 October 2026"
-msgstr "Başlangıç N0zoM1z0 * 10 Ekim 2026"
+msgstr "Yazan N0zoM1z0 · 10 Ekim 2026"
 
 #. {ph0}: <span aria-hidden="true">
 #. {ph1}: </span>
@@ -285,7 +284,7 @@ msgstr "Tersine mühendislikte sanayi devrimi."
 #: website/public/blog/touhou-reconstruction/index.html:205
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "By N0zoM1z0 · 10 October 2026"
-msgstr "Başlangıç N0zoM1z0 * 10 Ekim 2026"
+msgstr "Yazan N0zoM1z0 · 10 Ekim 2026"
 
 #: website/public/blog/touhou-reconstruction/index.html:207
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -329,7 +328,7 @@ msgid ""
 "needs testing. “Unknown” is a valid answer when the evidence is incomplete."
 msgstr ""
 "{ph0}Neyi iddia ettiğinize kanıtların karar vermesine izin verin.{ph1} "
-"Kendine güvenen bir açıklamanın hala test edilmesi gerekiyor. Kanıt eksik "
+"Kendine güvenen bir açıklamanın hâlâ test edilmesi gerekiyor. Kanıt eksik "
 "olduğunda ”Bilinmeyen\" geçerli bir cevaptır."
 
 #. {ph0}: <strong>
@@ -354,13 +353,13 @@ msgid ""
 "{ph0}We are in the early days of RE's industrial revolution.{ph1} The "
 "methods are still taking shape. There is plenty left to explore."
 msgstr ""
-"{ph0}RE'NİN sanayi devriminin ilk günlerindeyiz.{ph1} Yöntemler hala "
+"{ph0}RE’nin sanayi devriminin ilk günlerindeyiz.{ph1} Yöntemler hâlâ "
 "şekilleniyor. Keşfedilecek çok şey kaldı."
 
 #: website/public/blog/touhou-reconstruction/index.html:241
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "How experience compounds"
-msgstr "Bileşikler nasıl deneyimlenir"
+msgstr "Deneyim nasıl birikir?"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -402,7 +401,7 @@ msgstr "Doğrulama ölçütü"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Test against a{ph0}concrete reference."
-msgstr "A'ya karşı test{ph0}somut referans."
+msgstr "Somut bir referansa{ph0}karşı test edin."
 
 #: website/public/blog/touhou-reconstruction/index.html:340
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -419,7 +418,7 @@ msgstr "Çalışma belleği"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "Code, evidence,{ph0}checks and lessons."
-msgstr "Kod, kanıt,{ph0}çekler ve dersler."
+msgstr "Kod, kanıt,{ph0}kontroller ve dersler."
 
 #. {ph0}: <br />
 #. {ph1}: <strong>
@@ -450,7 +449,7 @@ msgstr "Yeniden kullanım"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}Pass{ph1} · Keep the result and its evidence"
-msgstr "{ph0}Geçmek{ph1} * Sonucu ve kanıtını saklayın"
+msgstr "{ph0}Geçti{ph1} * Sonucu ve kanıtını saklayın"
 
 #: website/public/blog/touhou-reconstruction/index.html:363
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -459,7 +458,7 @@ msgid ""
 "fixing the checks when we discover a gap."
 msgstr ""
 "Her proje bir sonrakini daha iyi bir başlangıç noktasıyla bırakır. Bu, bir "
-"boşluk keşfettiğimizde çekleri düzeltmeyi de içerir."
+"boşluk keşfettiğimizde kontrolleri düzeltmeyi de içerir."
 
 #: website/public/blog/touhou-reconstruction/index.html:370
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -496,7 +495,7 @@ msgstr "{ph0}İki yaklaşım{ph1}"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}TH095: compounding{ph1}"
-msgstr "{ph0} TH095 : bileşik{ph1}"
+msgstr "{ph0}TH095: deneyimin birikmesi{ph1}"
 
 #. {ph0}: <a href="#th04">
 #. {ph1}: </a>
@@ -512,7 +511,7 @@ msgstr "{ph0} TH04: mimariler arası{ph1}"
 #, python-brace-format
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "{ph0}From exact to readable{ph1}"
-msgstr "{ph0}Kesinden okunabilirliğe{ph1}"
+msgstr "{ph0}Tam eşleşmeden okunabilirliğe{ph1}"
 
 #. {ph0}: <a href="#industrial-shift">
 #. {ph1}: </a>
@@ -558,11 +557,11 @@ msgid ""
 "experience behind this article. The method can be useful elsewhere, but each"
 " field needs to establish what it can check against a reliable reference."
 msgstr ""
-"YENİDEN çalışmamın çoğu oyunlarla ilgili. Onları yeniden yapılandırıyorum, "
-"böylece davranışları anlaşılabilir ve sonunda bir yazılım bağlantı noktasına"
-" veya bir moda taşınabilir. Bu makalenin arkasındaki deneyim budur. Yöntem "
-"başka yerlerde yararlı olabilir, ancak her alanın güvenilir bir referansa "
-"karşı neyi kontrol edebileceğini belirlemesi gerekir."
+"Tersine mühendislik çalışmalarımın çoğu oyunlarla ilgili. Onları yeniden "
+"yapılandırıyorum, böylece davranışları anlaşılabilir ve sonunda bir yazılım "
+"portuna veya bir moda taşınabilir. Bu makalenin arkasındaki deneyim budur. "
+"Yöntem başka yerlerde yararlı olabilir, ancak her alanın güvenilir bir "
+"referansa karşı neyi kontrol edebileceğini belirlemesi gerekir."
 
 #: website/public/blog/touhou-reconstruction/index.html:401
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -572,10 +571,10 @@ msgid ""
 "development tools. Touhou reconstruction gave me a substantial project in "
 "which to find out."
 msgstr ""
-"Ağustos 2026'da ajan odaklı re'yi ciddi bir şekilde keşfetmeye başladım. Bir"
-" ajanın programa ve sıradan geliştirme araçlarına erişimle ne kadar ileri "
-"gidebileceğini görmek istedim. Touhou'nun yeniden inşası bana öğrenmem "
-"gereken önemli bir proje verdi."
+"Ağustos 2026'da ajan odaklı tersine mühendisliği ciddi bir şekilde keşfetmeye "
+"başladım. Bir ajanın programa ve sıradan geliştirme araçlarına erişimle ne "
+"kadar ileri gidebileceğini görmek istedim. Touhou'nun yeniden inşası bana "
+"öğrenmem gereken önemli bir proje verdi."
 
 #: website/public/blog/touhou-reconstruction/index.html:407
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -588,11 +587,11 @@ msgid ""
 "were trustworthy."
 msgstr ""
 "Erken ilerleme şaşırtıcıydı. Ben her adımı seçmeden bir soruşturma devam "
-"edebilir. Başarısız bir karşılaştırma aracıyı başka bir arayana "
-"gönderebilir. Küçük bir teşhis yazabilir ve daha sonra ne deneyeceğine karar"
-" vermek için sonucu kullanabilir. Bu özgürlüğü vermek bir fark yarattı: "
-"Projenin yönüne ve kontrollerinin güvenilir olup olmadığına daha fazla "
-"dikkat edebilirdim."
+"edebilir. Başarısız bir karşılaştırma aracıyı başka bir çağırana "
+"gönderebilir. Küçük bir teşhis yazabilir ve daha sonra ne deneyeceğine karar "
+"vermek için sonucu kullanabilir. Bu özgürlüğü vermek bir fark yarattı: "
+"Projenin yönüne ve kontrollerinin güvenilir olup olmadığına daha fazla dikkat "
+"edebilirdim."
 
 #: website/public/blog/touhou-reconstruction/index.html:416
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -647,8 +646,8 @@ msgid ""
 " Linux 64-bit release arrived on 30 August."
 msgstr ""
 "Devam başladıktan yaklaşık on bir gün sonra, 24 Ağustos'ta oynanabilir bir "
-"Linux yeniden yapılanma limanı işlendi. Bunu bir Web baskısı izledi. Yerel "
-"Linux 64 bit sürümü 30 Ağustos'ta geldi."
+"Linux portu işlendi. Bunu bir Web baskısı izledi. Yerel Linux 64 bit sürümü "
+"30 Ağustos'ta geldi."
 
 #: website/public/blog/touhou-reconstruction/index.html:443
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -677,12 +676,12 @@ msgid ""
 "investigate."
 msgstr ""
 "Bu, referans kontrollerini işin merkezinde yaptı. Onlara {ph0}doğrulama "
-"referansları (kahinler){ph1} diyorum. Bir kod karşılaştırması, yeniden "
-"yapılandırılmış bir işlevin orijinal talimatları yeniden üretip üretmediğini"
-" bize söyleyebilir. Bir çalışma zamanı denetimi, uygulanan bir rotanın "
-"beklenen duruma ulaşıp ulaşmadığını bize söyleyebilir. Temsilci bir açıklama"
-" önerir ve onu test eder; Bir uyumsuzluk ona araştırması gereken belirli bir"
-" şey verir."
+"referansları (oracle){ph1} diyorum. Bir kod karşılaştırması, yeniden "
+"yapılandırılmış bir işlevin orijinal talimatları yeniden üretip üretmediğini "
+"bize söyleyebilir. Bir çalışma zamanı denetimi, uygulanan bir rotanın "
+"beklenen duruma ulaşıp ulaşmadığını bize söyleyebilir. Temsilci bir açıklama "
+"önerir ve onu test eder; Bir uyumsuzluk ona araştırması gereken belirli bir "
+"şey verir."
 
 #: website/public/blog/touhou-reconstruction/index.html:458
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -696,7 +695,7 @@ msgid ""
 "much can depend on that software."
 msgstr ""
 "Doğrulama referansı (oracle), birinin yazdığı bir yazılımdır.  TH08 bana bu "
-"yazılıma ne kadar güvenebileceğine dair net bir hatırlatma yaptı."
+"yazılıma ne kadar bağımlı olunabileceğini net biçimde hatırlattı."
 
 #. {ph0}: <code>0.0</code>
 #. {ph1}: <code>128.0</code>
@@ -708,10 +707,10 @@ msgid ""
 "auto-collection. The reconstructed source checked player power against "
 "{ph0}. The original used {ph1}, the maximum-power threshold."
 msgstr ""
-"Eylül ayında, aşağı akış Anahtarı bağlantı noktası tarafından bildirilen bir"
-" hata, öğenin otomatik toplanmasına geri döndü. Yeniden oluşturulan kaynak, "
-"oyuncu gücünü {ph0}'a karşı kontrol etti. Orijinal, maksimum güç eşiği olan "
-"{ph1}'ı kullandı."
+"Eylül ayında, aşağı akış Switch portu tarafından bildirilen bir hata, öğenin "
+"otomatik toplanmasına geri döndü. Yeniden oluşturulan kaynak, oyuncu gücünü "
+"{ph0}'a karşı kontrol etti. Orijinal, maksimum güç eşiği olan {ph1}'ı "
+"kullandı."
 
 #: website/public/blog/touhou-reconstruction/index.html:469
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -758,7 +757,7 @@ msgid ""
 "bytes matched. The source meant something different."
 msgstr ""
 "Bu çekte bir delik bıraktı. Yeniden yapılandırılan talimatı orijinalin "
-"{ph0}'ına yönlendirebilirken, kaynak hala {ph1}dedi. Yönerge baytları "
+"{ph0}'ına yönlendirebilirken, kaynak hâlâ {ph1} diyordu. Talimat baytları "
 "eşleşti. Kaynak farklı bir şey ifade ediyordu."
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/th08/pull/11" >
@@ -814,8 +813,8 @@ msgid ""
 msgstr ""
 "Ekip çoğunlukla ajanlarla çalışan bir kişi olduğunda bu önemlidir. "
 "Ürettikleri her hattı kişisel olarak inceleyemem, bu yüzden güvenimin çoğu "
-"onların kontrollerine dayanıyor. Paylaşılan doğrulama referansı'nın (oracle)"
-" kör noktası, fark etmeden önce birçok araştırmayı etkileyebilir. "
+"onların kontrollerine dayanıyor. Paylaşılan doğrulama referansının (oracle) "
+"kör noktası, fark etmeden önce birçok araştırmayı etkileyebilir. "
 "Denetleyicinin gerçekte neyi doğruladığını anlamam ve başarısız olması "
 "gereken durumlara karşı test etmem gerekiyor."
 
@@ -831,9 +830,9 @@ msgid ""
 " working memory.{ph1}"
 msgstr ""
 "Çalışmalar devam ederken, bu kontroller deponun bir parçası haline geldi. "
-"Kaynak değişikliklerinin nedenleri ve daha önceki bir oturumun daha önceki "
-"bir oturumun durduğu yerden devam etmesine izin veren notlar da öyle. "
-"{ph0}Kaynak kod deposu, projenin çalışma belleği haline geliyordu.{ph1}"
+"Kaynak değişikliklerinin nedenleri ve önceki bir oturumun kaldığı yerden "
+"devam etmesine izin veren notlar da öyle. {ph0}Kaynak kod deposu, projenin "
+"çalışma belleği haline geliyordu.{ph1}"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -844,8 +843,8 @@ msgid ""
 "{ph0}A successful batch gave us both recovered code and a better environment"
 " for the next batch.{ph1}"
 msgstr ""
-"{ph0}Başarılı bir parti bize hem kurtarılan kodu hem de bir sonraki parti "
-"için daha iyi bir ortam sağladı.{ph1}"
+"{ph0}Başarılı bir toplu iş bize hem kurtarılan kodu hem de bir sonraki toplu "
+"iş için daha iyi bir ortam sağladı.{ph1}"
 
 #: website/public/blog/touhou-reconstruction/index.html:540
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -864,9 +863,9 @@ msgid ""
 " of work explicit. The notice announces that further development will happen"
 " privately until completion. One passage reads:"
 msgstr ""
-"GensokyoClub'NUN {ph0}kamuya açık BENİOKU{ph1}, bu tür çalışmalarla olan "
-"anlaşmazlığını açıkça ortaya koyuyor. Bildirim, tamamlanana kadar daha fazla"
-" gelişmenin özel olarak gerçekleşeceğini duyurdu. Bir pasaj okur:"
+"GensokyoClub'NUN {ph0}kamuya açık README{ph1}, bu tür çalışmalarla olan "
+"anlaşmazlığını açıkça ortaya koyuyor. Bildirim, tamamlanana kadar daha fazla "
+"gelişmenin özel olarak gerçekleşeceğini duyurdu. Bir pasaj okur:"
 
 #: website/public/blog/touhou-reconstruction/index.html:552
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -888,12 +887,12 @@ msgid ""
 "want to discuss is about how reconstruction should proceed and how a "
 "contribution should be judged."
 msgstr ""
-"Bildiride ayrıca bakıcılar üzerindeki psikolojik ücret de açıklanmaktadır. "
-"Katkı politikaları, öncelikle yapay zeka ile üretilen çekme taleplerini "
-"hariç tutar. Boş zamanlarını zor işlere harcadılar ve bu iş devam etmemi "
-"mümkün kıldı. Arkasındaki çabaya saygı duyuyorum. Tartışmak istediğim "
-"anlaşmazlık, yeniden yapılanmanın nasıl ilerlemesi gerektiği ve bir katkının"
-" nasıl değerlendirilmesi gerektiği ile ilgili."
+"Bildiride ayrıca bakıcılar üzerindeki psikolojik yük de açıklanmaktadır. "
+"Katkı politikaları, öncelikle yapay zeka ile üretilen pull request’leri hariç "
+"tutar. Boş zamanlarını zor işlere harcadılar ve bu iş devam etmemi mümkün "
+"kıldı. Arkasındaki çabaya saygı duyuyorum. Tartışmak istediğim anlaşmazlık, "
+"yeniden yapılanmanın nasıl ilerlemesi gerektiği ve bir katkının nasıl "
+"değerlendirilmesi gerektiği ile ilgili."
 
 #: website/public/blog/touhou-reconstruction/index.html:567
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -915,9 +914,9 @@ msgid ""
 "tools. What changed for me was that an agent could use that knowledge to "
 "pursue the next investigation on its own."
 msgstr ""
-"Mevcut projeler zaten kaynağında bilgiyi koruyor ve araçlar oluşturuyor. "
-"Benim için değişen şey, bir ajanın bu bilgiyi bir sonraki soruşturmayı kendi"
-" başına yürütmek için kullanabilmesiydi."
+"Mevcut projeler zaten bilgiyi kaynak kodunda ve derleme araçlarında koruyor. "
+"Benim için değişen şey, bir ajanın bu bilgiyi bir sonraki soruşturmayı kendi "
+"başına yürütmek için kullanabilmesiydi."
 
 #: website/public/blog/touhou-reconstruction/index.html:579
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -929,10 +928,10 @@ msgid ""
 "agent did most of the work."
 msgstr ""
 "Devamımda, bir sonucu kabul etmenin amacına ve standardına karar veriyorum. "
-"Ajanın soruşturma konusunda geniş bir özgürlüğü var. Önerilen yeniden inşası"
-" daha sonra ilgili kontrollerden kurtulmak zorundadır. İşin çoğunu bir "
-"temsilci yapmış olsa bile, başka bir kişinin neden bir uygulamayı "
-"seçtiğimizi inceleyebilmesini istiyorum."
+"Ajanın soruşturma konusunda geniş bir özgürlüğü var. Önerilen yeniden inşası "
+"daha sonra ilgili kontrolleri geçmek zorundadır. İşin çoğunu bir temsilci "
+"yapmış olsa bile, başka bir kişinin neden bir uygulamayı seçtiğimizi "
+"inceleyebilmesini istiyorum."
 
 #: website/public/blog/touhou-reconstruction/index.html:586
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -943,9 +942,9 @@ msgid ""
 " accepting a contribution."
 msgstr ""
 "Bu zor bir geçiş olabilir. Yıllarca süren özenli çalışma, çok daha hızlı "
-"ilerleyen bir devamlılığın temeli olabilir. Bu, krediyle ilgili gerçek "
-"soruları gündeme getiriyor. Ayrıca, bir katkıyı kabul etmeden önce "
-"bakıcıların bilmesi gerekenleri de değiştirir."
+"ilerleyen bir devamlılığın temeli olabilir. Bu, atıfla ilgili gerçek soruları "
+"gündeme getiriyor. Ayrıca, bir katkıyı kabul etmeden önce bakıcıların bilmesi "
+"gerekenleri de değiştirir."
 
 #: website/public/blog/touhou-reconstruction/index.html:592
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -957,10 +956,10 @@ msgid ""
 " much of that change they want to take on."
 msgstr ""
 "Endüstriyel benzetme bunu düşünmeme yardımcı oluyor. Bir zanaatta, sürecin "
-"çoğu, onu gerçekleştiren kişinin becerisine bağlıdır. Makine, bu becerinin "
-"gerekli olduğu yerde değişir. Birisi hala süreci tasarlamalı ve çıktısının "
-"ne zaman yanlış olduğunu anlamalıdır. Farklı topluluklar bu değişimin ne "
-"kadarını üstlenmek istediklerini seçebilir."
+"çoğu, onu gerçekleştiren kişinin becerisine bağlıdır. Makineleşme, bu "
+"becerinin nereye gerektiğini değiştirir. Birisi hâlâ süreci tasarlamalı ve "
+"çıktısının ne zaman yanlış olduğunu anlamalıdır. Farklı topluluklar bu "
+"değişimin ne kadarını üstlenmek istediklerini seçebilir."
 
 #: website/public/blog/touhou-reconstruction/index.html:600
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -973,7 +972,7 @@ msgstr ""
 "Benim seçimim, miras kalan eser kredilendirilerek ve tarihi korunarak açık "
 "bir şekilde devam etmektir. Yeni çalışmanın gözden geçirilebilir olmasını "
 "istiyorum. Bu bize bu yaklaşımın ne kadar ileri gidebileceğini sormanın ve "
-"yol boyunca neyin yanlış gittiğinden öğrenmenin bir yolunu sunuyor."
+"yol boyunca neyin yanlış gittiğini öğrenmenin bir yolunu sunuyor."
 
 #. {ph0}: <a
 #. href="https://github.com/GensokyoClub/th08/blob/e874b98e210b3be1ed21c5e03d54b883eac5069c/README.md#important-
@@ -995,14 +994,14 @@ msgid ""
 "and its {ph2}contribution policy{ph3}. The quotation is a shortened excerpt."
 " TH08's {ph4}credits and provenance{ph5} record the continuation boundary."
 msgstr ""
-"Kaynak: GensokyoClub 10 Ekim 2026'da kontrol edilen {ph0}BENİOKU "
+"Kaynak: GensokyoClub 10 Ekim 2026'da kontrol edilen {ph0}README "
 "bildirimi{ph1} ve {ph2}katkı politikası{ph3}. Alıntı kısaltılmış bir "
 "alıntıdır.  TH08 {ph4}kredileri ve kaynağı{ph5} devam sınırını kaydeder."
 
 #: website/public/blog/touhou-reconstruction/index.html:624
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "TH095: experience starts compounding"
-msgstr "TH095: deneyim birleştirmeye başlar"
+msgstr "TH095: deneyim birikmeye başlar"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/th095">
 #. {ph1}: </a>
@@ -1016,10 +1015,10 @@ msgid ""
 " much more about how to begin a reconstruction and how to keep it moving."
 msgstr ""
 "{ph0} TH095{ph1}, Mermiyi Vur, bu deneyimin değerini görmeyi çok daha "
-"kolaylaştırdı. Deposu 29 Ağustos'ta defterde sıfır onaylanmış oyun işleviyle"
-" başladı. Hala oyunu öğrenmek zorundaydık. Ancak bir yeniden yapılanmaya "
-"nasıl başlanacağı ve nasıl devam ettirileceği hakkında çok daha fazlasını "
-"zaten biliyorduk."
+"kolaylaştırdı. Deposu 29 Ağustos'ta defterde sıfır onaylanmış oyun işleviyle "
+"başladı. Hâlâ oyunu öğrenmek zorundaydık. Ancak bir yeniden yapılanmaya nasıl "
+"başlanacağı ve nasıl devam ettirileceği hakkında çok daha fazlasını zaten "
+"biliyorduk."
 
 #: website/public/blog/touhou-reconstruction/index.html:633
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1057,8 +1056,8 @@ msgid ""
 msgstr ""
 "Örneğin, TH08 bize birleştirilmiş programa erken dikkat etmeyi öğretmişti. "
 "Kurtarılan birkaç işlev aynı duruma bağlıysa, yalıtılmış karşılaştırmaları "
-"önemli bir soruyu açık bırakır. Birlikte çalıştıklarını görmeliyiz. Bu ders,"
-" TH095'NUN tüm program yapısına nasıl yaklaştığımızı şekillendirmeye "
+"önemli bir soruyu açık bırakır. Birlikte çalıştıklarını görmeliyiz. Bu ders, "
+"TH095’in tüm program derlemesina nasıl yaklaştığımızı şekillendirmeye "
 "yardımcı oldu."
 
 #: website/public/blog/touhou-reconstruction/index.html:653
@@ -1070,9 +1069,9 @@ msgid ""
 "that led to it."
 msgstr ""
 "Ben oradayken kafamda kalan bir ders faydalıdır. Başka bir oturumun "
-"çalışabileceğini kontrol ettikten sonra, devam ettikten sonra yardımcı "
-"olmaya devam edebilir. Bir sonraki temsilci, sonuca yol açan soruşturmayı "
-"tekrar etmeden sonucu kullanabilir."
+"çalıştırabileceği bir kontrol hâline geldiğinde, devam ettikten sonra "
+"yardımcı olmaya devam edebilir. Bir sonraki temsilci, sonuca yol açan "
+"soruşturmayı tekrar etmeden sonucu kullanabilir."
 
 #: website/public/blog/touhou-reconstruction/index.html:659
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1117,7 +1116,7 @@ msgstr ""
 #: website/public/blog/touhou-reconstruction/index.html:681
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "TH04: the workflow survives a different architecture"
-msgstr "TH04: iş akışı farklı bir mimariden sağ çıkıyor"
+msgstr "TH04: iş akışı farklı bir farklı mimaride de işliyor"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/th04">
 #. {ph1}: </a>
@@ -1147,10 +1146,10 @@ msgid ""
 "work is a native 64-bit port. Establishing a working DOS version first gives"
 " that port a reference."
 msgstr ""
-"DOS yeniden yapılandırması şimdi çalışıyor. Manuel testimde, sonları boyunca"
-" Normal rotaları tamamladım ve tasarrufları kontrol ettim. Mevcut çalışma "
-"yerel bir 64 bit bağlantı noktasıdır. Çalışan bir DOS sürümü oluşturmak, "
-"önce bu bağlantı noktasına bir başvuru verir."
+"DOS yeniden yapılandırması şimdi çalışıyor. Manuel testimde, sonları boyunca "
+"Normal rotaları tamamladım ve kayıtları kontrol ettim. Mevcut çalışma yerel "
+"bir 64 bit portudur. Çalışan bir DOS sürümü oluşturmak, önce bu portuna bir "
+"başvuru verir."
 
 #: website/public/blog/touhou-reconstruction/index.html:697
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1174,8 +1173,8 @@ msgid ""
 "evidence and checks are available, an agent can work through the question "
 "much as it did on a Windows title."
 msgstr ""
-"Oyundan sona geçişi düşünün. Hangi devletin bu sınırı aştığını ve bundan "
-"hangi programın sorumlu olduğunu bilmemiz gerekiyor. Bu DOS ürününe karşı "
+"Oyundan sona geçişi düşünün. Hangi durumun bu sınırı aştığını ve bundan hangi "
+"programın sorumlu olduğunu bilmemiz gerekiyor. Bu DOS ürününe karşı "
 "araştırabileceğimiz bir şey. Kanıt ve kontroller mevcut olduğunda, bir "
 "temsilci, bir Windows başlığında olduğu gibi soru üzerinde de çalışabilir."
 
@@ -1186,9 +1185,9 @@ msgid ""
 "not force us to start over with a new way of working. The architecture "
 "defined the problem; the workflow still gave us a way to solve it."
 msgstr ""
-"Bu nedenle TH04 argüman için önemlidir. Önemli bir platform değişikliği bizi"
-" yeni bir çalışma şekliyle baştan başlamaya zorlamadı. Mimari sorunu "
-"tanımladı; iş akışı hala bize bunu çözmenin bir yolunu verdi."
+"Bu nedenle TH04 argüman için önemlidir. Önemli bir platform değişikliği bizi "
+"yeni bir çalışma şekliyle baştan başlamaya zorlamadı. Mimari sorunu "
+"tanımladı; iş akışı hâlâ bize bunu çözmenin bir yolunu verdi."
 
 #: website/public/blog/touhou-reconstruction/index.html:717
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1197,9 +1196,9 @@ msgid ""
 "behavior already recovered on DOS. The knowledge from reconstruction gives "
 "the port something to build on."
 msgstr ""
-"64 Bit bağlantı noktası için artık yeni uygulamayı dos'ta kurtarılmış "
-"davranışlara karşı inceleyebiliriz. Yeniden yapılanmadan elde edilen bilgi, "
-"limana inşa edilecek bir şey verir."
+"64 bit port için artık yeni uygulamayı dos'ta kurtarılmış davranışlara karşı "
+"inceleyebiliriz. Yeniden yapılanmadan elde edilen bilgi, porta inşa edilecek "
+"bir şey verir."
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th04/blob/bb9faca54e2eb3c0d6c757c75d59ac29d2cd5e93/docs/RE_HANDOFF.md"
@@ -1214,9 +1213,8 @@ msgid ""
 "Project state as of 10 October 2026: {ph0}DOS reconstruction and manual "
 "testing{ph1} · {ph2}64-bit port{ph3}. The port remains in development."
 msgstr ""
-"10 Ekim 2026 itibariyle proje durumu: {ph0}DOS yeniden yapılandırma ve "
-"manuel test{ph1} · {ph2}64 bit bağlantı{ph3} noktası. Liman geliştirme "
-"aşamasındadır."
+"10 Ekim 2026 itibariyle proje durumu: {ph0}DOS yeniden yapılandırma ve manuel "
+"test{ph1} · {ph2}64 bit port{ph3}. Port geliştirme aşamasındadır."
 
 #: website/public/blog/touhou-reconstruction/index.html:735
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1240,7 +1238,7 @@ msgid ""
 "follow the game's logic without keeping the executable's memory layout in "
 "their head."
 msgstr ""
-"Bana göre, montaj ve ham ofsetler eski arkadaşlar gibi hissedebilir. Bunun "
+"Bana göre, assembly ve ham ofsetler eski arkadaşlar gibi hissedebilir. Bunun "
 "biraz sıra dışı bir \"okunabilir\" tanımı olduğunun farkındayım.\" Çoğu "
 "insan, yürütülebilir dosyanın bellek düzenini kafasında tutmadan oyunun "
 "mantığını takip etmeyi tercih eder."
@@ -1258,7 +1256,7 @@ msgid ""
 "next person can see where that interpretation came from."
 msgstr ""
 "{ph0}Anlamsal yeniden yapılanmanın{ph1} devreye girdiği yer burasıdır. "
-"Kurtarılan bir alan hala esas olarak ofseti ile bilinebilir. Rolünü "
+"Kurtarılan bir alan hâlâ esas olarak ofseti ile bilinebilir. Rolünü "
 "açıklayana kadar oyunun onu nasıl kullandığını takip ediyoruz. O zaman ona "
 "anlamlı bir isim ve kanıtlara uyan bir tür verebiliriz. Akıl yürütmeyi "
 "kaynakla birlikte tutarız, böylece bir sonraki kişi bu yorumun nereden "
@@ -1273,16 +1271,16 @@ msgid ""
 "To move the behavior safely, we need to recover the relationship behind the "
 "old memory access."
 msgstr ""
-"Bu özellikle bir yazılım bağlantı noktası için önemli hale gelir. Mutlak bir"
-" adres bana eski yürütülebilir dosyada bir şeyin nerede yaşadığını söyler. "
-"64 bitlik bir uygulamaya, hangi nesnenin o duruma sahip olması gerektiğine "
-"karar vermede çok az yardım sağlar. Davranışı güvenli bir şekilde taşımak "
-"için eski bellek erişiminin arkasındaki ilişkiyi kurtarmamız gerekiyor."
+"Bu özellikle bir yazılım portu için önemli hale gelir. Mutlak bir adres bana "
+"eski yürütülebilir dosyada bir şeyin nerede yaşadığını söyler. 64 bitlik bir "
+"uygulamaya, hangi nesnenin o duruma sahip olması gerektiğine karar vermede "
+"çok az yardım sağlar. Davranışı güvenli bir şekilde taşımak için eski bellek "
+"erişiminin arkasındaki ilişkiyi kurtarmamız gerekiyor."
 
 #: website/public/blog/touhou-reconstruction/index.html:761
 msgctxt "page:blog/touhou-reconstruction/index.html"
 msgid "The order I now use is:"
-msgstr "Şu anda kullandığım sipariş:"
+msgstr "Şu anda kullandığım sıra:"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -1342,10 +1340,9 @@ msgid ""
 "environment, such as a native 64-bit build. The reconstructed original-"
 "platform game remains a reference for comparing how the port behaves."
 msgstr ""
-"{ph0}Modern limanı yapın.{ph1} Yerleşik davranışı, yerel bir 64 bit yapı "
-"gibi yeni ortama taşıyın. Yeniden yapılandırılmış orijinal platform oyunu, "
-"bağlantı noktasının nasıl davrandığını karşılaştırmak için bir referans "
-"olmaya devam ediyor."
+"{ph0}Modern portu yapın.{ph1} Yerleşik davranışı, yerel bir 64 bit yapı gibi "
+"yeni ortama taşıyın. Yeniden yapılandırılmış orijinal platform oyunu, portun "
+"nasıl davrandığını karşılaştırmak için bir referans olmaya devam ediyor."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -1361,9 +1358,9 @@ msgid ""
 msgstr ""
 "İkinci aşamadan itibaren oynanabilir yapı, üçüncü aşamada {ph0}ikinci bir "
 "doğrulama referansı (oracle){ph1} haline gelir. İlk doğrulama referansı "
-"(oracle), değiştirilen kaynağımızın hala ilgili orijinal kodu ve verileri "
+"(oracle), değiştirilen kaynağımızın hâlâ ilgili orijinal kodu ve verileri "
 "yeniden üretip üretmediğini kontrol eder. İkincisi, yeniden yapılandırılan "
-"programın egzersiz yaptığımız yollar boyunca hala doğru şekilde "
+"programın egzersiz yaptığımız yollar boyunca hâlâ doğru şekilde "
 "oluşturulduğunu ve davrandığını kontrol eder."
 
 #: website/public/blog/touhou-reconstruction/index.html:801
@@ -1374,9 +1371,9 @@ msgid ""
 "different copies of state. Keeping both checks available gives the agent a "
 "concrete failure to investigate before carrying a refactor further."
 msgstr ""
-"Farklı hatalar yakalarlar. Bir tür değişikliği oluşturulan yönergeleri "
-"değiştirebilir. Sahiplik değişikliği, eyaletin farklı kopyalarını kullanarak"
-" oyunun iki bölümünü bırakabilir. Her iki kontrolün de mevcut tutulması, "
+"Farklı hatalar yakalarlar. Bir tür değişikliği oluşturulan talimatları "
+"değiştirebilir. Sahiplik değişikliği, eyaletin farklı kopyalarını kullanarak "
+"oyunun iki bölümünü bırakabilir. Her iki kontrolün de mevcut tutulması, "
 "acenteye bir refaktörü daha fazla taşımadan önce soruşturmada somut bir "
 "başarısızlık sağlar."
 
@@ -1425,7 +1422,7 @@ msgid ""
 msgstr ""
 "{ph0}Tam yeniden yapılanma bize bir referans veriyor. Anlamsal yeniden "
 "yapılanma, kurtarılan bilgiyi kullanılabilir hale getirir.{ph1} Daha sonra "
-"her ikisine de bir liman inşa edilebilir."
+"her ikisinin üzerine bir port inşa edilebilir."
 
 #: website/public/blog/touhou-reconstruction/index.html:835
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1466,10 +1463,10 @@ msgid ""
 "understand the mistake well enough to try again. I still have to decide "
 "whether the accumulated evidence supports a project milestone."
 msgstr ""
-"Ajanın yanlış hipotezler yapmasını bekliyorum. Önemli olan, onları test edip"
-" sonuçtan öğrenip öğrenemeyeceğimizdir. Başarısız bir kontrol, hatayı tekrar"
-" deneyecek kadar iyi anlamasına yardımcı olmalıdır. Birikmiş kanıtların bir "
-"proje kilometre taşını destekleyip desteklemediğine hala karar vermem "
+"Ajanın yanlış hipotezler yapmasını bekliyorum. Önemli olan, onları test edip "
+"sonuçtan öğrenip öğrenemeyeceğimizdir. Başarısız bir kontrol, hatayı tekrar "
+"deneyecek kadar iyi anlamasına yardımcı olmalıdır. Birikmiş kanıtların bir "
+"proje kilometre taşını destekleyip desteklemediğine hâlâ karar vermem "
 "gerekiyor."
 
 #: website/public/blog/touhou-reconstruction/index.html:857
@@ -1481,8 +1478,8 @@ msgid ""
 "use those to test the source it proposes and see where its explanation holds"
 " up."
 msgstr ""
-"REA, aracıya analiz araçlarına erişim sağlar. Bir işlevin arayanıyla ilgili "
-"bir soru, doğrudan o arayanı incelemeye yönlendirebilir. Yeniden "
+"REA, aracıya analiz araçlarına erişim sağlar. Bir işlevin çağıranıyla ilgili "
+"bir soru, doğrudan o çağıranı incelemeye yönlendirebilir. Yeniden "
 "yapılandırma projesi derleyiciyi ve kendi referans kontrollerini sağlar. "
 "Aracı, önerdiği kaynağı test etmek ve açıklamasının nerede geçerli olduğunu "
 "görmek için bunları kullanabilir."
@@ -1535,8 +1532,8 @@ msgid ""
 " we find a defect in a shared tool, we have to repair it and revisit the "
 "results it affected. The next project can then inherit a stronger tool."
 msgstr ""
-"{ph0}Bu endüstriyel değişimin ilk aşamalarındayız.{ph1} Altyapının çoğu hala"
-" olgunlaşmamış durumda. Temsilciler, kontrollerimizin desteklemek için "
+"{ph0}Bu endüstriyel değişimin ilk aşamalarındayız.{ph1} Altyapının çoğu hâlâ "
+"olgunlaşmamış durumda. Temsilciler, kontrollerimizin desteklemek için "
 "tasarlandığından daha hızlı hareket edebilir, bu nedenle süreç onlarla "
 "birlikte gelişmelidir. Paylaşılan bir araçta bir kusur bulduğumuzda, onu "
 "onarmalı ve etkilediği sonuçları tekrar gözden geçirmeliyiz. Bir sonraki "
@@ -1566,8 +1563,8 @@ msgid ""
 " game can improve the starting conditions for another."
 msgstr ""
 "{ph0}Touhou Yeniden Yapılanma Fabrikası{ph1} bu ihtiyaçtan doğdu. Projelere "
-"çeklerini ve derslerini ileriye taşımak için ortak bir yol sunar. Bir oyun "
-"üzerinde çalışmak, diğerinin başlangıç koşullarını iyileştirebilir."
+"kontrollerini ve derslerini ileriye taşımak için ortak bir yol sunar. Bir "
+"oyun üzerinde çalışmak, diğerinin başlangıç koşullarını iyileştirebilir."
 
 #: website/public/blog/touhou-reconstruction/index.html:910
 msgctxt "page:blog/touhou-reconstruction/index.html"
@@ -1608,11 +1605,10 @@ msgid ""
 "off after the first version runs."
 msgstr ""
 "Şimdi böyle bir projeyi tekrar tekrar araştırarak sürdürmenin bir yolunu "
-"görebiliyorum. Çalışan bir yeniden yapılanma elde etmek, bir yazılım "
-"bağlantı noktasını daha pratik hale getirir. Okunabilir anlambilimi "
-"kurtarmak, bir başkasının bir modu keşfetmesini kolaylaştırır. Oyunu anlamak"
-" için harcanan çaba, ilk sürüm yayınlandıktan sonra karşılığını vermeye "
-"devam edebilir."
+"görebiliyorum. Çalışan bir yeniden yapılanma elde etmek, bir yazılım portunu "
+"daha pratik hale getirir. Okunabilir anlambilimi kurtarmak, bir başkasının "
+"bir modu keşfetmesini kolaylaştırır. Oyunu anlamak için harcanan çaba, ilk "
+"sürüm yayınlandıktan sonra karşılığını vermeye devam edebilir."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -1880,7 +1876,7 @@ msgstr "İçeriğe geç"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Home{ph1}{ph2}/{ph3}Dinosaur speed lab"
-msgstr "{ph0}Ana{ph1}{ph2} Sayfa/{ph3} Dinozor hız laboratuvarı"
+msgstr "{ph0}Ana Sayfa{ph1}{ph2}/{ph3} Dinozor hız laboratuvarı"
 
 #: website/public/examples/dino-lab/index.html:203
 msgctxt "page:examples/dino-lab/index.html"
@@ -1905,7 +1901,7 @@ msgid ""
 "this mini-game with {ph2}adjustable speed.{ph3}"
 msgstr ""
 "Oyunun ivmesini yeniden oluşturmak için önce hızını kontrol eden kuralı "
-"bulun.  REA {ph0}çalışan komut dosyasını döndürdü;{ph1} Bu mini oyunu "
+"bulun.  REA {ph0}çalışan betiği döndürdü;{ph1} Bu mini oyunu "
 "{ph2}ayarlanabilir hızda oluşturmak için kuralını kullandık.{ph3}"
 
 #: website/public/examples/dino-lab/index.html:214
@@ -2011,13 +2007,13 @@ msgid ""
 "Enable JavaScript to play the reconstruction. The code and explanation above"
 " remain readable."
 msgstr ""
-"Yeniden yapılandırmayı oynatmak için JavaScript'YU etkinleştirin. Yukarıdaki"
-" kod ve açıklama okunabilir durumda kalır."
+"Yeniden yapılandırmayı oynatmak için JavaScript’i etkinleştirin. Yukarıdaki "
+"kod ve açıklama okunabilir durumda kalır."
 
 #: website/public/examples/dino-lab/index.html:300
 msgctxt "page:examples/dino-lab/index.html"
 msgid "Read the script REA returned"
-msgstr "Döndürülen REA komut dosyasını okuyun"
+msgstr "Döndürülen REA betiği okuyun"
 
 #. {ph0}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph1}: </a >
@@ -2030,8 +2026,8 @@ msgid ""
 " returned the loaded {ph2}, including this branch in the game’s update "
 "function:"
 msgstr ""
-"{ph0}Wayou'nun Chromium'DAN türetilmiş tarayıcı sürümünü{ph1} REA ile "
-"inceledik. Yüklenen {ph2}, bu dalı oyunun güncelleme işlevine dahil etmek:"
+"{ph0}Wayou’nun Chromium’dan türetilmiş tarayıcı sürümünü{ph1} REA ile "
+"inceledik. Yüklenen {ph2}, oyunun güncelleme işlevindeki bu dal dahil döndü:"
 
 #. {ph0}: <code>SPEED: 6</code>
 #. {ph1}: <code>ACCELERATION: 0.001</code>
@@ -2136,7 +2132,7 @@ msgstr "Analizi kendiniz deneyin"
 #, python-brace-format
 msgctxt "page:examples/dino-lab/index.html"
 msgid "{ph0}Set up REA{ph1} with your coding agent."
-msgstr "{ph0}Kodlama aracınızla REA'YU ayarlayın.{ph1}"
+msgstr "{ph0}Kodlama aracınızla REA’yı ayarlayın.{ph1}"
 
 #. {ph0}: <a href="../../guides/browser/#prepare" >
 #. {ph1}: </a >
@@ -2147,7 +2143,8 @@ msgctxt "page:examples/dino-lab/index.html"
 msgid ""
 "Follow the {ph0}browser connection steps{ph1}, using {ph2} as the page URL."
 msgstr ""
-"Kullanarak {ph0}{ph1}tarayıcı bağlantı adımlarını{ph2} sayfa URL'si olarak."
+"{ph0}Tarayıcı bağlantı adımlarını{ph1} izleyin ve {ph2} sayfasını URL olarak "
+"kullanın."
 
 #: website/public/examples/dino-lab/index.html:416
 msgctxt "page:examples/dino-lab/index.html"
@@ -2186,9 +2183,9 @@ msgid ""
 "faster? Show the speed rule, then build a small version with an adjustable "
 "speed.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Bu dinozor oyununu incelemek için REA kullanın. Neden daha "
-"hızlı oluyor? Hız kuralını gösterin, ardından ayarlanabilir hıza sahip küçük"
-" bir versiyon oluşturun.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Bu dinozor oyununu incelemek için REA kullanın. Neden daha "
+"hızlı oluyor? Hız kuralını gösterin, ardından ayarlanabilir hıza sahip küçük "
+"bir versiyon oluşturun.{ph3}{ph4}{ph5}"
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -2199,7 +2196,7 @@ msgid ""
 "Ask a follow-up: {ph0}“Where is jump height calculated? Add a jump-height "
 "control to the new version.”{ph1}"
 msgstr ""
-"Bir takip isteyin: {ph0}\"Atlama yüksekliği nerede hesaplanır? Yeni sürüme "
+"Takip sorusu sorun: {ph0}›Atlama yüksekliği nerede hesaplanır? Yeni sürüme "
 "bir atlama yüksekliği kontrolü ekleyin.”{ph1}"
 
 #. {ph0}: <a href="https://github.com/wayou/t-rex-
@@ -2335,7 +2332,7 @@ msgstr "REA’yı nasıl kurarım?"
 #: website/public/faq/index.html:230
 msgctxt "page:faq/index.html"
 msgid "Terminal · agent setup"
-msgstr "Terminal * aracı kurulumu"
+msgstr "Terminal · ajan kurulumu"
 
 #: website/public/faq/index.html:231 website/public/faq/index.html:272
 #: website/public/faq/index.html:290 website/public/faq/index.html:374
@@ -2357,10 +2354,10 @@ msgid ""
 "a question. {ph0}Follow the setup guide{ph1} for prerequisites and your "
 "first analysis."
 msgstr ""
-"Kurulum, REA’nın MCP bağlantısını kaydeder ve ilgili analiz skill’ini "
-"yükler. Tamamlandığında ajanınızı yeniden başlatın, ardından dosya yolunu ve"
-" sorunuzu verin. Gereksinimler ve ilk analiz için {ph0}kurulum "
-"kılavuzuna{ph1} bakın."
+"Kurulum, REA’nın MCP bağlantısını kaydeder ve ilgili analiz becerisini "
+"yükler. Tamamlandığında ajanınızı yeniden başlatın, ardından dosya yolunu ve "
+"sorunuzu verin. Gereksinimler ve ilk analiz için {ph0}kurulum kılavuzuna{ph1} "
+"bakın."
 
 #: website/public/faq/index.html:251
 msgctxt "page:faq/index.html"
@@ -2375,10 +2372,10 @@ msgid ""
 "Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP, and VS Code."
 " Grok Bot's connector is added from its chat."
 msgstr ""
-"Yerel MCP sunucularını destekleyen herhangi bir aracı. Kurulum içerir Claude"
-" Code, Claude Masaüstü, Codex, Cursor, Gemini CLI, Windsurf, Devin, "
-"OpenCode, Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP ve "
-"VS Code . Grok Bot'un konektörü sohbetinden eklenir."
+"Yerel MCP sunucularını destekleyen herhangi bir aracı. Kurulum içerir Claude "
+"Code, Claude Desktop, Codex, Cursor, Gemini CLI, Windsurf, Devin, OpenCode, "
+"Antigravity, GitHub Copilot CLI, Command Code, Grok Build, OMP ve VS Code . "
+"Grok Bot'un konektörü sohbetinden eklenir."
 
 #. {ph0}: <a href="../get-started/#agent">
 #. {ph1}: </a>
@@ -2399,8 +2396,8 @@ msgid ""
 "REA releases frequently, including bug fixes. If you installed the CLI with "
 "npm:"
 msgstr ""
-"REA, hata düzeltmeleri de dahil olmak üzere sık sık yayınlanır. CLI'YU npm "
-"ile kurduysanız :"
+"REA, hata düzeltmeleri de dahil olmak üzere sık sık yayınlanır. CLI’yı npm "
+"ile kurduysanız:"
 
 #: website/public/faq/index.html:271
 msgctxt "page:faq/index.html"
@@ -2421,7 +2418,7 @@ msgstr ""
 #: website/public/faq/index.html:289
 msgctxt "page:faq/index.html"
 msgid "Terminal · refresh agent setup"
-msgstr "Terminal * aracı kurulumunu yenile"
+msgstr "Terminal · ajan kurulumunu yenile"
 
 # Reviewed for readable setup and analysis terminology.
 #. {ph0}: <code>npx -y rea-agents@latest</code>
@@ -2441,7 +2438,7 @@ msgstr ""
 #: website/public/faq/index.html:309
 msgctxt "page:faq/index.html"
 msgid "Is installing the skill from skills.sh enough?"
-msgstr "Beceriyi yüklüyor mu skills.sh yeter mi?"
+msgstr "skills.sh’den beceriyi kurmak yeterli mi?"
 
 #. {ph0}: <a href="#install">
 #. {ph1}: </a>
@@ -2454,7 +2451,7 @@ msgid ""
 "restart your agent so it can call the tools."
 msgstr ""
 "Beceri, temsilcinize soruşturma talimatları verir. REA sunucusunu bağlamak "
-"için MCP {ph0}kurulumunu{ph1} çalıştırın ve eşleşen beceriyi yükleyin, "
+"için {ph0}REA kurulumunu{ph1} çalıştırın ve eşleşen beceriyi yükleyin, "
 "ardından aracınızı yeniden başlatın, böylece araçları çağırabilir."
 
 #: website/public/faq/index.html:323
@@ -2516,14 +2513,14 @@ msgid ""
 "packaged resources. {ph0}See the case studies{ph1} for worked "
 "investigations."
 msgstr ""
-"REA ayrıca yönetilen derlemeler, Android apk'lar, ürün yazılımı ve "
+"REA ayrıca yönetilen derlemeler, Android APK’leri, ürün yazılımı ve "
 "paketlenmiş kaynaklar için iş akışlarına sahiptir. Çalışılan soruşturmalar "
 "için {ph0}vaka incelemelerine bakın{ph1}."
 
 #: website/public/faq/index.html:352
 msgctxt "page:faq/index.html"
 msgid "Do I need Hopper, Ghidra or IDA?"
-msgstr "Hopper, Ghidra veya IDA'YA ihtiyacım var mı?"
+msgstr "Hopper, Ghidra veya IDA’ya ihtiyacım var mı?"
 
 #: website/public/faq/index.html:353
 msgctxt "page:faq/index.html"
@@ -2531,9 +2528,9 @@ msgid ""
 "Deep native analysis uses one of them. Static JavaScript and .NET inspection"
 " work with the supplied files and do not need a native analysis engine."
 msgstr ""
-"Makine kodu programlarının derinlemesine analizi bunlardan birini kullanır. "
-"Statik JavaScript ve .NET denetimi, sağlanan dosyalarla çalışır ve makine "
-"kodu programları motorunun analizine ihtiyaç duymaz."
+"Yerel ikili dosyalarnın derinlemesine analizi bunlardan birini kullanır. "
+"Statik JavaScript ve .NET denetimi, sağlanan dosyalarla çalışır ve yerel "
+"analiz motoruna ihtiyaç duymaz."
 
 #. {ph0}: <a href="../get-started/#native">
 #. {ph1}: </a>
@@ -2545,15 +2542,15 @@ msgid ""
 " and propose an installation. Your host and target determine which provider "
 "can be used. {ph0}Set up native analysis{ph1}."
 msgstr ""
-"Mevcut Ghidra veya IDA kurulumunuzu bağlayın veya kurulumun Hopper'YU "
+"Mevcut Ghidra veya IDA kurulumunuzu bağlayın veya kurulumun Hopper’ı "
 "algılamasına izin verin ve bir kurulum önerin. Ev sahibiniz ve hedefiniz "
-"hangi sağlayıcının kullanılabileceğini belirler. {ph0}Makine kodu "
-"programlarının analizini ayarlayın{ph1}."
+"hangi sağlayıcının kullanılabileceğini belirler. {ph0}Yerel ikili dosyalarnın "
+"analizini ayarlayın{ph1}."
 
 #: website/public/faq/index.html:366
 msgctxt "page:faq/index.html"
 msgid "Can I use REA without a coding agent?"
-msgstr "REA'YU kodlama aracısı olmadan kullanabilir miyim?"
+msgstr "REA’yı kodlama ajanı olmadan kullanabilir miyim?"
 
 #: website/public/faq/index.html:367
 msgctxt "page:faq/index.html"
@@ -2578,8 +2575,8 @@ msgid ""
 "Replace the path with an extracted application folder or ASAR file. {ph0}Use"
 " the CLI{ph1} for installation options."
 msgstr ""
-"Yolu ayıklanan bir uygulama klasörü veya ASAR dosyasıyla değiştirin. Kurulum"
-" seçenekleri için CLI'YU {ph0}kullanın.{ph1}"
+"Yolu ayıklanan bir uygulama klasörü veya ASAR dosyasıyla değiştirin. Kurulum "
+"seçenekleri için CLI’yı {ph0}kullanın.{ph1}"
 
 # Reviewed for readable setup and analysis terminology.
 #: website/public/faq/index.html:393
@@ -2673,8 +2670,8 @@ msgid ""
 "Restart or reconnect your agent after setup. Check its REA registration with"
 " {ph0}; for Codex:"
 msgstr ""
-"Aracınızı Kur'dan sonra yeniden başlatın veya yeniden bağlayın. REA kaydını "
-"{ph0} kontrol edin; Codex için :"
+"Aracınızı Kurulumdan sonra yeniden başlatın veya yeniden bağlayın. REA "
+"kaydını {ph0} ile kontrol edin; Codex için:"
 
 #: website/public/faq/index.html:460
 msgctxt "page:faq/index.html"
@@ -2691,9 +2688,8 @@ msgid ""
 "Replace {ph0} with your client ID, such as {ph1} or {ph2}. If the report "
 "shows a missing or stale registration, run setup for that client:"
 msgstr ""
-"{ph0} claude_code veya {ph1} gibi istemci kimliğinizle değiştirin{ph2}. "
-"Rapor eksik veya eski bir kayıt gösteriyorsa, bu istemci için kur'u "
-"çalıştırın:"
+"{ph0} yerine {ph1} veya {ph2} gibi istemci kimliğinizi yazın. Rapor eksik "
+"veya eski bir kayıt gösteriyorsa, bu istemci için kurulumu çalıştırın:"
 
 #: website/public/faq/index.html:480
 msgctxt "page:faq/index.html"
@@ -2717,7 +2713,7 @@ msgstr ""
 #: website/public/faq/index.html:500
 msgctxt "page:faq/index.html"
 msgid "Do I need to start Hopper first?"
-msgstr "Önce Hopper'YU çalıştırmam gerekiyor mu?"
+msgstr "Önce Hopper’ı çalıştırmam gerekiyor mu?"
 
 #. {ph0}: <a href="../get-started/#native">
 #. {ph1}: </a >
@@ -2729,9 +2725,9 @@ msgid ""
 "run choice of demo mode or license activation before unattended analysis. "
 "{ph0}See native provider setup{ph1}."
 msgstr ""
-"REA, bir işlem gerektiğinde Hopper'YU başlatır. macOS'DA, katılımsız "
-"analizden önce ilk çalıştırma demo modu seçimini veya lisans aktivasyonunu "
-"tamamlayın. {ph0}Yerel sağlayıcı kurulumuna bakın{ph1}."
+"REA, bir işlem gerektiğinde Hopper’ı başlatır. macOS’ta, katılımsız analizden "
+"önce ilk çalıştırma demo modu seçimini veya lisans aktivasyonunu tamamlayın. "
+"{ph0}Yerel sağlayıcı kurulumuna bakın{ph1}."
 
 #: website/public/faq/index.html:510
 msgctxt "page:faq/index.html"
@@ -2747,7 +2743,7 @@ msgid ""
 "{ph0}Update REA{ph1}, restart your agent and retry the same task. A recent "
 "release may already fix the problem."
 msgstr ""
-"{ph0}REA'YU güncelleyin{ph1}, aracınızı yeniden başlatın ve aynı görevi "
+"{ph0}REA’yı güncelleyin{ph1}, aracınızı yeniden başlatın ve aynı görevi "
 "yeniden deneyin. Yeni bir sürüm sorunu zaten düzeltebilir."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues/new/choose" >
@@ -2803,9 +2799,9 @@ msgid ""
 "the investigation."
 msgstr ""
 "Yararlı bir REA örneğiniz var mı? Görmeyi çok isteriz. Hedefi, sorunuzu, "
-"bulguları ve bunları bir {ph0}sorun{ph1} veya {ph2}çekme isteğinde{ph3} "
-"nasıl kontrol ettiğinizi paylaşın. Kısa kod alıntıları ve rakamları, "
-"başkalarının soruşturmayı takip etmesine yardımcı olur."
+"bulguları ve bunları bir {ph0}sorun{ph1} veya {ph2}çekme isteğinde{ph3} nasıl "
+"kontrol ettiğinizi paylaşın. Kısa kod alıntıları ve şekiller, başkalarının "
+"soruşturmayı takip etmesine yardımcı olur."
 
 #. {ph0}: <a href="https://discord.gg/GkcryMnJDM">
 #. {ph1}: </a>
@@ -2895,14 +2891,14 @@ msgstr "İçeriğe geç"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}Home{ph1} / Your first investigation"
-msgstr "{ph0}Home{ph1} / İlk araştırmanız"
+msgstr "{ph0}Ana Sayfa{ph1} / İlk incelemeniz"
 
 #. {ph0}: <br />
 #: website/public/first-investigation/index.html:202
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "Find out where{ph0}exported notes go."
-msgstr "Nerede olduğunu öğrenin{ph0}dışa aktarılan notlar gider."
+msgstr "Dışa aktarılan notların{ph0}nereye gittiğini öğrenin."
 
 #: website/public/first-investigation/index.html:203
 msgctxt "page:first-investigation/index.html"
@@ -2924,7 +2920,7 @@ msgstr "Bu alıştırmada"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}1. Set up{ph1}"
-msgstr "{ph0}1. Kurmak{ph1}"
+msgstr "{ph0}1. Kurulum{ph1}"
 
 #. {ph0}: <a href="#ask">
 #. {ph1}: </a>
@@ -2932,7 +2928,7 @@ msgstr "{ph0}1. Kurmak{ph1}"
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}2. Ask about export{ph1}"
-msgstr "{ph0}2. İhracat hakkında soru sorun{ph1}"
+msgstr "{ph0}2. Dışa aktarma hakkında soru sorun{ph1}"
 
 #. {ph0}: <a href="#answer">
 #. {ph1}: </a>
@@ -3006,7 +3002,7 @@ msgstr ""
 #: website/public/first-investigation/index.html:276
 msgctxt "page:first-investigation/index.html"
 msgid "2. Ask where the CSV is written"
-msgstr "2. CSV'NUN nerede yazıldığını sorun"
+msgstr "2. CSV’nin nerede yazıldığını sorun"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3028,7 +3024,7 @@ msgid ""
 "Your agent downloads the files and gives the unpacked folder to REA for "
 "inspection."
 msgstr ""
-"Ajanınız dosyaları indirir ve paketlenmemiş klasörü inceleme için REA'YA "
+"Ajanınız dosyaları indirir ve paketlenmemiş klasörü inceleme için REA’ya "
 "verir."
 
 #. {ph0}: <a class="button" href="../examples/notes-example.zip"
@@ -3038,7 +3034,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:first-investigation/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
-msgstr "{ph0}Örnek ZİP dosyasını indirin{ph1}"
+msgstr "{ph0}Örnek ZIP dosyasını indirin{ph1}"
 
 #. {ph0}: <code>notes-example</code>
 #: website/public/first-investigation/index.html:324
@@ -3088,8 +3084,7 @@ msgid ""
 "REA’s static analysis pairs the message with its handler. The destination is"
 " read from code."
 msgstr ""
-"REA'NUN statik analizi, mesajı işleyicisiyle eşleştirir. Hedef koddan "
-"okunur."
+"REA’nın statik analizi, mesajı işleyicisiyle eşleştirir. Hedef koddan okunur."
 
 #: website/public/first-investigation/index.html:387
 msgctxt "page:first-investigation/index.html"
@@ -3143,7 +3138,7 @@ msgstr "5. Başka bir soru sor"
 #: website/public/first-investigation/index.html:487
 msgctxt "page:first-investigation/index.html"
 msgid "Try a follow-up in the same conversation:"
-msgstr "Aynı sohbette bir takip yapmayı deneyin:"
+msgstr "Aynı sohbette takip sorusu sorun:"
 
 #: website/public/first-investigation/index.html:489
 msgctxt "page:first-investigation/index.html"
@@ -3200,8 +3195,8 @@ msgid ""
 "{ph0}Troubleshoot setup or analysis{ph1}{ph2}Update REA and check the "
 "connection if you get stuck.{ph3}"
 msgstr ""
-"{ph0}Kurulum veya analiz sorunlarını giderme{ph1}{ph2} REA'YU güncelleyin ve"
-" takılırsanız bağlantıyı kontrol edin.{ph3}"
+"{ph0}Kurulum veya analiz sorunlarını giderme{ph1}{ph2} REA’yı güncelleyin ve "
+"takılırsanız bağlantıyı kontrol edin.{ph3}"
 
 #: website/public/first-investigation/index.html:6
 msgctxt "page:first-investigation/index.html"
@@ -3275,7 +3270,7 @@ msgstr "{ph0}Ana{ph1} sayfa / Başlayın"
 #: website/public/get-started/index.html:200
 msgctxt "page:get-started/index.html"
 msgid "Set up REA."
-msgstr "REA'YU ayarlayın."
+msgstr "REA’yı ayarlayın."
 
 #: website/public/get-started/index.html:265
 msgctxt "page:get-started/index.html"
@@ -3334,8 +3329,8 @@ msgid ""
 "Type Y if asked to accept the terms. Close PowerShell, open it again, then "
 "run {ph0}."
 msgstr ""
-"Koşulları kabul etmeniz istenirse Y yazın. Powershell'i kapatın, tekrar "
-"açın, ardından {ph0} çalıştırın."
+"Koşulları kabul etmeniz istenirse Y yazın. PowerShell’i kapatın, tekrar açın, "
+"ardından {ph0} çalıştırın."
 
 #. {ph0}: <code>nodejs</code>
 #. {ph1}: <code>node -v</code>
@@ -3359,7 +3354,7 @@ msgid ""
 "{ph0}nodejs.org{ph1}."
 msgstr ""
 "Normal bir yükleyiciyi mi tercih edersiniz? LTS sürümünü şuradan indirin: "
-"{ph0}nodejs.org{ph1} ."
+"{ph0}nodejs.org{ph1}."
 
 #. {ph0}: <a href="#terminal">
 #. {ph1}: </a>
@@ -3367,7 +3362,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Use the CLI{ph1}"
-msgstr "{ph0}CLI'YU kullanın{ph1}"
+msgstr "{ph0}CLI’yı kullanın{ph1}"
 
 #. {ph0}: <a href="#help">
 #. {ph1}: </a>
@@ -3375,7 +3370,7 @@ msgstr "{ph0}CLI'YU kullanın{ph1}"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Getting help{ph1}"
-msgstr "{ph0}Yardım almak{ph1}"
+msgstr "{ph0}Yardım alma{ph1}"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -3487,10 +3482,10 @@ msgid ""
 "macOS press {ph2} {ph3}; on Windows, also quit from the tray icon if there "
 "is one."
 msgstr ""
-"{ph0}Masaüstü uygulamaları{ph1} (Claude Masaüstü, Cursor, Windsurf, VS "
-"Code): uygulamadan tamamen çıkın, ardından tekrar açın. Pencereyi kapatmak "
-"yeterli değil. macOS'DA {ph2} {ph3} tuşuna basın; Windows'DA varsa tepsi "
-"simgesinden de çıkın."
+"{ph0}Masaüstü uygulamaları{ph1} (Claude Desktop, Cursor, Windsurf, VS Code): "
+"uygulamadan tamamen çıkın, ardından tekrar açın. Pencereyi kapatmak yeterli "
+"değil. macOS’ta {ph2} {ph3} tuşuna basın; Windows’ta varsa tepsi simgesinden "
+"de çıkın."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -3501,7 +3496,7 @@ msgid ""
 "{ph0}Terminal agents{ph1} (Claude Code, Codex, Gemini CLI): exit the session"
 " and start it again."
 msgstr ""
-"{ph0}Terminal aracıları{ph1} (Claude Code, Codex , Gemini CLI ): oturumdan "
+"{ph0}Terminal aracıları{ph1} (Claude Code, Codex, Gemini CLI ): oturumdan "
 "çıkın ve yeniden başlatın."
 
 #: website/public/get-started/index.html:957
@@ -3580,13 +3575,13 @@ msgid ""
 "Replace the path with your extracted app directory or {ph0} file. On "
 "Windows, a path such as {ph1} works here."
 msgstr ""
-"Yolu çıkarılan uygulama dizininizle değiştirin veya {ph0} dosyası. "
-"Windows'DA {ph1} burada çalışıyor."
+"Yolu çıkarılan uygulama dizininizle değiştirin veya {ph0} dosyası. Windows’ta "
+"{ph1} burada çalışıyor."
 
 #: website/public/get-started/index.html:1582
 msgctxt "page:get-started/index.html"
 msgid "Where do I find an app's .asar file?"
-msgstr "Bir uygulamayı nerede bulabilirim.asar dosyası mı?"
+msgstr "Bir uygulamanın .asar dosyasını nerede bulurum?"
 
 #. {ph0}: <code>resources</code>
 #: website/public/get-started/index.html:1583
@@ -3636,7 +3631,8 @@ msgstr "{ph0} Linux:{ph1} genellikle {ph2}"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "Some apps install elsewhere. Search the app's folder for {ph0}."
-msgstr "Bazı uygulamalar başka bir yere yüklenir. Uygulama için {ph0}."
+msgstr ""
+"Bazı uygulamalar başka bir yere yüklenir. Uygulama klasöründe {ph0} arayın."
 
 #: website/public/get-started/index.html:1612
 msgctxt "page:get-started/index.html"
@@ -3646,8 +3642,7 @@ msgid ""
 "result."
 msgstr ""
 "Sonuç, uygulamayı tanımlar, modüller arasındaki bağlantıları gösterir ve "
-"kaynak konumlarını verir. REA'NUN çözemediği bağlantılar sonuçta "
-"işaretlenir."
+"kaynak konumlarını verir. REA’nın çözemediği bağlantılar sonuçta işaretlenir."
 
 #. {ph0}: <code>rea</code>
 #: website/public/get-started/index.html:1617
@@ -3659,7 +3654,7 @@ msgstr "Kabuğunuzda kalıcı bir {ph0} komutu istiyorsanız:"
 #: website/public/get-started/index.html:1623
 msgctxt "page:get-started/index.html"
 msgid "Install the CLI"
-msgstr "CLI'YU kurun"
+msgstr "CLI’yı kurun"
 
 #. {ph0}: <a href="../guides/javascript/" >
 #. {ph1}: </a >
@@ -3677,7 +3672,7 @@ msgstr "Ghidra kurulumunuzu bağlayın"
 #: website/public/get-started/index.html:1122
 msgctxt "page:get-started/index.html"
 msgid "Connect Ghidra on Windows"
-msgstr "Ghidra'YU Windows'ya bağlayın"
+msgstr "Ghidra’yı Windows’a bağlayın"
 
 #: website/public/get-started/index.html:1123
 msgctxt "page:get-started/index.html"
@@ -3705,19 +3700,18 @@ msgid ""
 "Connect Hopper on macOS or Linux. Run the setup command above; it detects an"
 " existing installation or offers an installation plan for your approval."
 msgstr ""
-"Hopper'YU macOS veya Linux'YA bağlayın. Yukarıdaki kurulum komutunu "
-"çalıştırın; Mevcut bir kurulumu algılar veya onayınız için bir kurulum planı"
-" sunar."
+"Hopper’ı macOS veya Linux’a bağlayın. Yukarıdaki kurulum komutunu çalıştırın; "
+"Mevcut bir kurulumu algılar veya onayınız için bir kurulum planı sunar."
 
 #: website/public/get-started/index.html:1689
 msgctxt "page:get-started/index.html"
 msgid "Getting help"
-msgstr "Yardım almak"
+msgstr "Yardım alma"
 
 #: website/public/get-started/index.html:1691
 msgctxt "page:get-started/index.html"
 msgid "If your agent doesn't see REA"
-msgstr "Temsilciniz REA'YU görmüyorsa"
+msgstr "Temsilciniz REA’yı görmüyorsa"
 
 #. {ph0}: <code>doctor</code>
 #: website/public/get-started/index.html:1692
@@ -3727,8 +3721,8 @@ msgid ""
 "Restart or reconnect the client after setup. Check its REA connection with "
 "{ph0}; for Codex:"
 msgstr ""
-"Kur'dan sonra istemciyi yeniden başlatın veya yeniden bağlayın. REA "
-"bağlantısını {ph0} kontrol edin; Codex için :"
+"Kurulumdan sonra istemciyi yeniden başlatın veya yeniden bağlayın. REA "
+"bağlantısını {ph0} kontrol edin; Codex için:"
 
 #: website/public/get-started/index.html:1703
 msgctxt "page:get-started/index.html"
@@ -3738,7 +3732,7 @@ msgstr "Bir sağlayıcının dikkat etmesi gerekiyorsa"
 #: website/public/get-started/index.html:1704
 msgctxt "page:get-started/index.html"
 msgid "Check the provider you're using. For Ghidra:"
-msgstr "Kullandığınız sağlayıcıyı kontrol edin. Ghidra için :"
+msgstr "Kullandığınız sağlayıcıyı kontrol edin. Ghidra için:"
 
 #: website/public/get-started/index.html:1707
 msgctxt "page:get-started/index.html"
@@ -3774,8 +3768,8 @@ msgid ""
 "{ph0}Choose an investigation guide{ph1}{ph2}Worked examples for a binary, an"
 " Electron app and a browser.{ph3}"
 msgstr ""
-"{ph0}Bir ikili, bir Electron uygulaması ve bir tarayıcı için çalışılan bir "
-"araştırma kılavuzu seçin{ph1}{ph2}.{ph3}"
+"{ph0}İkili dosya, Electron uygulaması ve tarayıcı için çalışılmış örnekler "
+"içeren bir inceleme kılavuzu seçin{ph1}{ph2}.{ph3}"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/issues">
 #. {ph1}: </a >
@@ -3802,13 +3796,13 @@ msgid ""
 "{ph0}REA community{ph1}{ph2}Questions, investigations and work in "
 "progress.{ph3}"
 msgstr ""
-"{ph0} REA topluluk{ph1}{ph2} Soruları, soruşturmaları ve devam eden "
+"{ph0} REA topluluğu{ph1}{ph2} Sorular, incelemeler ve devam eden "
 "çalışmalar.{ph3}"
 
 #: website/public/get-started/index.html:6
 msgctxt "page:get-started/index.html"
 msgid "Install REA and Set Up Your Coding Agent"
-msgstr "REA'YU Kurun ve Kodlama Aracınızı Kurun"
+msgstr "REA’yı Kurun ve Kodlama Aracınızı Kurun"
 
 #: website/public/get-started/index.html:7
 msgctxt "page:get-started/index.html"
@@ -3816,8 +3810,8 @@ msgid ""
 "Connect REA to your coding agent or inspect a local JavaScript or Electron "
 "app from the terminal. Setup, first questions and native provider guides."
 msgstr ""
-"REA'YU kodlama aracınıza bağlayın veya terminalden yerel bir JavaScript veya"
-" Electron uygulamasını inceleyin. Kurulum, ilk sorular ve yerel sağlayıcı "
+"REA’yı kodlama aracınıza bağlayın veya terminalden yerel bir JavaScript veya "
+"Electron uygulamasını inceleyin. Kurulum, ilk sorular ve yerel sağlayıcı "
 "kılavuzları."
 
 #: website/public/get-started/index.html:269
@@ -3901,7 +3895,7 @@ msgstr "{ph0}Ana{ph1} Sayfa / {ph2}Kılavuzlar{ph3} / Tarayıcı gözlemi"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "See what happens{ph0}when you click."
-msgstr "Ne olduğunu görün{ph0}tıkladığınızda."
+msgstr "Tıkladığınızda{ph0}ne olduğunu görün."
 
 #: website/public/guides/browser/index.html:204
 msgctxt "page:guides/browser/index.html"
@@ -3909,8 +3903,8 @@ msgid ""
 "Use a small browser app to connect an action, its network request and the "
 "JavaScript that builds a download."
 msgstr ""
-"Bir eylemi, ağ isteğini ve bir indirme oluşturan JavaScript'YU bağlamak için"
-" küçük bir tarayıcı uygulaması kullanın."
+"Bir eylemi, ağ isteğini ve bir indirme oluşturan JavaScript’i bağlamak için "
+"küçük bir tarayıcı uygulaması kullanın."
 
 #: website/public/guides/browser/index.html:211
 msgctxt "page:guides/browser/index.html"
@@ -3955,7 +3949,7 @@ msgstr "{ph0}CLI'DAN yakalama{ph1}"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0}Read the request and script{ph1}"
-msgstr "{ph0}İsteği ve komut dosyasını okuyun{ph1}"
+msgstr "{ph0}İsteği ve betiği okuyun{ph1}"
 
 #: website/public/guides/browser/index.html:222
 msgctxt "page:guides/browser/index.html"
@@ -3976,13 +3970,13 @@ msgid ""
 "download."
 msgstr ""
 "{ph0}Notes tarayıcı örneğinde{ph1} {ph2}Notları Dışa aktar{ph3} düğmesi "
-"bulunur. Tıklamak {ph4}, iki notu CSV olarak biçimlendirir ve bir indirme "
-"başlatır."
+"bulunur. Tıklandığında {ph4} yüklenir, iki notu CSV olarak biçimlendirir ve "
+"bir indirme başlatır."
 
 #: website/public/guides/browser/index.html:231
 msgctxt "page:guides/browser/index.html"
 msgid "From the click to the CSV download"
-msgstr "CSV indirmek için tıklayın"
+msgstr "Tıklamadan CSV indirmeye"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4042,7 +4036,7 @@ msgstr "Notları Dışa Aktar'ı tıklatmadan önce yakalamayı başlatın."
 #: website/public/guides/browser/index.html:268
 msgctxt "page:guides/browser/index.html"
 msgid "Open Chrome with remote debugging"
-msgstr "Uzaktan hata ayıklama ile Chrome'yu açın"
+msgstr "Uzaktan hata ayıklama ile Chrome’u açın"
 
 #: website/public/guides/browser/index.html:269
 msgctxt "page:guides/browser/index.html"
@@ -4050,8 +4044,8 @@ msgid ""
 "Open the hosted Notes example with a separate browser profile and a local "
 "debugging port. On Linux:"
 msgstr ""
-"Barındırılan Notlar örneğini ayrı bir tarayıcı profili ve yerel hata "
-"ayıklama bağlantı noktasıyla açın. Linux üzerinde :"
+"Barındırılan Notlar örneğini ayrı bir tarayıcı profili ve yerel hata ayıklama "
+"portuyla açın. Linux’ta:"
 
 #: website/public/guides/browser/index.html:275
 msgctxt "page:guides/browser/index.html"
@@ -4073,7 +4067,7 @@ msgid ""
 "Use your installed browser's executable path on macOS or Windows. You can "
 "replace the page URL with another page you want to inspect."
 msgstr ""
-"Yüklü tarayıcınızın yürütülebilir yolunu macOS veya Windows'DA kullanın. "
+"Yüklü tarayıcınızın yürütülebilir yolunu macOS veya Windows’ta kullanın. "
 "Sayfa URL'sini incelemek istediğiniz başka bir sayfayla değiştirebilirsiniz."
 
 #: website/public/guides/browser/index.html:295
@@ -4117,7 +4111,7 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect this page while I click Export notes. "
 "What request does it make, and how is the CSV built?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Notları Dışa Aktar'ı tıklatırken bu sayfayı incelemek için "
+"{ph0}›{ph1}{ph2}Notları Dışa Aktar'ı tıklatırken bu sayfayı incelemek için "
 "REA kullanın. Hangi isteği yapar ve CSV nasıl oluşturulur?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>http://127.0.0.1:9222</code>
@@ -4138,9 +4132,9 @@ msgid ""
 "reads the resulting evidence. It can then inspect the script behind the "
 "export."
 msgstr ""
-"Temsilciniz sayfa hedefini keşfeder, bir gözlem penceresi başlatır ve ortaya"
-" çıkan kanıtları okur. Daha sonra dışa aktarmanın arkasındaki komut "
-"dosyasını inceleyebilir."
+"Temsilciniz sayfa hedefini keşfeder, bir gözlem penceresi başlatır ve ortaya "
+"çıkan kanıtları okur. Daha sonra dışa aktarmanın arkasındaki betiği "
+"inceleyebilir."
 
 #: website/public/guides/browser/index.html:337
 msgctxt "page:guides/browser/index.html"
@@ -4199,7 +4193,7 @@ msgstr ""
 #: website/public/guides/browser/index.html:388
 msgctxt "page:guides/browser/index.html"
 msgid "Read the request and export script"
-msgstr "İsteği okuyun ve komut dosyasını dışa aktarın"
+msgstr "İsteği okuyun ve betiği dışa aktarın"
 
 #: website/public/guides/browser/index.html:391
 msgctxt "page:guides/browser/index.html"
@@ -4236,7 +4230,7 @@ msgstr "İstek başlatıcı"
 #, python-brace-format
 msgctxt "page:guides/browser/index.html"
 msgid "{ph0} · script"
-msgstr "{ph0} * komut dosyası"
+msgstr "{ph0} * betik"
 
 #: website/public/guides/browser/index.html:414
 msgctxt "page:guides/browser/index.html"
@@ -4266,7 +4260,7 @@ msgid ""
 "initiator. Read the captured script source to see how the data is used:"
 msgstr ""
 "İstek veri kaynağını tanımlar ve REA dışa {ph0}. Verilerin nasıl "
-"kullanıldığını görmek için yakalanan komut dosyası kaynağını okuyun:"
+"kullanıldığını görmek için yakalanan betik kaynağını okuyun:"
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:459
@@ -4278,7 +4272,7 @@ msgid ""
 "this click requested {ph0}."
 msgstr ""
 "İndirme, JSON yanıtı kullanılarak sayfada oluşturulur. CSV biçimlendirme "
-"adımı komut dosyasından gelir; ağ yakalama, bu tıklamanın {ph0}."
+"adımı betikten gelir; ağ yakalama, bu tıklamanın {ph0}."
 
 #. {ph0}: <code>notes.json</code>
 #: website/public/guides/browser/index.html:475
@@ -4312,9 +4306,8 @@ msgid ""
 "Observe a Notes export with REA: select a browser page, capture a click, "
 "inspect the request and follow the export script."
 msgstr ""
-"REA ile bir Not dışa aktarımını gözlemleyin: bir tarayıcı sayfası seçin, bir"
-" tıklama yakalayın, isteği inceleyin ve dışa aktarma komut dosyasını "
-"izleyin."
+"REA ile bir Not dışa aktarımını gözlemleyin: bir tarayıcı sayfası seçin, bir "
+"tıklama yakalayın, isteği inceleyin ve dışa aktarma betiği izleyin."
 
 #: website/public/guides/browser/index.html:210
 msgctxt "page:guides/browser/index.html"
@@ -4339,17 +4332,17 @@ msgstr "Örnek istemi kopyala"
 #: website/public/guides/browser/index.html:342
 msgctxt "page:guides/browser/index.html"
 msgid "Copy find the page"
-msgstr "Sayfayı kopyala bul"
+msgstr "Sayfayı bul komutunu kopyala"
 
 #: website/public/guides/browser/index.html:361
 msgctxt "page:guides/browser/index.html"
 msgid "Copy capture the next ten seconds"
-msgstr "Sonraki on saniyeyi kopyala"
+msgstr "Sonraki on saniyeyi yakala komutunu kopyala"
 
 #: website/public/guides/browser/index.html:426
 msgctxt "page:guides/browser/index.html"
 msgid "Copy read the loaded scripts"
-msgstr "Kopyala yüklenen komut dosyalarını oku"
+msgstr "Yüklenen betikleri okuma komutunu kopyala"
 
 #: website/public/guides/browser/index.html:513
 msgctxt "page:guides/browser/index.html"
@@ -4391,7 +4384,7 @@ msgstr "İlk soruşturma"
 #: website/public/guides/index.html:210
 msgctxt "page:guides/index.html"
 msgid "Set up REA"
-msgstr "REA'YU ayarlama"
+msgstr "REA’yı ayarlama"
 
 #: website/public/guides/index.html:211
 msgctxt "page:guides/index.html"
@@ -4406,7 +4399,7 @@ msgstr "REA ile başlayın"
 #: website/public/guides/index.html:216
 msgctxt "page:guides/index.html"
 msgid "Native binaries"
-msgstr "Makine kodu programları"
+msgstr "Yerel ikili dosyalar"
 
 #: website/public/guides/index.html:218
 msgctxt "page:guides/index.html"
@@ -4420,18 +4413,18 @@ msgid ""
 " read numeric constants and check the recovered C."
 msgstr ""
 "Bir Windows oyun yürütülebilir dosyasıyla başlayın. Talimatları inceleyin, "
-"bir arayanı takip edin, sayısal sabitleri okuyun ve kurtarılan C'yi kontrol "
+"bir çağıranı takip edin, sayısal sabitleri okuyun ve kurtarılan C'yi kontrol "
 "edin."
 
 #: website/public/guides/index.html:229
 msgctxt "page:guides/index.html"
 msgid "Native analysis guide"
-msgstr "Makine kodu programlarının analizi kılavuzu"
+msgstr "Yerel ikili dosyalarnın analizi kılavuzu"
 
 #: website/public/guides/index.html:233
 msgctxt "page:guides/index.html"
 msgid "JavaScript & Electron"
-msgstr "JavaScript VE Electron"
+msgstr "JavaScript ve Electron"
 
 #: website/public/guides/index.html:235
 msgctxt "page:guides/index.html"
@@ -4477,8 +4470,8 @@ msgid ""
 "Open a working Notes example, capture an export request and find the code "
 "that turns its response into a download."
 msgstr ""
-"Bir çalışma Notları örneği açın, bir dışa aktarma isteği yakalayın ve "
-"yanıtını karşıdan yüklemeye dönüştüren kodu bulun."
+"Çalışan bir Notlar örneği açın, bir dışa aktarma isteği yakalayın ve yanıtını "
+"karşıdan yüklemeye dönüştüren kodu bulun."
 
 #: website/public/guides/index.html:268
 msgctxt "page:guides/index.html"
@@ -4496,8 +4489,8 @@ msgid ""
 "Learn REA through short worked examples: a native calculation, an Electron "
 "CSV export and a browser request."
 msgstr ""
-"Kısa çalışılmış örneklerle REA'YU öğrenin: yerel bir hesaplama, bir Electron"
-" CSV dışa aktarma ve bir tarayıcı isteği."
+"Kısa çalışılmış örneklerle REA’yı öğrenin: yerel bir hesaplama, bir Electron "
+"CSV dışa aktarma ve bir tarayıcı isteği."
 
 #: website/public/guides/index.html:288
 msgctxt "page:guides/index.html"
@@ -4532,7 +4525,7 @@ msgid ""
 "Follow a button click from the page API, through Electron IPC, to the CSV "
 "file writer."
 msgstr ""
-"Sayfa apı'sinden Electron IPC aracılığıyla CSV dosya yazıcısına bir düğme "
+"Sayfa API’sinden Electron IPC aracılığıyla CSV dosya yazıcısına bir düğme "
 "tıklaması izleyin."
 
 #: website/public/guides/javascript/index.html:211
@@ -4619,9 +4612,7 @@ msgctxt "page:guides/javascript/index.html"
 msgid ""
 "{ph0}Renderer → preload{ph1}{ph2}{ph3}{ph4}{ph5}{ph6} calls the API exposed "
 "by {ph7}.{ph8}"
-msgstr ""
-"{ph0}Oluşturucu → notları önceden yükle{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}, ön "
-"{ph7}.{ph8}"
+msgstr "{ph0}Renderer → preload{ph1}{ph2}{ph3}{ph4}{ph5}{ph6}, ön {ph7}.{ph8}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -4727,8 +4718,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find what happens when I export notes in this "
 "app. Where is the CSV created?{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Bu uygulamada notları dışa aktardığımda ne olacağını bulmak"
-" için REA kullanın. CSV nerede oluşturulur?{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Bu uygulamada notları dışa aktardığımda ne olacağını bulmak "
+"için REA kullanın. CSV nerede oluşturulur?{ph3}{ph4}{ph5}"
 
 #. {ph0}: <code>app.asar</code>
 #: website/public/guides/javascript/index.html:299
@@ -4814,7 +4805,7 @@ msgstr "Örneği kendiniz analiz edin"
 #, python-brace-format
 msgctxt "page:guides/javascript/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
-msgstr "{ph0}Örnek ZİP dosyasını indirin{ph1}"
+msgstr "{ph0}Örnek ZIP dosyasını indirin{ph1}"
 
 #: website/public/guides/javascript/index.html:394
 msgctxt "page:guides/javascript/index.html"
@@ -4847,8 +4838,8 @@ msgid ""
 "feature tracing tools."
 msgstr ""
 "Kendi uygulamanız için dizini veya ASAR yolu ile aynı komutu kullanın. Bir "
-"aracı, REA'NUN özellik izleme araçlarıyla değişmez bir dizeyi, API adını "
-"veya IPC kanalını takip edebilir."
+"aracı, REA’nın özellik izleme araçlarıyla değişmez bir dizeyi, API adını veya "
+"IPC kanalını takip edebilir."
 
 #: website/public/guides/javascript/index.html:456
 msgctxt "page:guides/javascript/index.html"
@@ -4888,7 +4879,7 @@ msgid ""
 "{ph0}Follow Notion's clipboard bridge{ph1} {ph2}Apply the same approach to a"
 " packaged Electron app.{ph3}"
 msgstr ""
-"{ph0}Takip et Notion pano köprüsü{ph1} {ph2}Paketlenmiş bir Electron "
+"{ph0}Notion pano köprüsünü izleyin{ph1} {ph2}Paketlenmiş bir Electron "
 "uygulamasına aynı yaklaşımı uygulayın.{ph3}"
 
 #. {ph0}: <a href="../browser/">
@@ -4943,7 +4934,7 @@ msgstr "Bu sayfada"
 #: website/public/guides/javascript/index.html:220
 msgctxt "page:guides/javascript/index.html"
 msgid "JavaScript & Electron"
-msgstr "JavaScript VE Electron"
+msgstr "JavaScript ve Electron"
 
 #: website/public/guides/javascript/index.html:282
 msgctxt "page:guides/javascript/index.html"
@@ -4974,15 +4965,14 @@ msgstr "İçeriğe geç"
 msgctxt "page:guides/native/index.html"
 msgid "{ph0}Home{ph1} / {ph2}Guides{ph3} / Native analysis"
 msgstr ""
-"{ph0}Ana{ph1} Sayfa / {ph2}Kılavuzlar{ph3} / Makine kodu programlarının "
-"analizi"
+"{ph0}Ana{ph1} Sayfa / {ph2}Kılavuzlar{ph3} / Yerel ikili dosyalarnın analizi"
 
 #. {ph0}: <br />
 #: website/public/guides/native/index.html:202
 #, python-brace-format
 msgctxt "page:guides/native/index.html"
 msgid "Recover DX-Ball's{ph0}sound-pan calculation."
-msgstr "DX-Ball'NUN kurtarma{ph0}sol / sağ ses konumunun hesaplanması."
+msgstr "DX-Ball’ın{ph0}ses pan hesaplamasını kurtarın."
 
 #: website/public/guides/native/index.html:203
 msgctxt "page:guides/native/index.html"
@@ -5049,8 +5039,8 @@ msgid ""
 "In DX-Ball, a brick hit supplies a horizontal screen position. The sound "
 "code turns it into a left/right panning value."
 msgstr ""
-"DX-Ball'DA bir tuğla vuruşu yatay bir ekran konumu sağlar. Ses kodu onu sola"
-" / sağa kaydırma değerine dönüştürür."
+"DX-Ball’da bir tuğla vuruşu yatay bir ekran konumu sağlar. Ses kodu onu sola "
+"/ sağa kaydırma değerine dönüştürür."
 
 #. {ph0}: <code>0x00406400</code>
 #. {ph1}: <code>__ftol()</code>
@@ -5107,7 +5097,7 @@ msgid ""
 "{ph0}Caller:{ph1} a function that calls this one. It shows which values are "
 "passed in."
 msgstr ""
-"{ph0}Arayan:{ph1} bunu çağıran bir işlev. Hangi değerlerin iletildiğini "
+"{ph0}Çağıran:{ph1} bunu çağıran bir işlev. Hangi değerlerin iletildiğini "
 "gösterir."
 
 #. {ph0}: <strong>
@@ -5152,8 +5142,8 @@ msgid ""
 "{ph0}01 · Instructions{ph1}{ph2}An integer input{ph3}{ph4}A stack read "
 "supplies the value used by the floating-point instructions.{ph5}"
 msgstr ""
-"{ph0}01 * Yönergeler{ph1}{ph2} Bir tamsayı girişi{ph3}{ph4} Yığın okuması, "
-"kayan nokta yönergelerinin kullandığı değeri sağlar.{ph5}"
+"{ph0}01 * Talimatlar{ph1}{ph2} Bir tamsayı girişi{ph3}{ph4} Yığın okuması, "
+"kayan nokta talimatlarının kullandığı değeri sağlar.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5169,8 +5159,8 @@ msgid ""
 "{ph0}02 · Caller{ph1}{ph2}A screen coordinate{ph3}{ph4}The brick-hit caller "
 "passes {ph5}.{ph6}"
 msgstr ""
-"{ph0}02 * Arayan{ph1}{ph2} Bir ekran koordinatı{ph3}{ph4} Tuğlaya çarpan "
-"arayan {ph5}.{ph6}"
+"{ph0}02 * Çağıran{ph1}{ph2} Bir ekran koordinatı{ph3}{ph4} Tuğlaya çarpan "
+"çağıran {ph5}.{ph6}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -5196,7 +5186,7 @@ msgid ""
 "REA supplies the instructions, call relationship and bytes. The agent "
 "interprets them together."
 msgstr ""
-"REA yönergeleri, işlev çağrısı ilişkisini ve baytları sağlar. Ajan onları "
+"REA talimatları, işlev çağrısı ilişkisini ve baytları sağlar. Ajan onları "
 "birlikte yorumluyor."
 
 #: website/public/guides/native/index.html:299
@@ -5215,7 +5205,7 @@ msgid ""
 "After {ph0}connecting REA to your agent{ph1} and {ph2}setting up a native "
 "analysis tool{ph3}, provide the local executable and a question:"
 msgstr ""
-"REA'YU {ph0}aracınıza bağladıktan{ph1} ve {ph2}makine kodu programlarının "
+"REA’yı {ph0}aracınıza bağladıktan{ph1} ve {ph2}makine kodu programlarının "
 "analizi aracını kurduktan{ph3} sonra, yerel yürütülebilir dosyayı ve bir "
 "soruyu sağlayın:"
 
@@ -5239,9 +5229,9 @@ msgid ""
 "install it. On macOS, open Hopper once and choose demo mode or activate a "
 "license before your first analysis."
 msgstr ""
-"{ph0} Hopper{ph1} (macOS veya Linux): REA'NUN kurulumu onu algılar veya "
-"kurmayı teklif eder. macOS'DA Hopper'YU bir kez açın ve ilk analizinizden "
-"önce demo modunu seçin veya bir lisansı etkinleştirin."
+"{ph0} Hopper{ph1} (macOS veya Linux): REA’nın kurulumu onu algılar veya "
+"kurmayı teklif eder. macOS’ta Hopper’ı bir kez açın ve ilk analizinizden önce "
+"demo modunu seçin veya bir lisansı etkinleştirin."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5253,8 +5243,7 @@ msgid ""
 "an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
 msgstr ""
 "{ph0} Ghidra{ph1} (macOS veya Linux; Windows üzerinde deneysel): ücretsiz, "
-"ancak mevcut bir Ghidra 12.1'e ihtiyacı var.x kurulum ve 64 bit JDK 21 veya "
-"daha yenisi."
+"ancak mevcut bir Ghidra 12.1.x kurulumu ve 64 bit JDK 21 veya daha yenisi."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -5273,8 +5262,8 @@ msgstr ""
 msgctxt "page:guides/native/index.html"
 msgid "See {ph0}Set up native analysis{ph1} for the steps."
 msgstr ""
-"Adımlar için {ph0}Makine kodu programlarının analizini ayarlama{ph1} "
-"konusuna bakın."
+"Adımlar için {ph0}Yerel ikili dosyalarnın analizini ayarlama{ph1} konusuna "
+"bakın."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -5309,8 +5298,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}DX-Ball'NUN stereo ses konumlandırmasını nasıl "
-"hesapladığını bulmak için REA kullanın. Hesaplamayı açıklayın ve kodu "
+"{ph0}›{ph1}{ph2}DX-Ball’ın stereo ses konumlandırmasını nasıl hesapladığını "
+"bulmak için REA kullanın. Hesaplamayı açıklayın ve kodu "
 "gösterin.{ph3}{ph4}{ph5}"
 
 #: website/public/guides/native/index.html:359
@@ -5393,7 +5382,7 @@ msgstr ""
 #: website/public/guides/native/index.html:400
 msgctxt "page:guides/native/index.html"
 msgid "Follow the caller"
-msgstr "Arayanı takip et"
+msgstr "Çağıranı takip et"
 
 #. {ph0}: <code>0x14</code>
 #: website/public/guides/native/index.html:409
@@ -5403,8 +5392,8 @@ msgid ""
 "REA identifies the brick-hit caller. Its earlier instructions multiply the "
 "tile coordinate by 30; adding {ph0} (20) gives the brick's screen position."
 msgstr ""
-"REA, tuğlaya çarpan arayanı tanımlar. Önceki talimatları döşeme koordinatını"
-" 30 ile çarpar; {ph0} (20) eklemek tuğlanın ekran konumunu verir."
+"REA, tuğlaya çarpan çağıranı tanımlar. Önceki talimatları döşeme koordinatını "
+"30 ile çarpar; {ph0} (20) eklemek tuğlanın ekran konumunu verir."
 
 #: website/public/guides/native/index.html:414
 msgctxt "page:guides/native/index.html"
@@ -5471,7 +5460,7 @@ msgid ""
 "questions include “How is this file parsed?” or “Which function handles this"
 " menu action?”"
 msgstr ""
-"{ph0}Makine kodu programları sağlayıcısının bir analizini bağlayın{ph1}, "
+"{ph0}Yerel ikili dosyalar sağlayıcısının bir analizini bağlayın{ph1}, "
 "ardından aracınıza yerel bir yürütülebilir dosya veya kitaplık ve "
 "araştırılacak bir özellik verin. Faydalı başlangıç soruları arasında \"Bu "
 "dosya nasıl ayrıştırılır?\" veya \"Bu menü eylemini hangi işlev işler?”"
@@ -5526,7 +5515,7 @@ msgid ""
 "Recover a native calculation with REA: inspect instructions, follow a "
 "caller, read constants and check reconstructed C."
 msgstr ""
-"REA ile yerel bir hesaplamayı kurtarın: talimatları inceleyin, bir arayanı "
+"REA ile yerel bir hesaplamayı kurtarın: talimatları inceleyin, bir çağıranı "
 "takip edin, sabitleri okuyun ve yeniden yapılandırılmış C'yi kontrol edin."
 
 #: website/public/guides/native/index.html:209
@@ -5537,7 +5526,7 @@ msgstr "Bu sayfada"
 #: website/public/guides/native/index.html:219
 msgctxt "page:guides/native/index.html"
 msgid "Native analysis"
-msgstr "Makine kodu programlarının analizi"
+msgstr "Yerel ikili dosyalarnın analizi"
 
 #: website/public/guides/native/index.html:342
 msgctxt "page:guides/native/index.html"
@@ -5547,7 +5536,7 @@ msgstr "Örnek istemi kopyala"
 #: website/public/guides/native/index.html:473
 msgctxt "page:guides/native/index.html"
 msgid "Copy function analysis"
-msgstr "Kopyalama işlevi analizi"
+msgstr "Fonksiyon analizini kopyala"
 
 #: website/public/guides/native/index.html:515
 msgctxt "page:guides/native/index.html"
@@ -5568,7 +5557,7 @@ msgstr "Bu sayfada"
 #: website/public/index.html:202 website/public/index.html:250
 msgctxt "page:index.html"
 msgid "Set up REA"
-msgstr "REA'YU ayarlama"
+msgstr "REA’yı ayarlama"
 
 #. {ph0}: <a href="#setup" aria-current="location">
 #. {ph1}: </a>
@@ -5576,7 +5565,7 @@ msgstr "REA'YU ayarlama"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Set up REA{ph1}"
-msgstr "{ph0}REA'YU ayarlama{ph1}"
+msgstr "{ph0}REA’yı ayarlama{ph1}"
 
 #. {ph0}: <a href="#dinosaur">
 #. {ph1}: </a>
@@ -5600,7 +5589,7 @@ msgstr "{ph0}Hesap makinesi{ph1}"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Try REA{ph1}"
-msgstr "{ph0}REA'YU deneyin{ph1}"
+msgstr "{ph0}REA’yı deneyin{ph1}"
 
 #. {ph0}: <a href="#analyze">
 #. {ph1}: </a>
@@ -5788,8 +5777,8 @@ msgid ""
 "{ph0}You decode the instructions, follow the calls and reconstruct the "
 "calculation.{ph1}"
 msgstr ""
-"{ph0}Talimatları çözer, işlev çağrılarını takip eder ve hesaplamayı yeniden "
-"yapılandırırsınız.{ph1}"
+"{ph0}Talimatları çözümler, işlev çağrılarını takip eder ve hesaplamayı "
+"yeniden yapılandırırsınız.{ph1}"
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -5818,7 +5807,8 @@ msgstr "Örnek cevap · bulgulara dayanarak"
 msgctxt "page:index.html"
 msgid ""
 "After +, the % button takes {ph0}a percentage of the first number.{ph1}"
-msgstr "+ 'Dan sonra, % düğmesi {ph0}ilk sayının bir yüzdesini alır.{ph1}"
+msgstr ""
+"+ işleminden sonra, % düğmesi {ph0}ilk sayının bir yüzdesini alır.{ph1}"
 
 #: website/public/index.html:552
 msgctxt "page:index.html"
@@ -5844,7 +5834,7 @@ msgstr ""
 #: website/public/index.html:583
 msgctxt "page:index.html"
 msgid "Example 01 · Chrome’s dinosaur game"
-msgstr "Örnek 01 * Chrome'nun dinozor oyunu"
+msgstr "Örnek 01 * Chrome’un dinozor oyunu"
 
 #: website/public/index.html:584
 msgctxt "page:index.html"
@@ -5902,9 +5892,9 @@ msgid ""
 "faster? Show the speed rule, then build a small version with an adjustable "
 "speed.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Bu dinozor oyununu incelemek için REA kullanın. Neden daha "
-"hızlı oluyor? Hız kuralını gösterin, ardından ayarlanabilir hıza sahip küçük"
-" bir versiyon oluşturun.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Bu dinozor oyununu incelemek için REA kullanın. Neden daha "
+"hızlı oluyor? Hız kuralını gösterin, ardından ayarlanabilir hıza sahip küçük "
+"bir versiyon oluşturun.{ph3}{ph4}{ph5}"
 
 #. {ph0}: <a href="https://wayou.github.io/t-rex-runner/" >
 #. {ph1}: </a >
@@ -5939,7 +5929,7 @@ msgid ""
 "{ph0}01 · REA{ph1}{ph2}Read the running game’s script{ph3}{ph4}Return its "
 "actual code and settings to the agent.{ph5}"
 msgstr ""
-"{ph0}01 * REA{ph1}{ph2} Çalışan oyunun senaryosunu okuyun{ph3}{ph4} Gerçek "
+"{ph0}01 * REA{ph1}{ph2} Çalışan oyunun betiğini okuyun{ph3}{ph4} Gerçek "
 "kodunu ve ayarlarını aracıya döndürün.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -5956,8 +5946,8 @@ msgid ""
 "the recovered acceleration in a small game with a speed slider.{ph5}"
 msgstr ""
 "{ph0}02 * Temsilciniz{ph1}{ph2} Kuralı yeniden oluşturun, bir kontrol "
-"ekleyin{ph3}{ph4} Hız kaydırıcılı küçük bir oyunda kurtarılan ivmeyi "
-"kullanın.{ph5}"
+"ekleyin{ph3}{ph4} Hız kaydırıcılı küçük bir oyunda kurtarılan hızlanma "
+"kuralını kullanın.{ph5}"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -6094,14 +6084,14 @@ msgid ""
 "the rules after + and ×, then build a small calculator that uses "
 "both.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Windows Hesap Makinesinin% düğmesini incelemek için REA "
+"{ph0}›{ph1}{ph2}Windows Hesap Makinesinin% düğmesini incelemek için REA "
 "kullanın. Kuralları + ve × 'den sonra kurtarın, ardından her ikisini de "
 "kullanan küçük bir hesap makinesi oluşturun.{ph3}{ph4}{ph5}"
 
 #: website/public/index.html:849
 msgctxt "page:index.html"
 msgid "With +"
-msgstr "İle +"
+msgstr "+ ile"
 
 #. {ph0}: <span>
 #. {ph1}: </span >
@@ -6115,7 +6105,7 @@ msgstr "{ph0}İlk sayının% 10'unu alın.{ph1}{ph2}"
 #: website/public/index.html:856
 msgctxt "page:index.html"
 msgid "With ×"
-msgstr "İle ×"
+msgstr "× ile"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -6124,7 +6114,7 @@ msgstr "İle ×"
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}Turn 10% into 0.1.{ph1}{ph2}"
-msgstr "{ph0}% 10'u 0.1.200 × 0.1 = 20'ye çevirin{ph1}{ph2}"
+msgstr "{ph0}%10’u 0,1’e çevirin. 200 × 0,1 = 20{ph1}{ph2}"
 
 #: website/public/index.html:947
 msgctxt "page:index.html"
@@ -6231,7 +6221,7 @@ msgstr "Kılavuzlu örneği deneyin"
 #: website/public/index.html:1101
 msgctxt "page:index.html"
 msgid "Native binaries"
-msgstr "Makine kodu programları"
+msgstr "Yerel ikili dosyalar"
 
 #: website/public/index.html:1102
 msgctxt "page:index.html"
@@ -6245,12 +6235,12 @@ msgstr ""
 #: website/public/index.html:1106
 msgctxt "page:index.html"
 msgid "Native analysis guide"
-msgstr "Makine kodu programlarının analizi kılavuzu"
+msgstr "Yerel ikili dosyalarnın analizi kılavuzu"
 
 #: website/public/index.html:1109
 msgctxt "page:index.html"
 msgid "JavaScript & Electron"
-msgstr "JavaScript VE Electron"
+msgstr "JavaScript ve Electron"
 
 #: website/public/index.html:1110
 msgctxt "page:index.html"
@@ -6258,8 +6248,8 @@ msgid ""
 "Map modules, routes, IPC and native dependencies from an application folder "
 "or ASAR archive."
 msgstr ""
-"Modülleri, rotaları, IPC'yi ve native bağımlılıkları bir uygulama "
-"klasöründen veya ASAR arşivinden eşleyin."
+"Modülleri, rotaları, IPC'yi ve yerel bağımlılıkları bir uygulama klasöründen "
+"veya ASAR arşivinden eşleyin."
 
 #: website/public/index.html:1114
 msgctxt "page:index.html"
@@ -6379,7 +6369,7 @@ msgstr "Örnek olay incelemesi * Aegis Kimlik Doğrulayıcı"
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "How does an authenticator{ph0}generate a login code?"
-msgstr "Bir kimlik doğrulayıcı nasıl çalışır{ph0}bir giriş kodu oluşturun?"
+msgstr "Bir kimlik doğrulayıcı{ph0}giriş kodunu nasıl oluşturur?"
 
 #: website/public/showcase/aegis/index.html:205
 msgctxt "page:showcase/aegis/index.html"
@@ -6399,12 +6389,12 @@ msgstr "Aegis 3.4.3 * Android * Resmi sürüm APK * 6.9 MB"
 #: website/public/showcase/aegis/index.html:213
 msgctxt "page:showcase/aegis/index.html"
 msgid "View Aegis on GitHub"
-msgstr "Aegis'YU GitHub'DA görüntüleyin"
+msgstr "Aegis’i GitHub’da görüntüleyin"
 
 #: website/public/showcase/aegis/index.html:219
 msgctxt "page:showcase/aegis/index.html"
 msgid "From an APK to a code you can reproduce"
-msgstr "Bir APK'DAN yeniden oluşturabileceğiniz bir koda"
+msgstr "Bir APK’daN yeniden oluşturabileceğiniz bir koda"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span >
@@ -6420,7 +6410,7 @@ msgid ""
 "methods{ph3}{ph4}REA searches the package and traces the code used by the "
 "display and copy actions.{ph5}"
 msgstr ""
-"{ph0}01 * Özelliği bulun{ph1}{ph2} 3,077 sınıflar → oluşturma "
+"{ph0}01 * Özelliği bulun{ph1}{ph2} 3.077 sınıf → oluşturma "
 "yöntemleri{ph3}{ph4} REA paketi arar ve görüntüleme ve kopyalama eylemleri "
 "tarafından kullanılan kodu izler.{ph5}"
 
@@ -6456,8 +6446,8 @@ msgid ""
 "code.{ph3}{ph4}A new browser demo reproduces the rule and checks it against "
 "public reference cases.{ph5}"
 msgstr ""
-"{ph0}03 * Saati yeniden oluşturun ve kontrol{ph1}{ph2} edin. Kurallara "
-"dikkat et.{ph3}{ph4}Yeni bir tarayıcı demosu kuralı yeniden üretir ve genel "
+"{ph0}03 * Saati yeniden oluşturun ve kontrol{ph1}{ph2} edin. Kodu "
+"izleyin.{ph3}{ph4}Yeni bir tarayıcı demosu kuralı yeniden üretir ve genel "
 "referans durumlarına karşı kontrol eder.{ph5}"
 
 #: website/public/showcase/aegis/index.html:251
@@ -6511,7 +6501,7 @@ msgstr "{ph0}Yeniden yapılanmayı kontrol edin{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/aegis/index.html"
 msgid "{ph0}Inspect the APK yourself{ph1}"
-msgstr "{ph0}APK'YU kendiniz inceleyin{ph1}"
+msgstr "{ph0}APK’yı kendiniz inceleyin{ph1}"
 
 #: website/public/showcase/aegis/index.html:263
 msgctxt "page:showcase/aegis/index.html"
@@ -6559,7 +6549,7 @@ msgid ""
 "An example prompt for the downloaded APK, with REA's Android analysis "
 "configured. {ph0}Get the APK and analysis setup ↓{ph1}"
 msgstr ""
-"REA'NUN Android analizi yapılandırılmış olarak indirilen APK için bir örnek "
+"REA’nın Android analizi yapılandırılmış olarak indirilen APK için bir örnek "
 "istemi. APK {ph0}ve analiz kurulumunu edinin ↓{ph1}"
 
 #: website/public/showcase/aegis/index.html:302
@@ -6610,7 +6600,7 @@ msgstr "30 saniyelik blok"
 #: website/public/showcase/aegis/index.html:648
 msgctxt "page:showcase/aegis/index.html"
 msgid "Block"
-msgstr "Engel"
+msgstr "Blok"
 
 #. {ph0}: <code data-aegis-division>floor(59 / 30)</code>
 #. {ph1}: <br />
@@ -6660,7 +6650,7 @@ msgid ""
 "At 59 seconds: {ph0}287082.{ph1} At 60 seconds: {ph2}359152.{ph3} Moving "
 "within one block leaves the code unchanged."
 msgstr ""
-"59 Saniyede: {ph0}287082.{ph1} 60 Saniyede: {ph2}359152.{ph3} Bir blok "
+"59. saniyede: {ph0}287082.{ph1} 60 Saniyede: {ph2}359152.{ph3} Bir blok "
 "içinde hareket etmek kodu değiştirmeden bırakır."
 
 #. {ph0}: <a href="https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B" >
@@ -6682,7 +6672,7 @@ msgid ""
 "clock."
 msgstr ""
 "Diyagram sonucu 59 saniyede göstermektedir. Saati değiştirmek için "
-"JavaScript'YU etkinleştirin."
+"JavaScript’i etkinleştirin."
 
 #: website/public/showcase/aegis/index.html:398
 msgctxt "page:showcase/aegis/index.html"
@@ -6692,7 +6682,7 @@ msgstr "Kodu REA ile bulun"
 #: website/public/showcase/aegis/index.html:401
 msgctxt "page:showcase/aegis/index.html"
 msgid "Narrow the APK to three classes"
-msgstr "APK'YU üç sınıfa daraltın"
+msgstr "APK’yı üç sınıfa daraltın"
 
 #. {ph0}: <code>TotpInfo</code>
 #: website/public/showcase/aegis/index.html:426
@@ -6720,7 +6710,7 @@ msgid ""
 "Inspecting {ph0} then shows the display calling {ph1}."
 msgstr ""
 "REA, zaman damgası aşırı yüklenmesini tanımlar ve temel yöntemin "
-"arayanlarını bulur. Giriş Sahibini inceliyorum{ph0} daha sonra TotpInfo "
+"çağıranlarını bulur. Giriş Sahibini inceliyorum{ph0} daha sonra TotpInfo "
 "çağıran ekranı {ph1}."
 
 #. {ph0}: <code>com.beemdevelopment.aegis</code>
@@ -6750,7 +6740,7 @@ msgid ""
 "timestamp method turns seconds into a block number."
 msgstr ""
 "REA, {ph0}saat dönüşümünü, varsayılan ayarları ve oluşturma yöntemlerini "
-"döndürür.{ph1} Kurucular 30 saniyelik bir aralık ve altı basamak belirler; "
+"döndürür.{ph1} Yapıcılar 30 saniyelik bir aralık ve altı basamak belirler; "
 "zaman damgası yöntemi saniyeleri bir blok numarasına dönüştürür."
 
 #. {ph0}: <span>
@@ -6910,7 +6900,7 @@ msgstr "30 saniye"
 #: website/public/showcase/aegis/index.html:669
 msgctxt "page:showcase/aegis/index.html"
 msgid "1,111,111,109 seconds"
-msgstr "1,111,111,109 saniye"
+msgstr "1.111.111.109 saniye"
 
 #. {ph0}: <a href="https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B" >
 #. {ph1}: </a >
@@ -6955,7 +6945,7 @@ msgstr ""
 #: website/public/showcase/aegis/index.html:711
 msgctxt "page:showcase/aegis/index.html"
 msgid "Inspect the APK yourself"
-msgstr "APK'YU kendiniz inceleyin"
+msgstr "APK’yı kendiniz inceleyin"
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
@@ -6966,8 +6956,8 @@ msgid ""
 "{ph0}Set up REA{ph1} on macOS or Linux, then download these two files into "
 "the same folder. On Windows, use a Linux environment such as WSL."
 msgstr ""
-"{ph0}REA'YU macOS veya Linux'DA ayarlayın{ph1}, ardından bu iki dosyayı aynı"
-" klasöre indirin. Windows'DA WSL gibi bir Linux ortamı kullanın."
+"{ph0}REA’yı macOS veya Linux’ta ayarlayın{ph1}, ardından bu iki dosyayı aynı "
+"klasöre indirin. Windows’ta WSL gibi bir Linux ortamı kullanın."
 
 #. {ph0}: <code>JAVA_HOME</code>
 #. {ph1}: <code>PATH</code>
@@ -7000,9 +6990,9 @@ msgid ""
 "Your agent can continue through REA's CLI using the prompt above. For MCP, "
 "add {ph0} to the REA server's environment and reconnect it."
 msgstr ""
-"Aracınız yukarıdaki istemi kullanarak REA'NUN CLI'SU üzerinden devam "
-"edebilir. {ph0}MCP için REA sunucusunun ortamına REA_JADX_MCP_JAR ekleyin ve"
-" yeniden bağlayın."
+"Aracınız yukarıdaki istemi kullanarak REA’nın CLI’sı üzerinden devam "
+"edebilir. {ph0}MCP için REA sunucusunun ortamına REA_JADX_MCP_JAR ekleyin ve "
+"yeniden bağlayın."
 
 #. {ph0}: <strong >
 #. {ph1}: </strong >
@@ -7039,7 +7029,7 @@ msgid ""
 "{ph0}Official Aegis 3.4.3 release{ph1} · {ph2}Matching source commit{ph3} · "
 "{ph4}GPL-3.0 license{ph5}"
 msgstr ""
-"{ph0}Resmi Aegis 3.4.3 sürümü{ph1} * {ph2}Eşleşen kaynak taahhüdü{ph3} * "
+"{ph0}Resmi Aegis 3.4.3 sürümü{ph1} * {ph2}Eşleşen kaynak commit’i{ph3} * "
 "{ph4}GPL-3.0 lisansı{ph5}"
 
 #. {ph0}: <a href="https://www.rfc-editor.org/rfc/rfc6238.html#appendix-B" >
@@ -7074,7 +7064,7 @@ msgid ""
 "Inspect the Aegis Android APK with REA, recover its six-digit login-code "
 "calculation and try a reconstruction with an adjustable clock."
 msgstr ""
-"Aegis Android APK'YU REA ile inceleyin, altı basamaklı giriş kodu "
+"Aegis Android APK’yı REA ile inceleyin, altı basamaklı giriş kodu "
 "hesaplamasını kurtarın ve ayarlanabilir bir saatle yeniden yapılandırmayı "
 "deneyin."
 
@@ -7144,7 +7134,7 @@ msgid ""
 "find an input that makes the original program print {ph0}."
 msgstr ""
 "Küçük bir bayrak denetleyicisini incelemek, kurallarını denklemlere "
-"dönüştürmek ve orijinal program baskısını REArea'yı{ph0}."
+"dönüştürmek ve orijinal programın yazdırdığı{ph0}."
 
 #: website/public/showcase/ctf/index.html:209
 msgctxt "page:showcase/ctf/index.html"
@@ -7212,8 +7202,8 @@ msgid ""
 "the result.{ph5}"
 msgstr ""
 "{ph0}03 * Kurtarılan bayrağı çözün ve çalıştırın{ph1}{ph2} → "
-"Düzeltin!{ph3}{ph4}Bir Python betiği denklemleri çözer.  REA, sonucu kabul "
-"eden orijinal programı yakalar.{ph5}"
+"Doğru!{ph3}{ph4}Bir Python betiği denklemleri çözer.  REA, sonucu kabul eden "
+"orijinal programı yakalar.{ph5}"
 
 #: website/public/showcase/ctf/index.html:247
 msgctxt "page:showcase/ctf/index.html"
@@ -7329,9 +7319,9 @@ msgid ""
 "Explain how the checks work, then verify the answer with the original "
 "program.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Ms_flag_checker'ı analiz etmek ve bayrağı bulmak için REA "
-"kullanın. Kontrollerin nasıl çalıştığını açıklayın, ardından cevabı orijinal"
-" programla doğrulayın.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}Ms_flag_checker'ı analiz etmek ve bayrağı bulmak için REA "
+"kullanın. Kontrollerin nasıl çalıştığını açıklayın, ardından cevabı orijinal "
+"programla doğrulayın.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/ctf/index.html:298
 msgctxt "page:showcase/ctf/index.html"
@@ -7346,7 +7336,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:304
 msgctxt "page:showcase/ctf/index.html"
 msgid "Follow the input prompt to its function"
-msgstr "İşlevine giriş istemini takip edin"
+msgstr "Giriş isteminden işlevine ilerleyin"
 
 #: website/public/showcase/ctf/index.html:333
 msgctxt "page:showcase/ctf/index.html"
@@ -7407,7 +7397,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "The seventh check selects just one position. {ph0}Open figure{ph1}."
-msgstr "Yedinci kontrol sadece bir pozisyon seçer. {ph0}Açık rakam{ph1}."
+msgstr "Yedinci kontrol sadece bir pozisyon seçer. {ph0}Şekli aç{ph1}."
 
 #: website/public/showcase/ctf/index.html:412
 msgctxt "page:showcase/ctf/index.html"
@@ -7426,9 +7416,9 @@ msgid ""
 "means −21. The target is a little-endian integer. Together, these bytes tell"
 " the agent that {ph2}, so that character is {ph3}."
 msgstr ""
-"MOVSX yönergesi, maske baytlarını imzalı değerler {ph0} okur. Bu yüzden "
-"{ph1} -21 anlamına gelir. Hedef küçük endian bir tamsayıdır. Birlikte, bu "
-"baytlar aracıya {ph2}55{ph3} olduğunu söyler, böylece karakter 7olur."
+"MOVSX talimatı, maske baytlarını imzalı değerler {ph0} okur. Bu yüzden {ph1} "
+"-21 anlamına gelir. Hedef küçük endian bir tamsayıdır. Birlikte, bu baytlar "
+"aracıya {ph2}55{ph3} olduğunu söyler, böylece karakter 7olur."
 
 #: website/public/showcase/ctf/index.html:443
 msgctxt "page:showcase/ctf/index.html"
@@ -7441,7 +7431,7 @@ msgid ""
 "Select a step to connect the summing helper and its caller to the same rule "
 "in C."
 msgstr ""
-"Toplama yardımcısını ve arayanını C'de aynı kurala bağlamak için bir adım "
+"Toplama yardımcısını ve çağıranını C'de aynı kurala bağlamak için bir adım "
 "seçin."
 
 #. {ph0}: <span>
@@ -7474,7 +7464,7 @@ msgstr "{ph0}03{ph1} Ekle"
 #, python-brace-format
 msgctxt "page:showcase/ctf/index.html"
 msgid "{ph0}04{ph1} Advance"
-msgstr "{ph0}04{ph1} Peşin"
+msgstr "{ph0}04{ph1} İlerle"
 
 #. {ph0}: <span>
 #. {ph1}: </span>
@@ -7550,7 +7540,7 @@ msgid ""
 "{ph0}05 · Compare with the stored target.{ph1} The caller receives the sum "
 "in {ph2}. A mismatch jumps to {ph3}."
 msgstr ""
-"{ph0}05 * Saklanan hedefle karşılaştırın.{ph1} Arayan, toplamı {ph2} "
+"{ph0}05 * Saklanan hedefle karşılaştırın.{ph1} Çağıran, toplamı {ph2} "
 "cinsinden alır. Bir uyumsuzluk {ph3}."
 
 #: website/public/showcase/ctf/index.html:575
@@ -7559,8 +7549,8 @@ msgid ""
 "The instructions come from the summing helper and its caller. The C is an "
 "explanatory summary with descriptive names and a flattened 36-cell loop."
 msgstr ""
-"Talimatlar toplama yardımcısından ve arayanından gelir. C, açıklayıcı adlara"
-" ve düzleştirilmiş 36 hücreli bir döngüye sahip açıklayıcı bir özettir."
+"Talimatlar toplama yardımcısından ve çağıranından gelir. C, açıklayıcı adlara "
+"ve düzleştirilmiş 36 hücreli bir döngüye sahip açıklayıcı bir özettir."
 
 #: website/public/showcase/ctf/index.html:583
 msgctxt "page:showcase/ctf/index.html"
@@ -7594,8 +7584,9 @@ msgid ""
 "targets."
 msgstr ""
 "Z3, bu denklemleri karşılayan değerleri bulan bir çözücüdür. Bu alıntı, "
-"çıkarılan çekleri kullanır ve harf, rakam, alt çizgi ve parantez içeren bir "
-"{ph0} bayrağı varsayar. Tam indirme, 26 maskenin ve hedefin tümünü içerir."
+"çıkarılan kontrolleri kullanır ve harf, rakam, alt çizgi ve parantez içeren "
+"bir {ph0} bayrağı varsayar. Tam indirme, 26 maskenin ve hedefin tümünü "
+"içerir."
 
 #: website/public/showcase/ctf/index.html:626
 msgctxt "page:showcase/ctf/index.html"
@@ -7730,9 +7721,9 @@ msgid ""
 "Download the original challenge and the solver into one folder. Use the "
 "prompt above to investigate with your agent, or run the included script."
 msgstr ""
-"Orijinal mücadeleyi ve çözücüyü tek bir klasöre indirin. Aracınızla "
-"araştırmak veya birlikte verilen komut dosyasını çalıştırmak için yukarıdaki"
-" istemi kullanın."
+"Orijinal meydan okumayı ve çözücüyü tek bir klasöre indirin. Aracınızla "
+"araştırmak veya birlikte verilen betiği çalıştırmak için yukarıdaki istemi "
+"kullanın."
 
 #: website/public/showcase/ctf/index.html:739
 msgctxt "page:showcase/ctf/index.html"
@@ -7755,7 +7746,7 @@ msgstr ""
 #: website/public/showcase/ctf/index.html:761
 msgctxt "page:showcase/ctf/index.html"
 msgid "Set up REA with your coding agent"
-msgstr "Kodlama aracınızla REA'YU kurun"
+msgstr "Kodlama aracınızla REA’yı kurun"
 
 #: website/public/showcase/ctf/index.html:6
 msgctxt "page:showcase/ctf/index.html"
@@ -7872,13 +7863,13 @@ msgid ""
 "The goal is a maintainable C version of the 1996 Windows game. REA helps the"
 " agent inspect the original, one function at a time."
 msgstr ""
-"Amaç, 1996 Windows oyununun sürdürülebilir bir C versiyonudur.  REA, "
-"acentenin orijinali, her seferinde bir işlevi incelemesine yardımcı olur."
+"Amaç, 1996 Windows oyununun sürdürülebilir bir C versiyonudur.  REA, ajanın "
+"orijinali, her seferinde bir işlevi incelemesine yardımcı olur."
 
 #: website/public/showcase/dx-ball/index.html:208
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Windows i386 · C · REA"
-msgstr "Windows ı386 * C * REA"
+msgstr "Windows i386 * C * REA"
 
 #. {ph0}: <a href="../../assets/figures/dx-ball-sound-pan-investigation.svg" >
 #. {ph1}: </a >
@@ -7890,8 +7881,8 @@ msgid ""
 "callers and data reads; the reconstruction project implements and tests the "
 "result. {ph0}Open figure{ph1}"
 msgstr ""
-"REA talimatları, arayanları ve veri okumalarını sağlar; yeniden yapılandırma"
-" projesi sonucu uygular ve test eder. {ph0}Açık şekil{ph1}"
+"REA talimatları, çağıranları ve veri okumalarını sağlar; yeniden yapılandırma "
+"projesi sonucu uygular ve test eder. {ph0}Açık şekil{ph1}"
 
 #: website/public/showcase/dx-ball/index.html:236
 msgctxt "page:showcase/dx-ball/index.html"
@@ -7933,7 +7924,7 @@ msgstr "{ph0}Çalışmaya devam et{ph1}"
 #: website/public/showcase/dx-ball/index.html:249
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "maintained C functions"
-msgstr "tutulan C fonksiyonları"
+msgstr "bakımı yapılan C işlevleri"
 
 #: website/public/showcase/dx-ball/index.html:253
 msgctxt "page:showcase/dx-ball/index.html"
@@ -7978,8 +7969,8 @@ msgstr ""
 "Kurtarılan kod, tahta ve kaynak işlemeyi, tuğla vuruşlarını, animasyonları, "
 "parçacıkları ve bonus üretimini kapsar. Mevcut yapılar, denetim yardımcı "
 "programları ve bir analiz kitaplığı sağlar. Oynanabilir oyun üzerindeki "
-"çalışmalar top ve kürek fiziği, güçlendirme kullanımı ve Windows "
-"entegrasyonu ile devam ediyor."
+"çalışmalar top ve raket fiziği, güçlendirme kullanımı ve Windows entegrasyonu "
+"ile devam ediyor."
 
 #: website/public/showcase/dx-ball/index.html:283
 msgctxt "page:showcase/dx-ball/index.html"
@@ -7993,9 +7984,9 @@ msgid ""
 "The investigation needed to recover how that screen coordinate becomes a "
 "left/right panning value."
 msgstr ""
-"Bir tuğla vurulduğunda, yatay konumu ses koduna geçirilir. Soruşturma, bu "
-"ekran koordinatının nasıl sola / sağa kaydırma değeri haline geldiğini "
-"kurtarmak için gerekliydi."
+"Bir tuğla vurulduğunda, yatay konumu ses koduna geçirilir. İnceleme, bu ekran "
+"koordinatının nasıl sola / sağa kaydırma değeri haline geldiğini kurtarmak "
+"için gerekliydi."
 
 #. {ph0}: <span class="terminal-dots" aria-hidden="true" >
 #. {ph1}: <i>
@@ -8033,8 +8024,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how DX-Ball calculates sound panning. "
 "Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}DX-Ball'NUN stereo ses konumlandırmasını nasıl "
-"hesapladığını bulmak için REA kullanın. Hesaplamayı açıklayın ve kodu "
+"{ph0}›{ph1}{ph2}DX-Ball’ın stereo ses konumlandırmasını nasıl hesapladığını "
+"bulmak için REA kullanın. Hesaplamayı açıklayın ve kodu "
 "gösterin.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/dx-ball/index.html:312
@@ -8055,7 +8046,7 @@ msgid ""
 "read the constants from the executable. Those results supplied the input and"
 " arithmetic needed to write the C function below."
 msgstr ""
-"Aracı, işlevi incelemek, tuğlaya çarpan arayanını takip etmek ve "
+"Aracı, işlevi incelemek, tuğlaya çarpan çağıranını takip etmek ve "
 "yürütülebilir dosyadaki sabitleri okumak için REA kullandı. Bu sonuçlar, "
 "aşağıdaki C işlevini yazmak için gereken girdi ve aritmetiği sağladı."
 
@@ -8108,13 +8099,13 @@ msgid ""
 "The function result includes instructions alongside pseudocode and callers. "
 "Here, {ph0} exposes the integer input missing from the decompiler view."
 msgstr ""
-"İşlev sonucu, sahte kod ve arayanların yanı sıra talimatları içerir. Burada,"
-" {ph0} kod çözücü görünümünde eksik olan tamsayı girdisini gösterir."
+"İşlev sonucu, sözde kod ve çağıranların yanı sıra talimatları içerir. Burada, "
+"{ph0} kod çözücü görünümünde eksik olan tamsayı girdisini gösterir."
 
 #: website/public/showcase/dx-ball/index.html:377
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Follow the caller to understand the input"
-msgstr "Girişi anlamak için arayanı takip edin"
+msgstr "Girişi anlamak için çağıranı takip edin"
 
 #. {ph0}: <code>tile_x</code>
 #. {ph1}: <code>20 + 30 × tile_x</code>
@@ -8125,7 +8116,7 @@ msgid ""
 "REA identified this caller in the first result. Its preceding instructions "
 "scale {ph0} by 30; adding 20 gives the brick's screen coordinate, {ph1}."
 msgstr ""
-"REA bu arayanı ilk sonuçta tanımladı. Önceki talimatları {ph0}tile_x'i 30'a "
+"REA bu çağıranı ilk sonuçta tanımladı. Önceki talimatları {ph0}tile_x'i 30'a "
 "ölçeklendirir; 20 eklemek tuğlanın ekran koordinatını verir, {ph1}."
 
 #: website/public/showcase/dx-ball/index.html:401
@@ -8145,7 +8136,7 @@ msgstr ""
 #: website/public/showcase/dx-ball/index.html:430
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "From REA's findings to C"
-msgstr "REA'NUN bulgularından C'ye"
+msgstr "REA’nın bulgularından C'ye"
 
 #: website/public/showcase/dx-ball/index.html:431
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8220,8 +8211,8 @@ msgid ""
 "through REA establishes the screen-coordinate meaning of the C parameter "
 "{ph4}."
 msgstr ""
-"{ph0}01 * Girişi okuyun.{ph1} Talimat görünümü REA işlev sonucu okur {ph2} "
-"ve kullanır {ph3} tamsayıyı yüklemek için. Arayanı REA aracılığıyla takip "
+"{ph0}01 * Girişi okuyun.{ph1} Talimat görünümü REA işlev sonucu okur {ph2} ve "
+"kullanır {ph3} tamsayıyı yüklemek için. Çağıranı REA aracılığıyla takip "
 "etmek, C parametresi {ph4} ekran koordinat anlamını belirler."
 
 #. {ph0}: <strong>
@@ -8302,14 +8293,13 @@ msgid ""
 "The full listing below also includes the intervening stores and function "
 "setup and cleanup."
 msgstr ""
-"Derleme alıntısı giriş, aritmetik ve dönüş talimatlarını seçer. Aşağıdaki "
-"tam liste, araya giren depoları ve işlev kurulumunu ve temizlemeyi de "
-"içerir."
+"Assembly alıntısı giriş, aritmetik ve dönüş talimatlarını seçer. Aşağıdaki "
+"tam liste, araya giren depoları ve işlev kurulumunu ve temizlemeyi de içerir."
 
 #: website/public/showcase/dx-ball/index.html:574
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Full assembly and supporting evidence"
-msgstr "Tam montaj ve destekleyici kanıtlar"
+msgstr "Tam assembly ve destekleyici kanıtlar"
 
 #: website/public/showcase/dx-ball/index.html:577
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8319,7 +8309,7 @@ msgstr "REA sonucu * 0x406400-0x40643e"
 #: website/public/showcase/dx-ball/index.html:611
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "What the caller supplies"
-msgstr "Arayan ne sağlar"
+msgstr "Çağıran ne sağlar"
 
 #. {ph0}: <code>0x411f40</code>
 #: website/public/showcase/dx-ball/index.html:612
@@ -8385,7 +8375,7 @@ msgid ""
 "Recorded with REA 4.1.0 for the hash-pinned DX-Ball 1.07 target. The linked "
 "investigation notes retain the Evidence IDs."
 msgstr ""
-"Karma sabitlenmiş DX-Ball 1.07 hedefi için REA 4.1.0 ile kaydedildi. "
+"Karma değeri sabitlenmiş DX-Ball 1.07 hedefi için REA 4.1.0 ile kaydedildi. "
 "Bağlantılı soruşturma notları Kanıt Kimliklerini saklar."
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/dx-
@@ -8402,8 +8392,7 @@ msgid ""
 "{ph0}Maintained source{ph1} · {ph2}Investigation notes and evidence "
 "references{ph3}"
 msgstr ""
-"{ph0}Tutulan kaynak{ph1} * {ph2}Soruşturma notları ve kanıt "
-"referansları{ph3}"
+"{ph0}Tutulan kaynak{ph1} * {ph2}İnceleme notları ve kanıt referansları{ph3}"
 
 #: website/public/showcase/dx-ball/index.html:677
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8475,7 +8464,7 @@ msgstr "{ph0}Derleyici tekrar ayrıntılarını okuyun{ph1}"
 #: website/public/showcase/dx-ball/index.html:717
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Continue the investigation"
-msgstr "Soruşturmaya devam et"
+msgstr "İncelemeya devam et"
 
 #: website/public/showcase/dx-ball/index.html:718
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8500,7 +8489,7 @@ msgstr ""
 #: website/public/showcase/dx-ball/index.html:731
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "In the DX-Ball checkout"
-msgstr "DX-Ball kasasında"
+msgstr "DX-Ball çalışma kopyasında"
 
 #. {ph0}: <a href="https://github.com/N0zoM1z0/dx-ball" >
 #. {ph1}: </a >
@@ -8513,7 +8502,7 @@ msgid ""
 "{ph0}DX-Ball repository{ph1}{ph2}Current source, progress and local "
 "setup.{ph3}"
 msgstr ""
-"{ph0} DX-Ball deposu{ph1}{ph2} Akım kaynağı, ilerleme ve yerel kurulum.{ph3}"
+"{ph0} DX-Ball deposu{ph1}{ph2} Güncel kaynak, ilerleme ve yerel kurulum.{ph3}"
 
 #. {ph0}: <a href="../../guides/native/">
 #. {ph1}: </a >
@@ -8575,8 +8564,8 @@ msgid ""
 "checked independently against the original x86 in 3,205 cases and by VC4.0 "
 "compiler replay matching 63 bytes."
 msgstr ""
-"DXBALL.EXE işlevi 0x00406400, REA ile denetlenir. Tuğlaya çarpan bir arayan,"
-" 20 artı 30 kez tile_x sağlar. Talimatlar x'i yükleyin, 1.5625 ile çarpın, "
+"DXBALL.EXE işlevi 0x00406400, REA ile denetlenir. Tuğlaya çarpan bir çağıran, "
+"20 artı 30 kez tile_x sağlar. Talimatlar x'i yükleyin, 1.5625 ile çarpın, "
 "500.0'ı çıkarın, pan_scale uygulayın ve bir tamsayı döndürün. Tutulan C, "
 "3.205 durumda orijinal x86'ya karşı bağımsız olarak ve 63 baytla eşleşen "
 "VC4.0 derleyici tekrarı ile kontrol edilir."
@@ -8609,7 +8598,7 @@ msgstr "Orijinal derleme alıntısını kopyala"
 #: website/public/showcase/dx-ball/index.html:507
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "Copy sound-pan function"
-msgstr "Sesi kopyala-kaydırma işlevi"
+msgstr "Ses pan işlevini kopyala"
 
 #: website/public/showcase/dx-ball/index.html:578
 msgctxt "page:showcase/dx-ball/index.html"
@@ -8650,8 +8639,8 @@ msgid ""
 "Android, games, Electron and a CTF challenge, with code, figures and checked"
 " results."
 msgstr ""
-"Android, oyunlar, Electron ve kod, rakamlar ve kontrol edilen sonuçlarla CTF"
-" mücadelesi."
+"Android, oyunlar, Electron ve kod, şekiller ve doğrulanmış sonuçlarla CTF "
+"mücadelesi."
 
 #: website/public/showcase/index.html:208
 msgctxt "page:showcase/index.html"
@@ -8670,9 +8659,9 @@ msgid ""
 "generating methods with REA, then move a demo clock to see why the code "
 "changes every 30 seconds."
 msgstr ""
-"Yayınlanan APK'DA Aegis'NUN altı basamaklı kod hesaplamasını bulun. "
-"Oluşturma yöntemlerini REA ile izleyin, ardından kodun neden her 30 saniyede"
-" bir değiştiğini görmek için bir demo saatini hareket ettirin."
+"Yayınlanan APK’da Aegis’in altı basamaklı kod hesaplamasını bulun. Oluşturma "
+"yöntemlerini REA ile izleyin, ardından kodun neden her 30 saniyede bir "
+"değiştiğini görmek için bir demo saatini hareket ettirin."
 
 #: website/public/showcase/index.html:222
 msgctxt "page:showcase/index.html"
@@ -8682,7 +8671,7 @@ msgstr "Android vaka çalışmasını okuyun"
 #: website/public/showcase/index.html:226
 msgctxt "page:showcase/index.html"
 msgid "CTF · Native analysis"
-msgstr "CTF * Makine kodu programlarının analizi"
+msgstr "CTF * Yerel ikili dosyalarnın analizi"
 
 #: website/public/showcase/index.html:228
 msgctxt "page:showcase/index.html"
@@ -8696,9 +8685,9 @@ msgid ""
 "functions, turn masks and sums into equations, then verify the solved flag "
 "with the original program."
 msgstr ""
-"REA ile kolay bir indirme zorluğunu inceleyin. Kontrol fonksiyonlarını "
-"bulun, maskeleri ve toplamları denklemlere dönüştürün, ardından çözülen "
-"bayrağı orijinal programla doğrulayın."
+"REA ile kolay bir DownUnderCTF meydan okumasını inceleyin. Kontrol "
+"fonksiyonlarını bulun, maskeleri ve toplamları denklemlere dönüştürün, "
+"ardından çözülen bayrağı orijinal programla doğrulayın."
 
 #: website/public/showcase/index.html:240
 msgctxt "page:showcase/index.html"
@@ -8713,7 +8702,7 @@ msgstr "Yerel makine kodu · Yeniden yapılandırma"
 #: website/public/showcase/index.html:246
 msgctxt "page:showcase/index.html"
 msgid "DX-Ball's sound-pan calculation"
-msgstr "DX-Ball'NUN sol / sağ ses pozisyonunun hesaplanması"
+msgstr "DX-Ball’ın sol / sağ ses pozisyonunun hesaplanması"
 
 #: website/public/showcase/index.html:247
 msgctxt "page:showcase/index.html"
@@ -8723,7 +8712,7 @@ msgid ""
 "function, checked against the original behavior and all 63 compiled bytes."
 msgstr ""
 "1996 Windows oyunundan sol / sağ ses konumu hesaplamasını kurtarın.  REA "
-"talimatları, arayan referansları ve sayısal sabitler, orijinal davranışa ve "
+"talimatları, çağıran referansları ve sayısal sabitler, orijinal davranışa ve "
 "derlenmiş 63 baytın tümüne karşı kontrol edilen küçük bir C işlevine yol "
 "açar."
 
@@ -8749,7 +8738,7 @@ msgid ""
 " wrappers to the system clipboard, then see how a small HTML marker keeps "
 "rich block data connected to a copy."
 msgstr ""
-"Sayfaya bakan bir API'yi Notion 's paketlenmiş JavaScript . IPC "
+"Sayfaya bakan bir API'yi Notion’ın paketlenmiş JavaScript . IPC "
 "sarmalayıcılarını sistem panosuna kadar takip edin, ardından küçük bir HTML "
 "işaretleyicisinin zengin blok verilerini bir kopyaya nasıl bağlı tuttuğunu "
 "görün."
@@ -8777,7 +8766,7 @@ msgid ""
 "a ring aimed at the player."
 msgstr ""
 "Orijinal 16 bit açı yardımcısını REA ile inceleyin. Çarpma, bölme ve "
-"koordinat işlemlerini okunabilir C ++ ile eşleştirin, ardından oynatıcıya "
+"koordinat işlemlerini okunabilir C++ ile eşleştirin, ardından oyuncuya "
 "yönelik bir halkayı nasıl ürettiklerini görün."
 
 #: website/public/showcase/index.html:295
@@ -8857,7 +8846,7 @@ msgid ""
 "Trace a clipboard call from Notion's page API, through the preload and main "
 "process, to Electron's clipboard writer."
 msgstr ""
-"Bir pano çağrısını izleyin Notion 's sayfa API'sı, ön yükleme ve ana işlem "
+"Bir pano çağrısını izleyin Notion’ın sayfa API'sı, ön yükleme ve ana işlem "
 "aracılığıyla Electron 's pano yazıcısı."
 
 #: website/public/showcase/notion/index.html:208
@@ -8868,7 +8857,7 @@ msgstr "Notion Masaüstü 7.6.1 · JavaScript * REA"
 #: website/public/showcase/notion/index.html:212
 msgctxt "page:showcase/notion/index.html"
 msgid "The bridge inside Notion's desktop package"
-msgstr "Notion'NUN masaüstü paketinin içindeki köprü"
+msgstr "Notion’ın masaüstü paketinin içindeki köprü"
 
 #. {ph0}: <span class="flow-label">
 #. {ph1}: </span>
@@ -9037,7 +9026,7 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to trace how Notion copies text and HTML to the "
 "system clipboard. Show the code at each step.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Notion'NUN metin ve HTML'yi sistem panosuna nasıl "
+"{ph0}›{ph1}{ph2}Notion’ın metin ve HTML'yi sistem panosuna nasıl "
 "kopyaladığını izlemek için REA kullanın. Her adımda kodu "
 "gösterin.{ph3}{ph4}{ph5}"
 
@@ -9047,8 +9036,8 @@ msgid ""
 "An example prompt with Notion's local application package available to your "
 "coding agent."
 msgstr ""
-"Kodlama aracınız tarafından kullanılabilen Notion'NUN yerel uygulama "
-"paketine sahip örnek bir komut istemi."
+"Kodlama aracınız tarafından kullanılabilen Notion’ın yerel uygulama paketine "
+"sahip örnek bir komut istemi."
 
 #: website/public/showcase/notion/index.html:299
 msgctxt "page:showcase/notion/index.html"
@@ -9080,7 +9069,7 @@ msgid ""
 "with REA 4.1.0. Positions use the original bundle's line and zero-based "
 "column."
 msgstr ""
-"REA 4.1.0 ile kaydedilen Notion'NUN sekme ön yüklemesindeki yeni bir {ph0} "
+"REA 4.1.0 ile kaydedilen Notion’ın sekme ön yüklemesindeki yeni bir {ph0} "
 "sonucundan seçilen alanlar. Pozisyonlar, orijinal paketin satırını ve sıfır "
 "tabanlı sütunu kullanır."
 
@@ -9095,7 +9084,7 @@ msgid ""
 "agent something precise to look for in the main bundle. The four excerpts "
 "below show the route it connects."
 msgstr ""
-"Aracı bu konumları açar, birleştirilmiş apı'de pano üyesini bulur ve "
+"Aracı bu konumları açar, birleştirilmiş API’de pano üyesini bulur ve "
 "ınvokerınmain'i okur{ph0}. Çağrı sitesi {ph1} sağlar. Bu isim, ajana ana "
 "pakette araması gereken kesin bir şey verir. Aşağıdaki dört alıntı, "
 "bağlandığı rotayı göstermektedir."
@@ -9111,13 +9100,13 @@ msgid ""
 "Simplified from the packaged JavaScript, with readable variable names. "
 "Unrelated members are omitted."
 msgstr ""
-"Okunabilir değişken adlarıyla paketlenmiş JavaScript'DAN "
-"basitleştirilmiştir. İlgisiz üyeler atlanır."
+"Okunabilir değişken adlarıyla paketlenmiş JavaScript’den basitleştirilmiştir. "
+"İlgisiz üyeler atlanır."
 
 #: website/public/showcase/notion/index.html:344
 msgctxt "page:showcase/notion/index.html"
 msgid "Start at the API exposed to the page"
-msgstr "Sayfaya maruz kalan apı'den başlayın"
+msgstr "Sayfaya açılan API’den başlayın"
 
 #. {ph0}: <code>invokerInMain</code>
 #: website/public/showcase/notion/index.html:366
@@ -9143,7 +9132,7 @@ msgid ""
 "The returned function forwards the arguments through Electron's request-and-"
 "response IPC. We can now look for {ph0} on the main-process side."
 msgstr ""
-"Döndürülen işlev, bağımsız değişkenleri Electron istek ve yanıt IPC'Sİ "
+"Döndürülen işlev, bağımsız değişkenleri Electron istek ve yanıt IPC’si "
 "aracılığıyla iletir. Artık ana işlem tarafında {ph0} arayabiliriz."
 
 #: website/public/showcase/notion/index.html:404
@@ -9192,7 +9181,7 @@ msgid ""
 "Notion's web editor sends text and HTML through {ph0}. It keeps the block "
 "data locally and puts an ID in the copied HTML to connect them."
 msgstr ""
-"Notion'NUN web editörü, electronApı aracılığıyla metin ve HTML {ph0}. Blok "
+"Notion’ın web editörü, electronApi aracılığıyla metin ve HTML {ph0}. Blok "
 "verilerini yerel olarak saklar ve bunları bağlamak için kopyalanan HTML'ye "
 "bir kimlik koyar."
 
@@ -9263,7 +9252,7 @@ msgstr ""
 #: website/public/showcase/notion/index.html:525
 msgctxt "page:showcase/notion/index.html"
 msgid "A table through Notion's Markdown parser"
-msgstr "Notion'NUN Markdown ayrıştırıcısı aracılığıyla bir tablo"
+msgstr "Notion’ın Markdown ayrıştırıcısı aracılığıyla bir tablo"
 
 #: website/public/showcase/notion/index.html:546
 msgctxt "page:showcase/notion/index.html"
@@ -9289,10 +9278,10 @@ msgid ""
 " utility process. Subsequent statement batches and results travel over that "
 "port."
 msgstr ""
-"Notion'NUN oluşturucu, getsqlitemeta'yı IPC aracılığıyla ister{ph0} Ana "
-"işlem bir mesaj kanalı oluşturur ve bir bağlantı noktasını işleyiciye, "
-"diğeri ise bir SQLite yardımcı programı işlemine verir. Sonraki ifade "
-"grupları ve sonuçları bu bağlantı noktası üzerinden gider."
+"Notion’ın oluşturucu, getsqlitemeta'yı IPC aracılığıyla ister{ph0} Ana işlem "
+"bir mesaj kanalı oluşturur ve bir portu işleyiciye, diğeri ise bir SQLite "
+"yardımcı programı işlemine verir. Sonraki ifade grupları ve sonuçları bu port "
+"üzerinden gider."
 
 #: website/public/showcase/notion/index.html:560
 msgctxt "page:showcase/notion/index.html"
@@ -9413,7 +9402,7 @@ msgid ""
 "format."
 msgstr ""
 "Electron'NUN ön yüklemesi, IPC sarmalayıcıları ve ana işlemi aracılığıyla "
-"Notion'NUN pano API'sini kısa kod alıntıları ve zengin pano formatına bir "
+"Notion’ın pano API'sini kısa kod alıntıları ve zengin pano formatına bir "
 "bakışla takip edin."
 
 #: website/public/showcase/notion/index.html:255
@@ -9439,7 +9428,7 @@ msgstr "Notion ön yükleme alıntısını kopyalayın"
 #: website/public/showcase/notion/index.html:379
 msgctxt "page:showcase/notion/index.html"
 msgid "Copy Notion invoke wrapper excerpt"
-msgstr "Kopyala Notion sarmalayıcı alıntısını çağır"
+msgstr "Notion çağrı sarmalayıcısı alıntısını kopyala"
 
 #: website/public/showcase/notion/index.html:410
 msgctxt "page:showcase/notion/index.html"
@@ -9449,7 +9438,7 @@ msgstr "Notion işleyici sarmalayıcı alıntısını kopyala"
 #: website/public/showcase/notion/index.html:438
 msgctxt "page:showcase/notion/index.html"
 msgid "Copy Notion clipboard receiver excerpt"
-msgstr "Kopya Notion pano alıcısı alıntı"
+msgstr "Notion pano alıcısı alıntısını kopyala"
 
 #: website/public/showcase/notion/index.html:493
 msgctxt "page:showcase/notion/index.html"
@@ -9486,7 +9475,7 @@ msgstr "Örnek olay incelemesi * Touhou 4: Lotus Ülkesi Hikayesi"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "Reconstructing TH04's{ph0}bullet patterns."
-msgstr "TH04'NUN yeniden yapılandırılması{ph0}kurşun izleri."
+msgstr "TH04’ün yeniden yapılandırılması{ph0}kurşun izleri."
 
 #: website/public/showcase/th04/index.html:204
 msgctxt "page:showcase/th04/index.html"
@@ -9495,7 +9484,7 @@ msgid ""
 "the original DOS function, then follow its instructions into readable C++."
 msgstr ""
 "Bir mermi halkası kısa bir açı hesaplamasıyla başlar. Orijinal DOS işlevini "
-"incelemek için REA kullanın, ardından talimatlarını okunabilir C ++ olarak "
+"incelemek için REA kullanın, ardından talimatlarını okunabilir C++ olarak "
 "izleyin."
 
 #: website/public/showcase/th04/index.html:209
@@ -9560,7 +9549,7 @@ msgid ""
 "{ph0}03 · Read the C++{ph1}{ph2}Space → aim → rotate{ph3}{ph4}Connect each "
 "operation to the maintained reconstruction.{ph5}"
 msgstr ""
-"{ph0}03 * C ++ Boşluğunu okuyun{ph1}{ph2} → nişan al → döndür{ph3}{ph4} Her "
+"{ph0}03 * C++ Boşluğunu okuyun{ph1}{ph2} → nişan al → döndür{ph3}{ph4} Her "
 "işlemi sürdürülen yeniden yapılandırmaya bağlayın.{ph5}"
 
 #. {ph0}: <span class="flow-label">
@@ -9617,7 +9606,7 @@ msgstr "{ph0}REA ne döndürür{ph1}"
 #, python-brace-format
 msgctxt "page:showcase/th04/index.html"
 msgid "{ph0}Assembly to C++{ph1}"
-msgstr "{ph0}C ++ 'ya derleme{ph1}"
+msgstr "{ph0}C++’a derleme{ph1}"
 
 #. {ph0}: <a href="#checking">
 #. {ph1}: </a>
@@ -9647,7 +9636,7 @@ msgid ""
 " calculates the direction of each bullet. The same ring can face a fixed "
 "direction or turn toward the player."
 msgstr ""
-"Elly'nin saldırısı, ilk sayısı 16 olan bir nişan yüzüğü istiyor. Bir "
+"Elly'nin saldırısı, ilk sayısı 16 olan bir hedeflenen halka istiyor. Bir "
 "yardımcı, her merminin yönünü hesaplar. Aynı halka sabit bir yöne bakabilir "
 "veya oyuncuya doğru dönebilir."
 
@@ -9686,9 +9675,9 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to find how TH04 creates a ring of bullets and aims "
 "it at the player. Explain the calculation and show the code.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}›{ph1}{ph2}TH04'NUN bir mermi halkasını nasıl oluşturduğunu ve onu "
-"oyuncuya nasıl hedeflediğini bulmak için REA kullanın. Hesaplamayı açıklayın"
-" ve kodu gösterin.{ph3}{ph4}{ph5}"
+"{ph0}›{ph1}{ph2}TH04’ün bir mermi halkasını nasıl oluşturduğunu ve onu "
+"oyuncuya nasıl hedeflediğini bulmak için REA kullanın. Hesaplamayı açıklayın "
+"ve kodu gösterin.{ph3}{ph4}{ph5}"
 
 #: website/public/showcase/th04/index.html:299
 msgctxt "page:showcase/th04/index.html"
@@ -9708,9 +9697,9 @@ msgid ""
 "index adds 16 units: {ph0}. Adding the player's direction rotates those "
 "positions together."
 msgstr ""
-"TH04, 256 açı biriminde saat yönünde tam bir dönüş depolar. 16 Madde işareti"
-" için her dizin 16 birim ekler: {ph0}. Oyuncunun yönünü eklemek, bu "
-"pozisyonları birlikte döndürür."
+"TH04, 256 açı biriminde saat yönünde tam bir dönüş depolar. 16 mermi için her "
+"dizin 16 birim ekler: {ph0}. Oyuncunun yönünü eklemek, bu pozisyonları "
+"birlikte döndürür."
 
 #. {ph0}: <a href="../../assets/figures/th04-bullet-ring.svg" >
 #. {ph1}: </a >
@@ -9763,7 +9752,7 @@ msgid ""
 " result explain the pattern."
 msgstr ""
 "Her merminin hızını ve açısını ayarlayan işlev olan "
-"bullet_velocity_and_angle_set{ph0}  REA yönergelerini, sözde kodunu ve "
+"bullet_velocity_and_angle_set{ph0}  REA talimatlarını, sözde kodunu ve "
 "referanslarını döndürür. Bu sonucun üç kısmı modeli açıklıyor."
 
 #: website/public/showcase/th04/index.html:371
@@ -9796,8 +9785,8 @@ msgid ""
 "division uses the count read from {ph1}. The maintained source names that "
 "field {ph2}. The complete sequence appears below."
 msgstr ""
-"{ph0} madde işareti dizinini tutar. Vardiya 256 ile çarpar, ardından bölme "
-"{ph1}. Bullet_template alanı tutulan kaynak {ph2}. Tam sıra aşağıda görünür."
+"{ph0} mermi dizinini tutar. Kaydırma 256 ile çarpar, ardından bölme {ph1}. "
+"Bullet_template alanı tutulan kaynak {ph2}. Tam sıra aşağıda görünür."
 
 #: website/public/showcase/th04/index.html:425
 msgctxt "page:showcase/th04/index.html"
@@ -9812,7 +9801,7 @@ msgid ""
 "make those addresses readable; REA lets the agent check the original "
 "operations behind them."
 msgstr ""
-"Yönerge işlenenleri iki koordinat farklılığı ve bir yön yardımcısı ortaya "
+"Talimat işlenenleri iki koordinat farklılığı ve bir yön yardımcısı ortaya "
 "çıkarır. Dönüş değeri göreceli halka açısına eklenir. Kaynak adları bu "
 "adresleri okunabilir hale getirir; REA, aracının arkalarındaki orijinal "
 "işlemleri kontrol etmesini sağlar."
@@ -9820,7 +9809,7 @@ msgstr ""
 #: website/public/showcase/th04/index.html:457
 msgctxt "page:showcase/th04/index.html"
 msgid "From assembly to readable C++"
-msgstr "Montajdan okunabilir C ++ 'ya"
+msgstr "Assembly’den okunabilir C++’a"
 
 #: website/public/showcase/th04/index.html:458
 msgctxt "page:showcase/th04/index.html"
@@ -9881,7 +9870,7 @@ msgstr "REA * orijinal 16 bit talimatlar"
 #: website/public/showcase/th04/index.html:547
 msgctxt "page:showcase/th04/index.html"
 msgid "Readable C++ · aimed-ring summary"
-msgstr "Okunabilir C ++ * hedeflenmiş halka özeti"
+msgstr "Okunabilir C++ * hedeflenmiş halka özeti"
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -9925,7 +9914,7 @@ msgid ""
 msgstr ""
 "{ph0}03 * Oyuncu yönünü ekleyin.{ph1} İki çıkarma, oyuncu eksi orijinli "
 "koordinatları oluşturur. Yön yardımcısı {ph2} içinde bir açı döndürür; Onu "
-"eklemek tüm halkayı oynatıcıya doğru döndürür."
+"eklemek tüm halkayı oyuncuya doğru döndürür."
 
 #. {ph0}: <strong>
 #. {ph1}: </strong>
@@ -9954,9 +9943,9 @@ msgid ""
 " does. The surrounding source also converts this angle and speed into "
 "velocity."
 msgstr ""
-"{ph0}05 * Son açıyı bir baytta tutun.{ph1} Mağaza, yumurtlama açısı alanına "
-"{ph2} yazar. Değerler, tıpkı imzasız bayt dökümünün yaptığı gibi 255'ten "
-"sonra sarılır. Çevreleyen kaynak da bu açıyı ve hızı hıza dönüştürür."
+"{ph0}05 * Son açıyı bir baytta tutun.{ph1} Saklama işlemi, oluşma açısı "
+"alanına {ph2} yazar. Değerler, tıpkı imzasız bayt dökümünün yaptığı gibi "
+"255'ten sonra sarılır. Çevreleyen kaynak da bu açıyı ve hızı hıza dönüştürür."
 
 #: website/public/showcase/th04/index.html:609
 msgctxt "page:showcase/th04/index.html"
@@ -9965,8 +9954,8 @@ msgid ""
 " The C++ above is a readable summary. Compiler checks below apply to the "
 "maintained source in the linked project."
 msgstr ""
-"Montaj, hedeflenen halka dalını, amaç hesaplamasını ve son depoyu seçer. "
-"Yukarıdaki C ++ okunabilir bir özettir. Aşağıdaki derleyici denetimleri, "
+"Assembly, hedeflenen halka dalını, amaç hesaplamasını ve son depoyu seçer. "
+"Yukarıdaki C++ okunabilir bir özettir. Aşağıdaki derleyici denetimleri, "
 "bağlantılı projedeki tutulan kaynak için geçerlidir."
 
 #: website/public/showcase/th04/index.html:615
@@ -10007,14 +9996,14 @@ msgid ""
 "The TH04 project's recorded checks compile the bullet-generation code, "
 "including this helper, with its pinned Turbo C++ 4.0J toolchain."
 msgstr ""
-"TH04 projesinin kaydedilen kontrolleri, sabitlenmiş Turbo C ++ 4.0J araç "
+"TH04 projesinin kaydedilen kontrolleri, sabitlenmiş Turbo C++ 4.0J araç "
 "zinciri ile bu yardımcı da dahil olmak üzere madde işareti oluşturma kodunu "
 "derler."
 
 #: website/public/showcase/th04/index.html:672
 msgctxt "page:showcase/th04/index.html"
 msgid "2,139 matching bytes"
-msgstr "2,139 eşleşen bayt"
+msgstr "2.139 eşleşen bayt"
 
 #: website/public/showcase/th04/index.html:673
 msgctxt "page:showcase/th04/index.html"
@@ -10108,8 +10097,8 @@ msgid ""
 "helper. They also compare its MAP contribution and overlapping relocation."
 msgstr ""
 "Derleyici denetimleri, bu yardımcı da dahil olmak üzere tüm madde işareti "
-"ekleme kodu bölümünü kapsar. Ayrıca HARİTA katkısını ve örtüşen yer "
-"değiştirmeyi karşılaştırırlar."
+"ekleme kodu bölümünü kapsar. Ayrıca MAP katkısını ve örtüşen yer değiştirmeyi "
+"karşılaştırırlar."
 
 #. {ph0}: <code>0x1000</code>
 #: website/public/showcase/th04/index.html:725
@@ -10121,10 +10110,10 @@ msgid ""
 "two ranges across a 517-byte span; the selected instructions above lie in "
 "those reported ranges."
 msgstr ""
-"REA, {ph0} yük segmentinde statik DOS yük görüntüsünü doğruladı. Adresleri "
-"bu analiz görüntüsünü tanımlar. İşlev sonucu, 517 baytlık bir aralıkta iki "
-"aralıkta 503 gövde baytı bildirir; Yukarıdaki seçilen yönergeler, bildirilen"
-" aralıklarda bulunur."
+"REA, {ph0} yük segmentinde statik DOS yük görüntüsünü doğruladı. Adresleri bu "
+"analiz görüntüsünü tanımlar. İşlev sonucu, 517 baytlık bir aralıkta iki "
+"aralıkta 503 gövde baytı bildirir; Yukarıdaki seçilen talimatlar, bildirilen "
+"aralıklarda bulunur."
 
 #. {ph0}: <code>0d72e980</code>
 #: website/public/showcase/th04/index.html:732
@@ -10138,10 +10127,10 @@ msgid ""
 "independent pristine-dump provenance still open."
 msgstr ""
 "Kaynak adları ve derleyici denetimleri TH04 denetim noktası 0d72e980'den "
-"{ph0}. Daha önceki yeniden yapılanma gözlemleri, projenin kendi analiz komut"
-" dosyalarını kullandı; Bu sayfa, aynı orijinal hedefin yeni bir REA "
+"{ph0}. Daha önceki yeniden yapılanma gözlemleri, projenin kendi analiz komut "
+"dosyalarını kullandı; Bu sayfa, aynı orijinal hedefin yeni bir REA "
 "incelemesini ekler. Sağlanan oyunun kimliği, bağımsız bozulmamış döküm "
-"kaynağı hala açıkken, depo bildirimi tarafından sabitlenir."
+"kaynağı hâlâ açıkken, depo bildirimi tarafından sabitlenir."
 
 #: website/public/showcase/th04/index.html:740
 msgctxt "page:showcase/th04/index.html"
@@ -10150,9 +10139,9 @@ msgid ""
 " PC-98 hardware behavior have separate runtime checks in the reconstruction "
 "project."
 msgstr ""
-"Şekil açı hesaplamasını göstermektedir. Tam oyun denetimleri, zamanlama ve "
-"PC-98 donanım davranışı, yeniden yapılandırma projesinde ayrı çalışma zamanı"
-" denetimlerine sahiptir."
+"Şekil açı hesaplamasını göstermektedir. Tam oyun kontrolleri, zamanlama ve "
+"PC-98 donanım davranışı, yeniden yapılandırma projesinde ayrı çalışma zamanı "
+"denetimlerine sahiptir."
 
 #: website/public/showcase/th04/index.html:749
 msgctxt "page:showcase/th04/index.html"
@@ -10166,9 +10155,9 @@ msgid ""
 "assembly. Beyond bullet generation, the source covers stages, bosses, "
 "rendering, input, menus, endings and score handling."
 msgstr ""
-"Proje, oyunun dört DOS ürününü bakımlı C ++ ve montajdan oluşturuyor. Madde "
-"işareti oluşturmanın ötesinde, kaynak aşamaları, patronları, oluşturma, "
-"girdi, menüleri, sonları ve puan işlemeyi kapsar."
+"Proje, oyunun dört DOS ürününü bakımı yapılan C++ ve assembly’den "
+"oluşturuyor. Madde işareti oluşturmanın ötesinde, kaynak aşamaları, "
+"boss’ları, oluşturma, girdi, menüleri, sonları ve puan işlemeyi kapsar."
 
 #. {ph0}: <a class="text-link" href="https://github.com/N0zoM1z0/th04" >
 #. {ph1}: </a >
@@ -10191,8 +10180,8 @@ msgid ""
 "{ph0}Bullet-generation source{ph1}{ph2}The complete helper, other pattern "
 "types and template tuning.{ph3}"
 msgstr ""
-"{ph0}Madde işareti oluşturma kaynağı{ph1}{ph2} Tam yardımcı, diğer desen "
-"türleri ve şablon ayarı.{ph3}"
+"{ph0}Mermi oluşturma kaynağı{ph1}{ph2} Tam yardımcı, diğer desen türleri ve "
+"şablon ayarı.{ph3}"
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th04/blob/0d72e9801a5c14c10384efcbb6734ceccb74ee63/docs/DOS_BUILD.md"
@@ -10207,7 +10196,7 @@ msgid ""
 "{ph0}DOS build and run guide{ph1}{ph2}Build the source and test it in the "
 "project's PC-98 emulator workflow.{ph3}"
 msgstr ""
-"{ph0}DOS oluşturma ve çalıştırma kılavuzu{ph1}{ph2} Kaynağı oluşturun ve "
+"{ph0}DOS derleme ve çalıştırma kılavuzu{ph1}{ph2} Kaynağı oluşturun ve "
 "projenin PC-98 öykünücüsü iş akışında test edin.{ph3}"
 
 #. {ph0}: <a
@@ -10224,7 +10213,7 @@ msgid ""
 " x64 port.{ph3}"
 msgstr ""
 "{ph0}Geçerli proje durumu{ph1}{ph2} DOS doğrulaması ve ayrı yerel x64 "
-"bağlantı noktası.{ph3}"
+"portu.{ph3}"
 
 #: website/public/showcase/th04/index.html:6
 msgctxt "page:showcase/th04/index.html"
@@ -10238,9 +10227,9 @@ msgid ""
 "recovered C++ to see how a ring of bullets is spaced and aimed at the "
 "player."
 msgstr ""
-"TH04'NUN orijinal 16 bit DOS kodunu REA ile inceleyin. Bir mermi halkasının "
-"nasıl aralıklı ve oyuncuya yönelik olduğunu görmek için montajı ve "
-"kurtarılan C ++ 'yı takip edin."
+"TH04’ün orijinal 16 bit DOS kodunu REA ile inceleyin. Bir mermi halkasının "
+"nasıl aralıklı ve oyuncuya yönelik olduğunu görmek için assembly ve "
+"kurtarılan C++ kodunu takip edin."
 
 #: website/public/showcase/th04/index.html:256
 msgctxt "page:showcase/th04/index.html"
@@ -10543,7 +10532,7 @@ msgid ""
 "converted to an integer. Maintained C is checked in 3,205 original-x86 cases"
 " and a separate 63-byte compiler replay."
 msgstr ""
-"REA, bir DX-Ball işlevi için talimat, arayan ve bayt okuma kanıtı sağlar. "
+"REA, bir DX-Ball işlevi için talimat, çağıran ve bayt okuma kanıtı sağlar. "
 "Bir yığın girişi 1.5625 ile çarpılır, 500 ile dengelenir, ölçeklenir ve bir "
 "tamsayıya dönüştürülür. Tutulan C, 3.205 orijinal x86 durumunda ve ayrı bir "
 "63 baytlık derleyici tekrarında kontrol edilir."
@@ -10960,7 +10949,7 @@ msgstr "X’te takip et"
 #: website/public/examples/dino-lab/index.html:311
 msgctxt "page:examples/dino-lab/index.html"
 msgid "REA · selected script source"
-msgstr "REA * seçilen komut dosyası kaynağı"
+msgstr "REA * seçilen betik kaynağı"
 
 #: website/public/first-investigation/index.html:379
 msgctxt "page:first-investigation/index.html"
@@ -10980,7 +10969,7 @@ msgstr "Talimatlar"
 #: website/public/guides/index.html:225
 msgctxt "page:guides/index.html"
 msgid "Caller"
-msgstr "Arayan"
+msgstr "Çağıran"
 
 #: website/public/guides/index.html:226
 msgctxt "page:guides/index.html"
@@ -11040,7 +11029,7 @@ msgstr "REA talimat alıntısı * 0x406409"
 #: website/public/guides/native/index.html:403
 msgctxt "page:guides/native/index.html"
 msgid "REA caller excerpt · 0x411f5b"
-msgstr "REA arayan alıntı * 0x411f5b"
+msgstr "REA çağıran alıntı * 0x411f5b"
 
 #: website/public/guides/native/index.html:417
 msgctxt "page:guides/native/index.html"
@@ -11060,7 +11049,7 @@ msgstr "Vitrinler →"
 #: website/public/index.html:763
 msgctxt "page:index.html"
 msgid "Selected settings from the inspected script"
-msgstr "Denetlenen komut dosyasından seçilen ayarlar"
+msgstr "Denetlenen betikten seçilen ayarlar"
 
 #: website/public/index.html:938
 msgctxt "page:index.html"
@@ -11091,7 +11080,7 @@ msgstr "REA → temsilci * seçilen sonuçlar"
 #: website/public/showcase/aegis/index.html:450
 msgctxt "page:showcase/aegis/index.html"
 msgid "REA → agent · methods and callers"
-msgstr "REA → aracı * yöntemler ve arayanlar"
+msgstr "REA → aracı * yöntemler ve çağıranlar"
 
 #: website/public/showcase/aegis/index.html:520
 msgctxt "page:showcase/aegis/index.html"
@@ -11152,7 +11141,7 @@ msgstr "Orijinal çalıştırılabilir * SHA-256"
 #: website/public/showcase/ctf/index.html:729
 msgctxt "page:showcase/ctf/index.html"
 msgid "Download the original challenge"
-msgstr "Orijinal mücadeleyi indirin"
+msgstr "Orijinal meydan okumayı indirin"
 
 #: website/public/showcase/ctf/index.html:733
 msgctxt "page:showcase/ctf/index.html"
@@ -11180,7 +11169,7 @@ msgstr "REA → ajan * talimat alıntısı"
 #: website/public/showcase/dx-ball/index.html:387
 msgctxt "page:showcase/dx-ball/index.html"
 msgid "REA → agent · caller excerpt"
-msgstr "REA → temsilci * arayan alıntı"
+msgstr "REA → temsilci * çağıran alıntı"
 
 #. {ph0}: <code>read_bytes</code>
 #: website/public/showcase/dx-ball/index.html:405
@@ -11364,7 +11353,7 @@ msgstr "Aynı işlev sonucu * amaç alıntısı"
 #: website/public/showcase/th04/index.html:438
 msgctxt "page:showcase/th04/index.html"
 msgid "Corresponding maintained C++"
-msgstr "İlgili tutulan C ++"
+msgstr "İlgili tutulan C++"
 
 #: website/public/showcase/th04/index.html:618
 msgctxt "page:showcase/th04/index.html"
@@ -11410,7 +11399,7 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to analyze {ph3} and explain how it exports data. "
 "Show the relevant code and source locations.{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}{ph3}Verileri nasıl dışa aktardığını analiz etmek ve "
+"{ph0}›{ph1}{ph2}{ph3}Verileri nasıl dışa aktardığını analiz etmek ve "
 "açıklamak için REA kullanın. İlgili kodu ve kaynak konumlarını "
 "gösterin.{ph4}{ph5}{ph6}"
 
@@ -11451,10 +11440,10 @@ msgid ""
 "written, which fields it contains, and the relevant files and "
 "lines.{ph5}{ph6}{ph7}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}{ph3}Yeni bir örnek klasöre indirin ve paketini açın. "
-"Notları Dışa Aktar'ı tıklattığımda ne olacağını bulmak için REA kullanın. "
-"Nerede {ph4}yazıldığını, hangi alanları içerdiğini ve ilgili dosyaları ve "
-"satırları gösterin.{ph5}{ph6}{ph7}"
+"{ph0}›{ph1}{ph2}{ph3}Yeni bir örnek klasöre indirin ve paketini açın. Notları "
+"Dışa Aktar'ı tıklattığımda ne olacağını bulmak için REA kullanın. Nerede "
+"{ph4}yazıldığını, hangi alanları içerdiğini ve ilgili dosyaları ve satırları "
+"gösterin.{ph5}{ph6}{ph7}"
 
 #. {ph0}: <span class="prompt-symbol" aria-hidden="true">
 #. {ph1}: </span >
@@ -11608,9 +11597,9 @@ msgid ""
 "run the example’s {ph4} formatter with {ph5} to check it. Show the "
 "prediction and actual output.{ph6}{ph7}{ph8}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Kimliği 1 ve başlığı olan bir not için CSV değerini tahmin "
-"{ph3}edin. Ardından{ph4}{ph5}, kontrol etmek için örneğin biçimlendiricisini"
-" çalıştırın. Tahmini ve gerçek çıktıyı gösterin.{ph6}{ph7}{ph8}"
+"{ph0}›{ph1}{ph2}Kimliği 1 ve başlığı olan bir not için CSV değerini tahmin "
+"{ph3}edin. Ardından{ph4}{ph5}, kontrol etmek için örneğin biçimlendiricisini "
+"çalıştırın. Tahmini ve gerçek çıktıyı gösterin.{ph6}{ph7}{ph8}"
 
 #. {ph0}: <span translate="no">Node.js</span>
 #: website/public/first-investigation/index.html:438
@@ -11727,8 +11716,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect Windows Calculator. Why does {ph3} give "
 "220?{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Windows Hesap Makinesini incelemek için REA kullanın. Neden"
-" {ph3}220 veriyor?{ph4}{ph5}{ph6}"
+"{ph0}›{ph1}{ph2}Windows Hesap Makinesini incelemek için REA kullanın. Neden "
+"{ph3}220 veriyor?{ph4}{ph5}{ph6}"
 
 #. {ph0}: <span translate="no">index.js</span>
 #: website/public/index.html:715
@@ -12079,9 +12068,9 @@ msgid ""
 "when their storage could be reused."
 msgstr ""
 "TH09 saldırı fonksiyonunun mantığının büyük bir kısmı zaten yeniden "
-"oluşturulmuştu, ancak derleyici hala geçici sonuçları orijinalinden farklı "
-"şekilde saklıyordu. Geriye kalan sorun, bu sonuçların ne kadar süreyle canlı"
-" kalması gerektiği ve depolarının ne zaman yeniden kullanılabileceğiydi."
+"oluşturulmuştu, ancak derleyici hâlâ geçici sonuçları orijinalinden farklı "
+"şekilde saklıyordu. Geriye kalan sorun, bu sonuçların ne kadar süreyle canlı "
+"kalması gerektiği ve depolarının ne zaman yeniden kullanılabileceğiydi."
 
 #. {ph0}: <a
 #. href="https://github.com/N0zoM1z0/th09/commit/de63c0f9121963f3a6b1ab5471c4878625fd3425"
@@ -12424,12 +12413,12 @@ msgid ""
 "candidate fails, the model must decide what the result means for its next "
 "attempt. Knowing the relevant pattern is only the beginning of that process."
 msgstr ""
-"{ph0}\"Model, derleyici tuhaflığını bilmiyordu\" ve \"model bunu "
-"kullanamadı\" farklı sorunlardır.{ph1} Geri getirme ilk sorunu çözebilir, "
-"ancak bu gerçeği yararlı bir adaya dönüştürmek yine de çalışma gerektirir. "
-"Aday kaynak kodu başarısız olursa modelin bir sonraki denemesinde sonucun ne"
-" anlama geldiğine karar vermesi gerekir. İlgili modeli bilmek bu sürecin "
-"yalnızca başlangıcıdır."
+"{ph0}›Model, derleyici tuhaflığını bilmiyordu\" ve \"model bunu kullanamadı\" "
+"farklı sorunlardır.{ph1} Geri getirme ilk sorunu çözebilir, ancak bu gerçeği "
+"yararlı bir adaya dönüştürmek yine de çalışma gerektirir. Aday kaynak kodu "
+"başarısız olursa modelin bir sonraki denemesinde sonucun ne anlama geldiğine "
+"karar vermesi gerekir. İlgili modeli bilmek bu sürecin yalnızca "
+"başlangıcıdır."
 
 #: website/public/blog/reverse-engineering-models/index.html:473
 msgctxt "page:blog/reverse-engineering-models/index.html"
@@ -12472,9 +12461,9 @@ msgid ""
 "information. Each of the following experiments helped identify what still "
 "needed to change."
 msgstr ""
-"Geçici sonuçlar örneğini tekrar düşünün. Son kaynağı işe yarayan düzenlemeyi"
-" gösteriyor ancak bu kaynağa giden yol daha fazla bilgi içeriyor. Aşağıdaki "
-"deneylerin her biri, hala neyin değişmesi gerektiğinin belirlenmesine "
+"Geçici sonuçlar örneğini tekrar düşünün. Son kaynağı işe yçağıran düzenlemeyi "
+"gösteriyor ancak bu kaynağa giden yol daha fazla bilgi içeriyor. Aşağıdaki "
+"deneylerin her biri, hâlâ neyin değişmesi gerektiğinin belirlenmesine "
 "yardımcı oldu."
 
 #: website/public/blog/reverse-engineering-models/index.html:502
@@ -12582,8 +12571,8 @@ msgid ""
 "rigid sequence of required rewrites would remove that choice, along with "
 "part of the behavior we want the model to learn."
 msgstr ""
-"Bu seçimleri yapmayı öğrenmek özerklik gerektirir. Bazen bir sonraki yararlı"
-" adım, başka bir düzenleme derlemek yerine başka bir arayanı incelemektir. "
+"Bu seçimleri yapmayı öğrenmek özerklik gerektirir. Bazen bir sonraki yararlı "
+"adım, başka bir düzenleme derlemek yerine başka bir çağıranı incelemektir. "
 "Gerekli yeniden yazma işlemlerinin katı bir dizisi, modelin öğrenmesini "
 "istediğimiz davranışın bir kısmıyla birlikte bu seçimi de ortadan "
 "kaldıracaktır."
@@ -13249,7 +13238,7 @@ msgstr "Yerel makine kodu · Yeniden yapılandırma"
 #: website/public/index.html:1061
 msgctxt "page:index.html"
 msgid "DX-Ball's sound-pan calculation"
-msgstr "DX-Ball'NUN sol / sağ ses pozisyonunun hesaplanması"
+msgstr "DX-Ball’ın sol / sağ ses pozisyonunun hesaplanması"
 
 #: website/public/index.html:1066
 msgctxt "page:index.html"
@@ -13366,8 +13355,8 @@ msgid ""
 "If PowerShell later says {ph0}\"running scripts is disabled on this "
 "system\"{ph1} when you run {ph2}, use {ph3} instead. For npm, use {ph4}:"
 msgstr ""
-"Daha sonra {ph2} çalıştırırken PowerShell {ph0}\"running scripts is disabled"
-" on this system\"{ph1} derse bunun yerine {ph3} kullanın. npm için {ph4} "
+"Daha sonra {ph2} çalıştırırken PowerShell {ph0}›running scripts is disabled "
+"on this system\"{ph1} derse bunun yerine {ph3} kullanın. npm için {ph4} "
 "kullanın:"
 
 #: website/public/get-started/index.html:411
@@ -13753,7 +13742,7 @@ msgstr "Örneği kendiniz indirin veya kendi uygulamanızı kullanın"
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid "{ph0}Download example ZIP{ph1}"
-msgstr "{ph0}Örnek ZİP dosyasını indirin{ph1}"
+msgstr "{ph0}Örnek ZIP dosyasını indirin{ph1}"
 
 #. {ph0}: <code>notes-example</code>
 #: website/public/get-started/index.html:944
@@ -14754,7 +14743,7 @@ msgid ""
 "Recover the gameplay logic in C and test it against the "
 "original.{ph3}{ph4}{ph5}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}Bu oyunu yürütülebilir dosyasından yeniden oluşturmak için "
+"{ph0}›{ph1}{ph2}Bu oyunu yürütülebilir dosyasından yeniden oluşturmak için "
 "REA kullanın. C'deki oyun mantığını kurtarın ve orijinaline karşı test "
 "edin.{ph3}{ph4}{ph5}"
 
@@ -14764,7 +14753,7 @@ msgstr ""
 #, python-brace-format
 msgctxt "page:index.html"
 msgid "{ph0}See the DX-Ball case study →{ph1}"
-msgstr "{ph0}DX-Ball örnek olay incelemesine bakın →{ph1}"
+msgstr "{ph0}DX-Ball vaka incelemesine bakın →{ph1}"
 
 #: website/public/index.html:1136
 msgctxt "page:index.html"
@@ -14790,8 +14779,8 @@ msgid ""
 "{ph0}›{ph1}{ph2}Use REA to inspect {ph3}. Clone this website for "
 "me.{ph4}{ph5}{ph6}"
 msgstr ""
-"{ph0}\"{ph1}{ph2}İncelemek için {ph3}REA kullanın. Bu web sitesini benim "
-"için klonla.{ph4}{ph5}{ph6}"
+"{ph0}›{ph1}{ph2}İncelemek için {ph3}REA kullanın. Bu web sitesini benim için "
+"klonla.{ph4}{ph5}{ph6}"
 
 #. {ph0}: <a href="showcase/">
 #. {ph1}: </a>
