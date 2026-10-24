@@ -53,7 +53,7 @@ export const safeResponseMetadata = (
     response: {
       request_id: requestId,
       url,
-      mime_type: boundedHeader(cdpStringValue(response.mimeType)),
+      mime_type: mediaTypeDeclaration(cdpStringValue(response.mimeType)),
       content_length: contentLength(field("content-length")),
       content_encoding: boundedHeader(field("content-encoding")),
       csp,
@@ -245,7 +245,9 @@ const parseLinks = (
           context_scope: context.scope,
           rel: rel.toLowerCase().split(/\s+/u).filter(Boolean),
           as: boundedHeader(lastLinkParameter(parameters, "as")?.value),
-          type: boundedHeader(firstLinkParameter(parameters, "type")?.value),
+          type: mediaTypeDeclaration(
+            firstLinkParameter(parameters, "type")?.value,
+          ),
           crossorigin: boundedHeader(
             lastLinkParameter(parameters, "crossorigin")?.value,
           ),
@@ -429,6 +431,17 @@ const contentLength = (value: string | undefined): number | null => {
 
 const boundedHeader = (value: string | undefined): string | null =>
   value === undefined ? null : value.trim().toLowerCase();
+
+// RFC 9110 section 8.3.1: type/subtype are case-insensitive; parameters may not be.
+const mediaTypeDeclaration = (value: string | undefined): string | null => {
+  if (value === undefined) return null;
+  const declaration = value.trim();
+  const separator = declaration.indexOf(";");
+  return separator < 0
+    ? declaration.toLowerCase()
+    : declaration.slice(0, separator).toLowerCase() +
+        declaration.slice(separator);
+};
 
 const decodeLinkParameter = (value: string): string => {
   if (!value.startsWith('"')) return value;

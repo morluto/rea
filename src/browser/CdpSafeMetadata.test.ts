@@ -1,3 +1,4 @@
+import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import { safeResponseMetadata } from "./CdpSafeMetadata.js";
@@ -65,6 +66,70 @@ describe("structured COOP and COEP declarations", () => {
         corp: null,
         x_content_type_options: null,
       });
+    },
+  );
+});
+
+describe("media type parameter preservation", () => {
+  it.each([
+    [
+      'Multipart/Mixed; boundary="AaB03x"',
+      'multipart/mixed; boundary="AaB03x"',
+    ],
+    [
+      'Application/LD+JSON; profile="https://api.example/Profiles/Book;V=One,Two"',
+      'application/ld+json; profile="https://api.example/Profiles/Book;V=One,Two"',
+    ],
+    [
+      'Application/X-Protobuf; type="Example.Message"',
+      'application/x-protobuf; type="Example.Message"',
+    ],
+  ])(
+    "preserves case-sensitive media type parameters in %s",
+    (raw, expected) => {
+      const linkType = raw.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+      const captured = safeResponseMetadata(
+        "request-media-type",
+        `${origin}/page`,
+        {
+          mimeType: `  ${raw}  `,
+          headers: {
+            "Content-Encoding": " GZip ",
+            Link: `</resource>; rel="PreLoad MCP"; type="${linkType}"; as=SCRIPT; crossorigin=ANONYMOUS`,
+          },
+        },
+        new Set([origin]),
+      );
+
+      for (const projected of [
+        captured.response.mime_type,
+        captured.response.links[0]?.type,
+      ]) {
+        expect(projected).toBe(expected);
+        expect([...new MIMEType(projected ?? "").params]).toEqual([
+          ...new MIMEType(raw).params,
+        ]);
+      }
+      expect(captured.response.content_encoding).toBe("gzip");
+      expect(captured.response.links).toMatchObject([
+        {
+          href: `${origin}/resource`,
+          destination_scope: "approved",
+          context_url: `${origin}/page`,
+          context_scope: "approved",
+          rel: ["preload", "mcp"],
+          as: "script",
+          crossorigin: "anonymous",
+        },
+      ]);
+      expect(captured.agentHints).toEqual([
+        {
+          mechanism: "link_rel",
+          declaration: "preload mcp",
+          url: `${origin}/resource`,
+          trust: "page-declared-untrusted",
+        },
+      ]);
     },
   );
 });
