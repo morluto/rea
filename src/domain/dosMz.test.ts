@@ -326,6 +326,36 @@ describe("MZ header padding observations", () => {
     });
   });
 
+  it("requests an unread signature before treating padding as DOS data", () => {
+    const offset = 8192;
+    const bytes = Buffer.alloc(offset + 512);
+    bytes.write("MZ", 0, "ascii");
+    bytes.writeUInt16LE(128, 2);
+    bytes.writeUInt16LE(1, 4);
+    bytes.writeUInt16LE(2, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(28, 24);
+    bytes.writeUInt32LE(offset, 60);
+    const prefix = bytes.subarray(0, 4096);
+
+    expect(observeMzWindowsHeader(prefix, bytes.length)).toEqual({
+      state: "signature-needed",
+      offset,
+    });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("PE\0\0", "binary"),
+      }),
+    ).toEqual({ state: "declared", offset, signature: "PE" });
+    expect(
+      observeMzWindowsHeader(prefix, bytes.length, {
+        offset,
+        bytes: Buffer.from("ZZZZ", "ascii"),
+      }),
+    ).toEqual({ state: "absent" });
+  });
+
   it("keeps an unconfirmed pointer outside a relocation table unresolved", () => {
     const bytes = Buffer.alloc(256);
     dosMz().copy(bytes, 0, 0, 28);

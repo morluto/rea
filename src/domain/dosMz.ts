@@ -94,9 +94,15 @@ export const observeMzWindowsHeader = (
   if (signature !== "other" && signature !== "unobserved")
     return { state: "declared", offset, signature };
   // A relocation table that ends inside a complete DOS header owns the rest of
-  // that header as padding. Without a recognized Windows signature, a dword in
-  // that padding is DOS data rather than a Windows new-header declaration.
-  if (headerBytes >= 64 && relocationCount > 0 && tableEnd <= 60)
+  // that header as padding. An observed non-Windows signature confirms that a
+  // dword in that padding is DOS data. An unread signature still requests the
+  // bounded follow-up read when enough bytes remain to recognize one.
+  if (
+    headerBytes >= 64 &&
+    relocationCount > 0 &&
+    tableEnd <= 60 &&
+    (signature === "other" || fileSize - offset < 2)
+  )
     return { state: "absent" };
   if (headerBytes === 0 || headerBytes >= 64) {
     const remaining = fileSize - offset;

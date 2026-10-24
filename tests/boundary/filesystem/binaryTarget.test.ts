@@ -1238,6 +1238,34 @@ describe("DOS binary target I/O", () => {
     });
   });
 
+  it("resolves a PE signature beyond the prefix when DOS padding follows a relocation table", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-padded-stub-pe-target-",
+    );
+    const path = join(directory, "padded-stub.dll");
+    const offset = 8192;
+    const stub = Buffer.alloc(offset);
+    stub.write("MZ", 0, "ascii");
+    stub.writeUInt16LE(offset % 512, 2);
+    stub.writeUInt16LE(Math.ceil(offset / 512), 4);
+    stub.writeUInt16LE(2, 6);
+    stub.writeUInt16LE(4, 8);
+    stub.writeUInt16LE(28, 24);
+    stub.writeUInt32LE(offset, 60);
+    const peRecord = pe(0x8664, offset, 0x2002).subarray(offset);
+    const bytes = Buffer.concat([stub, peRecord]);
+    await writeFile(path, bytes);
+
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: {
+        format: "pe",
+        architecture: "x86_64",
+        executableRole: "shared-library",
+      },
+    });
+  });
+
   it("validates ambiguous DOS facts after extending the bounded prefix for relocations", async () => {
     const directory = await createTestTempDirectory(
       "rea-ambiguous-mz-relocations-",
