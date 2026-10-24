@@ -230,6 +230,11 @@ describe("Codex completed tool call parsing", () => {
       routed: false,
     },
     {
+      label: "another server_name",
+      identity: { server_name: "other" },
+      routed: false,
+    },
+    {
       label: "verified REA alias",
       identity: { server_name: "rea" },
       routed: true,
@@ -260,6 +265,44 @@ describe("Codex completed tool call parsing", () => {
       reaCalls: routed ? [{ server: "rea" }] : [],
     });
   });
+});
+
+describe("Codex REA server attribution", () => {
+  it.each([
+    { server: "rea" },
+    { server: "REA" },
+    { server_name: "rea" },
+    { server_name: "REA" },
+  ])(
+    "attributes completed calls with explicit REA identity: %j",
+    (identity) => {
+      const tool = "inspect_managed_artifact";
+      const metrics = evaluateCodexEvents(
+        [
+          {
+            type: "item.completed",
+            item: {
+              type: "mcp_tool_call",
+              status: "completed",
+              tool,
+              arguments: {},
+              ...identity,
+            },
+          },
+        ],
+        tool,
+        { requiredToolSubsequence: [tool] },
+      );
+
+      expect(metrics).toMatchObject({
+        naturalUse: true,
+        firstTool: tool,
+        correctFirstTool: true,
+        requiredToolSubsequenceMet: true,
+        reaCalls: [{ tool }],
+      });
+    },
+  );
 });
 
 describe("Codex Evidence delivery", () => {
