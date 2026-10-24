@@ -321,6 +321,9 @@ export const BROWSER_TOOL_CONTRACTS = [
   },
 ] as const satisfies readonly ToolContract[];
 
+// A one-pixel RGBA screenshot. The advertised digest covers these exact bytes,
+// so any edit to the encoding must also update `sha256`: the comparison parser
+// verifies every PNG chunk checksum (morluto/rea#3938).
 function exampleScreenshot() {
   return {
     sha256: "cdb30873bdf16770bfea1fe86e44db7476e504c2dca1542b0660b20f47f523a7",
