@@ -225,6 +225,15 @@ it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
       await artifacts.close();
     }
     if (response.ok) throw new Error("Expected Windows source path refusal");
+    console.error("DEBUG webScript response", {
+      platform: process.platform,
+      errorName:
+        response.error instanceof Error
+          ? response.error.constructor.name
+          : typeof response.error,
+      error: response.error,
+      projected: projectAnalysisError(response.error),
+    });
     expect(projectAnalysisError(response.error)).toMatchObject({
       code: "invalid_request",
       details: {

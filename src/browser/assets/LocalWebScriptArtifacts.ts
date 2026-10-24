@@ -136,6 +136,17 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
         source,
       });
     } catch (cause: unknown) {
+      console.error("DEBUG webScript catch", {
+        platform: process.platform,
+        callerSelected,
+        field,
+        targetPath,
+        causeName:
+          cause instanceof Error ? cause.constructor.name : typeof cause,
+        causeReason:
+          cause instanceof ArtifactReaderFailure ? cause.reason : undefined,
+        causeMessage: cause instanceof Error ? cause.message : String(cause),
+      });
       return err(
         webArtifactReadError(
           cause,

@@ -8,6 +8,7 @@ let shutdownSignal;
 const supervisor = spawn(
   process.execPath,
   [
+    "--no-warnings",
     fileURLToPath(new URL("./run-exclusive-command.mjs", import.meta.url)),
     ...process.argv.slice(2),
   ],
