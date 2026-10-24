@@ -1,3 +1,4 @@
+import type { JsonValue } from "../jsonValue.js";
 import {
   at,
   changesState,
@@ -6,6 +7,7 @@ import {
   listsAll,
   normalizedPath,
   type JsonObject,
+  type ParsedRequestBody,
   type StateEntity,
   type StateRecordFacts,
   type StateToolFacts,
@@ -221,9 +223,23 @@ export class EnvironmentStateWriteSimulation {
       });
     }
     this.#input.records.forEach((record, index) => this.#step(record, index));
-    return [...this.#drafts.values()].map((draft) =>
-      writeVerdict(draft, this.#input),
+    const views = new Map(
+      this.views([...this.#input.views.values()]).map((view) => [
+        view.tool,
+        view,
+      ]),
     );
+    return [...this.#drafts.values()].map((draft) => {
+      // A view that became recorded cannot supply proof for a served write.
+      let kept = 0;
+      for (const ordinal of draft.confirmed) {
+        const tool = this.#toolOf.get(ordinal)?.name;
+        if (tool !== undefined && views.get(tool)?.shape !== "recorded")
+          draft.confirmed[kept++] = ordinal;
+      }
+      draft.confirmed.length = kept;
+      return writeVerdict(draft, this.#input);
+    });
   }
 
   #step(record: StateRecordFacts, index: number): void {
@@ -244,11 +260,23 @@ export class EnvironmentStateWriteSimulation {
     );
   }
 
-  #context(writer: string): EffectContext {
+  #context(
+    writer: string,
+    request?: { readonly ordinal: number; readonly body: ParsedRequestBody },
+  ): EffectContext {
     return {
       isWrite: (record) => this.#isWrite(record),
       state: this.#state,
-      io: this.#input.io,
+      io:
+        request === undefined
+          ? this.#input.io
+          : {
+              ...this.#input.io,
+              requestBody: (ordinal) =>
+                ordinal === request.ordinal
+                  ? request.body
+                  : this.#input.io.requestBody(ordinal),
+            },
       records: this.#input.records,
       timed: this.#input.timed,
       viewOf: (ordinal) => {
@@ -303,25 +331,34 @@ export class EnvironmentStateWriteSimulation {
         record.query,
       );
     const step: WriteStep = { record, index, tool, observeOnly, pinned };
-    const context = this.#context(tool.name);
     const { address } = draft.plan;
-    const results =
-      address !== undefined && address.by !== "action"
+    const bulk = address !== undefined && address.by !== "action";
+    const apply = (body?: ParsedRequestBody): void => {
+      const context = this.#context(
+        tool.name,
+        body === undefined ? undefined : { ordinal: record.ordinal, body },
+      );
+      const results = bulk
         ? applyBulk(context, draft, step)
         : [APPLY[effect](context, draft, step)];
-    // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
-    if (
-      results.some((result) => result.kind === "unknown") &&
-      (!built(draft) || draft.linked !== undefined)
-    )
-      this.#unseen.unplanned(index);
-    for (const result of results)
-      this.#settle(result, {
-        index,
-        tool: tool.name,
-        path: record.path,
-        end: record.end,
-      });
+      // A call of a tool whose plan was never built, or one a linked plan does not place, is no more modelled than one of a tool without a plan.
+      if (
+        results.some((result) => result.kind === "unknown") &&
+        (!built(draft) || draft.linked !== undefined)
+      )
+        this.#unseen.unplanned(index);
+      for (const result of results)
+        this.#settle(result, {
+          index,
+          tool: tool.name,
+          path: record.path,
+          end: record.end,
+        });
+    };
+    // Item deletes use their path; calls outside a built plan's query never interpret their body.
+    if (pinned && (effect !== "delete" || bulk))
+      this.#input.io.withRequestBody(record.ordinal, apply);
+    else apply();
   }
 
   /** Attribute an applied effect to its tool; a recorded outcome is the state's new baseline; an unknown one taints. */
@@ -411,7 +448,11 @@ export class EnvironmentStateWriteSimulation {
     return true;
   }
 
-  #check(view: StateView, record: StateRecordFacts): CheckOutcome | undefined {
+  #check(
+    view: StateView,
+    record: StateRecordFacts,
+    comparisonBody?: (body: JsonValue) => JsonValue,
+  ): CheckOutcome | undefined {
     if (view.shape === "recorded") return undefined;
     const line = this.#line(view, record);
     if (view.shape !== "item" && line === undefined) return undefined;
@@ -443,7 +484,13 @@ export class EnvironmentStateWriteSimulation {
     const minted = view.per_response_members;
     return withBodies(this.#input.io.withBody, ordinals, (served, body) => {
       const check = {
-        body: body === undefined ? body : withoutMembers(body, minted),
+        body:
+          body === undefined
+            ? body
+            : withoutMembers(
+                comparisonBody === undefined ? body : comparisonBody(body),
+                minted,
+              ),
         base: served === undefined ? served : withoutMembers(served, minted),
         idField: this.#types.get(view.type)?.id_field ?? "",
         volatile: this.#input.volatileOf(view.type),
@@ -497,12 +544,24 @@ export class EnvironmentStateWriteSimulation {
     outcome = this.#sorted.retry(
       view,
       { record, outcome },
-      (candidate) => this.#check(candidate, record),
+      (candidate, comparisonBody) =>
+        this.#check(candidate, record, comparisonBody),
       blocked,
     );
     view = this.#viewOf(original);
     keys = [...outcome.targets, ...outcome.unheld];
+    if (blocked(keys)) return;
     let exercised = exercisedBy(this.#touched, keys, borrowers);
+    if (view.shape === "recorded") {
+      // Retiring a view withdraws ordering proof, not a remaining mismatch in values.
+      if (!outcome.pass)
+        this.#contradictOthers(
+          exercised,
+          record,
+          interference(this.#history, outcome),
+        );
+      return;
+    }
     if (borrowers !== undefined) {
       this.omitted.keep(view, outcome);
       if (!outcome.pass)

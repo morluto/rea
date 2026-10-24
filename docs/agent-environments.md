@@ -168,7 +168,7 @@ what to record next; hints never change what is served:
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
 | `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
-| `body-unusable`       | The request body is not a usable JSON object.                                                                                                                                                                                                    |
+| `body-unusable`       | The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.                                                                                                       |
 | `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
 | `unexplained-change`  | The write changed fields it did not send, in a way no rule explains. A second, different call of the same tool can show the pattern.                                                                                                             |
 | `contradicted`        | A later read disagreed with the modelled effect. Check the read at contradicted_by.                                                                                                                                                              |
@@ -681,7 +681,9 @@ never recorded, such as a created entity's clock, is rendered in it: a list that
 writes `+00:00` where item reads write `Z` lists a new entity the same way.
 A view that names a field in `sorted_arrays` lists that string array sorted, as
 a read-back showed the application does, while the state keeps it in the order
-it was written, so a write's own answer echoes it. Members a view names in
+it was written, so a write's own answer echoes it. If a later counted read
+contradicts that ordering, the view stays recorded and its earlier reads no
+longer confirm served writes. Members a view names in
 `per_response_members`, such as a request id each response mints, keep the
 value its recording carried. A list's `counters` and `query.totals` are
 top-level members or members one level down in a paging object

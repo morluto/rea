@@ -312,31 +312,35 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   }
 
   /** Parse one recorded request body as state JSON, as response bodies are admitted. */
-  #requestBody(ordinal: number): ParsedRequestBody | null {
+  #withRequestBody<T>(
+    ordinal: number,
+    use: (body: ParsedRequestBody) => T,
+  ): T | null {
     const entry = this.#entries.get(ordinal);
     const request = requestSchema.safeParse(entry?.record.reported);
-    if (entry === undefined || !request.success) return { kind: "unusable" };
+    if (entry === undefined || !request.success)
+      return use({ kind: "unusable" });
     const { postData, bodySize } = request.data.request;
     if (postData === undefined)
-      return { kind: bodySize === 0 ? "absent" : "unusable" };
+      return use({ kind: bodySize === 0 ? "absent" : "unusable" });
     const parsed = requestContentSchema.safeParse(postData);
-    if (!parsed.success) return { kind: "unusable" };
+    if (!parsed.success) return use({ kind: "unusable" });
     const { mimeType, text, params } = parsed.data;
     if (bodySize === 0 && text === "" && (params?.length ?? 0) === 0)
-      return { kind: "absent" };
+      return use({ kind: "absent" });
     if (
       !isJsonLike(mediaTypeEssence(mimeType)) ||
       Buffer.byteLength(text, "utf8") > STATE_BODY_LIMIT_BYTES
     )
-      return { kind: "unusable" };
+      return use({ kind: "unusable" });
     const release = this.temporaryCheckpoint();
     try {
       if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
         return null;
       const value = stateBodyJson(mimeType, { bodyText: text });
-      return value === undefined
-        ? { kind: "unusable" }
-        : { kind: "json", value };
+      return use(
+        value === undefined ? { kind: "unusable" } : { kind: "json", value },
+      );
     } finally {
       release();
     }
@@ -387,7 +391,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
       timeline,
       budget: {
         body: (ordinal) => this.#body(ordinal),
-        requestBody: (ordinal) => this.#requestBody(ordinal),
+        withRequestBody: (ordinal, use) => this.#withRequestBody(ordinal, use),
         emptyResponse: (ordinal) => this.#emptyResponse(ordinal),
         retain: (bytes) => this.retain(bytes),
         checkpoint: () => this.retainedCheckpoint(),

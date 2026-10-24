@@ -43,9 +43,9 @@ before building.
   contradicting read and a hint; it is null when the state is unavailable.
 - Every write reason has a hint; a reason without one fails to compile.
 - Credential-named header names, query parameter names and JSON or form body
-  members that hold a value are reported as a count and the first 20 record
-  pointers, never values, and never refuse a build; the scan cannot overflow the
-  stack on deeply nested bodies. A body is read as a form
+  members that hold a value are reported as a count and the first 20 record or
+  event pointers, never values, and never refuse a build; the scan cannot
+  overflow the stack on deeply nested bodies. A body is read as a form
   (`application/x-www-form-urlencoded`, by `URLSearchParams`) or as JSON (the
   media types replay parses as JSON) by its recorded media type; a body with
   none, or one naming neither, is JSON when it starts with `{` or `[` and a form

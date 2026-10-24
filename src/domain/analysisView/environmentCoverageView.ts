@@ -32,7 +32,8 @@ export const WITHHELD_WRITE_HINTS = {
     "The write's path names no collection or item the capture reads. Read the collection or item it changes.",
   "no-call":
     "No recorded call of this tool was modelled, for example because every call failed. Record a successful call.",
-  "body-unusable": "The request body is not a usable JSON object.",
+  "body-unusable":
+    "The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.",
   "no-observation":
     "Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it.",
   "unexplained-change":

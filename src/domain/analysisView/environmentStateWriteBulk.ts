@@ -150,6 +150,8 @@ export const applyBulk = (
   draft: WriteDraft,
   step: WriteStep,
 ): EffectResult[] => {
+  // Serving refuses another query before interpreting the request body.
+  if (!step.pinned) return [UNKNOWN];
   const type = draft.plan.target!;
   const { address } = draft.plan;
   const body = requestJson(context.io.requestBody(step.record.ordinal));
@@ -157,8 +159,6 @@ export const applyBulk = (
     address === undefined || address.by === "action"
       ? undefined
       : namedEntities(address, body, context.idField(type));
-  // A call with another query than the exemplar's may do something else, as serving refuses it.
-  if (!step.pinned) return [UNKNOWN];
   if (named === undefined) {
     fail(draft, step, "body-unusable");
     return [UNKNOWN];

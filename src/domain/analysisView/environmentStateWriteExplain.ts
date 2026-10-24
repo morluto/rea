@@ -62,8 +62,6 @@ export interface CreateEvidence {
   readonly type: readonly JsonObject[];
   /** The entities of any type the state holds under an id. */
   readonly named?: (id: string) => readonly StateEntity[];
-  /** Members whose values the tool's recorded calls varied. */
-  readonly varied?: ReadonlySet<string>;
 }
 
 /** What explaining a create looks values up in, built once per request body. */
@@ -258,10 +256,11 @@ export const explainCreate = (
     ),
     ...instantMembers(evidence.call.body, evidence.entity, constants),
   ]);
-  const pinned = pinnedEchoes(evidence.entity, evidence.call.body, {
-    type: evidence.type,
-    varied: evidence.varied ?? new Set(),
-  });
+  const pinned = pinnedEchoes(
+    evidence.entity,
+    evidence.call.body,
+    evidence.type,
+  );
   const stored = storedMembers(
     rules.filter((rule) => !stranded.has(rule.field)),
     evidence.entity,
@@ -358,7 +357,7 @@ export const explainUpdate = (
   rules.push(...pairedStamps(evidence, rules));
   // Serving renews one UUID alike in every field, so the call must have.
   unexplained.push(...unexplainedRenewals(rules, evidence));
-  const pinned = pinnedEchoes(evidence.after, body, { varied: new Set() });
+  const pinned = pinnedEchoes(evidence.after, body);
   const shaped = bodyOf(
     Object.fromEntries(
       Object.entries(body).filter(([member]) => member !== identity),

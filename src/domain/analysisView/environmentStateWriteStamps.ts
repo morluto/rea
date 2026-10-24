@@ -442,22 +442,6 @@ export const stampProblem = (
   return undefined;
 };
 
-/** The members whose values the tool's recorded calls varied. */
-export const variedMembers = (
-  bodies: readonly (JsonValue | undefined)[],
-): Set<string> => {
-  const seen = new Map<string, string>();
-  const varied = new Set<string>();
-  for (const body of bodies)
-    if (body !== undefined && isObject(body))
-      for (const [member, value] of Object.entries(body)) {
-        const text = JSON.stringify(value);
-        if (seen.has(member) && seen.get(member) !== text) varied.add(member);
-        seen.set(member, text);
-      }
-  return varied;
-};
-
 /** The identity values of the objects an entity nests, by the stem of the field each sits under: what a member like `collection_id` names. */
 const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
   const index = new Map<string, Set<string>>();
@@ -503,15 +487,12 @@ const stateOf = (
 
 /**
  * Echoed members accepted only with their recorded value: one naming an object the entity nests, which serving
- * would keep as recorded, and on a create a state other fields go with, unless the recorded calls varied it.
+ * would keep as recorded, and on a create a state other fields go with.
  */
 export const pinnedEchoes = (
   entity: JsonObject,
   body: JsonObject,
-  context: {
-    readonly type?: readonly JsonObject[];
-    readonly varied: ReadonlySet<string>;
-  },
+  type?: readonly JsonObject[],
 ): Set<string> => {
   const nested = nestedIdentities(entity);
   // A member names the object nested under the field it refers to, as `collection_id` does `collection`.
@@ -523,10 +504,8 @@ export const pinnedEchoes = (
   };
   return new Set(
     Object.entries(body).flatMap(([member, value]) =>
-      !context.varied.has(member) &&
-      (namesNested(member, value) ||
-        (context.type !== undefined &&
-          stateOf(entity, member, value, context.type)))
+      namesNested(member, value) ||
+      (type !== undefined && stateOf(entity, member, value, type))
         ? [member]
         : [],
     ),

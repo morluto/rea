@@ -24,7 +24,6 @@ const created = (
   entity: JsonObject,
   body: JsonObject,
   type: readonly JsonObject[] = [],
-  varied: ReadonlySet<string> = new Set(),
 ): CreateEvidence => ({
   entity,
   call: { path: "/items", pathValues: new Map(), body },
@@ -32,7 +31,6 @@ const created = (
   startMs: START,
   collection: [],
   type,
-  varied,
 });
 
 const updated = (
@@ -542,7 +540,7 @@ describe("members accepted only as recorded", () => {
     ]);
   });
 
-  it("takes only the recorded state other fields go with, unless the recorded calls varied it", () => {
+  it("takes only the recorded state other fields go with", () => {
     const post = { id: 9, title: "New", status: "draft", published_at: null };
     const others = [
       {
@@ -562,15 +560,6 @@ describe("members accepted only as recorded", () => {
       created(post, { title: "New", status: "draft" }, others),
     );
     expect(pinned.body.fixed).toEqual([{ member: "status", sent: "draft" }]);
-    const varied = explainCreate(
-      created(
-        post,
-        { title: "New", status: "draft" },
-        others,
-        new Set(["status"]),
-      ),
-    );
-    expect(varied.body.accepted).toEqual(["title", "status"]);
     // A value each entity holds its own of names it, not a state.
     const slugged = explainCreate(
       created(

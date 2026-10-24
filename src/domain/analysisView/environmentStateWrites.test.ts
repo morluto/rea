@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
+import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 import {
   timedCaptureEvidence,
   type TimedCaptureRow,
@@ -49,6 +51,49 @@ const ISO_SECONDS = {
 
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
+
+it.each(["delete", "mismatched-query"])(
+  "does not parse unused request content for %s under a bounded state allowance",
+  (kind) => {
+    const payload = { unused: "x".repeat(96 * 1024) };
+    const changed = renamedBook(FIRST_BOOK, "Renamed", 3);
+    const rows: TimedCaptureRow[] =
+      kind === "delete"
+        ? [
+            ...BOOK_INIT_ROWS,
+            ["DELETE", "/api/books/2", "", 204, payload],
+            ["GET", "/api/books/2", BOOK_NOT_FOUND, 404],
+          ]
+        : [
+            ...BOOK_INIT_ROWS,
+            [
+              "PATCH",
+              "/api/books/1?mode=one",
+              changed,
+              200,
+              { name: "Renamed" },
+            ],
+            ["GET", "/api/books/1", changed],
+            ["PATCH", "/api/books/2?mode=two", SECOND_BOOK, 200, payload],
+          ];
+    const capture = webNetworkCaptureSchema.parse(
+      timedCaptureEvidence(rows).normalized_result,
+    );
+    const accumulator = new EnvironmentStateAccumulator(512 * 1024);
+    for (const record of capture.records) {
+      const added = accumulator.add(record);
+      if (!added.ok) throw added.error;
+    }
+    const state = accumulator.finishState();
+    expect(state).toMatchObject({ ok: true });
+    if (!state.ok) throw state.error;
+    expect(
+      state.value.writes.find(
+        (write) => write.effect === (kind === "delete" ? "delete" : "update"),
+      ),
+    ).toMatchObject({ served: true });
+  },
+);
 
 describe("structured values an earlier update kept", () => {
   it.each([false, true])(
@@ -2242,7 +2287,7 @@ describe("evidence a learned sort keeps answering to", () => {
     ]);
     expect(planOf(state, "patch_books_by_id")).toMatchObject({
       served: true,
-      checked_record_ordinals: [4, 5],
+      checked_record_ordinals: [4],
     });
     expect(
       state.views.find((view) => view.tool === "get_books_by_id"),
@@ -2517,11 +2562,12 @@ describe("recorded calls serving would refuse", () => {
     expect(plan).toMatchObject({ served: false, checked_record_ordinals: [] });
   });
 
-  it("keeps a create's state at its recorded value, though a failed call or one with another query sent another", () => {
+  it("keeps a create's dependent state pinned when another call does not prove its result", () => {
     const draft = post(3, "draft", null);
     const sent = { title: "Post 3", status: "draft" };
     const others: TimedCaptureRow[] = [
       ["POST", "/api/posts", { detail: "Invalid." }, 422, { status: "x" }],
+      ["POST", "/api/posts", "", 204, { title: "Post 4", status: "published" }],
       [
         "POST",
         "/api/posts?import=true",
@@ -2549,6 +2595,7 @@ describe("recorded calls serving would refuse", () => {
         ]),
         "post_posts",
       );
+      expect(plan.served, other[1]).toBe(true);
       expect(plan.body?.fixed, other[1]).toEqual([
         { member: "status", sent: "draft" },
       ]);

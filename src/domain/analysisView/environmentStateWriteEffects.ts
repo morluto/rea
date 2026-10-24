@@ -98,6 +98,10 @@ export interface WriteIo {
     use: (body: JsonValue | undefined) => T,
   ) => T;
   readonly requestBody: (ordinal: number) => ParsedRequestBody;
+  readonly withRequestBody: <T>(
+    ordinal: number,
+    use: (body: ParsedRequestBody) => T,
+  ) => T;
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => void;
   readonly queryOf: (ordinal: number) => string | null | undefined;

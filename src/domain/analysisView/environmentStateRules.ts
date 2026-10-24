@@ -47,8 +47,11 @@ export const requestJson = (body: ParsedRequestBody): JsonValue | undefined =>
 /** Budgeted access the accumulator lends extraction; null and false mean the budget is exhausted. */
 export interface StateBudget {
   readonly body: (ordinal: number) => ParsedBody | null;
-  /** A record's request body, admitted as response bodies are. */
-  readonly requestBody: (ordinal: number) => ParsedRequestBody | null;
+  /** Keep the request's parsing reservation until its consumer finishes. */
+  readonly withRequestBody: <T>(
+    ordinal: number,
+    use: (body: ParsedRequestBody) => T,
+  ) => T | null;
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
   readonly retain: (bytes: number) => boolean;

@@ -167,3 +167,14 @@ the complete SDK replay took 23.264 s / 22.298 s / 474.0 MiB. These single
 observations are not pooled with the earlier performance cohort. Payload cleanup
 and payload-exit resource counters were verified, with no OOM/limit events;
 final whole-scope counters and actual model token usage remain unmeasured.
+
+## Review round on main `3d84215b`, 2026-10-24
+
+Three automated review findings were fixed in `d0198389f` and `7c25ad4dc`: a create compares the other calls' request
+bodies one at a time inside their parsing reservations, an echoed reference to a nested object stays pinned when the
+plan cannot rebuild the object, and a sorted read view a later read contradicts is recorded and loses the
+confirmations it gave. On macOS with Node v24.22.1 at `05566419e`, the static gates passed, `npx vitest run --project
+domain --project services` passed (10,164, 6 skipped; the reference-lifetimes file whose worker crashes on main was
+excluded) and the focused build, export, serve and analysis-view boundaries passed (10 files, 93). Over the same 50
+captures every write plan, session replay and served read equals `0895c89bc`'s: 187 write tools with 68 served, 68 of
+68 smoke calls, 1,151 views, and 2,085 of 2,155 initial and 2,763 of 3,022 session reads matching.

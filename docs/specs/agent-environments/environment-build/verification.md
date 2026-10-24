@@ -100,3 +100,14 @@ On macOS with Node v22.23.1: the static gates passed (`npm run jscpd`: 3.53%), `
 export, export-inputs, serve and analysis-view boundaries with tool schema validity passed (9 files, 96). Rebuilt over
 the same 50 captures and four HARs, all 54 bundles are byte-identical to the three-step path's, with the same coverage,
 served writes and warnings as before the round.
+
+## Review round on main `3d84215b`
+
+The branch merged main through `3d84215b`: #6946, which carries this builder, in `27a4e3986`, then #7008. Integrating
+#6946 took main's event-based credential scan, which also answers the review finding that a scenario transaction with
+duplicate responses or content events hid their credential names; a test that both content events of a transaction
+recorded twice are scanned fails on `0895c89bc`. The integration had dropped `0895c89bc`'s tests for form text recorded
+without a media type and its `body-unusable` hint; both are restored, and main's scan passes the tests.
+
+Rebuilt at `05566419e` over the same 50 captures and four HARs, all 54 bundles are byte-identical to the three-step
+path's, and their warnings and credential counts equal the previous round's.

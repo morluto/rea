@@ -287,6 +287,8 @@ export class EnvironmentStateExtraction {
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
           requestBody: (ordinal) => this.#parsedRequestBody(ordinal),
+          withRequestBody: (ordinal, use) =>
+            this.#withRequestBody(ordinal, use),
           emptyResponse: (ordinal) => this.#budget.emptyResponse(ordinal),
           retain: (bytes) => this.#retain(bytes),
           queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
@@ -295,10 +297,14 @@ export class EnvironmentStateExtraction {
     };
   }
 
+  #withRequestBody<T>(ordinal: number, use: (body: ParsedRequestBody) => T): T {
+    const value = this.#budget.withRequestBody(ordinal, use);
+    if (value === null) throw new StateBudgetExhausted();
+    return value;
+  }
+
   #parsedRequestBody(ordinal: number): ParsedRequestBody {
-    const parsed = this.#budget.requestBody(ordinal);
-    if (parsed === null) throw new StateBudgetExhausted();
-    return parsed;
+    return this.#withRequestBody(ordinal, (body) => body);
   }
 
   #requestBody(ordinal: number): JsonValue | undefined {
