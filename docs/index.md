@@ -61,6 +61,10 @@ For runtime instrumentation, see the [Frida guide](./frida-instrumentation.md).
 | Capture and compare a command                       | [Process capture](process-capture.md)                                                                                                                                                                                                                                                                                                                                                                                                          |
 | Use CLI/MCP and retain evidence                     | [CLI](cli.md), [MCP contracts](mcp-contracts.md), [agent prompts](mcp-prompts.md), [obligation ledgers](reconstruction-obligation-ledgers.md)                                                                                                                                                                                                                                                                                                  |
 
+Worked example: [Does diagonal movement make the player faster?](relay-garden-movement.md)
+follows a small JavaScript game from REA's source evidence to a checked movement
+implementation and optional original artwork.
+
 For development, use [testing](testing.md), [client verification](client-verification.md),
 [tool design](tool-design.md), [admission limits and recovery](design/limits-and-recovery.md),
 and [releasing](releasing.md).
