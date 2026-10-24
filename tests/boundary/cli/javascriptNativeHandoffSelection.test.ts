@@ -11,6 +11,36 @@ import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascr
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+/** Native-export node IDs the analysed graph binds to one add-on, read from the graph rather than the handoff. */
+const exportNodesBoundTo = (
+  graph: {
+    readonly nodes: readonly {
+      readonly kind: string;
+      readonly node_id: string;
+    }[];
+    readonly edges: readonly {
+      readonly source_node_id: string;
+      readonly target_node_id: string;
+    }[];
+  },
+  addonId: string,
+): string[] => {
+  const exportIds = new Set(
+    graph.nodes
+      .filter(({ kind }) => kind === "native-export")
+      .map(({ node_id: id }) => id),
+  );
+  const bound = graph.edges.flatMap(
+    ({ source_node_id: source, target_node_id: target }) =>
+      source === addonId && exportIds.has(target)
+        ? [target]
+        : target === addonId && exportIds.has(source)
+          ? [source]
+          : [],
+  );
+  return [...new Set(bound)].sort();
+};
+
 cliTest(
   "keeps native exports, digest links and selection separate across two add-ons and all trace directions",
   async ({ cli }) => {
@@ -64,6 +94,9 @@ cliTest(
     );
     if (addonA === undefined || addonB === undefined)
       throw new Error("Expected two distinct add-ons");
+    const exportsOfA = exportNodesBoundTo(graph, addonA.node_id);
+    // Both require() bindings of A, including the repeated openProject one.
+    expect(exportsOfA).toHaveLength(2);
     const observation = (path: string, sha256: string) =>
       createEvidence(
         { path, sha256, format: "raw-binary" },
@@ -124,10 +157,7 @@ cliTest(
         requested_exports: ["closeProject", "openProject"],
         evidence_ids: [evidenceA.evidence_id],
       });
-      expect(selectedA?.export_node_ids.length).toBeGreaterThan(0);
-      expect(new Set(selectedA?.export_node_ids).size).toBe(
-        selectedA?.export_node_ids.length,
-      );
+      expect(selectedA?.export_node_ids).toEqual(exportsOfA);
       const reached = trace.graph?.nodes
         .filter(({ kind }) => kind === "native-addon")
         .map(({ node_id }) => node_id)
