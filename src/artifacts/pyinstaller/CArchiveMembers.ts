@@ -98,7 +98,8 @@ export const projectStoredMember = (
       kind: symlink ? "symlink" : "file",
       declaredSize,
       compressedSize: entry.compressedSize,
-      executable: entry.typeCode === "b",
+      // Only the POSIX bootloader sets S_IXUSR on extracted `b` members.
+      executable: pathDialect === "posix" && entry.typeCode === "b",
       byteOffset: sourceByteOffset(entry, archiveStart),
       limitations,
       adapterKey: `carchive:${String(entry.index)}:${entry.name}`,
