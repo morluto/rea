@@ -379,3 +379,13 @@ describe("parsePackageChangeOutput", () => {
     });
   });
 });
+
+it.each(["Success\nFailure [DENIED]\n", "Failure [DENIED]\nSuccess\n"])(
+  "preserves explicit Failure over Success in mixed package output: %s",
+  (output) => {
+    expect(parsePackageChangeOutput(output)).toEqual({
+      status: "failure",
+      reason: "DENIED",
+    });
+  },
+);

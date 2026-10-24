@@ -417,11 +417,11 @@ export const parsePackageChangeOutput = (
   | { readonly status: "failure"; readonly reason: string }
   | { readonly status: "unknown" } => {
   const text = stdout.trim();
-  if (/^Success$/mu.test(text)) return { status: "success" };
   const reason = packageChangeFailureReason(text);
-  return reason === null
-    ? { status: "unknown" }
-    : { status: "failure", reason };
+  if (reason !== null) return { status: "failure", reason };
+  return /^Success$/mu.test(text)
+    ? { status: "success" }
+    : { status: "unknown" };
 };
 
 /**

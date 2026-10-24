@@ -1880,6 +1880,130 @@ exit 0`,
   }
 });
 
+const packageVerdictCases = [
+  {
+    name: "empty",
+    stdout: "",
+    stderr: "diagnostic-only\n",
+    exit: 0,
+    verdict: "unknown",
+  },
+  {
+    name: "progress",
+    stdout: "Performing Streamed Install\n",
+    stderr: "diagnostic-only\n",
+    exit: 0,
+    verdict: "unknown",
+  },
+  {
+    name: "stderr-only failure",
+    stdout: "",
+    stderr: "Failure [DENIED]\n",
+    exit: 0,
+    verdict: "unknown",
+  },
+  {
+    name: "explicit success",
+    stdout: "Success\n",
+    stderr: "",
+    exit: 0,
+    verdict: "success",
+  },
+  {
+    name: "explicit failure",
+    stdout: "Failure [DENIED]\n",
+    stderr: "",
+    exit: 0,
+    verdict: "failure",
+  },
+  {
+    name: "success before failure",
+    stdout: "Success\nFailure [DENIED]\n",
+    stderr: "",
+    exit: 0,
+    verdict: "failure",
+  },
+  {
+    name: "failure before success",
+    stdout: "Failure [DENIED]\nSuccess\n",
+    stderr: "",
+    exit: 0,
+    verdict: "failure",
+  },
+  {
+    name: "nonzero refusal",
+    stdout: "",
+    stderr: "Failure [DENIED]\n",
+    exit: 1,
+    verdict: "failure",
+  },
+] as const;
+
+for (const operation of [
+  "install_adb_package",
+  "uninstall_adb_package",
+] as const) {
+  it.each(packageVerdictCases)(
+    `${operation} preserves $name verdict and captured output`,
+    async (scenario) => {
+      const { binary, root } = await writeAdbStub(
+        () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ]; then
+  printf '%s' '${scenario.stdout}'
+  printf '%s' '${scenario.stderr}' >&2
+  exit ${scenario.exit}
+fi
+exit 1`,
+      );
+      const apk = join(root, "app.apk");
+      await writeFile(apk, "apk");
+      const result = await providerOver(binary).execute(
+        operation === "install_adb_package"
+          ? {
+              operation,
+              input: { serial: "emulator-5554", apk_path: apk, replace: false },
+            }
+          : {
+              operation,
+              input: { serial: "emulator-5554", package: "com.example" },
+            },
+      );
+      if (scenario.verdict === "success") {
+        expect(result.ok).toBe(true);
+        return;
+      }
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected package-change diagnostic");
+      const projected = projectAnalysisError(result.error);
+      if (scenario.verdict === "failure") {
+        expect(projected).toMatchObject({
+          code: "unsupported_target",
+          details: { reason: "DENIED" },
+        });
+      } else {
+        expect(projected).toMatchObject({
+          code: "unreadable_output",
+          details: {
+            reason: "package_change_verdict_unknown",
+            captured_output: {
+              stdout: scenario.stdout,
+              stderr: scenario.stderr,
+              stdout_bytes: Buffer.byteLength(scenario.stdout),
+              exit_code: 0,
+              signal: null,
+              truncated: false,
+            },
+          },
+        });
+        expect(projected.remediation.action).toContain(
+          "check the package state",
+        );
+        expect(projected.message).not.toContain("refused");
+      }
+    },
+  );
+}
+
 it("starts an app through resolved launcher component and force-stops it", async () => {
   const { binary } = await writeAdbStub(
     shellStub({

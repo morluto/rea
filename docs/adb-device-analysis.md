@@ -182,6 +182,8 @@ and during shutdown.
   `details.captured_output`; it is not reported as a device refusal.
 - **Producer identity stays attached.** Every result embeds the producing
   adb client (`binary_path`, `path_source`, `version`, `installed_path`).
+  If stdout contains both `Success` and `Failure [REASON]`, the explicit failure
+  takes precedence regardless of their order.
 
 ## Resource and lifecycle limits
 
