@@ -22,11 +22,16 @@ const freezeRecursively = <T>(value: T): T => {
 const runFilteredCli = async (
   value: unknown,
   format: "json" | "jsonl" | "yaml" | "toon" | "md",
-  filter: string,
+  filter?: string,
 ): Promise<string> => {
   const cli = Cli.create("filtered-array-test", { sync: false });
   cli.command("rows", { run: () => value });
-  const args = ["rows", "--format", format, "--filter-output", filter];
+  const args = [
+    "rows",
+    "--format",
+    format,
+    ...(filter === undefined ? [] : ["--filter-output", filter]),
+  ];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
     parseCliOutputArguments(args),
@@ -53,6 +58,38 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it("renders only each record's own fields in heterogeneous Markdown tables", async () => {
+  const value: unknown = JSON.parse(
+    '[{"name":"first","constructor":"ctor","toString":"text","__proto__":"proto","enabled":false,"count":0},{"name":"second"},{"name":"third","constructor":0,"toString":false,"__proto__":null}]',
+  );
+  freezeRecursively(value);
+  const json = await runFilteredCli(value, "json");
+  expect(JSON.parse(json)).toEqual(value);
+  const markdown = await runFilteredCli(value, "md");
+  const rows = markdown
+    .trim()
+    .split("\n")
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    );
+  expect(rows[0]).toEqual([
+    "name",
+    "constructor",
+    "toString",
+    "__proto__",
+    "enabled",
+    "count",
+  ]);
+  expect(rows.slice(2)).toEqual([
+    ["first", "ctor", "text", "proto", "false", "0"],
+    ["second", "", "", "", "", ""],
+    ["third", "0", "false", "null", "", ""],
+  ]);
+});
 
 it.each(
   (["json", "jsonl"] as const).flatMap((format) =>

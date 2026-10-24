@@ -107,7 +107,11 @@ const formatObjectTable = (
       }
   return renderTable(
     headers,
-    items.map((item) => headers.map((key) => markdownCell(item[key]))),
+    items.map((item) =>
+      headers.map((key) =>
+        markdownCell(Object.hasOwn(item, key) ? item[key] : undefined),
+      ),
+    ),
   );
 };
 
