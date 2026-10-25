@@ -486,6 +486,24 @@ describe("later initializer mutation proof", () => {
 });
 
 describe("later initializer literal prototype proof", () => {
+  it.each(["[]", '("")', "(0)", "(false)", "/value/", "(0n)"])(
+    "keeps the unknown when Object.prototype can supply a late loader through %s",
+    (literal) => {
+      const result = analyzeJavaScriptStaticSource(`
+        Object.prototype.load = require;
+        function register() {
+          load("electron").ipcMain.on("ping", () => {});
+        }
+        var load = ${literal}.load;
+        register();
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
   it.each([
     ["Array", "Array.prototype", "[]"],
     ["String", "String.prototype", '("")'],
@@ -566,6 +584,33 @@ describe("later initializer precision", () => {
     expect(result.parse_error_count).toBe(0);
     expect(result.parse_status).toBe("complete");
     expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it.each([
+    "alias = {}; alias.other = 1;",
+    "alias = {}; const replacement = alias; replacement.other = 1;",
+  ])("keeps bridge methods after replacement alias writes: %s", (writes) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      const base = { ping: () => ipcRenderer.send("ping") };
+      let alias = base;
+      ${writes}
+      contextBridge.exposeInMainWorld("api", base);
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.electron.context_bridge_apis).toContainEqual(
+      expect.objectContaining({
+        api_key: "api",
+        members: expect.arrayContaining(["ping"]),
+      }),
+    );
+    expect(result.electron.call_paths).toContainEqual(
+      expect.objectContaining({
+        entry: "api.ping",
+        terminal: "electron.ipcRenderer.send",
+      }),
+    );
   });
 
   it("keeps a sequence-wrapped late callee complete", () => {
