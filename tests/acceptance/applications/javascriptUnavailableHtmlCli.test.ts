@@ -255,7 +255,9 @@ cliTest(
     expect(
       result.graph.edges.some(
         ({ relation, properties }) =>
-          relation === "loads" && properties.resolved_path === "main.js",
+          relation === "loads" &&
+          properties.script_path === "main.js" &&
+          properties.resolved_path === "main.js",
       ),
     ).toBe(true);
     expect(
