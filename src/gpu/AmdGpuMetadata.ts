@@ -77,7 +77,12 @@ const preflight = (bytes: Buffer): Set<string> => {
       }
       payload = width!;
     }
-    if (count > 262144 - values || payload > 65536)
+    // Match the decoder's 65536-entry array and map limits (a map counts pairs twice).
+    if (
+      count > 262144 - values ||
+      payload > 65536 ||
+      count > (map ? 131072 : 65536)
+    )
       throw new BinaryResourceFailure(
         "structure",
         262144,
