@@ -29,6 +29,7 @@ it("cancels actual call-path work while its first seed indexes a long block", as
     source,
     accumulator,
     identity,
+    () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
   );
   // The first candidate has not yet been expanded: this checkpoint is inside
   // its block indexing, before the walker's completed batch is yielded.
@@ -54,6 +55,7 @@ it("cancels actual call-path work while its first seed indexes a long block", as
         source,
         completed,
         identity,
+        () => completeSemanticSteps(index.indexMemberMutationFactsSteps()),
       ),
     ),
   ).toContainEqual(expect.objectContaining({ entry: "first", conditions: [] }));

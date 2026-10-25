@@ -37,3 +37,56 @@ cliTest(
     });
   },
 );
+
+for (const surface of ["CLI", "stdio MCP"] as const) {
+  cliTest(
+    `retains inherited loader uncertainty through ${surface}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-js-inherited-loader-");
+      await writeFixtureFiles(root, {
+        "index.js": `Object.prototype.load = require;
+        function register() { load("electron").ipcMain.on("ping", () => {}); }
+        var load = [].load;
+        register();`,
+      });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      const source = application.graph.nodes
+        .flatMap((node) => node.observations)
+        .find(
+          (observation) => observation.properties.file_kind === "javascript",
+        );
+
+      expect(source?.properties.parse_status).toBe("partial");
+      expect(application.graph.coverage.status).toBe("partial");
+    },
+  );
+
+  cliTest(
+    `retains bridge paths after alias replacement through ${surface}`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-js-replaced-alias-");
+      await writeFixtureFiles(root, {
+        "preload.js": `const { contextBridge, ipcRenderer } = require("electron");
+        const base = { ping: () => ipcRenderer.send("ping") };
+        let alias = base;
+        alias = {};
+        alias.other = 1;
+        contextBridge.exposeInMainWorld("api", base);`,
+      });
+      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      const observations = application.graph.nodes.flatMap(
+        (node) => node.observations,
+      );
+
+      expect(observations).toContainEqual(
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            entry: "api.ping",
+            entry_kind: "bridge-member",
+            step_kind: "terminal",
+          }),
+        }),
+      );
+    },
+  );
+}

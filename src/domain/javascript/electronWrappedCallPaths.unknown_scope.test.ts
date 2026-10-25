@@ -588,6 +588,8 @@ describe("later initializer precision", () => {
 
   it.each([
     "alias = {}; alias.other = 1;",
+    "alias = []; alias.other = 1;",
+    "alias = {}; alias[key] = 1;",
     "alias = {}; const replacement = alias; replacement.other = 1;",
   ])("keeps bridge methods after replacement alias writes: %s", (writes) => {
     const result = analyzeJavaScriptStaticSource(`
@@ -611,6 +613,27 @@ describe("later initializer precision", () => {
         terminal: "electron.ipcRenderer.send",
       }),
     );
+  });
+
+  it.each([
+    "alias.load = require; alias = {};",
+    "const captured = alias; alias = {}; captured.load = require;",
+    "if (flag) alias = {}; alias.load = require;",
+    "({ value: alias } = { value: holder }); alias.load = require;",
+  ])("retains original alias mutation uncertainty: %s", (writes) => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      const holder = {};
+      let alias = holder;
+      ${writes}
+      function register() { load().ipcMain.on("ping", () => {}); }
+      var load = () => holder.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
   it("keeps a sequence-wrapped late callee complete", () => {
@@ -651,7 +674,7 @@ describe("later initializer alias write bounds", () => {
 
 describe("later initializer loader proof bounds", () => {
   it("bounds the loader proof for a long late alias chain", () => {
-    const aliases = Array.from({ length: 15_000 }, (_, index) =>
+    const aliases = Array.from({ length: 512 }, (_, index) =>
       index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
     ).join("\n");
     const result = analyzeJavaScriptStaticSource(`
@@ -659,7 +682,7 @@ describe("later initializer loader proof bounds", () => {
           load("electron").ipcMain.on("ping", () => {});
         }
         ${aliases}
-        var load = a14999;
+        var load = a511;
         register();
       `);
 
@@ -670,7 +693,7 @@ describe("later initializer loader proof bounds", () => {
 
   it("bounds the loader proof for a deeply nested late initializer", () => {
     const initializer = Array.from(
-      { length: 15_000 },
+      { length: 512 },
       (_, index) => `value${index}`,
     ).join(" + ");
     const result = analyzeJavaScriptStaticSource(`

@@ -22,6 +22,7 @@ import {
   type JavaScriptElectronIdentity,
 } from "./javascriptSemanticAnalysis.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { symbolicLogicalRight } from "./javascriptSymbolicControlFlow.js";
 import {
   moduleFactory,
@@ -1244,7 +1245,8 @@ export class JavaScriptSymbolicBindings {
       this.#isLoaderFree(object, depth + 1) &&
       (!node.computed || this.#isLoaderFree(node.property, depth + 1)) &&
       (ownObjectProperty ||
-        !this.state.prototypeRequireMutationOwners.has(owner))
+        (!this.state.prototypeRequireMutationOwners.has(owner) &&
+          !this.state.prototypeRequireMutationOwners.has("Object")))
     );
   }
 
@@ -1943,6 +1945,7 @@ export class JavaScriptSymbolicBindings {
         initializer.node.name,
       );
       if (!source) continue;
+      if (!this.#sharesInitialAliases(source, initializer.node)) continue;
       const aliases = this.#aliasesByBinding.get(source.bindingId) ?? [];
       aliases.push(binding.bindingId);
       this.#aliasesByBinding.set(source.bindingId, aliases);
@@ -1950,6 +1953,33 @@ export class JavaScriptSymbolicBindings {
       sources.push(source.bindingId);
       this.#aliasSourcesByBinding.set(binding.bindingId, sources);
     }
+  }
+
+  #sharesInitialAliases(
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean {
+    if (!binding.definitions.some(({ kind }) => kind === "assignment"))
+      return true;
+    const selected = semanticBindingAtRead(
+      binding,
+      read,
+      this.state.parentsByNode,
+    );
+    // A definite fresh replacement has its own object identity. Captures of
+    // the original value and uncertain rebindings retain their shared writes.
+    return (
+      selected.status !== "ordered" ||
+      !selected.hasDefiniteInitializer ||
+      selected.binding.initializers.length === 0 ||
+      selected.binding.initializers.some(
+        (initializer) =>
+          initializer === binding.initializers[0] ||
+          initializer.projection.length > 0 ||
+          (!t.isObjectExpression(initializer.node) &&
+            !t.isArrayExpression(initializer.node)),
+      )
+    );
   }
 
   #bindingAliasGroup(bindingId: string): ReadonlySet<string> {
@@ -2047,11 +2077,11 @@ export class JavaScriptSymbolicBindings {
       const binding = resolveSemanticBindingState(this.state, root, root.name);
       if (binding) {
         const alias = this.#exportAliases.get(binding.bindingId);
-        if (alias === undefined)
+        if (alias === undefined && this.#sharesInitialAliases(binding, root))
           this.#mutatedAliasGroups.add(
             this.#bindingAliasGroup(binding.bindingId),
           );
-        else this.#mutated.add(alias);
+        else this.#mutated.add(alias ?? binding.bindingId);
       }
       return;
     }
@@ -2121,7 +2151,11 @@ export class JavaScriptSymbolicBindings {
           }),
       ...(exportValueReceiver === undefined ? {} : { exportValueReceiver }),
     };
-    if (alias === undefined && selected.length > 0) {
+    if (
+      alias === undefined &&
+      selected.length > 0 &&
+      this.#sharesInitialAliases(binding, root)
+    ) {
       const group = this.#bindingAliasGroup(binding.bindingId);
       const writes = this.#aliasMemberWrites.get(group) ?? [];
       writes.push(write);
