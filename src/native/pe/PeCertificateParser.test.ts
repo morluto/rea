@@ -8,6 +8,7 @@ import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
   peCertificateFixture,
   peWithoutCertificateTableFixture,
+  pkcs7DualSignedTimestampedFixture,
   pkcs7SignedDataFixture,
   pkcs7SignedDataIndefiniteEnvelopeFixture,
 } from "./PeCertificates.fixture.js";
@@ -21,6 +22,7 @@ import { parsePeCertificates } from "./PeCertificateParser.js";
 // Independent boundary examples: changing an allowance requires reviewing
 // both the admitted and rejected certificate shapes.
 const ASN1_NODE_BUDGET = 16_384;
+const ASN1_DEPTH_BUDGET = 64;
 const MAX_OID_BYTES = 256;
 const MAX_OID_ARC_BYTES = 32;
 const MAX_DECODED_NAME_BYTES = 65_536;
@@ -734,6 +736,35 @@ it("stops decoding a certificate payload at the ASN.1 node budget", () => {
   const payload = contentInfo(derSeq(derInt(1), der(0x31, values)));
   expect(() => parse(peCertificateFixture(false, payload))).toThrow(
     /node budget/u,
+  );
+});
+
+it("reads a dual-signed, timestamped signature as deep as signed Windows binaries", () => {
+  const report = parse(
+    peCertificateFixture(true, pkcs7DualSignedTimestampedFixture()),
+  );
+  expect(report.entries[0]?.pkcs7?.signers).toEqual([
+    expect.objectContaining({
+      serial_hex: "11223344",
+      unsigned_attribute_oids: ["1.3.6.1.4.1.311.2.4.1"],
+    }),
+  ]);
+  // The nested signature and its timestamp are not inventoried yet.
+  expect(report.coverage).toMatchObject({
+    status: "partial",
+    certificates: 1,
+  });
+  expect(report.limitations).toContain(
+    "Signer unsigned attribute contents are not decoded; nested signatures and timestamp token certificates and times may be omitted.",
+  );
+});
+
+it("stops decoding a certificate payload at the ASN.1 depth budget", () => {
+  let nested: Buffer = Buffer.from([0x05, 0x00]);
+  for (let level = 0; level <= ASN1_DEPTH_BUDGET; level += 1)
+    nested = der(0x30, nested);
+  expect(() => readAsn1(nested)).toThrow(
+    `ASN.1 nesting exceeds ${String(ASN1_DEPTH_BUDGET)} levels.`,
   );
 });
 
