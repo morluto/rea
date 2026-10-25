@@ -191,6 +191,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // DecompileProcess converts seconds to an int millisecond timer delay.
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
+    /**
+     * Fail-fast ceiling for decompiler requests. Bodies at or below roughly
+     * 64 KiB decompile within the restart budget in practice; bodies in the
+     * 100 KiB range and above exhaust it after several CPU-minutes. The
+     * listing, reference and CFG facts stay available via other operations.
+     */
+    private static final long MAX_DECOMPILE_BODY_BYTES = 65536;
     private static AddressSpace sessionDefaultAddressSpace;
     private Path checkpointDirectory;
     private long checkpointModification;
@@ -1731,7 +1738,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             // The listing, reference and CFG facts below do not depend on the
             // native decompiler. Cancellation still ends the request.
             if (!failure.code.equals("decompile_failed") &&
-                !failure.code.equals("decompile_timed_out")) throw failure;
+                !failure.code.equals("decompile_timed_out") &&
+                !failure.code.equals("decompile_oversized")) throw failure;
             decompilation = null;
             decompilerFailure = failure.getMessage().strip();
         }
@@ -3732,6 +3740,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private DecompileResults decompile(Function function) {
         if (function.isExternal() || function.getBody().isEmpty()) {
             return null;
+        }
+        long bodyBytes = function.getBody().getNumAddresses();
+        if (bodyBytes > MAX_DECOMPILE_BODY_BYTES) {
+            throw new RequestFailure(
+                "decompile_oversized",
+                "Ghidra decompiler body limit: function body is " + bodyBytes +
+                " bytes (limit " + MAX_DECOMPILE_BODY_BYTES + "). Bodies beyond this limit" +
+                " exhaust the decompiler's restart budget; fail fast instead of burning it."
+            );
         }
         DecompileResults results = decompiler.decompileFunction(
             function,
