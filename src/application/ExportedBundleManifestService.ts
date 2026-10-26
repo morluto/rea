@@ -95,7 +95,6 @@ export const collectExportedBundleDirectoryEntries = async (
     for (const name of sortedNames) {
       const relativePath =
         relativePrefix.length === 0 ? name : `${relativePrefix}/${name}`;
-      if (relativePath === EXPORTED_BUNDLE_MANIFEST_FILENAME) continue;
 
       const candidateAbsolutePath = join(currentAbsoluteDir, name);
       if (!isPathWithinRoot(rootPath, candidateAbsolutePath)) {
@@ -120,6 +119,15 @@ export const collectExportedBundleDirectoryEntries = async (
       }
 
       if (entryStats.isDirectory()) {
+        if (relativePath === EXPORTED_BUNDLE_MANIFEST_FILENAME) {
+          collected.push({
+            relative_path: relativePath,
+            kind: "directory",
+            sha256: null,
+            bytes: null,
+          });
+          continue;
+        }
         await walk(candidateAbsolutePath, relativePath);
         continue;
       }
@@ -133,6 +141,8 @@ export const collectExportedBundleDirectoryEntries = async (
         });
         continue;
       }
+
+      if (relativePath === EXPORTED_BUNDLE_MANIFEST_FILENAME) continue;
 
       collected.push(
         await inspectRegularFileSnapshot(

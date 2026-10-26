@@ -96,7 +96,7 @@ export const createExportedBundleManifest = (
         relative_path: normalizedPath.value,
         sha256: entry.sha256,
         bytes: entry.bytes,
-        role: entry.role ?? null,
+        role: typeof entry.role === "string" ? entry.role.trim() || null : null,
       };
     })
     .sort((left, right) =>
@@ -182,6 +182,17 @@ interface ScannedObservedEntries {
   readonly invalidEntriesCount: number;
 }
 
+const orderObservedEntriesForDeterministicScan = (
+  observedEntries: readonly ObservedBundleFileSystemEntry[],
+  expectedByPath: ReadonlyMap<string, ExportedBundleEntry>,
+): ObservedBundleFileSystemEntry[] =>
+  [...observedEntries].sort((a, b) => {
+    const aExpected = expectedByPath.has(a.relative_path) ? 0 : 1;
+    const bExpected = expectedByPath.has(b.relative_path) ? 0 : 1;
+    if (aExpected !== bExpected) return aExpected - bExpected;
+    return compareUnicodeCodePoints(a.relative_path, b.relative_path);
+  });
+
 const scanObservedEntries = (
   observedEntries: readonly ObservedBundleFileSystemEntry[],
   expectedByPath: ReadonlyMap<string, ExportedBundleEntry>,
@@ -191,12 +202,36 @@ const scanObservedEntries = (
     string,
     { readonly sha256: string; readonly bytes: number }
   >();
-  const seenFoldedPaths = new Set<string>();
+  const seenFoldedPaths = new Map<string, string>();
   let observedRegularFileCount = 0;
   let invalidEntriesCount = 0;
 
-  for (const observed of observedEntries) {
-    if (observed.relative_path === EXPORTED_BUNDLE_MANIFEST_FILENAME) continue;
+  const orderedObserved = orderObservedEntriesForDeterministicScan(
+    observedEntries,
+    expectedByPath,
+  );
+
+  for (const observed of orderedObserved) {
+    const entryKind = observed.kind ?? "file";
+    if (
+      observed.relative_path === EXPORTED_BUNDLE_MANIFEST_FILENAME &&
+      entryKind === "file"
+    ) {
+      continue;
+    }
+    if (observed.relative_path === EXPORTED_BUNDLE_MANIFEST_FILENAME) {
+      invalidEntriesCount += 1;
+      findings.push({
+        kind: "non_regular_entry",
+        relative_path: observed.relative_path,
+        expected_sha256: null,
+        observed_sha256: null,
+        expected_bytes: null,
+        observed_bytes: null,
+        message: `Bundle manifest ${JSON.stringify(observed.relative_path)} is a non-regular filesystem object (${entryKind}); symlinks and special files are rejected`,
+      });
+      continue;
+    }
 
     const normalizedPath = normalizeExportedBundleRelativePath(
       observed.relative_path,
@@ -217,8 +252,10 @@ const scanObservedEntries = (
 
     const pathKey = normalizedPath.value;
     const foldedKey = foldBundlePathCase(pathKey);
-    if (seenFoldedPaths.has(foldedKey)) {
+    const firstPathForFold = seenFoldedPaths.get(foldedKey);
+    if (firstPathForFold !== undefined) {
       invalidEntriesCount += 1;
+      validObservedByPath.delete(firstPathForFold);
       findings.push({
         kind: "duplicate_observed_path",
         relative_path: pathKey,
@@ -230,9 +267,8 @@ const scanObservedEntries = (
       });
       continue;
     }
-    seenFoldedPaths.add(foldedKey);
+    seenFoldedPaths.set(foldedKey, pathKey);
 
-    const entryKind = observed.kind ?? "file";
     if (entryKind !== "file") {
       invalidEntriesCount += 1;
       findings.push({
@@ -298,8 +334,13 @@ const reconcileManifestAgainstObserved = (
   for (const expected of manifest.entries) {
     const observed = scanned.validObservedByPath.get(expected.relative_path);
     if (observed === undefined) {
+      const expectedFolded = foldBundlePathCase(expected.relative_path);
       const hasInvalidFinding = findings.some(
-        (finding) => finding.relative_path === expected.relative_path,
+        (finding) =>
+          finding.relative_path === expected.relative_path ||
+          (finding.kind === "duplicate_observed_path" &&
+            finding.relative_path !== null &&
+            foldBundlePathCase(finding.relative_path) === expectedFolded),
       );
       if (!hasInvalidFinding) {
         missingFilesCount += 1;

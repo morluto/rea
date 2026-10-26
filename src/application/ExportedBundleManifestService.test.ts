@@ -3,6 +3,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readFile,
   rm,
   symlink,
   writeFile,
@@ -12,6 +13,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  parseExportedBundleManifest,
+  serializeExportedBundleManifest,
+} from "../domain/exportedBundleManifest.js";
 import {
   generateExportedBundleDirectoryManifest,
   verifyExportedBundleDirectory,
@@ -90,6 +95,108 @@ describe("ExportedBundleManifestService directory manifest generation and verifi
       ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ExportedBundleManifestService ingression, reproduction, and TOCTOU coverage (#6337)", () => {
+  it("executes multi-dataset ingression -> review -> reproduction and catches symlinked manifest or empty-dir drift", async () => {
+    const tempRoot = await mkdtemp(join(tmpdir(), "rea-bundle-g1-"));
+    try {
+      await mkdir(join(tempRoot, "bin"), { recursive: true });
+      await mkdir(join(tempRoot, "decompiled"), { recursive: true });
+      await mkdir(join(tempRoot, "reports"), { recursive: true });
+
+      await writeFile(
+        join(tempRoot, "bin/routerd.elf"),
+        Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01]),
+      );
+      await writeFile(
+        join(tempRoot, "decompiled/auth_handler.c"),
+        "int auth_verify(void) { return 0; }\n",
+        "utf8",
+      );
+      await writeFile(
+        join(tempRoot, "reports/triage-\u{1F680}.sarif.json"),
+        '{"version":"2.1.0","runs":[]}\n',
+        "utf8",
+      );
+
+      const manifestPath = join(tempRoot, "rea-bundle-manifest.json");
+      const manifest = await generateExportedBundleDirectoryManifest(tempRoot, {
+        bundle_kind: "analysis-bundle",
+        writeManifestFile: true,
+        provenance: {
+          artifact: {
+            available: true,
+            sha256: "d".repeat(64),
+            format: "elf",
+            architecture: "x86_64",
+          },
+          provider: {
+            available: true,
+            id: "rea-ghidra",
+            name: "REA Ghidra",
+            version: "6.8.0",
+          },
+          source_evidence_ids: [`ev_${"1".repeat(64)}`, `ev_${"2".repeat(64)}`],
+        },
+        roleByRelativePath: {
+          "bin/routerd.elf": "subject-binary",
+          "decompiled/auth_handler.c": "decompilation",
+          "reports/triage-\u{1F680}.sarif.json": "sarif-report",
+        },
+      });
+
+      // Stage 1 -> Stage 2 -> Stage 3 byte-identical reproduction
+      const diskManifestBytes = await readFile(manifestPath, "utf8");
+      const reparsed = parseExportedBundleManifest(
+        JSON.parse(diskManifestBytes),
+      );
+      expect(serializeExportedBundleManifest(reparsed)).toBe(diskManifestBytes);
+
+      const cleanVerify = await verifyExportedBundleDirectory(tempRoot);
+      expect(cleanVerify.verified).toBe(true);
+      expect(cleanVerify.summary.verified_files).toBe(3);
+
+      // Post-export mutation 1: replace a file with an empty directory
+      await rm(join(tempRoot, "decompiled/auth_handler.c"));
+      await mkdir(join(tempRoot, "decompiled/auth_handler.c"));
+      const dirDriftVerify = await verifyExportedBundleDirectory(tempRoot);
+      expect(dirDriftVerify.verified).toBe(false);
+      expect(dirDriftVerify.findings).toEqual([
+        expect.objectContaining({
+          kind: "non_regular_entry",
+          relative_path: "decompiled/auth_handler.c",
+        }),
+      ]);
+
+      // Restore file, then replace rea-bundle-manifest.json with a symlink (even when passing in-memory manifest)
+      await rm(join(tempRoot, "decompiled/auth_handler.c"), {
+        recursive: true,
+        force: true,
+      });
+      await writeFile(
+        join(tempRoot, "decompiled/auth_handler.c"),
+        "int auth_verify(void) { return 0; }\n",
+        "utf8",
+      );
+      await rm(manifestPath);
+      await symlink(join(tempRoot, "bin/routerd.elf"), manifestPath);
+
+      const symlinkManifestVerify = await verifyExportedBundleDirectory(
+        tempRoot,
+        { manifest },
+      );
+      expect(symlinkManifestVerify.verified).toBe(false);
+      expect(symlinkManifestVerify.findings).toEqual([
+        expect.objectContaining({
+          kind: "non_regular_entry",
+          relative_path: "rea-bundle-manifest.json",
+        }),
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 });

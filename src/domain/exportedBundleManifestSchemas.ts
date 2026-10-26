@@ -29,7 +29,11 @@ const WINDOWS_RESERVED_BASENAME =
 const WINDOWS_FORBIDDEN_SEGMENT_CHARS = /[<>:"|?*]/u;
 
 export const foldBundlePathCase = (pathValue: string): string =>
-  pathValue.normalize("NFC").toUpperCase().toLowerCase();
+  pathValue
+    .normalize("NFC")
+    .toUpperCase()
+    .toLowerCase()
+    .replace(/i\u0307/gu, "i");
 
 const hasControlCharacters = (value: string): boolean => {
   for (let i = 0; i < value.length; i += 1) {
@@ -69,12 +73,16 @@ export const normalizeExportedBundleRelativePath = (
   if (input.length === 0) {
     return err("Bundle entry relative_path must not be empty");
   }
-  if (!input.isWellFormed() || hasControlCharacters(input)) {
+  if (/[\uD800-\uDFFF]/u.test(input) || hasControlCharacters(input)) {
     return err(
       `Bundle entry relative_path contains ill-formed UTF-16 or control characters: ${JSON.stringify(input)}`,
     );
   }
   const normalized = input.normalize("NFC");
+  if (normalized !== input)
+    return err(
+      `Bundle entry path must use canonical Unicode NFC normalization: ${JSON.stringify(input)}`,
+    );
   if (
     !admitsCanonicalPathSyntax(normalized) ||
     looksExternal(normalized) ||

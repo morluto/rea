@@ -357,3 +357,93 @@ describe("exportedBundleManifest adversarial path and case-collision traps (#633
     ]);
   });
 });
+
+describe("exportedBundleManifest Unicode, case-fold, and collision quarantine coverage (#6337)", () => {
+  it("enforces Unicode code-point sorting, Turkish/German/Greek case-folding, NFD rejection, and permutation-invariant collision quarantining", () => {
+    const shaA = createHash("sha256").update("{}\n").digest("hex");
+    // Astral U+10400 vs BMP U+E000 ordering check
+    const manifestAstral = createExportedBundleManifest({
+      bundle_kind: "analysis-bundle",
+      entries: [
+        {
+          relative_path: "evidence/k-\u{10400}.json",
+          sha256: shaA,
+          bytes: 3,
+          role: "  primary-evidence  ",
+        },
+        {
+          relative_path: "evidence/k-\uE000.json",
+          sha256: shaA,
+          bytes: 3,
+          role: "   ",
+        },
+      ],
+    });
+    expect(manifestAstral.entries.map((e) => e.relative_path)).toEqual([
+      "evidence/k-\uE000.json",
+      "evidence/k-\u{10400}.json",
+    ]);
+    expect(manifestAstral.entries[0]?.role).toBeNull();
+    expect(manifestAstral.entries[1]?.role).toBe("primary-evidence");
+
+    // Reject Turkish dotted İ vs i, German ß vs ss, Greek σ vs ς, and NFD paths
+    expect(() =>
+      createExportedBundleManifest({
+        bundle_kind: "analysis-bundle",
+        entries: [
+          { relative_path: "cfg/\u0130.json", sha256: shaA, bytes: 3 },
+          { relative_path: "cfg/i.json", sha256: shaA, bytes: 3 },
+        ],
+      }),
+    ).toThrow(/case-colliding/i);
+
+    expect(() =>
+      createExportedBundleManifest({
+        bundle_kind: "analysis-bundle",
+        entries: [
+          { relative_path: "cfg/straße.json", sha256: shaA, bytes: 3 },
+          { relative_path: "cfg/strasse.json", sha256: shaA, bytes: 3 },
+        ],
+      }),
+    ).toThrow(/case-colliding/i);
+
+    expect(() =>
+      createExportedBundleManifest({
+        bundle_kind: "analysis-bundle",
+        entries: [
+          { relative_path: "cfg/cafe\u0301.json", sha256: shaA, bytes: 3 },
+        ],
+      }),
+    ).toThrow(/NFC/i);
+
+    // Reverse-order case-colliding observed entries must produce identical report and verified_files: 0
+    const expectedManifest = createExportedBundleManifest({
+      bundle_kind: "analysis-bundle",
+      entries: [{ relative_path: "safe/entry.json", sha256: shaA, bytes: 3 }],
+    });
+    const obsForward = [
+      { relative_path: "safe/entry.json", sha256: shaA, bytes: 3 },
+      { relative_path: "SAFE/ENTRY.JSON", sha256: shaA, bytes: 3 },
+    ];
+    const obsReverse = [...obsForward].reverse();
+
+    const repForward = verifyExportedBundleManifest(
+      expectedManifest,
+      obsForward,
+    );
+    const repReverse = verifyExportedBundleManifest(
+      expectedManifest,
+      obsReverse,
+    );
+    expect(repForward).toEqual(repReverse);
+    expect(repForward.verified).toBe(false);
+    expect(repForward.summary.verified_files).toBe(0);
+    expect(repForward.summary.missing_files).toBe(0);
+    expect(repForward.findings).toEqual([
+      expect.objectContaining({
+        kind: "duplicate_observed_path",
+        relative_path: "SAFE/ENTRY.JSON",
+      }),
+    ]);
+  });
+});
