@@ -157,6 +157,12 @@ describe("FlutterEngineStringScanner", () => {
   });
 });
 
+describe("FlutterEngineStringScanner toolchain behavior", () => {
+  it("collects the labeled Android clang line", () => {
+    assertSingleToolchainLine(
+      "Android (5900059 based on r365631c) clang version 9.0.8 (https://android.googlesource.com/toolchain/llvm-project 207d7abc) (based on LLVM 9.0.8svn)",
+    );
+  });
   it("does not claim a toolchain cap for unrelated overlong strings", () => {
     const scanner = new FlutterEngineStringScanner();
     const license = `Apache License Version 2.0 ${"x".repeat(700)}`;
