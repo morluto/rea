@@ -101,7 +101,10 @@ export const parseDevicetree = (
   let cursor = header.off_mem_rsvmap;
   const reservationEnd = Math.min(
     end,
-    ...[header.off_dt_struct, header.off_dt_strings].filter((n) => n >= cursor),
+    ...[
+      header.off_dt_struct,
+      ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
+    ].filter((n) => n >= cursor),
   );
   if (ranges.some((r) => cursor >= r.start && cursor < r.end))
     malformed("Reservation block overlaps another FDT block");

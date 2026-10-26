@@ -8,6 +8,7 @@ import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
 import {
   cells,
   devicetreeFixture,
+  emptyStringsAtReservationBoundaryFixture,
   type FixtureNode,
 } from "./Devicetree.fixture.js";
 const parse = (b: Buffer, limits = {}) =>
@@ -250,6 +251,14 @@ it("rejects unterminated reservations and unknown tokens", () => {
   token.writeUInt32BE(0x12345678, 72);
   expect(() => parse(token)).toThrow("Unknown FDT token");
 });
+it.each([16, 17] as const)(
+  "accepts an empty strings block at the reservation boundary in v%s",
+  (version) => {
+    const report = parse(emptyStringsAtReservationBoundaryFixture(version));
+    expect(report.nodes).toHaveLength(1);
+    expect(report.reservations).toEqual([]);
+  },
+);
 it("bounds expansion of repeated paths before allocation", () => {
   const longName = "a".repeat(4096);
   let node: FixtureNode = { name: longName };
