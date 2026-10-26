@@ -8,6 +8,7 @@ import {
   updateResidualUnknown,
 } from "../domain/residualUnknown.js";
 import {
+  compareAnalysisRuns,
   compareEvidenceAnalysisRuns,
   projectEvidenceBundleToAnalysisRun,
   projectEvidenceToAnalysisRun,
@@ -271,5 +272,95 @@ describe("AnalysisRunComparisonService fail-closed validation (#6338)", () => {
     expect(() =>
       projectEvidenceBundleToAnalysisRun(conflictingBundle, "conflict-run"),
     ).toThrow(/Conflicting finding_id definitions/u);
+  });
+});
+
+const makeCorroboratingRecord = (
+  providerId: string,
+  sha256: string,
+  sev: "medium" | "high",
+) =>
+  createEvidence(
+    { path: "/bin/daemon.elf", sha256, format: "elf", architecture: "x86_64" },
+    { id: providerId, name: providerId, version: "6.8.0" },
+    {
+      predicateType: "rea.binary.triage.v1",
+      operation: "analyze_binary_triage",
+      parameters: {},
+      rawResult: null,
+      result: {
+        findings: [
+          {
+            finding_id: "F-CORROBORATED-01",
+            category: "crypto",
+            severity: sev,
+            confidence: "observed",
+            status: "observed",
+            title: "Static IV in AES-GCM nonce setup",
+            summary: "Nonce buffer initialized with constant 12-byte IV.",
+          },
+        ],
+        obligations: [
+          {
+            obligation_id: "OBL-NONCE-01",
+            category: "crypto-invariant",
+            description:
+              "Verify whether IV is overwritten before EVP_EncryptInit_ex.",
+            status: "open",
+          },
+        ],
+      },
+      confidence: "observed",
+      authority: "shipped-artifact",
+      relationshipCoverage: { status: "complete" },
+    },
+  );
+
+describe("multi-record EvidenceBundle Ingression, Corroboration, and Subject-Conflict Coverage (#6338)", () => {
+  it("merges corroborating evidence_ids across bundle records, reproduces deterministically, and rejects multi-subject bundles", () => {
+    const shaMain = "a".repeat(64);
+    const shaOther = "b".repeat(64);
+
+    const recLeft1 = makeCorroboratingRecord("rea-ghidra", shaMain, "medium");
+    const recLeft2 = makeCorroboratingRecord("rea-rizin", shaMain, "medium");
+    const recRight1 = makeCorroboratingRecord("rea-ghidra", shaMain, "high");
+    const recRight2 = makeCorroboratingRecord("rea-rizin", shaMain, "high");
+
+    const bundleLeft = createEvidenceBundle([recLeft1, recLeft2], []);
+    const bundleLeftReversed = createEvidenceBundle([recLeft2, recLeft1], []);
+    const bundleRight = createEvidenceBundle([recRight1, recRight2], []);
+
+    const cmpForward = compareAnalysisRuns(
+      projectEvidenceBundleToAnalysisRun(bundleLeft, "bundle-left"),
+      projectEvidenceBundleToAnalysisRun(bundleRight, "bundle-right"),
+    );
+    const cmpReverse = compareAnalysisRuns(
+      projectEvidenceBundleToAnalysisRun(bundleLeftReversed, "bundle-left"),
+      projectEvidenceBundleToAnalysisRun(bundleRight, "bundle-right"),
+    );
+
+    expect(cmpForward.ok).toBe(true);
+    expect(cmpReverse.ok).toBe(true);
+    if (!cmpForward.ok || !cmpReverse.ok) return;
+
+    expect(cmpForward.value).toEqual(cmpReverse.value);
+    const findingDelta = cmpForward.value.items.find(
+      (i) => i.item_key === "finding:F-CORROBORATED-01",
+    );
+    expect(findingDelta?.status).toBe("changed");
+    expect(findingDelta?.evidence_links).toHaveLength(4);
+
+    const recWrongSubject = makeCorroboratingRecord(
+      "rea-objdump",
+      shaOther,
+      "medium",
+    );
+    const mixedSubjectBundle = createEvidenceBundle(
+      [recLeft1, recWrongSubject],
+      [],
+    );
+    expect(() =>
+      projectEvidenceBundleToAnalysisRun(mixedSubjectBundle, "bad-bundle"),
+    ).toThrow(/conflicting subject artifacts/i);
   });
 });

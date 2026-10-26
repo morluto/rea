@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import {
   type AnalysisRunEnvelope,
+  analysisRunComparisonReportSchema,
   checkAnalysisRunCompatibility,
   compareAnalysisRuns,
   compareCompatibleAnalysisRuns,
@@ -501,5 +502,119 @@ describe("analysisRunComparison adversarial compatibility and prototype safety (
     expect(ctorObligation?.changed_fields).toEqual(["description"]);
     expect(report.summary.by_kind.obligation.unchanged).toBe(1);
     expect(report.summary.by_kind.obligation.regressed).toBe(0);
+  });
+});
+
+describe("Run Comparison Unicode code-point order, truncation delta, and schema contradiction guards (#6338)", () => {
+  it("orders astral-plane keys by Unicode code point, detects positive change under partial coverage, and rejects contradictory report totals", () => {
+    const left = makeBaseRun({
+      run_id: "run-astral-left",
+      relationship_coverage: {
+        status: "partial",
+        truncated: true,
+        omitted_count: 4,
+        limitations: ["Indirect jump table truncated"],
+      },
+      findings: [
+        {
+          finding_id: "F-\u{10400}",
+          category: "crypto",
+          severity: "low",
+          confidence: "observed",
+          title: "Astral finding",
+          summary: "Initial low severity",
+          evidence_id: EV_LEFT,
+        },
+        {
+          finding_id: "F-\uE000",
+          category: "crypto",
+          severity: "high",
+          confidence: "observed",
+          title: "BMP private-use finding",
+          summary: "Stable high severity",
+          evidence_id: EV_LEFT,
+        },
+      ],
+      procedures: [],
+      obligations: [],
+      unknowns: [],
+    });
+
+    const right = makeBaseRun({
+      run_id: "run-astral-right",
+      relationship_coverage: {
+        status: "partial",
+        truncated: false,
+        omitted_count: 4,
+        limitations: [],
+      },
+      findings: [
+        {
+          finding_id: "F-\uE000",
+          category: "crypto",
+          severity: "high",
+          confidence: "observed",
+          title: "BMP private-use finding",
+          summary: "Stable high severity",
+          evidence_id: EV_RIGHT,
+        },
+        {
+          finding_id: "F-\u{10400}",
+          category: "crypto",
+          severity: "critical",
+          confidence: "observed",
+          title: "Astral finding",
+          summary: "Escalated to critical severity",
+          evidence_id: EV_RIGHT,
+        },
+      ],
+      procedures: [],
+      obligations: [],
+      unknowns: [],
+    });
+
+    const res = compareAnalysisRuns(left, right);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+
+    const report = res.value;
+    expect(report.items.map((i) => i.item_key)).toEqual([
+      "finding:F-\uE000",
+      "finding:F-\u{10400}",
+    ]);
+    expect(report.summary.unknown).toBe(0);
+    expect(report.summary.changed).toBe(1);
+    expect(report.status).toBe("changed");
+    expect(report.coverage_delta.transition).toBe("improved");
+
+    const emptyPartialLeft = makeBaseRun({
+      relationship_coverage: {
+        status: "partial",
+        truncated: true,
+        omitted_count: 2,
+      },
+      procedures: [],
+      findings: [],
+      obligations: [],
+      unknowns: [],
+    });
+    const emptyCompleteRight = makeBaseRun({
+      procedures: [],
+      findings: [],
+      obligations: [],
+      unknowns: [],
+    });
+    const emptyCmp = compareAnalysisRuns(emptyPartialLeft, emptyCompleteRight);
+    expect(emptyCmp.ok).toBe(true);
+    if (emptyCmp.ok) {
+      expect(emptyCmp.value.status).toBe("unknown");
+    }
+
+    expect(() =>
+      analysisRunComparisonReportSchema.parse({
+        ...report,
+        status: "unchanged",
+      }),
+    ).toThrow(/cannot claim status .*unchanged/i);
   });
 });

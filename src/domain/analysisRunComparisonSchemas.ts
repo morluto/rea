@@ -70,6 +70,7 @@ export const analysisRunProcedureRecordSchema = z.strictObject({
   callers: z.array(z.string().min(1)).optional(),
   pseudocode_sha256: digestSchema.nullable().optional(),
   evidence_id: evidenceIdSchema.optional(),
+  evidence_ids: z.array(evidenceIdSchema).optional(),
   metadata: jsonObjectSchema.optional(),
 });
 
@@ -87,6 +88,7 @@ export const analysisRunFindingRecordSchema = z.strictObject({
   locations: z.array(z.string().min(1)).optional(),
   attributes: jsonObjectSchema.optional(),
   evidence_id: evidenceIdSchema.optional(),
+  evidence_ids: z.array(evidenceIdSchema).optional(),
   metadata: jsonObjectSchema.optional(),
 });
 
@@ -325,32 +327,72 @@ export const analysisRunComparisonSummarySchema = z.strictObject({
   }),
 });
 
-export const analysisRunComparisonReportSchema = z.strictObject({
-  comparison_id: comparisonIdSchema,
-  status: z.enum(["unchanged", "changed", "unknown"]),
-  result_type: supportedAnalysisRunResultTypeSchema,
-  operation: z.string().min(1),
-  predicate_type: z.string().min(1),
-  same_artifact_sha256: z.boolean().nullable(),
-  left_run: z.strictObject({
-    run_id: z.string().min(1),
-    evidence_id: evidenceIdSchema,
-    subject_sha256: digestSchema.nullable(),
-    provider_id: z.string().min(1),
-  }),
-  right_run: z.strictObject({
-    run_id: z.string().min(1),
-    evidence_id: evidenceIdSchema,
-    subject_sha256: digestSchema.nullable(),
-    provider_id: z.string().min(1),
-  }),
-  ignored_presentation_fields: z.array(z.string().min(1)),
-  coverage_delta: analysisRunCoverageDeltaSchema,
-  summary: analysisRunComparisonSummarySchema,
-  changes: z.array(analysisRunItemDeltaSchema),
-  items: z.array(analysisRunItemDeltaSchema),
-  limitations: z.array(z.string().min(1)),
-});
+export const analysisRunComparisonReportSchema = z
+  .strictObject({
+    comparison_id: comparisonIdSchema,
+    status: z.enum(["unchanged", "changed", "unknown"]),
+    result_type: supportedAnalysisRunResultTypeSchema,
+    operation: z.string().min(1),
+    predicate_type: z.string().min(1),
+    same_artifact_sha256: z.boolean().nullable(),
+    left_run: z.strictObject({
+      run_id: z.string().min(1),
+      evidence_id: evidenceIdSchema,
+      subject_sha256: digestSchema.nullable(),
+      provider_id: z.string().min(1),
+    }),
+    right_run: z.strictObject({
+      run_id: z.string().min(1),
+      evidence_id: evidenceIdSchema,
+      subject_sha256: digestSchema.nullable(),
+      provider_id: z.string().min(1),
+    }),
+    ignored_presentation_fields: z.array(z.string().min(1)),
+    coverage_delta: analysisRunCoverageDeltaSchema,
+    summary: analysisRunComparisonSummarySchema,
+    changes: z.array(analysisRunItemDeltaSchema),
+    items: z.array(analysisRunItemDeltaSchema),
+    limitations: z.array(z.string().min(1)),
+  })
+  .superRefine((report, ctx) => {
+    const s = report.summary;
+    const sumTotal = s.unchanged + s.changed + s.added + s.removed + s.unknown;
+    if (sumTotal !== s.total_items) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["summary", "total_items"],
+        message: `summary.total_items (${String(s.total_items)}) does not equal sum of status counts (${String(sumTotal)})`,
+      });
+    }
+    if (report.items.length !== s.total_items) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: `items.length (${String(report.items.length)}) does not match summary.total_items (${String(s.total_items)})`,
+      });
+    }
+    const expectedChanges = s.changed + s.added + s.removed + s.unknown;
+    if (report.changes.length !== expectedChanges) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["changes"],
+        message: `changes.length (${String(report.changes.length)}) does not match non-unchanged count (${String(expectedChanges)})`,
+      });
+    }
+    if (
+      report.status === "unchanged" &&
+      (expectedChanges > 0 ||
+        !report.coverage_delta.left_complete ||
+        !report.coverage_delta.right_complete)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["status"],
+        message:
+          'Report cannot claim status "unchanged" when changes/unknowns exist or either run has incomplete coverage',
+      });
+    }
+  });
 
 export type AnalysisRunComparisonReport = z.infer<
   typeof analysisRunComparisonReportSchema
@@ -367,9 +409,5 @@ export interface NormalizedComparisonItem {
   readonly semantic_digest: string;
   readonly obligation_status?: AnalysisRunObligationStatus;
   readonly unknown_status?:
-    | "open"
-    | "investigating"
-    | "blocked"
-    | "contradicted"
-    | "resolved";
+    "open" | "investigating" | "blocked" | "contradicted" | "resolved";
 }

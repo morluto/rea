@@ -14,6 +14,7 @@ import {
   type SupportedAnalysisRunResultType,
 } from "../domain/analysisRunComparison.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { type Evidence, parseEvidence } from "../domain/evidence.js";
 import {
   type EvidenceBundle,
@@ -185,12 +186,21 @@ const extractObligationEntry = (
   ) {
     throw new TypeError("Invalid obligation entry fields");
   }
+  const explicitEvidenceIds = parseStrictStringArray(
+    item.evidence_ids,
+    "obligation.evidence_ids",
+  );
   return {
     obligation_id: item.obligation_id,
     category: item.category,
     description: item.description,
     status: item.status as AnalysisRunObligationRecord["status"],
-    evidence_ids: [defaultEvidenceId],
+    evidence_ids: [
+      ...new Set([defaultEvidenceId, ...explicitEvidenceIds]),
+    ].sort(compareUnicodeCodePoints),
+    ...(typeof item.metadata === "object" && item.metadata !== null
+      ? { metadata: jsonObjectSchema.parse(item.metadata) }
+      : {}),
   };
 };
 
@@ -320,6 +330,29 @@ const putConflictCheckedItem = <T extends Record<string, unknown>>(
       `Conflicting ${idField} definitions (${key}) across records in EvidenceBundle`,
     );
   }
+  const mergedIds = [
+    ...new Set([
+      ...(typeof existing.evidence_id === "string"
+        ? [existing.evidence_id]
+        : []),
+      ...(Array.isArray(existing.evidence_ids)
+        ? (existing.evidence_ids as string[])
+        : []),
+      ...(typeof item.evidence_id === "string" ? [item.evidence_id] : []),
+      ...(Array.isArray(item.evidence_ids)
+        ? (item.evidence_ids as string[])
+        : []),
+    ]),
+  ].sort(compareUnicodeCodePoints);
+  if (mergedIds.length > 0) {
+    map.set(key, {
+      ...existing,
+      ...(typeof existing.evidence_id === "string"
+        ? { evidence_id: mergedIds[0] }
+        : {}),
+      evidence_ids: mergedIds,
+    });
+  }
 };
 
 const aggregateBundleRelationshipCoverage = (
@@ -355,18 +388,37 @@ export const projectEvidenceBundleToAnalysisRun = (
   runId: string,
 ): AnalysisRunEnvelope => {
   const bundle = parseEvidenceBundle(bundleInput);
-  const primaryRecord = bundle.records[0];
+  const sortedRecords = [...bundle.records].sort((a, b) =>
+    compareUnicodeCodePoints(a.evidence_id, b.evidence_id),
+  );
+  const primaryRecord = sortedRecords[0];
   if (primaryRecord === undefined) {
     throw new TypeError(
       "Cannot project an empty EvidenceBundle with zero Evidence records into an AnalysisRunEnvelope",
     );
+  }
+  const nonNullSubjects = bundle.records
+    .map((r) => r.subject)
+    .filter((s): s is NonNullable<typeof s> => s !== null);
+  const firstSubject = nonNullSubjects[0] ?? null;
+  for (const subj of nonNullSubjects) {
+    if (
+      firstSubject !== null &&
+      (subj.digest.sha256 !== firstSubject.digest.sha256 ||
+        subj.format !== firstSubject.format ||
+        subj.architecture !== firstSubject.architecture)
+    ) {
+      throw new TypeError(
+        `Cannot project EvidenceBundle into a single AnalysisRunEnvelope when records target conflicting subject artifacts (${firstSubject.digest.sha256} vs ${subj.digest.sha256})`,
+      );
+    }
   }
 
   const proceduresByAddress = new Map<string, AnalysisRunProcedureRecord>();
   const findingsById = new Map<string, AnalysisRunFindingRecord>();
   const obligationsById = new Map<string, AnalysisRunObligationRecord>();
 
-  for (const record of bundle.records) {
+  for (const record of sortedRecords) {
     const extracted = extractStructuredItemsFromNormalizedResult(
       record.normalized_result,
       record.evidence_id,
@@ -400,7 +452,8 @@ export const projectEvidenceBundleToAnalysisRun = (
   const headUnknownsById = new Map<string, AnalysisRunUnknownRecord>();
   for (const unknown of bundle.unknowns) {
     const prev = headUnknownsById.get(unknown.unknown_id);
-    if (prev === undefined || unknown.revision > prev.revision) {
+    const prevRev = prev?.revision ?? 0;
+    if (prev === undefined || unknown.revision > prevRev) {
       headUnknownsById.set(unknown.unknown_id, {
         unknown_id: unknown.unknown_id,
         question: unknown.question,
@@ -408,9 +461,13 @@ export const projectEvidenceBundleToAnalysisRun = (
         disposition: unknown.resolution?.disposition ?? null,
         revision: unknown.revision,
         evidence_ids: [
-          ...unknown.supporting_evidence_ids,
-          ...unknown.mutation_evidence_ids,
-        ],
+          ...new Set([
+            ...unknown.supporting_evidence_ids,
+            ...unknown.contradicting_evidence_ids,
+            ...unknown.mutation_evidence_ids,
+            ...(unknown.resolution?.evidence_ids ?? []),
+          ]),
+        ].sort(compareUnicodeCodePoints),
       });
     }
   }
@@ -440,7 +497,9 @@ export const projectEvidenceBundleToAnalysisRun = (
     findings: [...findingsById.values()],
     obligations: [...obligationsById.values()],
     unknowns: [...headUnknownsById.values()],
-    limitations: bundle.records.flatMap((record) => record.limitations),
+    limitations: [
+      ...new Set(sortedRecords.flatMap((record) => record.limitations)),
+    ].sort(compareUnicodeCodePoints),
   });
 };
 

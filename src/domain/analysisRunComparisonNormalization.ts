@@ -107,6 +107,7 @@ export const normalizeProcedureItem = (
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
       ...(procedure.evidence_id === undefined ? [] : [procedure.evidence_id]),
+      ...(procedure.evidence_ids ?? []),
     ]),
     semantic_fields: semanticFields,
     presentation_fields: presentationMeta,
@@ -185,6 +186,7 @@ export const normalizeFindingItem = (
     evidence_ids: sortUniqueStrings([
       run.evidence_id,
       ...(finding.evidence_id === undefined ? [] : [finding.evidence_id]),
+      ...(finding.evidence_ids ?? []),
     ]),
     semantic_fields: semanticFields,
     presentation_fields: presentationFields,

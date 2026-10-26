@@ -67,12 +67,25 @@ const computeCoverageDelta = (
   const rightOmitted = rightCoverage.omitted_count ?? 0;
   const omittedDelta = rightOmitted - leftOmitted;
 
+  const leftTruncated = leftCoverage.truncated ?? false;
+  const rightTruncated = rightCoverage.truncated ?? false;
   let transition: "unchanged" | "improved" | "regressed" = "unchanged";
-  if (rightRank > leftRank || (rightRank === leftRank && omittedDelta < 0)) {
+  if (
+    rightRank > leftRank ||
+    (rightRank === leftRank && omittedDelta < 0) ||
+    (rightRank === leftRank &&
+      omittedDelta === 0 &&
+      leftTruncated &&
+      !rightTruncated)
+  ) {
     transition = "improved";
   } else if (
     rightRank < leftRank ||
-    (rightRank === leftRank && omittedDelta > 0)
+    (rightRank === leftRank && omittedDelta > 0) ||
+    (rightRank === leftRank &&
+      omittedDelta === 0 &&
+      !leftTruncated &&
+      rightTruncated)
   ) {
     transition = "regressed";
   }
@@ -426,14 +439,16 @@ export const compareAnalysisRuns = (
     },
   };
 
+  const hasPositiveChange =
+    summary.changed > 0 || summary.added > 0 || summary.removed > 0;
   const overallStatus: "unchanged" | "changed" | "unknown" =
-    summary.unknown > 0 ||
-    !coverageDelta.left_complete ||
-    !coverageDelta.right_complete
+    summary.unknown > 0
       ? "unknown"
-      : summary.changed > 0 || summary.added > 0 || summary.removed > 0
+      : hasPositiveChange
         ? "changed"
-        : "unchanged";
+        : !coverageDelta.left_complete || !coverageDelta.right_complete
+          ? "unknown"
+          : "unchanged";
 
   const unsignedReport = {
     status: overallStatus,
