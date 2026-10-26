@@ -87,3 +87,34 @@ it("keeps cancellation uncertain across a mutable closure capture", () => {
     resolution: "partial",
   });
 });
+
+it("keeps cancellation within the handle family that Node clears", () => {
+  // Node keeps timeouts and immediates in disjoint handle families:
+  // clearTimeout/clearInterval act only on a Timeout, clearImmediate only on an
+  // Immediate. Clearing across the families returns without cancelling.
+  const pairs = [
+    ["setTimeout", "clearTimeout", true],
+    ["setTimeout", "clearInterval", true],
+    ["setTimeout", "clearImmediate", false],
+    ["setInterval", "clearTimeout", true],
+    ["setInterval", "clearInterval", true],
+    ["setInterval", "clearImmediate", false],
+    ["setImmediate", "clearTimeout", false],
+    ["setImmediate", "clearInterval", false],
+    ["setImmediate", "clearImmediate", true],
+  ] as const;
+
+  for (const [schedule, cancel, linked] of pairs) {
+    const operations = timerOperations(`
+      const handle = ${schedule}(work, 10);
+      ${cancel}(handle);
+    `);
+
+    expect(operations[1], `${schedule} then ${cancel}`).toMatchObject({
+      kind: "cancel",
+      method: cancel,
+      linkedTimerId: linked ? operations[0]?.timerId : null,
+      resolution: linked ? "complete" : "unresolved",
+    });
+  }
+});
