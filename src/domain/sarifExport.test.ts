@@ -578,3 +578,126 @@ describe("SARIF 2.1.0 partial location variants and edge-case guards (#6332)", (
     );
   });
 });
+
+describe("SARIF 2.1.0 ingression, Unicode code-point order, and reproduction coverage (#6332)", () => {
+  it("orders astral-plane rule IDs by Unicode code point (not UTF-16 code units) and reproduces byte-identically", () => {
+    // U+E000 (BMP private use, UTF-16 0xE000) < U+10400 (Deseret Capital Long I, UTF-16 0xD801 0xDC00)
+    // In UTF-16 code units, 0xD801 < 0xE000, but in Unicode code points U+E000 < U+10400.
+    const ruleBmp = "rea/crypto/k-\uE000";
+    const ruleAstral = "rea/crypto/k-\u{10400}";
+    const inputForward = {
+      findings: [
+        {
+          finding_id: "F-\u{10400}",
+          rule_id: ruleAstral,
+          category: "crypto",
+          severity: "high" as const,
+          title: "Instance title A",
+          message: "Astral rule finding",
+          locations: [
+            { uri: "fw/mod-\u{1F680}.bin", byteOffset: 64, byteLength: 16 },
+          ],
+          evidence_ids: [EV_ID_2, EV_ID_1],
+        },
+        {
+          finding_id: "F-\uE000",
+          rule_id: ruleBmp,
+          category: "crypto",
+          severity: "medium" as const,
+          title: "Instance title B",
+          message: "BMP rule finding",
+          locations: [
+            {
+              uri: "fw/mod-ß.bin",
+              address: "0x00401000",
+              addressLengthBytes: 32,
+            },
+          ],
+          evidence_ids: [EV_ID_1],
+        },
+      ],
+    };
+    const inputReversed = {
+      findings: [...inputForward.findings].reverse(),
+    };
+
+    const logForward = exportFindingsToSarif(inputForward);
+    const logReversed = exportFindingsToSarif(inputReversed);
+    const serialized = serializeSarifLog(logForward);
+    expect(serializeSarifLog(logReversed)).toBe(serialized);
+
+    const reparsed = parseSarifLog(JSON.parse(serialized));
+    expect(serializeSarifLog(reparsed)).toBe(serialized);
+
+    const rules = reparsed.runs[0]?.tool.driver.rules ?? [];
+    expect(rules.map((r) => r.id)).toEqual([ruleBmp, ruleAstral]);
+    expect(reparsed.runs[0]?.results.map((r) => r.ruleIndex)).toEqual([0, 1]);
+  });
+
+  it("avoids promoting ambiguous instance titles to rule shortDescription and rejects invalid helpUri or non-NFC URIs", () => {
+    const log = exportFindingsToSarif({
+      findings: [
+        {
+          finding_id: "F-1",
+          rule_id: "rea/crypto/weak-rsa",
+          category: "crypto",
+          title: "1024-bit RSA key in TLS cert A",
+          message: "Cert A uses 1024-bit RSA.",
+          locations: [],
+          artifact_uri: "certs/a.pem",
+          evidence_ids: [EV_ID_1],
+        },
+        {
+          finding_id: "F-2",
+          rule_id: "rea/crypto/weak-rsa",
+          category: "crypto",
+          title: "1024-bit RSA key in SSH host key B",
+          message: "Host key B uses 1024-bit RSA.",
+          locations: null,
+          artifact_uri: "certs/b.pem",
+          evidence_ids: [EV_ID_2],
+        },
+      ],
+    });
+    expect(log.runs[0]?.tool.driver.rules[0]?.shortDescription.text).toBe(
+      "REA crypto finding (rea/crypto/weak-rsa)",
+    );
+    // Explicit locations: [] or null must never fabricate a URI location from artifact_uri
+    expect(log.runs[0]?.results[0]?.locations).toEqual([]);
+    expect(log.runs[0]?.results[0]?.properties.location_availability).toBe(
+      "unavailable",
+    );
+    expect(log.runs[0]?.results[1]?.locations).toEqual([]);
+
+    expect(() =>
+      exportFindingsToSarif({
+        findings: [
+          {
+            finding_id: "F-BAD-HELP",
+            rule_id: "rea/crypto/r1",
+            rule_help_uri: "javascript:alert(1)",
+            category: "crypto",
+            message: "Bad help URI",
+            evidence_ids: [EV_ID_1],
+          },
+        ],
+      }),
+    ).toThrowError(expect.objectContaining({ code: "invalid_finding_input" }));
+
+    for (const badUri of [
+      "src/cafe\u0301.js",
+      "src/app.js?query=1",
+      "src/app.js#frag",
+      "src/trailing.",
+      "src/trailing ",
+      "src/lpt1.bin",
+    ]) {
+      expect(() =>
+        exportFindingsToSarif({
+          artifacts: [{ uri: badUri, sha256: ARTIFACT_SHA_1 }],
+          findings: [],
+        }),
+      ).toThrowError(expect.objectContaining({ code: "invalid_artifact_uri" }));
+    }
+  });
+});

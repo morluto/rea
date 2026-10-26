@@ -99,7 +99,13 @@ const resolveSubjectArtifactUri = (
   evidence: Evidence,
   overrideUri?: string | null,
 ): string | null => {
-  if (typeof overrideUri === "string" && overrideUri.trim().length > 0) {
+  if (overrideUri !== undefined && overrideUri !== null) {
+    if (typeof overrideUri !== "string") {
+      throw new SarifExportError(
+        "invalid_artifact_uri",
+        `Invalid defaultArtifactUri ${JSON.stringify(overrideUri)}: must be a string.`,
+      );
+    }
     const normalized = normalizeSarifArtifactUri(overrideUri);
     if (!normalized.ok) {
       throw new SarifExportError(
@@ -133,39 +139,64 @@ const resolveFindingLocations = (
   subjectArtifactUri: string | null,
   fallbackLocations: readonly SarifExportFindingLocationInput[],
 ): SarifExportFindingLocationInput[] => {
-  if (Array.isArray(item.locations)) {
-    return item.locations.map((loc) =>
-      parseStructuredLocationEntry(loc, findingId, subjectArtifactUri),
+  if (item.locations === undefined) return [...fallbackLocations];
+  if (item.locations === null) return [];
+  if (!Array.isArray(item.locations)) {
+    throw new SarifExportError(
+      "invalid_location_metadata",
+      `Finding ${JSON.stringify(findingId)} has non-array locations metadata.`,
+      { findingId },
     );
   }
-  if (item.locations === null) {
-    return [];
-  }
-  return [...fallbackLocations];
+  return item.locations.map((loc) =>
+    parseStructuredLocationEntry(loc, findingId, subjectArtifactUri),
+  );
 };
 
 const resolveFindingConfidence = (
   rawConfidence: unknown,
   defaultConfidence: Evidence["confidence"],
-): Evidence["confidence"] =>
-  rawConfidence === "observed" ||
-  rawConfidence === "derived" ||
-  rawConfidence === "inferred"
-    ? rawConfidence
-    : defaultConfidence;
+  findingId: string,
+): Evidence["confidence"] => {
+  if (rawConfidence === undefined || rawConfidence === null) {
+    return defaultConfidence;
+  }
+  if (
+    rawConfidence === "observed" ||
+    rawConfidence === "derived" ||
+    rawConfidence === "inferred"
+  ) {
+    return rawConfidence;
+  }
+  throw new SarifExportError(
+    "invalid_finding_input",
+    `Finding ${JSON.stringify(findingId)} has invalid confidence ${JSON.stringify(rawConfidence)}.`,
+    { findingId },
+  );
+};
 
 const resolveFindingStatus = (
   rawStatus: unknown,
   defaultConfidence: Evidence["confidence"],
-): "observed" | "verified" | "open" | "inferred" =>
-  rawStatus === "observed" ||
-  rawStatus === "verified" ||
-  rawStatus === "open" ||
-  rawStatus === "inferred"
-    ? rawStatus
-    : defaultConfidence === "observed"
-      ? "observed"
-      : "inferred";
+  findingId: string,
+): "observed" | "verified" | "open" | "inferred" => {
+  if (rawStatus === undefined || rawStatus === null) {
+    return defaultConfidence === "observed" ? "observed" : "inferred";
+  }
+  if (
+    rawStatus === "observed" ||
+    rawStatus === "verified" ||
+    rawStatus === "open" ||
+    rawStatus === "inferred"
+  ) {
+    return rawStatus;
+  }
+  throw new SarifExportError(
+    "invalid_finding_input",
+    `Finding ${JSON.stringify(findingId)} has invalid status ${JSON.stringify(rawStatus)}.`,
+    { findingId },
+  );
+};
 
 interface EvidenceExtractionContext {
   readonly evidence: Evidence;
@@ -173,13 +204,40 @@ interface EvidenceExtractionContext {
   readonly fallbackLocations: readonly SarifExportFindingLocationInput[];
 }
 
-const resolveExtraEvidenceIds = (item: Record<string, unknown>): string[] => {
-  if (Array.isArray(item.evidence_ids)) {
-    return item.evidence_ids.filter(
-      (id): id is string => typeof id === "string",
-    );
+const resolveExtraEvidenceIds = (
+  item: Record<string, unknown>,
+  findingId: string,
+): string[] => {
+  if (item.evidence_ids !== undefined && item.evidence_ids !== null) {
+    if (!Array.isArray(item.evidence_ids)) {
+      throw new SarifExportError(
+        "missing_evidence_reference",
+        `Finding ${JSON.stringify(findingId)} has non-array evidence_ids.`,
+        { findingId },
+      );
+    }
+    return item.evidence_ids.map((id) => {
+      if (typeof id !== "string") {
+        throw new SarifExportError(
+          "missing_evidence_reference",
+          `Finding ${JSON.stringify(findingId)} has non-string entry in evidence_ids.`,
+          { findingId },
+        );
+      }
+      return id;
+    });
   }
-  return typeof item.evidence_id === "string" ? [item.evidence_id] : [];
+  if (item.evidence_id !== undefined && item.evidence_id !== null) {
+    if (typeof item.evidence_id !== "string") {
+      throw new SarifExportError(
+        "missing_evidence_reference",
+        `Finding ${JSON.stringify(findingId)} has non-string evidence_id.`,
+        { findingId },
+      );
+    }
+    return [item.evidence_id];
+  }
+  return [];
 };
 
 const resolveRawRuleId = (
@@ -192,22 +250,65 @@ const resolveRawRuleId = (
   return typeof item.rule_id === "string" ? item.rule_id : "";
 };
 
-const resolveRawSeverity = (rawSeverity: unknown): string | null => {
+const resolveRawSeverity = (
+  rawSeverity: unknown,
+  findingId: string,
+): string | null => {
   if (rawSeverity === undefined || rawSeverity === null) return null;
-  return typeof rawSeverity === "string" ? rawSeverity : String(rawSeverity);
+  if (typeof rawSeverity !== "string") {
+    throw new SarifExportError(
+      "invalid_severity",
+      `Finding ${JSON.stringify(findingId)} has non-string severity ${JSON.stringify(rawSeverity)}.`,
+      { findingId },
+    );
+  }
+  return rawSeverity;
 };
 
 const resolveOptionalItemFields = (
   item: Record<string, unknown>,
-): Pick<SarifExportFindingInput, "rule_name" | "title" | "attributes"> => ({
-  ...(typeof item.rule_name === "string" ? { rule_name: item.rule_name } : {}),
-  ...(typeof item.title === "string" ? { title: item.title } : {}),
-  ...(typeof item.attributes === "object" &&
-  item.attributes !== null &&
-  !Array.isArray(item.attributes)
-    ? { attributes: jsonObjectSchema.parse(item.attributes) }
-    : {}),
-});
+  findingId: string,
+): Pick<
+  SarifExportFindingInput,
+  | "rule_name"
+  | "rule_short_description"
+  | "rule_full_description"
+  | "rule_help_uri"
+  | "title"
+  | "attributes"
+> => {
+  if (
+    item.attributes !== undefined &&
+    item.attributes !== null &&
+    (typeof item.attributes !== "object" || Array.isArray(item.attributes))
+  ) {
+    throw new SarifExportError(
+      "invalid_finding_input",
+      `Finding ${JSON.stringify(findingId)} has non-object attributes.`,
+      { findingId },
+    );
+  }
+  return {
+    ...(typeof item.rule_name === "string"
+      ? { rule_name: item.rule_name }
+      : {}),
+    ...(typeof item.rule_short_description === "string"
+      ? { rule_short_description: item.rule_short_description }
+      : {}),
+    ...(typeof item.rule_full_description === "string"
+      ? { rule_full_description: item.rule_full_description }
+      : {}),
+    ...(typeof item.rule_help_uri === "string"
+      ? { rule_help_uri: item.rule_help_uri }
+      : {}),
+    ...(typeof item.title === "string" ? { title: item.title } : {}),
+    ...(typeof item.attributes === "object" &&
+    item.attributes !== null &&
+    !Array.isArray(item.attributes)
+      ? { attributes: jsonObjectSchema.parse(item.attributes) }
+      : {}),
+  };
+};
 
 const extractSingleFindingItem = (
   rawEntry: unknown,
@@ -250,18 +351,22 @@ const extractSingleFindingItem = (
   return {
     finding_id: findingId,
     rule_id: resolveRawRuleId(item, category),
-    ...resolveOptionalItemFields(item),
+    ...resolveOptionalItemFields(item, findingId),
     category,
-    severity: resolveRawSeverity(item.severity),
-    confidence: resolveFindingConfidence(item.confidence, evidence.confidence),
+    severity: resolveRawSeverity(item.severity, findingId),
+    confidence: resolveFindingConfidence(
+      item.confidence,
+      evidence.confidence,
+      findingId,
+    ),
     authority: evidence.authority,
-    status: resolveFindingStatus(item.status, evidence.confidence),
+    status: resolveFindingStatus(item.status, evidence.confidence, findingId),
     message: resolveFindingMessageText(item),
     locations: parsedLocations,
     evidence_ids: [
       evidence.evidence_id,
       ...evidence.evidence_links,
-      ...resolveExtraEvidenceIds(item),
+      ...resolveExtraEvidenceIds(item, findingId),
     ],
     artifact_sha256: evidence.subject?.digest.sha256 ?? null,
     artifact_uri: parsedLocations.length > 0 ? subjectArtifactUri : null,
@@ -270,22 +375,16 @@ const extractSingleFindingItem = (
   };
 };
 
-/**
- * Extract structured `SarifExportFindingInput` records from an authenticated
- * REA `Evidence` observation without fabricating severity or location metadata.
- */
+/** Extract structured `SarifExportFindingInput` records from an authenticated REA `Evidence`. */
 export const extractStructuredFindingsFromEvidence = (
   evidenceInput: Evidence,
-  options?: {
-    readonly defaultArtifactUri?: string | null;
-  },
+  options?: { readonly defaultArtifactUri?: string | null },
 ): readonly SarifExportFindingInput[] => {
   const evidence = parseEvidence(evidenceInput);
   const subjectArtifactUri = resolveSubjectArtifactUri(
     evidence,
     options?.defaultArtifactUri,
   );
-
   if (
     typeof evidence.normalized_result !== "object" ||
     evidence.normalized_result === null ||
@@ -293,7 +392,6 @@ export const extractStructuredFindingsFromEvidence = (
   ) {
     return [];
   }
-
   const record = evidence.normalized_result as Record<string, unknown>;
   if (typeof record.analysis_category === "string") {
     const support = describeSarifCategorySupport(record.analysis_category);
@@ -305,7 +403,6 @@ export const extractStructuredFindingsFromEvidence = (
       );
     }
   }
-
   if (record.findings === undefined) return [];
   if (!Array.isArray(record.findings)) {
     throw new SarifExportError(
@@ -313,12 +410,9 @@ export const extractStructuredFindingsFromEvidence = (
       `Evidence ${evidence.evidence_id} has a non-array normalized_result.findings field.`,
     );
   }
-
-  const fallbackLocations: SarifExportFindingLocationInput[] =
-    evidence.locations.map((loc) =>
-      convertEvidenceLocationToSarifLocationInput(loc, subjectArtifactUri),
-    );
-
+  const fallbackLocations = evidence.locations.map((loc) =>
+    convertEvidenceLocationToSarifLocationInput(loc, subjectArtifactUri),
+  );
   return record.findings.map((rawEntry, index) =>
     extractSingleFindingItem(rawEntry, index, {
       evidence,
@@ -339,9 +433,28 @@ export interface ExportEvidenceToSarifOptions {
   readonly limitations?: readonly string[];
 }
 
-/**
- * Export an authenticated REA `Evidence` record's supported findings as SARIF 2.1.0.
- */
+const describeRelationshipCoverageLimitations = (
+  evidence: Evidence,
+): string[] => {
+  const cov = evidence.relationship_coverage;
+  if (cov === null) return [];
+  const notes: string[] = [];
+  if (cov.status === "partial") {
+    notes.push(
+      `Evidence ${evidence.evidence_id} recorded partial relationship coverage.`,
+    );
+    for (const lim of cov.limitations) {
+      notes.push(lim);
+    }
+  } else if (cov.status === "unknown") {
+    notes.push(
+      `Evidence ${evidence.evidence_id} relationship coverage is unknown: ${cov.reason}`,
+    );
+  }
+  return notes;
+};
+
+/** Export an authenticated REA `Evidence` record's supported findings as SARIF 2.1.0. */
 export const exportEvidenceToSarif = (
   evidenceInput: Evidence,
   options?: ExportEvidenceToSarifOptions,
@@ -354,7 +467,6 @@ export const exportEvidenceToSarif = (
     evidence,
     options?.defaultArtifactUri,
   );
-
   const artifacts: SarifExportArtifactInput[] =
     evidence.subject !== null && subjectArtifactUri !== null
       ? [
@@ -377,13 +489,15 @@ export const exportEvidenceToSarif = (
     artifacts,
     findings: [...extractedFindings, ...(options?.additionalFindings ?? [])],
     evidence_records: [evidence],
-    limitations: [...evidence.limitations, ...(options?.limitations ?? [])],
+    limitations: [
+      ...evidence.limitations,
+      ...describeRelationshipCoverageLimitations(evidence),
+      ...(options?.limitations ?? []),
+    ],
   });
 };
 
-/**
- * Non-throwing `Result` wrapper around `exportEvidenceToSarif`.
- */
+/** Non-throwing `Result` wrapper around `exportEvidenceToSarif`. */
 export const tryExportEvidenceToSarif = (
   evidenceInput: Evidence,
   options?: ExportEvidenceToSarifOptions,
@@ -413,11 +527,15 @@ export interface ExportEvidenceBundleToSarifOptions {
   readonly limitations?: readonly string[];
 }
 
-/**
- * Export supported findings across an authenticated REA `EvidenceBundle` as a
- * single SARIF 2.1.0 log while preserving all Evidence references and recording
- * residual-unknown limitations without fabricating findings.
- */
+const lookupUriBySha256 = (
+  uriMap: Readonly<Record<string, string>> | undefined,
+  sha256: string,
+): string | null =>
+  uriMap !== undefined && Object.hasOwn(uriMap, sha256)
+    ? (uriMap[sha256] ?? null)
+    : null;
+
+/** Export supported findings across an authenticated REA `EvidenceBundle` as SARIF 2.1.0. */
 export const exportEvidenceBundleToSarif = (
   bundleInput: EvidenceBundle,
   options?: ExportEvidenceBundleToSarifOptions,
@@ -425,20 +543,25 @@ export const exportEvidenceBundleToSarif = (
   const bundle = parseEvidenceBundle(bundleInput);
   const findings: SarifExportFindingInput[] = [];
   const artifacts: SarifExportArtifactInput[] = [];
+  const recordLimitations: string[] = [];
 
   for (const record of bundle.records) {
+    recordLimitations.push(
+      ...record.limitations,
+      ...describeRelationshipCoverageLimitations(record),
+    );
     const overrideUri =
       record.subject !== null
-        ? (options?.defaultArtifactUriBySha256?.[
-            record.subject.digest.sha256
-          ] ?? null)
+        ? lookupUriBySha256(
+            options?.defaultArtifactUriBySha256,
+            record.subject.digest.sha256,
+          )
         : null;
     findings.push(
       ...extractStructuredFindingsFromEvidence(record, {
         defaultArtifactUri: overrideUri,
       }),
     );
-
     const subjectUri = resolveSubjectArtifactUri(record, overrideUri);
     if (record.subject !== null && subjectUri !== null) {
       artifacts.push({
@@ -451,7 +574,6 @@ export const exportEvidenceBundleToSarif = (
   }
 
   findings.push(...(options?.additionalFindings ?? []));
-
   const uniqueProviders = bundle.providers;
   const singleProvider =
     uniqueProviders.length === 1 && uniqueProviders[0] !== undefined
@@ -462,12 +584,15 @@ export const exportEvidenceBundleToSarif = (
         }
       : null;
 
-  const bundleLimitations: string[] = [...(options?.limitations ?? [])];
-  if (bundle.unknowns.length > 0) {
-    bundleLimitations.push(
-      `Bundle contains ${String(bundle.unknowns.length)} residual unknown record(s); residual unknowns represent open investigation questions and are intentionally omitted from SARIF findings.`,
-    );
-  }
+  const bundleLimitations: string[] = [
+    ...recordLimitations,
+    ...(options?.limitations ?? []),
+    ...(bundle.unknowns.length > 0
+      ? [
+          `Bundle contains ${String(bundle.unknowns.length)} residual unknown record(s); residual unknowns represent open investigation questions and are intentionally omitted from SARIF findings.`,
+        ]
+      : []),
+  ];
 
   return exportFindingsToSarif({
     ...(options?.tool === undefined ? {} : { tool: options.tool }),
@@ -479,9 +604,7 @@ export const exportEvidenceBundleToSarif = (
   });
 };
 
-/**
- * Non-throwing `Result` wrapper around `exportEvidenceBundleToSarif`.
- */
+/** Non-throwing `Result` wrapper around `exportEvidenceBundleToSarif`. */
 export const tryExportEvidenceBundleToSarif = (
   bundleInput: EvidenceBundle,
   options?: ExportEvidenceBundleToSarifOptions,
@@ -500,22 +623,24 @@ export const tryExportEvidenceBundleToSarif = (
   }
 };
 
-/**
- * Atomically write a validated SARIF 2.1.0 log to disk as canonical UTF-8 JSON.
- */
+let sarifTempFileCounter = 0;
+
+/** Atomically write a validated SARIF 2.1.0 log to disk as canonical UTF-8 JSON. */
 export const writeSarifLogFile = async (
   filePath: string,
   sarifLog: SarifLog,
 ): Promise<void> => {
   const targetPath = resolve(filePath);
-  const parentDir = dirname(targetPath);
+  sarifTempFileCounter += 1;
   const tempPath = join(
-    parentDir,
-    `.rea-sarif-export.tmp-${String(process.pid)}-${String(Date.now())}`,
+    dirname(targetPath),
+    `.rea-sarif-export.tmp-${String(process.pid)}-${String(Date.now())}-${String(sarifTempFileCounter)}`,
   );
-  const serialized = serializeSarifLog(sarifLog);
   try {
-    await writeFile(tempPath, serialized, { encoding: "utf8", flag: "wx" });
+    await writeFile(tempPath, serializeSarifLog(sarifLog), {
+      encoding: "utf8",
+      flag: "wx",
+    });
     await rename(tempPath, targetPath);
   } catch (cause: unknown) {
     await rm(tempPath, { force: true }).catch(() => undefined);
