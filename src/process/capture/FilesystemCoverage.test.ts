@@ -600,6 +600,61 @@ it("allocates the observer directory before baseline and excludes it before entr
   }
 });
 
+it.each(["nested", "outside", "no-roots"] as const)(
+  "treats a removed observer directory as absent during the final snapshot (%s)",
+  async (placement) => {
+    const fixture = await createTestTempDirectory("rea-observer-removed-");
+    const root = join(fixture, "selected");
+    await mkdir(root);
+    await writeFile(join(root, "kept.txt"), "retain me");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: placement === "no-roots" ? [] : [root],
+      limits: { files: 2 },
+    });
+    const prepared = await prepareProcessCapture(
+      scenario,
+      undefined,
+      snapshotRoots,
+      {
+        createTemporaryRoot: () =>
+          mkdtemp(
+            join(placement === "nested" ? root : fixture, "rea-process-"),
+          ),
+        cleanup: (path) => rm(path, { recursive: true, force: true }),
+      },
+    );
+    try {
+      const expectedPaths =
+        placement === "no-roots" ? [] : ["root_0:.", "root_0:kept.txt"];
+      expect(prepared.before.files.map(({ path }) => path).sort()).toEqual(
+        [...expectedPaths].sort(),
+      );
+      expect(prepared.before.truncated).toBe(false);
+
+      await rm(prepared.temporaryRoot, { recursive: true, force: true });
+      const final = await snapshotRoots(scenario, undefined, prepared.before, {
+        observerPaths: [prepared.temporaryRoot],
+      });
+
+      expect(final.files.map(({ path }) => path).sort()).toEqual(
+        [...expectedPaths].sort(),
+      );
+      expect(final.truncated).toBe(false);
+      expect(final.coverage.unobserved_subtrees).toEqual([]);
+      if (placement !== "no-roots") {
+        expect(
+          final.files.find(({ path }) => path === "root_0:kept.txt"),
+        ).toEqual(
+          prepared.before.files.find(({ path }) => path === "root_0:kept.txt"),
+        );
+      }
+    } finally {
+      await rm(prepared.temporaryRoot, { recursive: true, force: true });
+    }
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "excludes the exact observer path through parent aliases while retaining same-name target directories",
   async () => {
