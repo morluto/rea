@@ -4,6 +4,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  realpath,
   readFile,
   rm,
   symlink,
@@ -651,6 +652,62 @@ it.each(["nested", "outside", "no-roots"] as const)(
       }
     } finally {
       await rm(prepared.temporaryRoot, { recursive: true, force: true });
+    }
+  },
+);
+
+it("treats an observer path below a regular file as absent", async () => {
+  const fixture = await createTestTempDirectory("rea-observer-not-directory-");
+  const root = join(fixture, "selected");
+  const blocker = join(fixture, "blocker.txt");
+  await mkdir(root);
+  await writeFile(join(root, "kept.txt"), "retain me");
+  await writeFile(blocker, "not a directory");
+  const observerPath = join(blocker, "capture");
+  const scenario = processScenarioSchema.parse({
+    executable: process.execPath,
+    filesystem_observation_paths: [root],
+  });
+  try {
+    await expect(realpath(observerPath)).rejects.toMatchObject({
+      code: "ENOTDIR",
+    });
+    const snapshot = await snapshotRoots(scenario, undefined, undefined, {
+      observerPaths: [observerPath],
+    });
+
+    expect(snapshot.files.map(({ path }) => path).sort()).toEqual([
+      "root_0:.",
+      "root_0:kept.txt",
+    ]);
+    expect(snapshot.coverage.unobserved_subtrees).toEqual([]);
+    expect(snapshot.truncated).toBe(false);
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "propagates unexpected observer path resolution errors",
+  async () => {
+    const fixture = await createTestTempDirectory("rea-observer-symlink-loop-");
+    const root = join(fixture, "selected");
+    const loop = join(fixture, "observer-loop");
+    await mkdir(root);
+    await writeFile(join(root, "kept.txt"), "retain me");
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    try {
+      await symlink(loop, loop);
+      await expect(
+        snapshotRoots(scenario, undefined, undefined, {
+          observerPaths: [loop],
+        }),
+      ).rejects.toMatchObject({ code: "ELOOP" });
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
     }
   },
 );
