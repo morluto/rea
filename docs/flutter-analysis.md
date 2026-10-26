@@ -109,9 +109,11 @@ server; older servers keep the complete request after schema discovery.
   header check does not establish valid table contents or exported symbols.
 - **`libflutter` facts** are per-ABI observations: byte size, SHA-256
   digest, GNU build IDs from ELF-declared `PT_NOTE` / `SHT_NOTE` ranges,
-  and any _labeled_ strings the build
-  carries. Release engine builds often strip the `Dart VM version` string —
-  absence is reported as `null`, not guessed. Android clang/LLVM toolchain
+  and Dart/toolchain strings the build carries. `dart_version` accepts the
+  labeled `Dart VM version:` form and the unlabeled Dart
+  `Version::String()` form (`<version> (<channel>) (<commit time>)` with an
+  optional ` on "<os>_<arch>"` suffix) that release engines embed. Absence of
+  either form is reported as `null`, not guessed. Android clang/LLVM toolchain
   lines are reported verbatim as build provenance.
   `build_id_candidates` preserves distinct IDs. `build_id` is populated only
   when all declared note ranges were examined and one ID was found;
@@ -122,10 +124,13 @@ server; older servers keep the complete request after schema discovery.
   Compressed `SHT_NOTE` sections are skipped with an unsupported-compression
   limitation and partial coverage; IDs from other note ranges remain candidates.
   Encoded note storage is never interpreted as note headers or inflated.
-- Labeled strings must fit their complete grammar. `dart_version_capped`
-  and `toolchain_capped` independently report labels omitted by grammar or
-  projection bounds; either makes identification coverage partial. Values
-  split across read chunks are retained without publishing truncated prefixes.
+- Version and toolchain strings must fit their complete grammar.
+  `dart_version_capped` and `toolchain_capped` independently report labels
+  omitted by grammar or projection bounds; either makes identification
+  coverage partial. Values split across read chunks are retained without
+  publishing truncated prefixes. Unlabeled runs that miss the
+  `Version::String()` grammar are ignored and do not set
+  `dart_version_capped`.
 - **`coverage: "partial"`** also appears when an ABI carries `libapp.so`
   without `libflutter.so` (or vice versa).
 - The APK itself is digested before parsing, so `target.sha256` binds the

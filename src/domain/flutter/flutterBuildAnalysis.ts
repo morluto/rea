@@ -142,7 +142,7 @@ export const flutterResultSchemas = {
             .string()
             .nullable()
             .describe(
-              "Labeled 'Dart VM version' string, when a build carries one",
+              "Embedded Dart version string when present: the labeled 'Dart VM version' form, or the unlabeled Version::String() form release engines carry",
             ),
           toolchain_lines: z.array(z.string().min(1)),
           /** Dart labels omitted by grammar or single-version projection bounds. */
