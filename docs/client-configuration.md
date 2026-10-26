@@ -632,21 +632,20 @@ writing a registration ZCode cannot load.
 
 ## FreeBuff
 
-For FreeBuff, the proposed integration writes `mcpServers.rea` into the user-scope
-`~/.agents/mcp.json` shared-agent file. Entries carry `command`, `args`, and
-`env`; stdio is the default transport. The proposed personal skill location is
-`~/.agents/skills`, so setup installs its skill copy there. Because the same
+For FreeBuff, `rea setup --client freebuff` writes `mcpServers.rea` into the
+user-scope `~/.agents/mcp.json` shared-agent file. Entries carry `command`,
+`args`, and `env`; stdio is the default transport. The personal skill location
+is `~/.agents/skills`, so setup installs its skill copy there. Because the same
 file doubles as ZCode's user-scope fallback (see above), a `freebuff`
-registration is also in the file ZCode uses until ZCode defines its own native server.
-Setup and doctor detect FreeBuff from its own profile directory
-(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that
-REA's skill installs create for every client.
+registration is also in the file ZCode uses until ZCode defines its own native
+server. Setup and doctor detect FreeBuff from its own profile directory
+(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that REA's
+skill installs create for every client.
 
-The configuration write and personal skill locations are proposed integration
-boundaries. FreeBuff MCP loading and skill discovery have not been verified
-with an installed native FreeBuff client/version; filesystem tests cover REA's
-editing, discovery, and ownership behavior only. Automatic applicability
-requires the FreeBuff profile directory even when the shared MCP file exists.
+FreeBuff MCP loading and skill discovery have not been verified with an
+installed native FreeBuff client/version; filesystem tests cover REA's editing,
+discovery, and ownership behavior only. Automatic applicability requires the
+FreeBuff profile directory even when the shared MCP file exists.
 When uninstall cannot establish FreeBuff or another shared-storage reader from
 product discovery, a malformed or unreadable shared MCP file is retained
 unchanged and does not stop other REA removals, including `--purge-data`. When
@@ -654,8 +653,9 @@ FreeBuff or ZCode product applicability is established or unresolved, the same
 malformed shared file stops uninstall before removals. See
 [Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
-FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
-reject `rea setup --client freebuff` as an unsupported client. See the
+FreeBuff setup support requires `rea-agents@6.8.0` or later (including the
+current npm `latest` release). Older versions reject
+`rea setup --client freebuff` as an unsupported client. See the
 [installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness
