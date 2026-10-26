@@ -28,6 +28,7 @@ import {
   inspectKunaProvider,
   kunaSettingAffectsProbe,
 } from "./kuna/KunaDoctor.js";
+import { inspectUnicornProvider } from "./unicorn/UnicornDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -704,6 +705,12 @@ export const createSystemDoctorHost = (
                 signal: inspectionSignal,
               }),
             ),
+        inspectUnicornProvider(
+          inspectionEnvironment,
+          platform,
+          host.architecture,
+          { signal: inspectionSignal },
+        ),
       ]);
       return inspections.map((inspection) =>
         providerSettingOrigins(

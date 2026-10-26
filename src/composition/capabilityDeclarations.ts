@@ -105,6 +105,7 @@ import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProvider
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "../rust/RustBinaryProviderIdentity.js";
 import { SIGROK_PROVIDER_IDENTITY } from "../signals/SigrokProviderIdentity.js";
+import { UNICORN_PROVIDER_IDENTITY } from "../unicorn/UnicornProviderMetadata.js";
 import { WABT_PROVIDER_IDENTITY } from "../wasm/WabtRelease.js";
 
 type CanonicalOperationName = (typeof TOOL_CONTRACTS)[number]["name"];
@@ -570,6 +571,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(SQLITE_PROVIDER_IDENTITY, {
         group: "SQLITE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  unicorn: {
+    providers: [
+      providerBinding(UNICORN_PROVIDER_IDENTITY, {
+        group: "UNICORN_TOOL_CONTRACTS",
       }),
     ],
   },

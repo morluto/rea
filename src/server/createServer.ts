@@ -26,6 +26,7 @@ import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupErro
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createByteEntropyService } from "../composition/binaryDiagnostics/byteEntropy.js";
 import { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import { UnicornEmulationService } from "../application/unicorn/UnicornEmulationService.js";
 import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { catalogIdentityForToolFamilies } from "../contracts/catalog/catalogIdentity.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
@@ -45,10 +46,12 @@ import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
-import { createJebAnalysisService } from "../application/ProviderOperationServices.js";
-import { createPcapAnalysisService } from "../application/ProviderOperationServices.js";
-import { createApktoolResourceAnalysisService } from "../application/ProviderOperationServices.js";
-import { createFlutterBuildAnalysisService } from "../application/ProviderOperationServices.js";
+import {
+  createJebAnalysisService,
+  createPcapAnalysisService,
+  createApktoolResourceAnalysisService,
+  createFlutterBuildAnalysisService,
+} from "../application/ProviderOperationServices.js";
 import { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import { registerGuidedPrompts } from "./registerPrompts.js";
 import { registerSessionTools } from "./registerSessionTools.js";
@@ -412,6 +415,13 @@ export const createServer = (
           elfDependencies,
         },
         contractTools,
+      );
+      // Unicorn runs caller-supplied bytes in isolation, so it registers
+      // without session admission (no binary needs to be open).
+      registerServiceTools(
+        server,
+        { unicorn: new UnicornEmulationService(environment) },
+        { logger: toolLogger, recordEvidence, evidenceById },
       );
     },
     artifact: () => {

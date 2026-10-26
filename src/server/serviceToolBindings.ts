@@ -48,6 +48,8 @@ import {
 import { captureSensitiveValues } from "../domain/webNetworkCapture.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
 import type { FridaInstrumentationService } from "../application/frida/FridaInstrumentationService.js";
+import type { UnicornEmulationService } from "../application/unicorn/UnicornEmulationService.js";
+import { bindUnicornTools } from "./unicornToolBindings.js";
 import {
   resolveRizinCommandRequest,
   type ReverseEngineeringService,
@@ -554,6 +556,9 @@ const SERVICE_TOOL_BINDINGS = {
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
   frida: bindFridaTools satisfies Bind<FridaInstrumentationService>,
+  // Unicorn runs caller-supplied bytes in isolation, not the session's
+  // target; compose it without analysis admission.
+  unicorn: bindUnicornTools satisfies Bind<UnicornEmulationService>,
   // Opening a target orders itself in the session, so it runs outside
   // analysis admission; a failed open reports the selection at failure.
   binaryTarget: ((session) => ({

@@ -48,6 +48,7 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolCont
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
+import { UNICORN_TOOL_CONTRACTS } from "./unicorn/unicornToolContracts.js";
 import { ENVIRONMENT_TOOL_CONTRACTS } from "./environmentToolContracts.js";
 import { BROWSER_TOOL_CONTRACTS } from "./browserToolContracts.js";
 import { BROWSER_SCENARIO_TOOL_CONTRACTS } from "./browserScenarioToolContracts.js";
@@ -108,6 +109,7 @@ const CATALOG_CONTRACT_GROUPS = {
   GDB_TOOL_CONTRACTS,
   RIZIN_DEBUG_TOOL_CONTRACTS,
   FRIDA_TOOL_CONTRACTS,
+  UNICORN_TOOL_CONTRACTS,
 } as const;
 
 /**
