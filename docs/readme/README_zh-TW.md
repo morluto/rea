@@ -22,7 +22,7 @@
 
 [快速開始](#快速開始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [案例](#案例) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [文件](#文件)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Linux 上的 Ghidra、JADX、韌體工具啟動和靜態 JavaScript/Electron 分
 安裝 Node.js 和 npm 後，執行：
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 選擇 AI 代理，檢查計劃中的變更並核准。設定流程會添加 REA 的 MCP 服務和對應的工作流程指引，並備份已有組態。完成後重新啟動 AI 代理。
@@ -95,7 +96,8 @@ MCP 預設使用精簡輸入 Schema，以減少上下文開銷。需要完整欄
 檢查已解包的 JavaScript/Electron 應用目錄或 ASAR 檔案：
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 結果包含模組、匯入、Electron 邊界及相關證據。將路徑替換為你的目標路徑，例如 Windows 上的 `"D:/apps/example"`。
@@ -103,7 +105,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 如果需要經常使用，可以安裝 `rea` 命令：
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA 更新較快，新版本經常包含錯誤修復。請將安裝的版本保�
 通過 `npm install --global` 或 `bun add --global` 安裝的 CLI 使用：
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Bun 全域更新需要 Bun 1.2.17 或更新版本。如果使用較舊的 Bun �
 如果使用 `npx`，通過以下命令更新 AI 代理設定：
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -296,7 +301,7 @@ REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能�
 <details>
 <summary><strong>從 skills.sh 安裝 skill 有什麼作用？</strong></summary>
 
-skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../installation.md#skill-only-installation)。
+skill 為 AI 代理提供調查指引。使用 `npx rea-agents@6.8.0 setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../installation.md#skill-only-installation)。
 
 </details>
 
@@ -322,12 +327,14 @@ REA 在本機分析目標。AI 代理會接收工具結果，其模型提供商�
 通過 npm 安裝的 CLI 使用：
 
 ```bash
+
 rea update
 ```
 
 通過 `npx` 設定 AI 代理時使用：
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

@@ -22,7 +22,7 @@
 
 [ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -75,7 +75,8 @@ Linux-ൽ Ghidra, JADX, firmware tool launches, static JavaScript/Electron analy
 Node.js-ഉം npm-ഉം ഇൻസ്റ്റാൾ ചെയ്തശേഷം ഈ command പ്രവർത്തിപ്പിക്കുക:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 നിങ്ങൾ ഉപയോഗിക്കുന്ന agents തിരഞ്ഞെടുക്കുക, നിർദ്ദേശിച്ച മാറ്റങ്ങൾ പരിശോധിക്കുക, തുടർന്ന് അവയ്ക്ക് അനുമതി നൽകുക. നിലവിലുള്ള configuration-ന്റെ backup-ുകൾ സൂക്ഷിച്ചുകൊണ്ട് setup, REA-യുടെ MCP server-ഉം അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങളും ചേർക്കും. അതിനുശേഷം നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക.
@@ -97,7 +98,8 @@ Notes app-ൽ search എങ്ങനെ പ്രവർത്തിക്കു�
 Extract ചെയ്ത JavaScript/Electron app directory അല്ലെങ്കിൽ ASAR പരിശോധിക്കുക:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 ഫലത്തിൽ modules, imports, Electron boundaries, അവയ്ക്കുള്ള തെളിവുകൾ എന്നിവ ഉൾപ്പെടും. `/absolute/path/to/app` എന്നതിന് പകരം നിങ്ങളുടെ target-ന്റെ path നൽകുക; Windows-ൽ ഉദാഹരണത്തിന് `"D:/apps/example"` ഉപയോഗിക്കാം.
@@ -105,7 +107,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 സാധാരണ ഉപയോഗത്തിനായി `rea` command ഇൻസ്റ്റാൾ ചെയ്യാൻ:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -118,6 +121,7 @@ REA-യിൽ പതിവായി മാറ്റങ്ങൾ വരുന്�
 `npm install --global` അല്ലെങ്കിൽ `bun add --global` ഉപയോഗിച്ച് ഇൻസ്റ്റാൾ ചെയ്ത CLI-ക്കായി:
 
 ```bash
+
 rea update
 ```
 
@@ -130,6 +134,7 @@ Agent registrations-ഉം skill-ഉം പുതുക്കാൻ, update ക�
 `npx` ഉപയോഗിക്കുന്നുവെങ്കിൽ, agent setup പുതുക്കാൻ:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -300,7 +305,7 @@ Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് age
 <details>
 <summary><strong>skills.sh-ൽ നിന്ന് skill ഇൻസ്റ്റാൾ ചെയ്യുന്നത് എന്താണ് ചെയ്യുന്നത്?</strong></summary>
 
-ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../installation.md#skill-only-installation) കാണുക.
+ഈ skill നിങ്ങളുടെ agent-ന് അന്വേഷണ നിർദ്ദേശങ്ങൾ നൽകുന്നു. REA-യുടെ MCP server രജിസ്റ്റർ ചെയ്യാനും അനുയോജ്യമായ നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യാനും `npx rea-agents@6.8.0 setup` ഉപയോഗിക്കുക; തുടർന്ന് നിങ്ങളുടെ agent വീണ്ടും ആരംഭിക്കുക. [Skill-only installation](../installation.md#skill-only-installation) കാണുക.
 
 </details>
 
@@ -326,12 +331,14 @@ REA targets local ആയി വിശകലനം ചെയ്യുന്നു
 `npm install --global` അല്ലെങ്കിൽ `bun add --global` ഉപയോഗിച്ച് ഇൻസ്റ്റാൾ ചെയ്ത CLI-ക്കായി:
 
 ```bash
+
 rea update
 ```
 
 `npx` വഴി agent setup നടത്തുന്നതിനായി:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

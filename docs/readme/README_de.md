@@ -22,7 +22,7 @@
 
 [Schnellstart](#schnellstart) · [So funktioniert REA](#so-funktioniert-rea) · [Was du analysieren kannst](#was-du-analysieren-kannst) · [Fallstudien](#fallstudien) · [RL-Umgebungen erstellen](#build-rl-environments) · [Häufige Fragen](#häufige-fragen) · [Dokumentation](#dokumentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Unter Linux benötigen Starts von Ghidra, JADX und Firmware-Werkzeugen sowie sta
 Wenn Node.js und npm installiert sind, führe diesen Befehl aus:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 Wähle deine Agenten aus, prüfe die geplanten Änderungen und bestätige sie. Die Einrichtung fügt den MCP-Server von REA und passende Workflow-Anweisungen hinzu und sichert vorhandene Konfigurationen. Starte deinen Agenten anschließend neu.
@@ -95,7 +96,8 @@ Ersetze Notes durch deine Ziel-App und benenne die Funktion, die du verstehen m�
 Untersuche ein entpacktes JavaScript-/Electron-App-Verzeichnis oder eine ASAR-Datei:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Das Ergebnis enthält Module, Imports, Electron-Grenzen und die zugehörigen Belege. Ersetze den Pfad durch dein Ziel, beispielsweise `"D:/apps/example"` unter Windows.
@@ -103,7 +105,8 @@ Das Ergebnis enthält Module, Imports, Electron-Grenzen und die zugehörigen Bel
 Für die regelmäßige Nutzung kannst du den Befehl `rea` installieren:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA entwickelt sich schnell weiter; neue Versionen enthalten häufig Fehlerbeheb
 Für eine über `npm install --global` / `bun add --global` installierte CLI:
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Um die Agentenregistrierungen und den Skill zu aktualisieren, führe den Einrich
 Wenn du `npx` verwendest, aktualisiere die Agenteneinrichtung mit:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -296,7 +301,7 @@ REA startet Hopper, wenn eine Operation es benötigt. Unter macOS kann beim erst
 <details>
 <summary><strong>Was bewirkt die Installation des Skills über skills.sh?</strong></summary>
 
-Der Skill stellt Untersuchungsanweisungen für deinen Agenten bereit. Verwende `npx rea-agents setup`, um den MCP-Server von REA zu registrieren und passende Anweisungen zu installieren. Starte deinen Agenten anschließend neu. Siehe [Installation nur des Skills](../installation.md#skill-only-installation).
+Der Skill stellt Untersuchungsanweisungen für deinen Agenten bereit. Verwende `npx rea-agents@6.8.0 setup`, um den MCP-Server von REA zu registrieren und passende Anweisungen zu installieren. Starte deinen Agenten anschließend neu. Siehe [Installation nur des Skills](../installation.md#skill-only-installation).
 
 </details>
 
@@ -322,12 +327,14 @@ Aktualisiere zuerst; eine neuere Version könnte den Fehler bereits behoben habe
 Für eine über npm installierte CLI:
 
 ```bash
+
 rea update
 ```
 
 Für die Agenteneinrichtung über `npx`:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

@@ -22,7 +22,7 @@
 
 [Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Документація](#документація)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ REA підключає вашого агента до інструментів �
 Якщо Node.js і npm встановлено, виконайте:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 Виберіть агентів, перевірте запропоновані зміни та схваліть їх. Налаштування додає MCP-сервер REA та відповідні інструкції робочих процесів, створюючи резервні копії наявної конфігурації. Після цього перезапустіть агента.
@@ -95,7 +96,8 @@ MCP типово використовує компактні вхідні схе
 Перевірте розпакований каталог застосунку JavaScript/Electron або файл ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Результат містить модулі, імпорти, межі Electron і підтвердження для них. Замініть шлях своїм, наприклад `"D:/apps/example"` у Windows.
@@ -103,7 +105,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 Для регулярного використання встановіть команду `rea`:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA швидко розвивається, а нові випуски часто
 Для CLI, встановленого через `npm install --global` / `bun add --global`:
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ rea update
 Якщо використовуєте `npx`, оновіть налаштування агента командою:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -296,7 +301,7 @@ REA запускає Hopper, коли він потрібен для опера�
 <details>
 <summary><strong>Що дає встановлення skill із skills.sh?</strong></summary>
 
-Skill надає агенту інструкції дослідження. Використовуйте `npx rea-agents setup`, щоб зареєструвати MCP-сервер REA та встановити відповідні інструкції, а потім перезапустіть агента. Дивіться [встановлення лише skill](../installation.md#skill-only-installation).
+Skill надає агенту інструкції дослідження. Використовуйте `npx rea-agents@6.8.0 setup`, щоб зареєструвати MCP-сервер REA та встановити відповідні інструкції, а потім перезапустіть агента. Дивіться [встановлення лише skill](../installation.md#skill-only-installation).
 
 </details>
 
@@ -322,12 +327,14 @@ REA аналізує цілі локально. Ваш агент отримує
 Для CLI, встановленого через npm:
 
 ```bash
+
 rea update
 ```
 
 Для налаштування агента через `npx`:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

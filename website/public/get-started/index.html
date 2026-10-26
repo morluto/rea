@@ -330,7 +330,7 @@ npm -v</code></pre>
                       Copy
                     </button>
                   </div>
-                  <pre><code id="node-windows-shim">npx.cmd rea-agents@latest setup</code></pre>
+                  <pre><code id="node-windows-shim">npx.cmd rea-agents@6.8.0 setup</code></pre>
                 </div>
               </details>
               <details class="evidence-details" id="node-macos-help">
@@ -588,7 +588,7 @@ cd rea-work</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="setup-claude-desktop">npx rea-agents@latest setup --client claude_desktop</code></pre>
+                <pre><code id="setup-claude-desktop">npx rea-agents@6.8.0 setup --client claude_desktop</code></pre>
               </div>
               <p>
                 Review and approve the plan, reopen Claude, then
@@ -817,7 +817,7 @@ cd rea-work</code></pre>
                 <span class="prompt-symbol" aria-hidden="true">›</span
                 ><span id="agent-install-prompt"
                   >Install REA and connect it to this coding agent using
-                  <span translate="no">npx rea-agents@latest setup</span>. Show
+                  <span translate="no">npx rea-agents@6.8.0 setup</span>. Show
                   me the setup plan for approval, then verify the
                   installation.</span
                 ><span class="terminal-cursor" aria-hidden="true"></span>
@@ -838,7 +838,7 @@ cd rea-work</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="agent-setup">npx rea-agents@latest setup</code></pre>
+                <pre><code id="agent-setup">npx rea-agents@6.8.0 setup</code></pre>
               </div>
               <p>For one specific client, add its setup ID:</p>
               <div class="code-block">
@@ -853,8 +853,13 @@ cd rea-work</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="agent-setup-one">npx rea-agents@latest setup --client codex</code></pre>
+                <pre><code id="agent-setup-one">npx rea-agents@6.8.0 setup --client codex</code></pre>
               </div>
+              <p>
+                Prefer a version pin such as <code>@6.8.0</code>. Use
+                <code>@latest</code> only when you intentionally want every new
+                publish.
+              </p>
               <p>
                 If npm asks to download the package, type <code>y</code> and
                 press Enter. In REA's client list, use the arrow keys to move,
@@ -901,7 +906,7 @@ cd rea-work</code></pre>
                   Copy
                 </button>
               </div>
-              <pre><code id="client-doctor">npx -y rea-agents@latest doctor --client codex --json</code></pre>
+              <pre><code id="client-doctor">npx -y rea-agents@6.8.0 doctor --client codex --json</code></pre>
             </div>
             <p>
               Replace <code>codex</code> with your client's setup ID. A
@@ -1089,7 +1094,7 @@ cd rea-work</code></pre>
                       Copy
                     </button>
                   </div>
-                  <pre><code id="hopper-check">npx -y rea-agents@latest doctor --provider hopper --json</code></pre>
+                  <pre><code id="hopper-check">npx -y rea-agents@6.8.0 doctor --provider hopper --json</code></pre>
                 </div>
                 <p>
                   If macOS asks for Automation permission, allow the app that
@@ -1176,8 +1181,8 @@ javac -version</code></pre>
                     </div>
                     <pre><code id="ghidra-windows-connect">$env:GHIDRA_INSTALL_DIR = "C:/tools/ghidra_12.1.4_PUBLIC"
 $env:JAVA_HOME = "C:/tools/jdk-21"
-npx -y rea-agents@latest doctor --provider ghidra --json
-npx rea-agents@latest setup</code></pre>
+npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx rea-agents@6.8.0 setup</code></pre>
                   </div>
                   <p>
                     Replace the two paths with your installations, then review
@@ -1246,8 +1251,8 @@ export JAVA_HOME="/absolute/path/to/jdk-21"</code></pre>
                         Copy
                       </button>
                     </div>
-                    <pre><code id="ghidra-unix-setup">npx -y rea-agents@latest doctor --provider ghidra --json
-npx rea-agents@latest setup</code></pre>
+                    <pre><code id="ghidra-unix-setup">npx -y rea-agents@6.8.0 doctor --provider ghidra --json
+npx rea-agents@6.8.0 setup</code></pre>
                   </div>
                 </details>
                 <p>
@@ -1349,8 +1354,8 @@ npx rea-agents@latest setup</code></pre>
                   </div>
                   <pre><code id="ida-connect">$env:REA_IDA_MCP_CONFIG = "C:/analysis/ida-mcp.json"
 $env:REA_ANALYSIS_PROVIDER = "ida"
-npx -y rea-agents@latest doctor --provider ida --json
-npx rea-agents@latest setup</code></pre>
+npx -y rea-agents@6.8.0 doctor --provider ida --json
+npx rea-agents@6.8.0 setup</code></pre>
                 </div>
                 <div class="code-block">
                   <div class="code-header">
@@ -1366,8 +1371,8 @@ npx rea-agents@latest setup</code></pre>
                   </div>
                   <pre><code id="ida-connect-unix">export REA_IDA_MCP_CONFIG="/absolute/path/to/ida-mcp.json"
 export REA_ANALYSIS_PROVIDER="ida"
-npx -y rea-agents@latest doctor --provider ida --json
-npx rea-agents@latest setup</code></pre>
+npx -y rea-agents@6.8.0 doctor --provider ida --json
+npx rea-agents@6.8.0 setup</code></pre>
                 </div>
                 <p>
                   Use the JSON registration file you prepared with the provider
@@ -1607,7 +1612,7 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="terminal-analysis">npx -y rea-agents@latest analyze-javascript-application "/absolute/path/to/app" --json</code></pre>
+                <pre><code id="terminal-analysis">npx -y rea-agents@6.8.0 analyze-javascript-application "/absolute/path/to/app" --json</code></pre>
               </div>
               <p>
                 Replace the path with your extracted app directory or
@@ -1666,7 +1671,7 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="install-cli">npm install --global rea-agents</code></pre>
+                <pre><code id="install-cli">npm install --global rea-agents@6.8.0</code></pre>
               </div>
               <p>
                 <a href="../guides/javascript/"
@@ -1685,15 +1690,16 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="native-function">npx -y rea-agents@latest function "/absolute/path/to/program" main --provider ghidra --json</code></pre>
+                <pre><code id="native-function">npx -y rea-agents@6.8.0 function "/absolute/path/to/program" main --provider ghidra --json</code></pre>
               </div>
               <p>
                 Replace <code>main</code> with a function name or address from
                 the target's function list. Ghidra must be configured first.
               </p>
               <p id="curl-installation">
-                On macOS or Linux, you can also use the curl installer after
-                preparing Node.js:
+                On macOS or Linux, you can also review a version-pinned curl
+                installer after preparing Node.js. Download the tagged script,
+                inspect it, then install that package version:
               </p>
               <div class="code-block">
                 <div class="code-header">
@@ -1707,11 +1713,18 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="install-curl">curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash</code></pre>
+                <pre><code id="install-curl">rea_version=6.8.0
+curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
+less rea-install.sh
+bash rea-install.sh --version "$rea_version"</code></pre>
               </div>
               <p>
-                Follow the setup prompts to connect your agent. If they don't
-                appear, run <code>rea setup</code>.
+                The tag pins the selected script revision;
+                <code>--version</code> selects the npm package. Piping
+                <code>main/install.sh</code> or using
+                <code>rea-agents@latest</code> follows every new tip publish;
+                treat those as an opt-in. Follow the setup prompts to connect
+                your agent. If they don't appear, run <code>rea setup</code>.
               </p>
               <p id="curl-setup-path">
                 If your shell can't find <code>rea</code>, use the executable
@@ -1750,7 +1763,7 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="provider-doctor">npx -y rea-agents@latest doctor --provider ghidra --json</code></pre>
+                <pre><code id="provider-doctor">npx -y rea-agents@6.8.0 doctor --provider ghidra --json</code></pre>
               </div>
               <p>
                 The report gives the failed check and a suggested next step.
@@ -1780,14 +1793,16 @@ npx rea-agents@latest setup</code></pre>
                     Copy
                   </button>
                 </div>
-                <pre><code id="windows-setup-command">npx.cmd rea-agents@latest setup</code></pre>
+                <pre><code id="windows-setup-command">npx.cmd rea-agents@6.8.0 setup</code></pre>
               </div>
             </details>
             <details class="evidence-details">
               <summary>Update or remove REA</summary>
               <p>
-                To refresh your agent connection, run the latest setup command
-                again, review its plan and restart your client.
+                To refresh your agent connection, run setup again for the
+                release you want, review its plan and restart your client.
+                <code>@latest</code> follows every publish; use it when you
+                intentionally want the newest release.
               </p>
               <div class="code-block">
                 <div class="code-header">

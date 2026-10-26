@@ -22,7 +22,7 @@
 
 [شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-می‌کند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-می‌توان-تحلیل-کرد) · [نمونه‌های عملی](#نمونه‌های-عملی) · [ساخت محیط‌های RL](#build-rl-environments) · [پرسش‌های متداول](#پرسش‌های-متداول) · [مستندات](#مستندات)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -65,7 +65,8 @@ REA ایجنت شما را به ابزارهایی برای بررسی باین�
 پس از نصب Node.js و npm، دستور زیر را اجرا کنید:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 ایجنت‌های موردنظر را انتخاب کنید، تغییرات پیشنهادی را بررسی و تأیید کنید. فرایند راه‌اندازی، سرور MCP مربوط به REA و دستورالعمل‌های گردش‌کار متناظر را اضافه می‌کند و از پیکربندی موجود نسخهٔ پشتیبان می‌گیرد. پس از آن ایجنت خود را مجدداً راه‌اندازی کنید.
@@ -87,7 +88,8 @@ MCP به‌طور پیش‌فرض از schema ورودی فشرده استفاد
 برای بررسی پوشهٔ استخراج‌شدهٔ یک برنامهٔ JavaScript/Electron یا فایل ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 نتیجه شامل ماژول‌ها، importها، مرزهای Electron و شواهد مربوط به آن‌هاست. مسیر را با مسیر برنامهٔ هدف جایگزین کنید؛ مثلاً در ویندوز `"D:/apps/example"`.
@@ -95,7 +97,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 برای نصب دستور `rea` جهت استفادهٔ مداوم:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -108,6 +111,7 @@ REA به‌سرعت تغییر می‌کند و نسخه‌های جدید مع�
 برای CLI نصب‌شده از طریق `npm install --global` / `bun add --global`:
 
 ```bash
+
 rea update
 ```
 
@@ -120,6 +124,7 @@ rea update
 اگر از `npx` استفاده می‌کنید، راه‌اندازی ایجنت را با دستور زیر به‌روز کنید:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -284,7 +289,7 @@ REA زمانی که عملیاتی به Hopper نیاز داشته باشد آن
 
 <details><summary><strong>نصب skill از skills.sh چه کاری انجام می‌دهد؟</strong></summary>
 
-این skill دستورالعمل‌های بررسی را برای ایجنت فراهم می‌کند. برای ثبت سرور MCP مربوط به REA و نصب دستورالعمل‌های متناظر، `npx rea-agents setup` را اجرا کنید و سپس ایجنت را مجدداً راه‌اندازی کنید. [نصب مستقل skill](../installation.md#skill-only-installation) را ببینید.
+این skill دستورالعمل‌های بررسی را برای ایجنت فراهم می‌کند. برای ثبت سرور MCP مربوط به REA و نصب دستورالعمل‌های متناظر، `npx rea-agents@6.8.0 setup` را اجرا کنید و سپس ایجنت را مجدداً راه‌اندازی کنید. [نصب مستقل skill](../installation.md#skill-only-installation) را ببینید.
 
 </details>
 
@@ -307,12 +312,14 @@ REA اهداف را به‌صورت محلی تحلیل می‌کند. ایجن�
 برای CLI نصب‌شده با npm:
 
 ```bash
+
 rea update
 ```
 
 برای راه‌اندازی ایجنت با `npx`:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

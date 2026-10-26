@@ -22,7 +22,7 @@
 
 [Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Build RL environments](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -78,15 +78,17 @@ checks. Recovery steps are in `docs/installation.md` under
 With Node.js and npm installed, run:
 
 ```bash
-npx rea-agents setup
+npx rea-agents@6.8.0 setup
 ```
 
 Choose your agents, review the proposed changes, and approve them. Setup adds
 REA's MCP server and matching workflow instructions, with backups of existing
-configuration. Restart your agent afterward. Setup records the selected runtime and REA
-entry script directly. If acquired through a package runner, keep its cache entry
-available. Run package acquisition from a trusted directory outside the target
-project. Installation and recovery details are in the setup guide below.
+configuration. Restart your agent afterward. Prefer a version pin such as
+`@6.8.0`; use `@latest` only when you intentionally want every new publish.
+Setup records the selected runtime and REA entry script directly. If acquired
+through a package runner, keep its cache entry available. Run package
+acquisition from a trusted directory outside the target project. Installation
+and recovery details are in the setup guide below.
 
 Setup supports Claude Code, Codex, Cursor, Gemini CLI, Grok Build and
 [other agents](docs/installation.md#supported-agents). See
@@ -119,7 +121,7 @@ Replace Notes with your target app and the feature you want to understand.
 Inspect an extracted JavaScript/Electron app directory or ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 The result includes modules, imports, Electron boundaries and their evidence.
@@ -128,7 +130,7 @@ Replace the path with your target, such as `"D:/apps/example"` on Windows.
 To install the `rea` command for regular use:
 
 ```bash
-npm install --global rea-agents
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -167,9 +169,11 @@ If you use `npx`, update your agent setup with:
 npx rea-agents@latest setup
 ```
 
-Review the setup changes and restart your agent. For one-off CLI commands,
-use `npx rea-agents@latest` followed by the command. With Bun, use
-`bunx rea-agents@latest` in place of `npx rea-agents@latest`.
+Review the setup changes and restart your agent. `@latest` follows every
+publish; use it when you intentionally want the newest release. For a
+version-pinned one-off CLI command, use `npx -y rea-agents@6.8.0` followed by
+the command. With Bun, use `bunx rea-agents@6.8.0` in place of
+`npx rea-agents@6.8.0`.
 
 ## How REA works
 
@@ -368,7 +372,7 @@ Hopper manually if needed. See
 <details>
 <summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
-The skill supplies investigation instructions for your agent. Use `npx rea-agents setup`
+The skill supplies investigation instructions for your agent. Use `npx rea-agents@6.8.0 setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/installation.md#skill-only-installation).
 

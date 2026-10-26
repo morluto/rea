@@ -22,7 +22,7 @@
 
 [Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [RL ortamları oluşturun](#build-rl-environments) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Linux’ta Ghidra, JADX ve firmware araçlarının başlatılması ile statik Ja
 Node.js ve npm yüklüyken şu komutu çalıştırın:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 Ajanlarınızı seçin, önerilen değişiklikleri inceleyin ve onaylayın. Kurulum, mevcut yapılandırmaları yedekleyerek REA'nın MCP sunucusunu ve uyumlu iş akışı talimatlarını ekler. Ardından ajanınızı yeniden başlatın.
@@ -95,7 +96,8 @@ Notes yerine hedef uygulamanızı ve anlamak istediğiniz özelliği belirtin.
 Çıkarılmış bir JavaScript/Electron uygulama dizinini veya ASAR dosyasını inceleyin:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Sonuç; modülleri, içe aktarmaları, Electron sınırlarını ve bunlara ilişkin kanıtları içerir. Yolu hedefinizle değiştirin; Windows'ta örneğin `"D:/apps/example"` kullanabilirsiniz.
@@ -103,7 +105,8 @@ Sonuç; modülleri, içe aktarmaları, Electron sınırlarını ve bunlara iliş
 Düzenli kullanım için `rea` komutunu yüklemek üzere:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA hızla değişir ve yeni sürümler sık sık hata düzeltmeleri içerir. Ku
 `npm install --global` veya `bun add --global` ile yüklenen CLI için:
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Ajan kayıtlarını ve skill'i güncellemek için güncellemenin çıktısında 
 `npx` kullanıyorsanız ajan kurulumunu şu komutla güncelleyin:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -290,7 +295,7 @@ REA, bir işlem gerektirdiğinde Hopper'ı başlatır. macOS'ta ilk çalıştır
 <details>
 <summary><strong>skills.sh üzerinden skill yüklemek ne yapar?</strong></summary>
 
-Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `npx rea-agents setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](../installation.md#skill-only-installation) belgesine bakın.
+Skill, ajanınıza araştırma talimatları sağlar. REA'nın MCP sunucusunu kaydetmek ve uyumlu talimatları yüklemek için `npx rea-agents@6.8.0 setup` kullanın, ardından ajanınızı yeniden başlatın. [Yalnızca skill yükleme](../installation.md#skill-only-installation) belgesine bakın.
 
 </details>
 
@@ -316,12 +321,14 @@ REA hedefleri yerel olarak analiz eder. Ajanınız araç sonuçlarını alır ve
 npm ile yüklenen CLI için:
 
 ```bash
+
 rea update
 ```
 
 `npx` üzerinden ajan kurulumu için:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

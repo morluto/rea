@@ -22,7 +22,7 @@
 
 [Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Di Linux, peluncuran Ghidra, JADX dan alat firmware serta analisis statis JavaSc
 Dengan Node.js dan npm yang telah terpasang, jalankan:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 Pilih agen yang ingin digunakan, tinjau perubahan yang diusulkan, lalu setujui perubahan tersebut. Proses penyiapan menambahkan server MCP REA dan instruksi alur kerja yang sesuai, serta membuat cadangan konfigurasi yang sudah ada. Setelah itu, mulai ulang agen Anda.
@@ -95,7 +96,8 @@ Ganti Notes dengan aplikasi target dan fitur yang ingin Anda pahami.
 Periksa direktori aplikasi JavaScript/Electron yang telah diekstrak atau berkas ASAR:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Hasilnya mencakup modul, impor, batas antarkomponen Electron, dan bukti yang mendasarinya. Ganti jalur tersebut dengan lokasi target Anda, misalnya `"D:/apps/example"` di Windows.
@@ -103,7 +105,8 @@ Hasilnya mencakup modul, impor, batas antarkomponen Electron, dan bukti yang men
 Untuk memasang perintah `rea` agar dapat digunakan secara rutin:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA berkembang dengan cepat, dan rilis baru sering menyertakan perbaikan bug. Pa
 Untuk CLI yang dipasang melalui `npm install --global` atau `bun add --global`:
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Untuk memperbarui pendaftaran agen dan skill Anda, jalankan perintah penyiapan y
 Jika Anda menggunakan `npx`, perbarui penyiapan agen dengan:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -308,7 +313,7 @@ Lihat [startup dan pemecahan masalah Hopper](../installation.md#launcher-paths-a
 <details>
 <summary><strong>Apa fungsi memasang skill dari skills.sh?</strong></summary>
 
-Skill tersebut menyediakan instruksi investigasi untuk agen Anda. Gunakan `npx rea-agents setup` untuk mendaftarkan server MCP REA dan memasang instruksi yang sesuai, lalu mulai ulang agen Anda.
+Skill tersebut menyediakan instruksi investigasi untuk agen Anda. Gunakan `npx rea-agents@6.8.0 setup` untuk mendaftarkan server MCP REA dan memasang instruksi yang sesuai, lalu mulai ulang agen Anda.
 
 Lihat [instalasi khusus skill](../installation.md#skill-only-installation).
 
@@ -336,12 +341,14 @@ Perbarui terlebih dahulu. Rilis terbaru mungkin sudah memperbaiki masalah terseb
 Untuk CLI yang dipasang melalui `npm install --global` atau `bun add --global`:
 
 ```bash
+
 rea update
 ```
 
 Untuk penyiapan agen melalui `npx`:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

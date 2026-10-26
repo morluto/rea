@@ -22,7 +22,7 @@
 
 [빠른 시작](#빠른-시작) · [REA의 작동 방식](#rea의-작동-방식) · [분석할 수 있는 대상](#분석할-수-있는-대상) · [사례](#사례) · [RL 환경 만들기](#build-rl-environments) · [자주 묻는 질문](#자주-묻는-질문) · [문서](#문서)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Linux에서 Ghidra, JADX, 펌웨어 도구를 실행하거나 정적 JavaScript/
 Node.js와 npm이 설치된 환경에서 다음 명령을 실행하세요.
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 에이전트를 선택하고, 예정된 변경 사항을 검토한 뒤 승인하세요. 설정 과정은 기존 설정을 백업하고 REA의 MCP 서버와 버전에 맞는 워크플로 지침을 추가합니다. 완료 후 에이전트를 다시 시작하세요.
@@ -95,7 +96,8 @@ Notes를 대상 앱으로 바꾸고 이해하고 싶은 기능을 지정하세�
 압축을 푼 JavaScript/Electron 앱 디렉터리 또는 ASAR를 검사합니다.
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 결과에는 모듈, 임포트, Electron 경계와 관련 근거가 포함됩니다. 경로를 분석할 대상으로 바꾸세요. Windows에서는 `"D:/apps/example"` 같은 경로를 사용할 수 있습니다.
@@ -103,7 +105,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 자주 사용할 경우 `rea` 명령을 설치하세요.
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA는 빠르게 바뀌며 새 릴리스에는 버그 수정이 자주 포함됩
 `npm install --global` 또는 `bun add --global`로 설치한 CLI에서는 다음 명령을 사용합니다.
 
 ```bash
+
 rea update
 ```
 
@@ -130,6 +134,7 @@ Bun 전역 업데이트에는 Bun 1.2.17 이상이 필요합니다. 이전 버�
 `npx`를 사용한다면 다음 명령으로 에이전트 설정을 갱신하세요.
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -296,7 +301,7 @@ REA는 작업에 필요할 때 Hopper를 실행합니다. macOS에서는 처음 
 <details>
 <summary><strong>skills.sh에서 설치하는 스킬은 어떤 역할을 하나요?</strong></summary>
 
-스킬은 에이전트에게 조사 지침을 제공합니다. `npx rea-agents setup`으로 REA의 MCP 서버를 등록하고 버전에 맞는 지침을 설치한 뒤 에이전트를 다시 시작하세요. [스킬만 설치하기](../installation.md#skill-only-installation)를 참고하세요.
+스킬은 에이전트에게 조사 지침을 제공합니다. `npx rea-agents@6.8.0 setup`으로 REA의 MCP 서버를 등록하고 버전에 맞는 지침을 설치한 뒤 에이전트를 다시 시작하세요. [스킬만 설치하기](../installation.md#skill-only-installation)를 참고하세요.
 
 </details>
 
@@ -322,12 +327,14 @@ REA는 대상을 로컬에서 분석합니다. 에이전트는 도구 결과를 
 `npm install --global` 또는 `bun add --global`로 설치한 CLI에서는 다음 명령을 사용합니다.
 
 ```bash
+
 rea update
 ```
 
 `npx`로 에이전트를 설정했다면 다음 명령을 사용합니다.
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

@@ -22,7 +22,7 @@
 
 [クイックスタート](#クイックスタート) · [REA の仕組み](#rea-の仕組み) · [分析できる対象](#分析できる対象) · [事例](#事例) · [RL 環境を構築する](#build-rl-environments) · [よくある質問](#よくある質問) · [ドキュメント](#ドキュメント)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Linux での Ghidra、JADX、ファームウェアツールの起動と静的 Ja
 Node.js と npm がインストールされている環境で実行します。
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 使うエージェントを選び、予定されている変更を確認して承認してください。セットアップは REA の MCP サーバーと対応するワークフローの手順を追加し、既存の設定をバックアップします。完了後にエージェントを再起動してください。
@@ -95,7 +96,8 @@ Notes を対象のアプリに置き換え、理解したい機能を指定し�
 展開済みの JavaScript/Electron アプリのディレクトリ、または ASAR を調べます。
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 結果にはモジュール、インポート、Electron の境界と、それらの根拠が含まれます。パスは対象に合わせて変更してください。Windows では、たとえば `"D:/apps/example"` を指定します。
@@ -103,7 +105,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 日常的に使う場合は、`rea` コマンドをインストールできます。
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA は更新が速く、新しいリリースには頻繁にバグ修正が含�
 `npm install --global` / `bun add --global` でインストールした CLI の場合：
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Bun のグローバル更新には Bun 1.2.17 以降が必要です。古い場�
 `npx` を使っている場合は、次のコマンドでエージェントの設定を更新します。
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -298,7 +303,7 @@ REA は必要な操作の際に Hopper を起動します。macOS では、初�
 <details>
 <summary><strong>skills.sh からスキルをインストールすると何ができますか？</strong></summary>
 
-スキルはエージェントに調査の手順を提供します。`npx rea-agents setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../installation.md#skill-only-installation)を参照してください。
+スキルはエージェントに調査の手順を提供します。`npx rea-agents@6.8.0 setup` で REA の MCP サーバーを登録し、対応する手順をインストールしてから、エージェントを再起動してください。[スキルのみのインストール](../installation.md#skill-only-installation)を参照してください。
 
 </details>
 
@@ -324,12 +329,14 @@ REA は対象をローカルで分析します。エージェントはツール�
 npm でインストールした CLI の場合：
 
 ```bash
+
 rea update
 ```
 
 `npx` でエージェントを設定している場合：
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

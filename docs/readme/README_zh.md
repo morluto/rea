@@ -22,7 +22,7 @@
 
 [快速开始](#快速开始) · [REA 的工作原理](#rea-的工作原理) · [可以分析什么](#可以分析什么) · [案例](#案例) · [构建 RL 环境](#build-rl-environments) · [常见问题](#常见问题) · [GNU objdump 和 Rizin 工具](../reverse-engineering-tools.md) · [文档](#文档)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -73,7 +73,8 @@ Linux 上的 Ghidra、JADX、固件工具启动和静态 JavaScript/Electron 分
 安装 Node.js 和 npm 后，运行：
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 选择智能体，检查计划中的变更并批准。设置流程会添加 REA 的 MCP 服务和匹配的工作流指引，并备份已有配置。完成后重启智能体。
@@ -95,7 +96,8 @@ MCP 默认使用紧凑输入 Schema 来减少上下文开销。需要完整字�
 检查已解包的 JavaScript/Electron 应用目录或 ASAR 文件：
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 结果包含模块、导入、Electron 边界及相关证据。将路径替换为你的目标路径，例如 Windows 上的 `"D:/apps/example"`。
@@ -103,7 +105,8 @@ npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --
 如果需要经常使用，可以安装 `rea` 命令：
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -116,6 +119,7 @@ REA 更新较快，新版本经常包含错误修复。请保持安装的版本�
 通过 `npm install --global` 或 `bun add --global` 安装的 CLI 使用：
 
 ```bash
+
 rea update
 ```
 
@@ -128,6 +132,7 @@ Bun 全局更新需要 Bun 1.2.17 或更高版本。如果使用较旧的 Bun �
 如果使用 `npx`，通过以下命令更新智能体设置：
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -294,7 +299,7 @@ REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能�
 <details>
 <summary><strong>从 skills.sh 安装 skill 有什么作用？</strong></summary>
 
-skill 为智能体提供调查指引。使用 `npx rea-agents setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../installation.md#skill-only-installation)。
+skill 为智能体提供调查指引。使用 `npx rea-agents@6.8.0 setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../installation.md#skill-only-installation)。
 
 </details>
 
@@ -320,12 +325,14 @@ REA 在本机分析目标。智能体会接收工具结果，其模型提供商�
 通过 npm 安装的 CLI 使用：
 
 ```bash
+
 rea update
 ```
 
 通过 `npx` 设置智能体时使用：
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

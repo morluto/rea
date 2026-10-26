@@ -22,7 +22,7 @@
 
 [Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
-<code>npx rea-agents setup</code>
+<code>npx rea-agents@6.8.0 setup</code>
 
 </div>
 
@@ -78,7 +78,8 @@ ke "Linux owned-process prerequisite" section mein hain.
 Node.js aur npm installed hon to yeh command chalayein:
 
 ```bash
-npx rea-agents setup
+
+npx rea-agents@6.8.0 setup
 ```
 
 Apne agents select karein, proposed changes dekhein aur approve karein. Setup
@@ -111,7 +112,8 @@ Notes ki jagah apni target app aur jis feature ko samajhna hai uska naam likhein
 Extract ki hui JavaScript/Electron app directory ya ASAR inspect karein:
 
 ```bash
-npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+
+npx -y rea-agents@6.8.0 analyze-javascript-application /absolute/path/to/app --json
 ```
 
 Natije mein modules, imports, Electron boundaries aur unke saboot milte hain.
@@ -120,7 +122,8 @@ Path ko apne target se badlein, jaise Windows par `"D:/apps/example"`.
 Rozmarra use ke liye `rea` command install karne ke liye:
 
 ```bash
-npm install --global rea-agents
+
+npm install --global rea-agents@6.8.0
 rea --help
 ```
 
@@ -136,6 +139,7 @@ hain. Apni installation updated rakhein.
 Agar CLI `npm install --global` ya `bun add --global` se install ki hai:
 
 ```bash
+
 rea update
 ```
 
@@ -158,6 +162,7 @@ di hui setup command chalayein.
 Agar aap `npx` use karte hain to agent setup is tarah update karein:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 
@@ -369,7 +374,7 @@ dekhein.
 
 Skill aapke agent ko jaanch karne ki instructions deti hai. REA ka MCP server
 register karne aur matching instructions install karne ke liye
-`npx rea-agents setup` use karein, phir agent restart karein.
+`npx rea-agents@6.8.0 setup` use karein, phir agent restart karein.
 [Sirf skill ki installation](../installation.md#skill-only-installation) dekhein.
 
 </details>
@@ -400,12 +405,14 @@ Pehle update karein; ho sakta hai recent release mein masla hal ho chuka ho.
 Agar CLI `npm install --global` ya `bun add --global` se install ki hai:
 
 ```bash
+
 rea update
 ```
 
 `npx` se agent setup ke liye:
 
 ```bash
+
 npx rea-agents@latest setup
 ```
 

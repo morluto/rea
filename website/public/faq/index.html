@@ -239,7 +239,7 @@
                       Copy
                     </button>
                   </div>
-                  <pre><code id="faq-setup">npx rea-agents@latest setup</code></pre>
+                  <pre><code id="faq-setup">npx rea-agents@6.8.0 setup</code></pre>
                 </div>
                 <p>
                   Setup registers REA's MCP connection and installs the matching
@@ -303,8 +303,11 @@
                 <p>
                   Review the changes and restart your agent. Its REA connection
                   pins a package version, so refreshing setup makes it use the
-                  new release. For one-off CLI commands, use
-                  <code>npx -y rea-agents@latest</code> followed by the command.
+                  new release.
+                  <code>@latest</code> follows every publish; use it when you
+                  intentionally want the newest release. For a version-pinned
+                  one-off CLI command, use
+                  <code>npx -y rea-agents@6.8.0</code> followed by the command.
                 </p>
               </details>
               <details class="faq-item" id="skill">
@@ -382,7 +385,7 @@
                       Copy
                     </button>
                   </div>
-                  <pre><code id="faq-cli-analysis">npx -y rea-agents@latest analyze-javascript-application \
+                  <pre><code id="faq-cli-analysis">npx -y rea-agents@6.8.0 analyze-javascript-application \
   /absolute/path/to/app --json</code></pre>
                 </div>
                 <p>
@@ -469,7 +472,7 @@
                       Copy
                     </button>
                   </div>
-                  <pre><code id="faq-doctor">npx -y rea-agents@latest doctor --client codex --json</code></pre>
+                  <pre><code id="faq-doctor">npx -y rea-agents@6.8.0 doctor --client codex --json</code></pre>
                 </div>
                 <p>
                   Replace <code>codex</code> with your client ID, such as
@@ -489,7 +492,7 @@
                       Copy
                     </button>
                   </div>
-                  <pre><code id="faq-repair">npx rea-agents@latest setup --client codex</code></pre>
+                  <pre><code id="faq-repair">npx rea-agents@6.8.0 setup --client codex</code></pre>
                 </div>
                 <p>
                   Review its plan and restart the client. If registration is
