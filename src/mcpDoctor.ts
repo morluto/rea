@@ -324,7 +324,10 @@ const inspectProductionMcpSession = async (
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
         observedIdentity.catalogDigest === catalog.digests.combined_sha256,
-      detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
+      // Identity is carried by the request-flow reply; without one it is unobserved, not missing.
+      detail: requestFlow.ok
+        ? `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`
+        : `identity not observed: ${requestFlow.error.detail}`,
     },
     {
       name: "request-flow",

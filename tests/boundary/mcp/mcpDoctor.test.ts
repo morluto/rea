@@ -385,29 +385,49 @@ describe("production MCP doctor family scopes", () => {
     },
   );
 
-  it("discovers an empty prompt inventory and explains a scope without session", async () => {
-    const result = await runProductionMcpDoctor({
-      command: process.execPath,
-      args: [resolve("scripts/rea.mjs"), "mcp"],
-      cwd: process.cwd(),
-      environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "browser" },
-    });
-    expect(result).toMatchObject({
-      healthy: false,
-      adapter: "production-stdio",
-      inventory: {
-        prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
-      },
-      request_flow: { tool: "binary_session", ok: false },
-    });
-    expect(result.checks).toContainEqual({
-      name: "request-flow",
-      ok: false,
-      detail: expect.stringMatching(
-        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu,
-      ),
-    });
-  });
+  it.each(["browser", "native"])(
+    "explains unobserved identity for a %s scope without session",
+    async (families) => {
+      const result = await runProductionMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, REA_MCP_TOOL_FAMILIES: families },
+      });
+      expect(result).toMatchObject({
+        healthy: false,
+        adapter: "production-stdio",
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+        request_flow: { tool: "binary_session", ok: false },
+        identity: {
+          observed_package_version: null,
+          observed_catalog_digest: null,
+        },
+      });
+      const scopeLimitation =
+        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu;
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: false,
+        detail: expect.stringMatching(
+          new RegExp(`^identity not observed: ${scopeLimitation.source}`, "iu"),
+        ),
+      });
+      expect(result.checks).not.toContainEqual(
+        expect.objectContaining({
+          name: "server-identity",
+          detail: expect.stringContaining("missing"),
+        }),
+      );
+      expect(result.checks).toContainEqual({
+        name: "request-flow",
+        ok: false,
+        detail: expect.stringMatching(scopeLimitation),
+      });
+    },
+  );
 
   it("fails startup instead of misreporting inventory for an invalid scope", async () => {
     const result = await runProductionMcpDoctor({
@@ -638,6 +658,14 @@ describe("production MCP doctor probe validation", () => {
         name: "initialize",
         ok: true,
         detail: expect.any(String),
+      });
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: mode !== "invalid",
+        detail:
+          mode === "invalid"
+            ? expect.stringMatching(/^identity not observed: .*output schema/iu)
+            : expect.stringMatching(/^package=.+; catalog=.+$/u),
       });
       if (mode === "invalid")
         expect(result.checks).toContainEqual({
