@@ -52,6 +52,35 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(report.load_config?.inferences[0]?.evidence_kind).toBe("inferred");
     expect(report.load_config?.se_handler_count).toBe(bits === 32 ? 2 : null);
   });
+  it.each([
+    [0x2100, 0x2200, 0x1700],
+    [0x2180, 0x2280, null],
+    [0x2200, 0x2300, null],
+  ] as const)(
+    "retains a TLS template at [%s, %s) without requiring file backing",
+    async (start, end, fileOffset) => {
+      const bytes = peLoadConfigImage({
+        bits,
+        zeroFillCallback: true,
+        rawDataRange: [start, end],
+      });
+      const base = bits === 64 ? 0x180000000n : 0x10000000n;
+      const report = await parsePeLoadConfig(
+        bytes,
+        { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+        inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+      );
+      expect(report.tls).toMatchObject({
+        start_address_of_raw_data: `0x${(base + BigInt(start)).toString(16)}`,
+        end_address_of_raw_data: `0x${(base + BigInt(end)).toString(16)}`,
+        raw_data_size: 256,
+        raw_data_file_offset: fileOffset,
+        raw_data_section: ".text",
+      });
+      expect(report.tls?.callbacks).toHaveLength(1);
+      expect(report.load_config?.guard_flags?.raw).toBe(0x500);
+    },
+  );
   it("honors Size even when directory bytes contain newer fields", async () => {
     const report = await parse({
       bits,
