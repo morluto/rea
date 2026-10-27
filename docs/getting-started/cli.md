@@ -690,6 +690,12 @@ an exact result when the target bytes, operation, parameters, provider and
 settings match. Mutations and cursor-dependent calls are excluded from the
 cache. Snapshot files are local and use owner-only permissions.
 
+Malformed snapshot headers or entries remain integrity failures. The diagnostic
+keeps the first schema issue's location and message, plus the number of further
+issues, rather than replacing it with a constant validation reason. File-selection
+and JSON-syntax failures remain distinct; internal exception objects and stacks
+are not serialized into the public error.
+
 A binary CLI replay reports the current invocation's selected path while leaving
 the saved Evidence and snapshot query unchanged. See
 [caller-selected paths](../reference/mcp-contracts.md#caller-selected-paths)
