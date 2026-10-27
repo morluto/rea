@@ -338,6 +338,8 @@ const malformedUser = " \tuserId=unknown  \t";
 const unsafeApp = ` \tappId=${UNSAFE}  \t`;
 const overflowUser = ` \tuserId=${OVERFLOW}  \t`;
 const malformedApp = " \tappId=-1  \t";
+const attachedUser = "  userId=10123abc";
+const attachedApp = "  appId=20002abc";
 const cappedPackageIssues = Array.from({ length: 12 }, (_, index) => ({
   command: "dumpsys package",
   field: "user_id",
@@ -428,6 +430,30 @@ const packageScenarios = [
     ],
     userId: 0,
     issues: cappedPackageIssues,
+  },
+  {
+    name: "attached text leaves the only declaration unknown",
+    lines: [attachedUser],
+    userId: null,
+    issues: [
+      {
+        command: "dumpsys package",
+        field: "user_id",
+        reason: "invalid_format",
+        raw_line: attachedUser,
+      },
+    ],
+  },
+  {
+    name: "attached text before and after a valid declaration",
+    lines: [attachedUser, "  userId=10456", attachedApp],
+    userId: 10456,
+    issues: [attachedUser, attachedApp].map((raw_line) => ({
+      command: "dumpsys package",
+      field: "user_id",
+      reason: "invalid_format",
+      raw_line,
+    })),
   },
 ];
 
