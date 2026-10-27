@@ -422,7 +422,10 @@ export const parseDumpsysPackageOutput = (
     )
       details.installerPackageName = absentInstallerOrName(value);
     else if (key === "userId" || key === "appId") {
-      const parsed = /^(\d+)/u.exec(value);
+      // The decimal ID must end its token: Package Manager separates later
+      // fields with whitespace, so attached text makes the declaration
+      // malformed instead of admitting its digit prefix.
+      const parsed = /^(\d+)(?:\s|$)/u.exec(value);
       const admitted = parsed === null ? null : safeInteger(parsed[1]!);
       if (admitted === null)
         issues.add({
