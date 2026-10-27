@@ -40,6 +40,8 @@ export interface RegistrationRunnerLaunch {
   readonly exitCode: string | number | null;
   readonly signal: string | null;
   readonly stdout: string;
+  /** Machine-readable consumers must reject an incomplete excerpt. */
+  readonly stdoutTruncated?: boolean;
   readonly stderr: string;
   readonly timedOut: boolean;
   readonly spawnError?: string;
@@ -221,6 +223,7 @@ export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
       exitCode: exit?.code ?? exit?.signal ?? null,
       signal: exit?.signal ?? null,
       stdout: stdout.text,
+      stdoutTruncated: stdout.truncated,
       stderr: stderr.text,
       timedOut,
       ...(spawnError === undefined ? {} : { spawnError }),

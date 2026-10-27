@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { withPluginSetup } from "./SetupPluginHost.js";
@@ -27,8 +28,22 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   let inspectionFailure: string | undefined;
   let inventory: string | undefined;
   let failReadback = false;
+  let interruptAt: number | undefined;
+  let doctorsAtInterrupt = 0;
   const launch: RegistrationRunnerLauncher = async (command, args) => {
     calls.push({ command, args });
+    if (calls.length === interruptAt) {
+      doctorsAtInterrupt = base.doctorCalls;
+      return {
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        interruptedSignal: "SIGINT",
+        cleanupFailure: "controlled cleanup refusal",
+      };
+    }
     const listing = args[1] === "list";
     if (listing && inspectionFailure !== undefined)
       return {
@@ -96,8 +111,102 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
     failReadback: () => {
       failReadback = true;
     },
+    interrupt: (at: number) => {
+      interruptAt = at;
+    },
+    doctorsAtInterrupt: () => doctorsAtInterrupt,
   };
 };
+
+it.each([true, false])(
+  "does not inspect Claude on a failed preapproval plan (dryRun=%s)",
+  async (dryRun) => {
+    const f = fixture("claude_code");
+    f.base.clients = [
+      ...f.base.clients,
+      { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+    ];
+    f.base.clientInspections.set("cursor", {
+      status: "invalid",
+      remediation: "Malformed Cursor configuration",
+    });
+    const result = await runSetup(
+      {
+        ...f.setupOptions,
+        approved: false,
+        dryRun,
+        clientIds: ["claude_code", "cursor"],
+        readinessScope: {
+          clients: ["claude_code", "cursor"],
+          providers: [],
+          skill: true,
+        },
+      },
+      f.host(),
+    );
+    expect(result.status).toBe("needs_human");
+    expect(result.remediation).toContain("Malformed Cursor");
+    expect(f.calls).toEqual([]);
+  },
+);
+
+it.each(["codex", "claude_code"])(
+  "permits plugin-only %s setup when the direct launcher is private",
+  async (id) => {
+    const f = fixture(id);
+    f.base.registrationCommandBlocker = "Install REA outside the package.";
+    expect((await runSetup(f.setupOptions, f.host())).status).toBe("ready");
+    expect(f.mutations()).toHaveLength(2);
+    expect(f.base.configurations).toBe(0);
+  },
+);
+
+it("retains the private-launcher blocker for mixed plugin and direct setup", async () => {
+  const f = fixture("claude_code");
+  f.base.registrationCommandBlocker = "Install REA outside the package.";
+  f.base.clients = [
+    ...f.base.clients,
+    { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+  ];
+  const result = await runSetup(
+    { ...f.setupOptions, clientIds: ["claude_code", "cursor"] },
+    f.host(),
+  );
+  expect(result.status).toBe("needs_human");
+  expect(result.remediation).toBe(f.base.registrationCommandBlocker);
+  expect(f.calls).toEqual([]);
+  expect(f.base.configurations).toBe(0);
+});
+
+it.each([1, 2, 3, 4, 5])(
+  "stops after a plugin interrupt at command %s and still closes setup",
+  async (at) => {
+    const f = fixture("claude_code");
+    f.base.clients = [
+      ...f.base.clients,
+      { name: "cursor", configPath: "/fixture/cursor.json", format: "json" },
+    ];
+    let closed = false;
+    const host = f.host();
+    const close = host.close?.bind(host);
+    host.close = async () => {
+      closed = true;
+      return close?.();
+    };
+    f.interrupt(at);
+    await expect(
+      runSetup(
+        { ...f.setupOptions, clientIds: ["claude_code", "cursor"] },
+        host,
+      ),
+    ).rejects.toBeInstanceOf(AnalysisCancelledError);
+    expect(closed).toBe(true);
+    expect(f.calls).toHaveLength(at);
+    expect(f.base.doctorCalls).toBe(f.doctorsAtInterrupt());
+    // The final verification happens after the earlier approved Cursor write.
+    expect(f.base.configurations).toBe(at === 5 ? 1 : 0);
+  },
+);
 
 it.each(["codex", "claude_code"])(
   "installs %s through its own marketplace without direct MCP or skill writes",

@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { stat } from "node:fs/promises";
+import { win32 } from "node:path";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { windowsBatchCommand } from "../process/WindowsBatchCommand.js";
+import {
+  isWindowsBatchFile,
+  windowsBatchCommand,
+} from "../process/WindowsBatchCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   launchRegistrationRunnerCommand,
@@ -36,7 +42,7 @@ const claudePlugins = z.array(
   }),
 );
 
-const launchPluginCommand: RegistrationRunnerLauncher = (
+const launchPluginCommand: RegistrationRunnerLauncher = async (
   command,
   arguments_,
   options,
@@ -44,14 +50,63 @@ const launchPluginCommand: RegistrationRunnerLauncher = (
   if (options.platform !== "win32")
     return launchRegistrationRunnerCommand(command, arguments_, options);
   const selectedEnvironment = snapshotEnvironment(options.env, "win32");
-  // cmd resolves both native and npm .cmd clients using the selected child PATH.
   const environment = {
     ...selectedEnvironment,
     PATHEXT: selectedEnvironment.PATHEXT ?? ".COM;.EXE;.BAT;.CMD",
   };
+  // Resolve PATH explicitly: cmd would otherwise prefer a file in the project CWD.
+  let executable: string | undefined;
+  for (const entry of (selectedEnvironment.PATH ?? "").split(";")) {
+    if (entry === "") continue;
+    const directory =
+      entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry;
+    if (directory === "") continue;
+    for (const extension of environment.PATHEXT.split(";")) {
+      if (![".com", ".exe", ".bat", ".cmd"].includes(extension.toLowerCase()))
+        continue;
+      const candidate = win32.resolve(
+        options.cwd,
+        directory,
+        `${command}${extension}`,
+      );
+      try {
+        if ((await stat(candidate)).isFile()) {
+          executable = candidate;
+          break;
+        }
+      } catch (cause: unknown) {
+        const code =
+          cause instanceof Error && "code" in cause ? cause.code : undefined;
+        if (code !== "ENOENT" && code !== "ENOTDIR")
+          return {
+            exitCode: null,
+            signal: null,
+            stdout: "",
+            stderr:
+              "Client PATH lookup failed. Check access to the selected PATH directories.",
+            timedOut: false,
+          };
+      }
+    }
+    if (executable !== undefined) break;
+  }
+  if (executable === undefined)
+    return {
+      exitCode: null,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      spawnError: "ENOENT: client was not found on the selected PATH",
+    };
+  if (!isWindowsBatchFile(executable))
+    return launchRegistrationRunnerCommand(executable, arguments_, {
+      ...options,
+      env: environment,
+    });
   const invocation = windowsBatchCommand({
     environment,
-    batchPath: command,
+    batchPath: executable,
     arguments: arguments_,
   });
   return launchRegistrationRunnerCommand(
@@ -74,26 +129,33 @@ export class SetupPluginClient {
     private readonly launch: RegistrationRunnerLauncher = launchPluginCommand,
   ) {}
 
-  private run(arguments_: readonly string[], timeoutMs: number) {
-    return this.launch(this.command, arguments_, {
+  private async run(arguments_: readonly string[], timeoutMs: number) {
+    const result = await this.launch(this.command, arguments_, {
       env: this.environment,
       cwd: process.cwd(),
       timeoutMs,
       platform: process.platform,
       resources: this.resources,
     });
+    if (result.interruptedSignal !== undefined)
+      throw new AnalysisCancelledError("setup", {
+        cause: result.interruptedSignal,
+        diagnostics: { interrupted_signal: result.interruptedSignal },
+      });
+    return result;
   }
 
   async inspect(): Promise<PluginInspection> {
     const result = await this.run(["plugin", "list", "--json"], 30_000);
-    if (
-      result.cleanupFailure !== undefined ||
-      result.timedOut ||
-      result.interruptedSignal !== undefined
-    )
+    if (result.cleanupFailure !== undefined || result.timedOut)
       return {
         status: "invalid",
         remediation: `${this.command} plugin inspection did not finish safely. Check the client and rerun setup.`,
+      };
+    if (result.stdoutTruncated === true)
+      return {
+        status: "invalid",
+        remediation: `${this.command} plugin inventory exceeded the 64 KiB output capture limit. Use the client's plugin manager directly; setup cannot verify this inventory.`,
       };
     if (result.exitCode !== 0) {
       if (
@@ -167,8 +229,7 @@ export class SetupPluginClient {
       if (
         result.exitCode !== 0 ||
         result.timedOut ||
-        result.cleanupFailure !== undefined ||
-        result.interruptedSignal !== undefined
+        result.cleanupFailure !== undefined
       )
         return `${this.command} ${arguments_.join(" ")} did not complete. Run the command in your terminal, resolve its error, then rerun setup. Any successfully added marketplace is retained; no direct MCP registration was created.`;
     }

@@ -34,11 +34,19 @@ for (const [id, command] of [
   cliTest(
     `public setup installs the ${id} plugin after approval and is idempotent`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory("rea-plugin-first-");
+      const root = await createTestTempDirectory("rea-plugin-first-");
+      const home = join(root, "client home");
+      await mkdir(home);
       const bin = join(home, "bin");
       await mkdir(bin);
       const script = join(bin, "client.mjs");
       await writeFile(script, clientSource);
+      const hijackMarker = join(home, "client-hijacked");
+      if (process.platform === "win32")
+        await writeFile(
+          join(home, `${command}.cmd`),
+          `@echo hijacked>"${hijackMarker}"\r\n@exit /b 1\r\n`,
+        );
       await writeFile(
         join(bin, `${command}${process.platform === "win32" ? ".cmd" : ""}`),
         process.platform === "win32"
@@ -113,6 +121,9 @@ for (const [id, command] of [
           : {}),
       });
       expect(await readFile(state, "utf8")).toBe(afterInstall);
+      await expect(access(hijackMarker)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       expect(await readFile(config, "utf8")).toBe(
         original ?? '{"existing":true}',
       );

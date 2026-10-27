@@ -1572,6 +1572,12 @@ Rerunning setup leaves an enabled plugin installed without repeating the install
 Claude Code's inventory command can migrate client settings, so setup defers that
 command until approval. Its plan includes the inventory and conditional install
 or enable commands even on reruns; an already enabled plugin needs no reinstall.
+Preapproval failure reports also leave Claude's inventory untouched. Interrupting
+a plugin command stops setup before subsequent client writes or readiness probes,
+while retained child cleanup remains retryable. Windows client lookup uses the
+selected PATH rather than implicitly running a same-named file in the project.
+Inventories larger than the 64 KiB capture limit report that limit explicitly;
+use the client plugin manager directly for those inventories.
 
 Existing direct registrations remain direct. Older Codex clients without plugin
 commands, custom provider environment settings, a Hopper installation plan,

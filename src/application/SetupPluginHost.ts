@@ -29,6 +29,7 @@ class PluginSetupHost {
   ]);
   private providerSettings = false;
   private configuredDirectClient = false;
+  private readonly approvedPluginClients = new Set<string>();
   private readonly pending = new Map<string, Promise<ClientRoute>>();
   private readonly routes = new Map<string, ClientRoute>();
   constructor(
@@ -207,6 +208,7 @@ class PluginSetupHost {
         detail:
           "Client configuration changed after the plugin plan was approved. Rerun setup to avoid adding a duplicate server.",
       };
+    this.approvedPluginClients.add(client.name);
     const state = await selected.manager.inspect();
     const failure =
       state.status === "invalid"
@@ -264,6 +266,18 @@ class PluginSetupHost {
       ? this.host.prewarmRegistrationRunner()
       : { status: "skipped", reason: "direct_launcher" };
 
+  private inspectPluginReadiness = async (
+    id: string,
+  ): Promise<PluginInspection | undefined> => {
+    const selected = this.routes.get(id);
+    if (
+      selected?.mode !== "plugin" ||
+      (id === "claude_code" && !this.approvedPluginClients.has(id))
+    )
+      return undefined;
+    return selected.manager.inspect();
+  };
+
   private doctor: NonNullable<SetupHost["doctor"]> = async (scope) => {
     const pluginIds = (scope?.clients ?? []).filter(
       (id) => this.routes.get(id)?.mode === "plugin",
@@ -287,18 +301,17 @@ class PluginSetupHost {
     );
     const checks: DoctorCheck[] = [];
     for (const id of pluginIds) {
-      const selected = this.routes.get(id);
-      const state: PluginInspection | undefined =
-        selected?.mode === "plugin"
-          ? await selected.manager.inspect()
-          : undefined;
+      const state = await this.inspectPluginReadiness(id);
       const healthy =
         state?.status === "available" && state.installed && state.enabled;
       checks.push({
         name: `plugin:${id}`,
         ok: healthy,
         classification: healthy ? "healthy" : "config_drift",
-        detail: `${REA_PLUGIN_ID} must be installed and enabled in the client.`,
+        detail:
+          state === undefined
+            ? "Plugin inventory was not inspected because this client was not approved."
+            : `${REA_PLUGIN_ID} must be installed and enabled in the client.`,
       });
     }
     return {
