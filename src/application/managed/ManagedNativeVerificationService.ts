@@ -45,14 +45,6 @@ export const executeManagedNativeBoundaries = (
   });
 };
 
-/** Return only derived Evidence for callers that do not need source observations. */
-export const verifyManagedNativeBoundariesEvidence = (
-  rawInput: unknown,
-): Result<Evidence, AnalysisError> => {
-  const execution = executeManagedNativeBoundaries(rawInput);
-  return execution.ok ? ok(execution.value.evidence) : execution;
-};
-
 const createManagedNativeVerificationEvidence = (
   source: ManagedNativeVerificationSource,
   result: ManagedNativeVerificationResult,

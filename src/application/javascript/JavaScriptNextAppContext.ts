@@ -1,20 +1,36 @@
 import { posix } from "node:path";
 
-import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { ArtifactInventoryCoverage } from "../../domain/artifactGraph.js";
+import type {
+  JavaScriptArtifactFileSet,
+  JavaScriptArtifactFile,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { NextAppSourceContext } from "../../domain/javascript/javascriptRoutePaths.js";
 import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 
 /** Package declarations and inventoried directories own source-router applicability. */
 export const createJavaScriptNextAppContext = (
-  files: readonly JavaScriptArtifactFile[],
+  fileSet: Pick<
+    JavaScriptArtifactFileSet,
+    "files" | "unavailable_relevant_files"
+  >,
   documents: JavaScriptJsonDocuments,
   directories: ReadonlySet<string>,
+  coverage: ArtifactInventoryCoverage,
 ): ((
   file: Pick<JavaScriptArtifactFile, "path" | "container_sha256">,
 ) => NextAppSourceContext) => {
   const packages = new Map(
-    files
+    fileSet.files
+      .filter(({ kind }) => kind === "package-json")
+      .map((file) => [
+        compositeKey([file.container_sha256, posix.dirname(file.path)]),
+        file,
+      ]),
+  );
+  const unavailablePackages = new Map(
+    fileSet.unavailable_relevant_files
       .filter(({ kind }) => kind === "package-json")
       .map((file) => [
         compositeKey([file.container_sha256, posix.dirname(file.path)]),
@@ -28,9 +44,15 @@ export const createJavaScriptNextAppContext = (
       ;
       directory = posix.dirname(directory)
     ) {
-      const manifest = packages.get(
-        compositeKey([file.container_sha256, directory]),
-      );
+      const key = compositeKey([file.container_sha256, directory]);
+      const unavailable = unavailablePackages.get(key);
+      if (unavailable !== undefined)
+        return {
+          kind: "unknown",
+          package: null,
+          reason: `The nearest owning package manifest ${unavailable.path}${unavailable.inventory_occurrence_id === undefined ? "" : ` (inventory occurrence ${unavailable.inventory_occurrence_id})`} is unavailable: ${unavailable.limitations?.join("; ") || "Inventoried package bytes are unavailable."}`,
+        };
+      const manifest = packages.get(key);
       if (manifest !== undefined) {
         const identity = {
           path: manifest.path,
@@ -53,6 +75,14 @@ export const createJavaScriptNextAppContext = (
             directory: compiled,
             package: identity,
           };
+        // Selecting src/app requires proving that the higher-priority app is absent.
+        if (coverage.status !== "complete" && !directories.has(`${prefix}app`))
+          return {
+            kind: "unknown",
+            package: identity,
+            reason:
+              "Incomplete artifact traversal does not establish whether the owning package has a higher-priority app directory.",
+          };
         let root = roots.get(manifest);
         if (root === undefined) {
           root =
@@ -65,6 +95,12 @@ export const createJavaScriptNextAppContext = (
           ? { kind: "app-directory", directory: root, package: identity }
           : { kind: "outside-app-directory", package: identity };
       }
+      if (coverage.status !== "complete")
+        return {
+          kind: "unknown",
+          package: null,
+          reason: `Incomplete artifact traversal does not establish whether ${directory === "." ? "" : `${directory}/`}package.json owns this source.`,
+        };
       if (directory === "." || directory === "/") break;
     }
     return {

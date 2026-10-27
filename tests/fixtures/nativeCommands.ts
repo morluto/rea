@@ -10,7 +10,14 @@ import type {
   NativeCommandCapture,
   NativeCommandOptions,
   NativeCommandRunner,
+  ResolvedTool,
 } from "../../src/native/CommandRunner.js";
+
+/** Resolver seam for fixtures with identical invocation and physical paths. */
+export const nativeResolvedToolFixture = (
+  path: string,
+  sha256: string,
+): ResolvedTool => ({ invocationPath: path, resolvedPath: path, sha256 });
 
 /** Replay captured native command outputs through the production runner seam. */
 export class NativeFixtureRunner implements NativeCommandRunner {

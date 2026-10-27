@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { timedCaptureEvidence } from "../../fixtures/analysisView.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import {
   Client,
@@ -56,6 +57,36 @@ const connect = async (url: URL) => {
   await client.connect(transport);
   return client;
 };
+
+processTest(
+  "replays recorded own JSON keys without interpreting inherited members as fields",
+  async ({ processes }) => {
+    const body = JSON.parse(
+      '{"id":1,"__proto__":{"source":"recorded"},"nested":{"constructor":null,"__proto__":[false,0,""]}}',
+    );
+    const fixture = environmentStateServeFixture(
+      timedCaptureEvidence([["GET", "/api/books/1", body]]),
+    );
+    const started = await serveReplayOnly(processes, {}, fixture);
+    const client = await connect(started.url);
+    try {
+      const response = await client.callTool({
+        name: "get_books_by_id",
+        arguments: { id: "1" },
+      });
+      expect(response.isError).toBeFalsy();
+      expect(response.structuredContent).toMatchObject({ body });
+      const replayed = jsonObjectSchema.parse(
+        jsonObjectSchema.parse(response.structuredContent).body,
+      );
+      expect(Object.hasOwn(replayed, "__proto__")).toBe(true);
+      expect(Object.hasOwn(replayed, "constructor")).toBe(false);
+    } finally {
+      await client.close();
+    }
+  },
+  HTTP_BOUNDARY_TIMEOUT_MS,
+);
 
 processTest(
   "validates repeated query arrays through the advertised MCP contract",

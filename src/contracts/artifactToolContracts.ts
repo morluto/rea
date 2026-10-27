@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
@@ -5,7 +6,6 @@ import { artifactOutputSchemas } from "./toolOutputSchemaGroups.js";
 import { artifactIntegrityPolicySchema } from "../domain/artifactIntegrityPolicy.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { appleAssetCatalogInputSchema } from "../domain/apple/appleAssetCatalog.js";
 import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
@@ -52,12 +52,13 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
 };
 
 const artifact = <
-  Name extends string,
+  Name extends keyof typeof artifactOutputSchemas,
   Schema extends z.ZodType<Readonly<Record<string, unknown>>>,
 >(
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(artifactOutputSchemas, name);
   return {
@@ -66,6 +67,7 @@ const artifact = <
     description,
     kind: "artifact-provider",
     requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema,
     outputSchema,
     examples: [
@@ -83,6 +85,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
     "inspect_artifact",
     "Inspect an active archive or application package, including Node.js SEA carriers, in one call. By default returns the complete content-addressed artifact graph once, as the typed nested inventory Evidence, with root and integrity observations, integrity contradictions, hypotheses, unexplored branches, limitations, and next probes inline. For PCK and large containers prefer detail summary: it retains the complete inspection and returns its derived summary view; read exact paths, batch occurrence/content IDs and selected fields with inspect_analysis_view using parent_evidence_id. This changes delivery, not inventory coverage. Read-only DMG mounting is used automatically on supported macOS hosts. Integrity mismatches fail by default; record-and-continue keeps mismatches explicitly untrusted. It does not extract files; use extract_artifact to materialize regular contents of supported formats. DMG extraction is unavailable; use a caller-managed read-only mount on macOS to access its files.",
     artifactInspectionInputSchema,
+    { evidenceParameters: "preserve-detail" },
   ),
   artifact(
     "extract_artifact",
@@ -103,6 +106,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
           "Omitted or complete returns the complete decoded graph Evidence. summary retains that complete Evidence in this session and returns its inspect_analysis_view summary; use normalized_result.parent_evidence_id for interface-builder pages.",
         ),
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   artifact(
     "inspect_keyed_archive",

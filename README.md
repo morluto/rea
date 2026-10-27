@@ -96,6 +96,12 @@ complete advertised field guidance and nested validation details. Both profiles
 keep the full tool set and canonical server validation. See
 "Compact input schema profile" in the MCP contracts guide.
 
+Complete output schemas are advertised by default. If your client caps the
+complete `tools/list` frame, set `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` to
+bound each advertised output schema, or `off` to omit output schemas entirely.
+Both settings keep canonical server-side validation and complete structured
+results. See "Output schemas" in the MCP contracts guide.
+
 ### Ask your agent
 
 ```text

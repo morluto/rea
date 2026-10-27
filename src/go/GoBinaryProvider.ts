@@ -1,18 +1,17 @@
-import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import {
-  readStableArtifact,
-  completedStableArtifact,
-} from "../artifacts/readStableArtifact.js";
+  projectStableArtifactFailure,
+  projectArtifactCloseFailure,
+} from "../artifacts/StableArtifactFailure.js";
+import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
+import { readStableArtifact } from "../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-  bindArtifactFileCleanup,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 import type { GoBinaryPort } from "../application/go/GoBinaryPort.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -32,7 +31,6 @@ import {
 } from "../domain/go/goBinary.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
@@ -40,7 +38,6 @@ import {
   BinaryFormatFailure,
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
-import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
 
 /** Bundled format reader identity; embedded compiler versions are separate observed facts. */
 export const GO_BINARY_PROVIDER_IDENTITY = {
@@ -150,30 +147,13 @@ const failureForPrimary = (
 
 const failureFor = (cause: unknown, path: string): AnalysisError => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
-  const snapshot = completedStableArtifact(cause);
-  if (snapshot !== undefined) {
-    // This inspect boundary acquires exactly one StableArtifactSnapshot before
-    // metadata decoding. Completion describes that read, not a decoded report.
-    primary.retainPartialObservation(
-      fileSnapshotPartialObservationSchema.parse({
-        kind: "file-snapshot-hash",
-        path,
-        sha256: snapshot.sha256,
-        bytes: snapshot.bytes.length,
-      }),
-    );
-  }
-  if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
-    return primary;
-  const cleanup = new ProviderCleanupError(
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    path,
     GO_BINARY_PROVIDER_IDENTITY.id,
-    cause.cleanup.resources,
-    { reason: cause.cleanup.reason },
-    { operation: OPERATION, cause },
+    OPERATION,
   );
-  const error = analysisErrorWithCleanupFailure(primary, cleanup, OPERATION);
-  bindArtifactFileCleanup(cause, error);
-  return error;
 };
 
 const outputLimit = (path: string) =>
@@ -245,19 +225,11 @@ export class GoBinaryProvider implements GoBinaryPort {
     try {
       await this.#resources.close();
     } catch (cause: unknown) {
-      if (
-        !(cause instanceof ArtifactReaderFailure) ||
-        cause.cleanup === undefined
-      )
-        throw cause;
-      const error = new ProviderCleanupError(
+      throw projectArtifactCloseFailure(
+        cause,
         GO_BINARY_PROVIDER_IDENTITY.id,
-        cause.cleanup.resources,
-        { reason: cause.cleanup.reason },
-        { cause, operation: OPERATION },
+        OPERATION,
       );
-      bindArtifactFileCleanup(cause, error);
-      throw error;
     }
   }
 

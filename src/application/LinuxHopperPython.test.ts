@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  ExecFileOutputCancelledError,
+  execFileOutput,
+} from "../process/ExecFileOutput.js";
 import { inspectLinuxHopperPythonRuntime } from "./LinuxHopperPython.js";
 
 const response = (value: unknown) => {
@@ -128,6 +131,50 @@ describe("distribution Python runtime inspection", () => {
 });
 
 describe("distribution Python process cleanup", () => {
+  it("retains output failure when cancellation arrives during command cleanup", async () => {
+    const directory = await createTestTempDirectory("rea-python-failure-stop-");
+    const stopping = join(directory, "stopping");
+    const release = join(directory, "release");
+    const controller = new AbortController();
+    const program = `
+const fs = require('node:fs');
+process.on('SIGTERM', () => {
+  fs.writeFileSync(${JSON.stringify(stopping)}, 'stopping');
+  const timer = setInterval(() => {
+    if (fs.existsSync(${JSON.stringify(release)})) {
+      clearInterval(timer);
+      process.exit(0);
+    }
+  }, 10);
+});
+process.stdout.write(Buffer.alloc(128 * 1024, 120));
+setInterval(() => {}, 1000);
+`;
+    const execution = inspectLinuxHopperPythonRuntime(
+      process.env,
+      controller.signal,
+      (_command, _arguments, options) =>
+        execFileOutput(process.execPath, ["-e", program], options),
+    );
+    try {
+      await vi.waitFor(() => access(stopping), {
+        timeout: 5_000,
+        interval: 10,
+      });
+      controller.abort({ request: "cancel during failed command cleanup" });
+    } finally {
+      await writeFile(release, "release");
+      await execution;
+    }
+    expect(await execution).toMatchObject({
+      ok: false,
+      error: {
+        reason: "query_failed",
+        cause: { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" },
+      },
+    });
+  });
+
   it.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/python3"))(
     "waits for a delayed Python exit before completing cancellation",
     async () => {
@@ -194,6 +241,22 @@ while True:
 });
 
 describe("distribution Python isolation and cancellation", () => {
+  it("uses the producer's cancellation reason without requiring an aborted caller", async () => {
+    const reason = { producer: "interrupted command" };
+    const result = await inspectLinuxHopperPythonRuntime(
+      {},
+      undefined,
+      async () => {
+        throw new ExecFileOutputCancelledError(reason);
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { reason: "cancelled", cause: reason },
+    });
+    if (!result.ok) expect(result.error.cause).toBe(reason);
+  });
+
   it("preserves cancellation and starts no interpreter for an already cancelled query", async () => {
     const controller = new AbortController();
     const reason = new Error("caller cancellation");

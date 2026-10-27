@@ -22,6 +22,9 @@ const GUARDED_WORKFLOWS = new Set([
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
 // analyzes the built C fixture as well as its own applications.
 const FIXTURE_SOURCES = [
+  "scripts/build-conformance-fixtures.mjs",
+  "scripts/verify-conformance-fixtures.mjs",
+  "scripts/lib/conformance-fixtures.mjs",
   "tests/conformance/c/**",
   "tests/conformance/napi/**",
   "tests/conformance/objc/**",

@@ -142,6 +142,7 @@ export type BinaryContainer = BinaryContainerFacts &
         readonly format: "elf";
         readonly elf: {
           readonly machine: number;
+          readonly type: number;
           readonly dynamicSegments: readonly ElfDynamicSegment[];
         };
       }

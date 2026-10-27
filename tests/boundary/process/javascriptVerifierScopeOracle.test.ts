@@ -114,3 +114,30 @@ it("parses explicit per-path expectations without borrowing the production phase
     }).success,
   ).toBe(false);
 });
+
+it("retains prototype-named source paths in independent expectations", () => {
+  const input = Object.fromEntries([
+    ["__proto__", expected],
+    ["constructor", expected],
+  ]);
+  const parsed = structuredScopeExpectationsSchema.parse(input);
+  expect(Object.keys(parsed)).toEqual(["__proto__", "constructor"]);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(parsed["__proto__"]).toEqual(expected);
+});
+
+it("validates prototype-named expectations and retains the nonempty path policy", () => {
+  for (const entry of [
+    null,
+    { ...expected, operation: "wrong" },
+    { ...expected, analysis_status: "wrong" },
+  ])
+    expect(
+      structuredScopeExpectationsSchema.safeParse(
+        Object.fromEntries([["__proto__", entry]]),
+      ).success,
+    ).toBe(false);
+  expect(
+    structuredScopeExpectationsSchema.safeParse({ "": expected }).success,
+  ).toBe(false);
+});

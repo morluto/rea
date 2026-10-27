@@ -1,3 +1,5 @@
+import { readFieldDefinitionRow } from "./ManagedFieldDefinitionRows.js";
+import { readMemberReferenceRowFacts } from "./ManagedMemberReferenceRows.js";
 import { readMethodDefinitionRow } from "./ManagedMethodDefinitionRows.js";
 import { jsonStringByteLength } from "../domain/jsonStringByteLength.js";
 import { isManagedMemberReferenceInstruction } from "../domain/managed/managedMemberInstructionFacts.js";
@@ -8,7 +10,10 @@ import {
 } from "./ManagedDecodeBudget.js";
 import type { ManagedPeLayout } from "./ManagedPeReader.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
-import type { ManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  type ManagedMetadataLayout,
+} from "./ManagedMetadataLayout.js";
 import {
   metadataSignature,
   memberTargetIdentity,
@@ -82,12 +87,12 @@ export const parseFields = (
   );
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 4, row);
-      const flags = cursor.readUInt16();
+      const { token, rowOffset, flags, nameIndex, signatureIndex } =
+        readFieldDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
       const owner =
@@ -95,7 +100,6 @@ export const parseFields = (
           ? 0
           : (readManagedValue(() => ownerRow(row), issues) ?? 0);
       const declared = ranges[owner - 1];
-      const token = metadataToken(4, row);
       core.set(token, {
         token,
         name,
@@ -106,7 +110,7 @@ export const parseFields = (
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
       );
       const decoded = budgetedSignature(
@@ -130,7 +134,7 @@ export const parseFields = (
       });
       fields.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         declaring_type_token: declared?.token ?? null,
         declaring_type: declared?.fullName ?? null,
         name,
@@ -179,8 +183,8 @@ export const parseExportedTypes = (
       const token = metadataToken(39, row);
       const implementation = decodeMetadataCodedIndex(
         implementationRaw,
-        2,
-        [38, 35, 39],
+        MANAGED_CODED_INDEXES.Implementation.bits,
+        MANAGED_CODED_INDEXES.Implementation.tables,
         layout.rowCounts,
       );
       if (implementation.kind !== "valid")
@@ -234,34 +238,25 @@ export const parseMemberRefs = (
   const table = layout.table(10);
   for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
     readManagedValue(() => {
-      const cursor = metadataRowCursor(bytes, layout, 10, row);
-      const parentRaw = cursor.readIndex(
-        layout.codedIndexSize("MemberRefParent"),
-      );
+      const { token, rowOffset, parentRaw, parent, nameIndex, signatureIndex } =
+        readMemberReferenceRowFacts(bytes, layout, row);
       const name = readMetadataString(
         bytes,
         layout,
-        cursor.readIndex(layout.stringIndexSize),
+        nameIndex,
         layout.strings.size,
       );
       const sig = readMetadataBlob(
         bytes,
         layout,
-        cursor.readIndex(layout.blobIndexSize),
+        signatureIndex,
         layout.blob?.size ?? 0,
-      );
-      const token = metadataToken(10, row);
-      const parent = decodeMetadataCodedIndex(
-        parentRaw,
-        3,
-        [2, 1, 26, 6, 27],
-        layout.rowCounts,
       );
       if (parent.kind !== "valid")
         issues.push({
           code: "invalid-row",
           scope: `metadata.MemberRef:${token}`,
-          offset: cursor.start,
+          offset: rowOffset,
           detail:
             parent.kind === "null"
               ? "MemberRef parent coded index 0x0 is null, but the Class column must reference a row"
@@ -278,7 +273,7 @@ export const parseMemberRefs = (
       );
       refs.push({
         token,
-        row_offset: cursor.start,
+        row_offset: rowOffset,
         parent_token: parentToken,
         parent_name: parentName,
         name,
@@ -374,6 +369,7 @@ export const parseMethods = ({
         flags,
         nameIndex,
         signatureIndex,
+        implementation,
       } = readMethodDefinitionRow(bytes, layout, row);
       const name = readMetadataString(
         bytes,
@@ -416,7 +412,7 @@ export const parseMethods = ({
         ),
       });
       const read = methodBody(bytes, pe, rva, {
-        implementation: { implFlags, flags },
+        implementation,
         budget: managedDecodeBudget(layout),
         metadataLayout: layout,
         methodToken: token,

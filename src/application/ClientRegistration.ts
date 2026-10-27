@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -141,7 +142,7 @@ export const parseClientRegistration = (
   if (client.format === "opencode") {
     const entry = opencodeLauncherSchema
       .extend({
-        environment: z.record(z.string(), z.string()).optional(),
+        environment: jsonRecordSchema(z.string()).optional(),
       })
       .transform(normalizeOpencodeLauncher)
       .safeParse(value);
@@ -245,9 +246,8 @@ export const refreshClientRegistration = (
     registration.enable = false;
   if (client.name === "codex" || client.name === "grok_build")
     registration.startup_timeout_sec =
-      (client.name === "codex"
-        ? positiveTimeout(existing.startup_timeout_sec)
-        : undefined) ?? MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
+      positiveTimeout(existing.startup_timeout_sec) ??
+      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds;
   if (client.name === "codex")
     registration.tool_timeout_sec =
       positiveTimeout(existing.tool_timeout_sec) ??

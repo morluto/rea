@@ -6,12 +6,12 @@ import {
   connect as connectTool,
   jsonResult,
 } from "./enhancedToolsHarness.js";
-import type {
-  AnalysisExecution,
-  AnalysisOperationPort,
+import {
+  createAnalysisExecution,
+  type AnalysisExecution,
+  type AnalysisOperation,
+  type AnalysisOperationPort,
 } from "../../../src/application/AnalysisProvider.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
-import type { AnalysisOperation } from "../../../src/application/AnalysisProvider.js";
 import type { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -22,6 +22,7 @@ import {
   ok as resultOk,
   type Result,
 } from "../../../src/domain/result.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
@@ -411,6 +412,47 @@ describe("enhanced MCP binary overview", () => {
 });
 
 describe("enhanced MCP inventory validation", () => {
+  // Injected provider successes verify public MCP composition, not real-provider behavior.
+  it.each(["list_procedures", "list_strings"] as const)(
+    "rejects malformed successful %s inventory without manufacturing overview counts",
+    async (operation) => {
+      let inventory: JsonValue = [];
+      const client = await connect({
+        execute: (name, parameters, options) =>
+          name === operation
+            ? Promise.resolve(ok(inventory))
+            : completeOverviewPort.execute(name, parameters, options),
+      });
+      for (const malformed of [
+        { error: "inventory unavailable" },
+        { "0x1000": "obsolete map" },
+        [{ address: "0x1000", value: 7 }],
+      ]) {
+        inventory = malformed;
+        const response = await client.callTool({
+          name: "binary_overview",
+          arguments: {},
+        });
+        expect(response.isError).toBe(true);
+        expect(parseMcpToolError(response).error).toMatchObject({
+          code: "unreadable_output",
+          details: { operation },
+        });
+      }
+      inventory = [{ address: "0x1000", value: "canonical control" }];
+      const response = await client.callTool({
+        name: "binary_overview",
+        arguments: {},
+      });
+      expect(response.isError).not.toBe(true);
+      expect(jsonResult(response)).toMatchObject({
+        document: "fixture",
+        procedure_count: operation === "list_procedures" ? 1 : 2,
+        string_count: operation === "list_strings" ? 1 : 700,
+      });
+    },
+  );
+
   it("rejects paginated provider output", async () => {
     const client = await connect({
       execute: () =>

@@ -27,7 +27,15 @@ const processRow = (
   pid: number,
   ppid: number | null,
   rss: number | null,
-) => ({ user: "shell", pid, ppid, rss, state: "S", name });
+) => ({
+  user: "shell",
+  pid,
+  ppid,
+  rss,
+  state: "S",
+  // The final NAME column retains the exact suffix emitted by processLine.
+  name: `${name}  \t`,
+});
 
 const processListing = (variant: Variant) => {
   const boundary = Number.MAX_SAFE_INTEGER;

@@ -12,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 /** Replaceable offline dependency reader with no target-execution authority. */
 export interface RustBinaryPort {
   readonly identity: ProviderIdentity;
-  close?(): Promise<void>;
+  close(): Promise<void>;
   inspect(
     input: InspectRustBinaryInput,
     options?: ExecutionOptions,

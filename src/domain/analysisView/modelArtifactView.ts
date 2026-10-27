@@ -10,7 +10,7 @@ import {
 } from "../model/modelArtifact.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
@@ -135,21 +135,13 @@ type Checked = {
   types: Map<string, number>;
 };
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(modelArtifactSchema);
 const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    key !== null &&
-    typeof key === "object" &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checked.get(key) : undefined;
-  let report: ModelArtifact;
-  if (cached !== undefined) report = cached.report;
-  else {
-    const parsed = parseAnalysisViewResult(modelArtifactSchema, parent);
-    if (!parsed.ok) return parsed;
-    report = reusable ? (key as ModelArtifact) : parsed.value;
-  }
+  const parsed = readReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checked.get(report) : undefined;
   if (
     parent.subject != null &&
     (parent.subject.local_path !== report.artifact.path ||
@@ -184,7 +176,7 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
     names: new Map(report.tensors.map((row) => [row.name, row.index])),
     keys: new Map(report.metadata.map((row) => [row.key, row.index])),
   };
-  if (reusable) checked.set(key, value);
+  if (reusable) checked.set(report, value);
   return ok(value);
 };
 

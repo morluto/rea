@@ -1,6 +1,8 @@
 import { expect } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
+import { stripTypeScriptTypes } from "node:module";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
@@ -9,6 +11,10 @@ import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
+import {
+  analysisViewResultSchema,
+  javascriptApplicationSummaryViewResultSchema,
+} from "../../../src/domain/analysisView/analysisView.js";
 
 const sourcePositionSchema = z.object({ line: z.number(), column: z.number() });
 const callPathConditionSchema = z.object({
@@ -867,5 +873,253 @@ cliTest(
         expect.objectContaining({ expression: "allowed(event)" }),
       ]);
     }
+  },
+);
+
+const descriptorSender = `function(channel) { return (...args) => send(channel, ...args); }`;
+const descriptorNoop = `function() { return () => {}; }`;
+const descriptorCases: readonly (readonly [
+  string,
+  string,
+  boolean,
+  boolean?,
+  boolean?,
+])[] = [
+  ["control", `{value:${descriptorSender}}`, true],
+  ["accessor-noop", `{get:function(){return ${descriptorNoop}}}`, false],
+  ["mixed-getter", `{get:()=>0,...{value:${descriptorSender}}}`, false, true],
+  ["mixed-setter", `{value:${descriptorSender},...{set:()=>{}}}`, false, true],
+  ["string-spread", `{value:${descriptorSender},..."x"}`, true],
+  ["negative-number", `{value:${descriptorSender},...-1}`, true],
+  ["negative-bigint", `{value:${descriptorSender},...-1n}`, true],
+  [
+    "method-value",
+    "{value" + descriptorSender.slice("function".length) + "}",
+    true,
+  ],
+  ["patch-after-sender", `{value:${descriptorSender}}`, true, false, false],
+  ["negative-prototype", `{__proto__:-1,value:${descriptorSender}}`, true],
+  ["bigint-prototype", `{__proto__:-1n,value:${descriptorSender}}`, true],
+  ["successive-noops", `{enumerable:true}`, true],
+  ["literal-noop", `{enumerable:true}`, true],
+  ["replaced-namespace", `{value:${descriptorNoop}}`, false],
+  ["namespaced-noop", `{value:${descriptorNoop}}`, true],
+  ["patch-after", `{value:${descriptorNoop}}`, false],
+  ["outer-patch-after", `{value:${descriptorNoop}}`, false],
+  ["mutating-intrinsic", `{value:${descriptorSender}}`, false],
+  ["null-prototype", `{__proto__:null,value:${descriptorSender}}`, true],
+  ["function-spread", `{value:${descriptorSender},...function(){}}`, true],
+  ["regexp-spread", `{value:${descriptorSender},.../x/}`, true],
+  ["template-spread", "{value:" + descriptorSender + ",...`x${1}`}", true],
+  ["empty-array", `{value:${descriptorSender},...[]}`, true],
+  ["array", `{value:${descriptorSender},...[1]}`, true],
+  ["patched-intrinsic", `{get:function(){return ${descriptorNoop}}}`, true],
+  ["typescript-assertion", `({value:${descriptorSender}} as const)`, true],
+  [
+    "duplicate-noop",
+    `{value:${descriptorSender},value:${descriptorNoop}}`,
+    false,
+  ],
+  [
+    "duplicate-sender",
+    `{value:${descriptorNoop},value:${descriptorSender}}`,
+    true,
+  ],
+  [
+    "spread-sender",
+    `{value:${descriptorNoop},...{value:${descriptorSender}}}`,
+    true,
+  ],
+  [
+    "spread-noop",
+    `{value:${descriptorSender},...{value:${descriptorNoop}}}`,
+    false,
+  ],
+  [
+    "computed-sender",
+    `{value:${descriptorNoop},["value"]:${descriptorSender}}`,
+    true,
+  ],
+  ["null-spread", `{value:${descriptorSender},...null}`, true],
+  ["undefined-spread", `{value:${descriptorSender},...undefined}`, true],
+  ["void-spread", `{value:${descriptorSender},...void 0}`, true],
+  ["nested-null-spread", `{value:${descriptorSender},...{...null}}`, true],
+] as const;
+
+const analyzeDescriptorFacts = async ({
+  cli,
+  root,
+  connection,
+}: {
+  cli: TestCli;
+  root: string;
+  connection: Awaited<ReturnType<typeof connectLocalToolsMcp>> | undefined;
+}) => {
+  type ApplicationResult = z.infer<
+    typeof javascriptApplicationAnalysisResultSchema
+  >;
+  type Observation = Pick<
+    ApplicationResult["graph"]["nodes"][number]["observations"][number],
+    "properties" | "evidence"
+  >;
+  let statistics: ApplicationResult["statistics"];
+  const observations: Observation[] = [];
+  if (connection === undefined) {
+    const application = await analyzeJavaScriptDirectory("CLI", cli, root);
+    statistics = application.statistics;
+    for (const node of application.graph.nodes)
+      observations.push(...node.observations);
+  } else {
+    const response = await connection.call("analyze_javascript_application", {
+      input_path: root,
+      format: "directory",
+      detail: "summary",
+    });
+    expect(response.isError).not.toBe(true);
+    const summary = z
+      .object({
+        normalized_result: javascriptApplicationSummaryViewResultSchema,
+      })
+      .parse(response.structuredContent).normalized_result;
+    statistics =
+      javascriptApplicationAnalysisResultSchema.shape.statistics.parse(
+        summary.summary.statistics,
+      );
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const response = await connection.call("inspect_analysis_view", {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: summary.parent_evidence_id,
+        },
+        view: {
+          kind: "javascript-facts",
+          where: { kinds: ["javascript-expression"] },
+          property_keys: ["step_kind", "terminal", "channel", "resolution"],
+          offset,
+          limit: 64,
+        },
+      });
+      expect(response.isError).not.toBe(true);
+      const page = z
+        .object({ normalized_result: analysisViewResultSchema })
+        .parse(response.structuredContent).normalized_result;
+      if (page.kind !== "javascript-facts")
+        throw new Error("Expected retained JavaScript facts");
+      expect(page.parent_evidence_id).toBe(summary.parent_evidence_id);
+      observations.push(...page.rows);
+      offset = page.coverage.next_offset;
+      if (offset === null) {
+        expect(page.coverage.exhausted).toBe(true);
+        expect(observations).toHaveLength(page.coverage.total);
+      }
+    }
+    await connection.client.ping();
+  }
+  return { statistics, observations };
+};
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "uses effective defineProperty descriptor values for bundled IPC paths through %s",
+  async (surface, { cli }) => {
+    const workspace = await createTestTempDirectory("rea-descriptor-values-");
+    const root = join(workspace, "路径-'values");
+    const files = Object.fromEntries(
+      descriptorCases.map(([name, descriptor, sends, throws]) => {
+        const source = `(() => {
+        const modules = {
+          2(module) { module.exports = require("electron"); },
+          5(module, exports, load) {
+            const electron = load(2);
+            ${name === "successive-noops" ? "Object.defineProperty=()=>{};Object.defineProperty=()=>{};" : name === "literal-noop" ? "Object.defineProperty=(_target,_key)=>0;" : name === "replaced-namespace" ? "globalThis={Object:{}};globalThis.Object.defineProperty=()=>{};" : name === "namespaced-noop" ? "globalThis.Object.defineProperty=()=>{};" : name === "patched-intrinsic" ? "Object.defineProperty=()=>{};" : name === "mutating-intrinsic" ? "Object.defineProperty=(target,key)=>{target[key]=" + descriptorNoop + ";};" : ""}
+            exports.sender = ${["accessor-noop", "successive-noops", "literal-noop", "replaced-namespace", "namespaced-noop", "patched-intrinsic", "patch-after", "outer-patch-after", "mutating-intrinsic"].includes(name) ? descriptorSender : descriptorNoop};
+            Object.defineProperty(exports, "sender", ${descriptor});
+            ${name.startsWith("patch-after") ? "Object.defineProperty=()=>{};" : ""}
+            function send(channel, ...args) { electron.ipcRenderer.send(channel, ...args); }
+          },
+          9(module, exports, load) {
+            const helper = load(5);
+            load(2).contextBridge.exposeInMainWorld("${name}", {copy: helper.sender("${name}:copy")});
+          }
+        };
+        function load(id) { const m = {exports:{}}; modules[id].call(m.exports,m,m.exports,load); return m.exports; }
+        load(9);
+        ${name === "outer-patch-after" ? "Object.defineProperty=()=>{};" : ""}
+      })();`;
+        // Node executes only this test-owned fixture with a recording Electron
+        // substitute: an independent descriptor-semantics oracle, not provider proof.
+        const channels: string[] = [];
+        const run = () =>
+          runInNewContext(
+            name === "typescript-assertion"
+              ? stripTypeScriptTypes(source)
+              : source,
+            {
+              require: () => ({
+                ipcRenderer: {
+                  send: (channel: string) => channels.push(channel),
+                },
+                contextBridge: {
+                  exposeInMainWorld: (_key: string, api: { copy(): void }) =>
+                    api.copy(),
+                },
+              }),
+            },
+            { timeout: 1_000 },
+          );
+        if (throws) expect(run).toThrow(/Invalid property descriptor/u);
+        else run();
+        expect(channels, name).toEqual(sends ? [`${name}:copy`] : []);
+        return [
+          `${name}.${name === "typescript-assertion" ? "cts" : "cjs"}`,
+          source,
+        ];
+      }),
+    );
+    await writeFixtureFiles(root, files);
+    const connection =
+      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+    if (connection !== undefined) {
+      const failure = await connection.call("analyze_javascript_application", {
+        input_path: join(root, "absent"),
+        format: "directory",
+      });
+      expect(failure.isError).toBe(true);
+      await connection.client.ping();
+    }
+    const { statistics, observations } = await analyzeDescriptorFacts({
+      cli,
+      root,
+      connection,
+    });
+    for (const [name, source] of Object.entries(files))
+      expect(await readFile(join(root, name), "utf8")).toBe(source);
+    expect(statistics).toMatchObject({
+      parsed_javascript_files: descriptorCases.length,
+      parse_failures: 0,
+    });
+    const terminals = observations.filter(
+      ({ properties }) =>
+        properties.step_kind === "terminal" &&
+        properties.terminal === "electron.ipcRenderer.send",
+    );
+    expect(
+      terminals.map(({ properties }) => properties.channel).sort(),
+    ).toEqual(
+      descriptorCases
+        // A factory with a later global patch can run repeatedly: its native
+        // intrinsic is unknown even though this test invokes it only once.
+        .filter(([, , sends, , admitted = sends]) => admitted)
+        .map(([name]) => `${name}:copy`)
+        .sort(),
+    );
+    for (const terminal of terminals)
+      expect(terminal).toMatchObject({
+        properties: { resolution: "candidate" },
+        evidence: {
+          state: "inferred",
+          authority: "static-relationship-inference",
+        },
+      });
   },
 );

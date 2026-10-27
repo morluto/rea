@@ -16,7 +16,7 @@ const CLI_COMMAND_TOOL_ALIASES = Object.freeze({
   trace: ["trace_feature"],
   search: ["search_strings", "search_procedures"],
   "capture-process": ["capture_process_scenario"],
-  "compare-bundles": ["compare_bundles"],
+  compare: ["compare_bundles"],
   "list-objdump-architectures": ["inspect_with_objdump"],
   "debug-with-gdb": ["gdb_console"],
   "debug-with-rizin": ["rizin_debug_command"],

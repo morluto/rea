@@ -1,3 +1,4 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -25,6 +26,11 @@ import {
   snapshotDocuments,
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
+import {
+  cdpFrameRecordFacts,
+  cdpFrameEventFacts,
+  type CdpFrameFacts,
+} from "./CdpFrameIdentity.js";
 import { snapshotDocumentNodes, snapshotNodeAt } from "./CdpSnapshotNodes.js";
 import { cdpSnapshotString } from "./CdpSnapshotStrings.js";
 import {
@@ -56,7 +62,7 @@ interface ElectronInspectionState {
   readonly completeness: CdpCaptureCompleteness;
   readonly scripts: ElectronScriptDraft[];
   readonly scriptMetadataRetention: ElectronScriptMetadataRetention;
-  readonly executionContextFrames: Map<string, string>;
+  readonly executionContextFrames: Map<string, CdpContextFrameClaim>;
   readonly frameGenerations: Map<string, number>;
   readonly frameParents: Map<string, string | null>;
   readonly frameDocuments: Map<string, ElectronFrameDocument>;
@@ -286,16 +292,16 @@ const advanceFrameGeneration = (
   event: CdpEvent,
   state: ElectronInspectionState,
 ): void => {
+  const facts = cdpFrameEventFacts(event);
   // A same-document event changes the cached identity, never its generation
   // or authority. Later full-frame replay must compare with that current URL.
   if (event.method === "Page.navigatedWithinDocument") {
-    const params = recordValue(event.params);
-    const id = cdpStringValue(params?.frameId);
-    if (id === undefined) return;
+    const id = facts.frameId;
+    if (id === null) return;
     if (id === state.mainFrameId) state.navigationDuringCapture = true;
     const previous = state.frameDocuments.get(id);
     if (previous === undefined) return;
-    const url = cdpFrameUrl(params);
+    const url = cdpFrameUrl(facts.source);
     if (url === undefined || url === "") state.frameDocuments.delete(id);
     else state.frameDocuments.set(id, { ...previous, url });
     return;
@@ -308,15 +314,10 @@ const advanceFrameGeneration = (
     ].includes(event.method)
   )
     return;
-  const params = recordValue(event.params);
-  const frame =
-    event.method === "Page.frameNavigated"
-      ? recordValue(params?.frame)
-      : params;
-  const id = cdpStringValue(frame?.id) ?? cdpStringValue(frame?.frameId);
-  if (id === undefined) return;
+  const id = facts.frameId;
+  if (id === null) return;
   const document =
-    event.method === "Page.frameNavigated" ? frameDocument(frame) : undefined;
+    facts.kind === "navigated" ? frameDocument(facts) : undefined;
   const previous = state.frameDocuments.get(id);
   if (
     document !== undefined &&
@@ -327,9 +328,9 @@ const advanceFrameGeneration = (
     return;
   invalidateFrameGenerations(id, state);
   // Event ancestry only invalidates future facts; it never authorizes a frame.
-  const parent =
-    cdpStringValue(frame?.parentId) ?? cdpStringValue(frame?.parentFrameId);
-  if (parent !== undefined && parent !== "") state.frameParents.set(id, parent);
+  const parent = facts.parentId;
+  if (facts.parentRelation === "child" && parent !== null)
+    state.frameParents.set(id, parent);
   else state.frameParents.delete(id);
   if (document !== undefined) retainFrameDocument(id, document, state);
 };
@@ -387,23 +388,19 @@ const invalidateFrameGenerations = (
 
 /** Only a known URL and loader together can prove a duplicate document event. */
 const frameDocument = (
-  frame: ReturnType<typeof recordValue>,
+  facts: CdpFrameFacts,
 ): ElectronFrameDocument | undefined => {
-  const url = cdpFrameUrl(frame);
-  const loaderId = cdpStringValue(frame?.loaderId);
+  const url = cdpFrameUrl(facts.source);
   if (
     url === undefined ||
     url === "" ||
-    loaderId === undefined ||
-    loaderId === ""
+    facts.loaderId === undefined ||
+    facts.loaderId === "" ||
+    facts.loaderIssue !== null ||
+    (facts.parentRelation !== "root" && facts.parentRelation !== "child")
   )
     return undefined;
-  if (
-    frame?.parentId !== undefined &&
-    (cdpStringValue(frame.parentId) === undefined || frame.parentId === "")
-  )
-    return undefined;
-  return { url, loaderId, parentId: cdpStringValue(frame?.parentId) ?? null };
+  return { url, loaderId: facts.loaderId, parentId: facts.parentId };
 };
 
 /** Protocol identities are observations, separate from asynchronous file authorization. */
@@ -416,11 +413,11 @@ const seedFrameDocuments = (
   const tree = recordValue(recordValue(result)?.frameTree);
   if (tree === undefined) return;
   for (const entry of walkFrameTrees(tree)) {
-    const frame = recordValue(entry.frame);
-    const id = cdpStringValue(frame?.id);
-    const document = frameDocument(frame);
+    const facts = cdpFrameRecordFacts(recordValue(entry.frame));
+    const id = facts.frameId;
+    const document = frameDocument(facts);
     if (
-      id !== undefined &&
+      id !== null &&
       document !== undefined &&
       // A same-document event can update identity without changing generation.
       // Do not overwrite that newer observation with this in-flight tree.
@@ -625,24 +622,19 @@ export const captureFrames = async (
   )) {
     throwIfElectronInspectionCancelled(signal);
     const frame = recordValue(tree.frame);
-    const frameId = cdpStringValue(frame?.id);
-    const parentId = cdpStringValue(frame?.parentId);
+    const facts = cdpFrameRecordFacts(frame);
+    const frameId = facts.frameId;
+    const parentId = facts.parentId;
     // Only the enclosing tree root may omit its parent. Children must agree
     // with a structurally proved enclosing frame, independent of its file policy.
     // Malformed ancestry cannot grant proof to a frame or its descendants.
     const ancestryKnown =
       tree === frameTree
-        ? frame !== undefined && !Object.hasOwn(frame, "parentId")
-        : parentId !== undefined &&
-          parentId !== "" &&
-          parentId !== frameId &&
+        ? facts.parentRelation === "root"
+        : facts.parentRelation === "child" &&
+          parentId !== null &&
           parentId === enclosingParents.get(tree);
-    if (
-      frame === undefined ||
-      frameId === undefined ||
-      frameId === "" ||
-      !ancestryKnown
-    ) {
+    if (frame === undefined || frameId === null || !ancestryKnown) {
       completeness.exclude("frames", "invalid_protocol_value");
       continue;
     }

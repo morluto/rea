@@ -1,5 +1,19 @@
 import { posix, win32 } from "node:path";
 
+/** Append a relative child without collapsing POSIX symlink/.. traversal.
+ * Preserve relative parents too: configuration admission owns absolute-path validation.
+ */
+export const appendCallerPath = (
+  parent: string,
+  child: string,
+  platform: NodeJS.Platform = process.platform,
+): string =>
+  platform === "win32"
+    ? win32.join(parent, child)
+    : parent === ""
+      ? child
+      : `${parent.endsWith("/") ? parent : `${parent}/`}${child}`;
+
 /**
  * Make a caller-selected local path absolute without changing which file it
  * names. POSIX resolves `..` after following the preceding symlink, so lexical

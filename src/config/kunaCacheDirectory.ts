@@ -1,4 +1,5 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 
 /** Per-user cache directory that REA owns for Kuna on this host. */
 export const defaultKunaCacheDirectory = (
@@ -7,11 +8,11 @@ export const defaultKunaCacheDirectory = (
   platform: NodeJS.Platform,
 ): string => {
   if (platform === "darwin")
-    return join(home, "Library", "Caches", "rea", "kuna");
+    return appendCallerPath(home, "Library/Caches/rea/kuna", platform);
   const xdg = environment.XDG_CACHE_HOME;
-  return join(
-    xdg !== undefined && isAbsolute(xdg) ? xdg : join(home, ".cache"),
-    "rea",
-    "kuna",
-  );
+  const root =
+    xdg !== undefined && isAbsolute(xdg)
+      ? xdg
+      : appendCallerPath(home, ".cache", platform);
+  return appendCallerPath(root, "rea/kuna", platform);
 };

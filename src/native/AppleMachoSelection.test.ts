@@ -1,13 +1,16 @@
+import { readFatContainerHeader } from "../domain/apple/machoContainer.js";
 import { describe, expect, it } from "vitest";
 
 import {
   CPU,
   LC,
   dylibCommand,
+  dylibUseCommand,
   fatImage,
   machoImage,
   machoImageWithUnknownCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
+import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
 import {
   parseMachoLayout,
   selectMachoSlice,
@@ -34,6 +37,22 @@ it("keeps unknown magic distinct from recognized unsupported Mach-O formats", ()
   expect(failure).toBeInstanceOf(TypeError);
   expect(failure).not.toBeInstanceOf(UnsupportedMachoMetadataFormatError);
 });
+
+it.each([
+  { magic: 0xfeedface, headerSize: 28 },
+  { magic: 0xcefaedfe, headerSize: 28 },
+  { magic: 0xfeedfacf, headerSize: 32 },
+  { magic: 0xcffaedfe, headerSize: 32 },
+])(
+  "reports a recognized truncated header before CPU admission ($magic)",
+  ({ magic, headerSize }) => {
+    const bytes = Buffer.alloc(headerSize - 1);
+    bytes.writeUInt32BE(magic);
+    expect(() => parseMachoLayout(bytes, "unrecognized")).toThrow(
+      new RangeError("Truncated Mach-O header"),
+    );
+  },
+);
 
 const registerThinCpuFamilyControls = (): void => {
   it.each([
@@ -323,4 +342,60 @@ describe("native Mach-O fixup load command boundaries", () => {
       "\ufeff/libé",
     ]);
   });
+
+  it.each<[string, Uint8Array]>([
+    ["load", dylibCommand(LC.LOAD_DYLIB, "/lib?")],
+    ["weak", dylibCommand(LC.LOAD_WEAK_DYLIB, "/lib?")],
+    ["reexport", dylibCommand(LC.REEXPORT_DYLIB, "/lib?")],
+    ["lazy", dylibCommand(LC.LAZY_LOAD_DYLIB, "/lib?")],
+    ["upward", dylibCommand(LC.LOAD_UPWARD_DYLIB, "/lib?")],
+    ["modern use", dylibUseCommand(LC.LOAD_DYLIB, "/lib?", 0x8)],
+  ])(
+    "retains opaque %s install-name identity while refusing text resolution",
+    async (_kind, original) => {
+      const command = Buffer.from(original);
+      const nameOffset = command.readUInt32LE(8);
+      command[nameOffset + 4] = 0x80;
+      const bytes = Buffer.from(machoImage({ commands: [command] }));
+      expect(parseMachoLayout(bytes, "arm64").fixups.dylibs).toEqual([
+        {
+          bytes_base64: Buffer.from([0x2f, 0x6c, 0x69, 0x62, 0x80]).toString(
+            "base64",
+          ),
+        },
+      ]);
+      expect(
+        await readMachoImage(
+          async (offset, length) => bytes.subarray(offset, offset + length),
+          bytes.length,
+        ),
+      ).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining("not UTF-8"),
+      });
+    },
+  );
 });
+
+it.each([0, 129])(
+  "preserves native FAT selection policy separately from generic identity admission (count %i)",
+  (count) => {
+    const bytes = Buffer.alloc(8);
+    bytes.writeUInt32BE(0xcafebabe);
+    bytes.writeUInt32BE(count, 4);
+    expect(readFatContainerHeader(bytes, bytes.length)).toEqual(
+      count === 0
+        ? { state: "malformed", reason: "FAT header declares no architectures" }
+        : { state: "not-fat" },
+    );
+    expect(() => selectMachoSlice(bytes, "arm64")).toThrow(
+      count === 0
+        ? new TypeError(
+            "Requested FAT architecture is absent (FAT header byte order: big-endian)",
+          )
+        : new RangeError(
+            "Malformed FAT architecture table (FAT header byte order: big-endian)",
+          ),
+    );
+  },
+);

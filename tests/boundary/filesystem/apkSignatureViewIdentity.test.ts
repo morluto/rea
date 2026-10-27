@@ -20,7 +20,7 @@ it("checks parent subject identity again when signing facts are already cached",
     const result = await service.inspect({ path, detail: "complete" });
     if (!result.ok) throw result.error;
     const evidence = result.value;
-    if (evidence.subject === null)
+    if (evidence.subject === null || evidence.subject.format !== "apk")
       throw new Error("selected file subject missing");
     const parent = {
       evidenceId: evidence.evidence_id,
@@ -32,7 +32,15 @@ it("checks parent subject identity again when signing facts are already cached",
     };
     const initial = projectApkSignatureView(parent, { kind: "summary" });
     if (!initial.ok) throw initial.error;
+    for (const format of ["file", "apk", "zip"] as const)
+      expect(
+        projectApkSignatureView(
+          { ...parent, subject: { ...evidence.subject, format } },
+          { kind: "summary" },
+        ).ok,
+      ).toBe(true);
     for (const subject of [
+      { ...evidence.subject, format: "directory" as const },
       { ...evidence.subject, local_path: join(root, "other.apk") },
       {
         ...evidence.subject,

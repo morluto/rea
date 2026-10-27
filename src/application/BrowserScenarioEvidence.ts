@@ -9,12 +9,27 @@ import {
 } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 
+/** A step as Evidence records it: a request step leaves out an empty `save`, so a scenario that saves nothing records and hashes as it did before saved values existed. */
+const recordedAction = (
+  action: BrowserScenario["actions"][number],
+): Record<string, unknown> => {
+  if (action.action !== "request" || action.save.length > 0) return action;
+  const { save, ...rest } = action;
+  return rest;
+};
+
 const browserScenarioParameters = (
   scenario: BrowserScenario,
-): EvidenceObservation["parameters"] => ({
-  ...jsonObjectSchema.parse(scenario),
-  scenario_sha256: digestCanonicalValue(scenario, "Browser scenario"),
-});
+): EvidenceObservation["parameters"] => {
+  const recorded = {
+    ...scenario,
+    actions: scenario.actions.map(recordedAction),
+  };
+  return {
+    ...jsonObjectSchema.parse(recorded),
+    scenario_sha256: digestCanonicalValue(recorded, "Browser scenario"),
+  };
+};
 
 /** Create Evidence without retaining resolved scenario secret values. */
 export const createBrowserScenarioEvidence = (

@@ -285,6 +285,41 @@ describe("rejected IL2CPP global-metadata", () => {
   });
 });
 
+describe("IL2CPP generic-container linking facts", () => {
+  it.each([31, 39] as const)(
+    "retains type argument counts and version %i container admission",
+    (version) => {
+      const fixture = createIl2cppMetadataFixture({
+        version,
+        genericOwners: true,
+      });
+      const { link } = readIl2cppMetadataForLinking(fixture.bytes);
+      expect(link.genericTypeArgumentCounts[3]).toBe(1);
+      expect(link.methodGenericContainer(4)).toBe(2);
+      expect(link.typeGenericContainer(3)).toBe(version === 39 ? undefined : 0);
+      expect(link.genericContainer(0)).toEqual(
+        version === 39 ? undefined : { count: 1, parameterStart: 0 },
+      );
+      expect(link.typeGenericContainer(-1)).toBeUndefined();
+      expect(link.genericContainer(-1)).toBeUndefined();
+    },
+  );
+
+  it.each([31, 39] as const)(
+    "keeps negative argument counts admissible to inventory but refuses version %i linking",
+    (version) => {
+      const bytes = createIl2cppMetadataFixture({
+        version,
+        genericTypeArgumentCounts: { 3: -1 },
+      }).bytes;
+      expect(readIl2cppMetadata(bytes).types[3]?.name).toBe("Größe");
+      const rejected = failure(bytes, readIl2cppMetadataForLinking);
+      expect(rejected.reason).toBe("index-out-of-range");
+      expect(rejected.message).toContain("negative argument count -1");
+    },
+  );
+});
+
 describe("IL2CPP generic-container extents", () => {
   it("checks generic-container count against its fixed 16-byte records before resolving widths", () => {
     // A positive count with no record bytes.

@@ -1,8 +1,9 @@
+import { selectArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import {
   pcapCaptureHostSupported,
   PCAP_CAPTURE_UNSUPPORTED_HOST_REASON,
 } from "../domain/pcap/pcapAnalysis.js";
-import { access, realpath } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute } from "node:path";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -49,8 +50,8 @@ export const preparePcapNativeBound = async (
   try {
     if (!isAbsolute(configured))
       throw new Error(`${PRLIMIT_COMMAND_ENV} must be absolute.`);
-    const limiter = await realpath(configured);
-    await access(limiter, constants.X_OK);
+    const selection = await selectArtifactCommandPath(configured);
+    await access(selection.resolvedPath, constants.X_OK);
     const limits = await resources.readLimits({
       address_space_bytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
       file_bytes: BOUNDED_PRODUCER_LIMITS.file_bytes,
@@ -58,7 +59,7 @@ export const preparePcapNativeBound = async (
     });
     const nativeBound = {
       limiter: {
-        command: limiter,
+        command: selection,
         arguments: prlimitCeilingArguments(limits),
       },
     };

@@ -458,3 +458,22 @@ const createGhidraProfile = (
         }
       : {}),
   });
+
+/** A caller database supplies analysis state; no import or completion claims are inferred. */
+export const existingGhidraAnalysisProfile = (
+  target: BinaryTarget,
+  provider: Parameters<typeof createAnalysisProfile>[0],
+  project: JsonValue,
+) =>
+  createAnalysisProfile(provider, {
+    target_kind: target.kind,
+    target_format: target.format,
+    architecture: target.architecture ?? null,
+    import_mode: "existing-project-private-copy-v1",
+    ...sharedAnalysisSemantics,
+    annotation_policy: "read-only-existing-project-v1",
+    existing_project: project,
+    original_analysis: { completeness: "unknown", settings: "unknown" },
+    no_return_repair: "disabled-existing-project",
+    process_launch: "inspected-jvm-launch-support-v1",
+  });

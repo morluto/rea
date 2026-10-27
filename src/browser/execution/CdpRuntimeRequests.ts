@@ -4,10 +4,8 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
 import { jsonObjectSchema } from "../../domain/jsonValue.js";
 import type { CdpEvent } from "../CdpConnection.js";
-import {
-  runtimeRequestSchema,
-  runtimeStackSchema,
-} from "./CdpRuntimeProtocol.js";
+import { runtimeRequestSchema } from "../CdpNetworkEventFacts.js";
+import { runtimeStackSchema } from "./CdpRuntimeProtocol.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { sanitizeRuntimeInitiator } from "./CdpRuntimeInitiator.js";
 import { assertRuntimeRetention } from "./CdpRuntimeRetention.js";

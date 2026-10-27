@@ -98,7 +98,7 @@ describe("artifact archive inventory", () => {
     await writeFile(join(source, "main.js"), "console.log('ok');\n");
     const asarPath = join(root, "app.asar");
     await createPackage(source, asarPath);
-    const asarResult = await inventory(target(asarPath, "asar"));
+    const asarResult = await inventory(await target(asarPath));
     expect(asarResult.occurrences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ logical_path: "main.js" }),
@@ -107,7 +107,7 @@ describe("artifact archive inventory", () => {
 
     const unpackedPath = join(root, "unpacked.asar");
     await createPackageWithOptions(source, unpackedPath, { unpack: "*.js" });
-    const unpackedResult = await inventory(target(unpackedPath, "asar"));
+    const unpackedResult = await inventory(await target(unpackedPath));
     expect(unpackedResult.occurrences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -121,7 +121,7 @@ describe("artifact archive inventory", () => {
       "changed();\n",
     );
     const corrupted = await new ArtifactProvider(process.env)
-      .createClient(target(unpackedPath, "asar"))
+      .createClient(await target(unpackedPath))
       .execute("inventory_artifact", {});
     expect(corrupted).toMatchObject({
       ok: false,
@@ -135,7 +135,7 @@ describe("artifact archive inventory", () => {
       },
     });
     const failedInspection = await new ArtifactProvider(process.env)
-      .createClient(target(unpackedPath, "asar"))
+      .createClient(await target(unpackedPath))
       .execute("inspect_artifact", {});
     expect(failedInspection).toMatchObject({
       ok: false,
@@ -151,13 +151,8 @@ const inventory = async (targetValue: BinaryTarget) => {
   return artifactInventoryResultSchema.parse(result.value.result);
 };
 
-const target = (
-  path: string,
-  format: Extract<BinaryTarget, { kind: "archive" }>["format"] | "directory",
-): BinaryTarget => ({
-  path,
-  sourcePath: path,
-  sha256: "0".repeat(64),
-  kind: "archive",
-  format: format === "directory" ? "asar" : format,
-});
+const target = async (path: string): Promise<BinaryTarget> => {
+  const parsed = await parseBinaryTarget(path);
+  if (!parsed.ok) throw parsed.error;
+  return parsed.value;
+};

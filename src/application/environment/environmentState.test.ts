@@ -29,7 +29,10 @@ import {
   loadEnvironmentState,
   prepareServedState,
 } from "./environmentState.js";
-import { STATE_INTAKE_LIMIT_BYTES } from "./environmentStateDocument.js";
+import {
+  STATE_INTAKE_LIMIT_BYTES,
+  parseStateDocument,
+} from "./environmentStateDocument.js";
 import {
   EnvironmentStateStore,
   ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES,
@@ -679,24 +682,20 @@ describe("rea-state/v1 validation", () => {
       path: "rea_state/types",
       message: "differs from the served types",
     });
-    const prototypeMember = (at: "entity" | "fields") =>
+    const prototypeMember = () =>
       firstProblem(
         JSON.parse(
           JSON.stringify(documentWith(() => undefined)).replace(
-            at === "entity" ? '"type":' : '"fields":{',
-            at === "entity"
-              ? '"__proto__":{"x":1},"type":'
-              : '"fields":{"__proto__":{"x":1},',
+            '"type":',
+            '"__proto__":{"x":1},"type":',
           ),
         ),
       );
-    expect(prototypeMember("entity")).toEqual({
+    expect(prototypeMember()).toEqual({
       path: "rea_state/entities/0",
       message: "has a member rea-state/v1 does not define",
     });
-    expect(prototypeMember("fields")).toMatchObject({
-      path: "rea_state/entities/0/fields",
-    });
+
     expect(firstProblem([])).toMatchObject({ path: "" });
     expect(
       firstProblem({ rea_state: { version: 2, entities: [], documents: [] } }),
@@ -734,5 +733,72 @@ describe("wide state value validation", () => {
     const retainedObject =
       store.snapshot().rea_state.entities[0]?.fields.caller_wide_object;
     expect(retainedObject).toEqual(wideObject);
+  });
+});
+
+it("retains arbitrary dictionary keys and owned JSON references at state intake", () => {
+  const dictionary = JSON.parse(
+    '{"__proto__":{"constructor":{"prototype":"kept"}},"constructor":7,"prototype":8}',
+  );
+  const document = documentWith((value) => {
+    const entity = value.rea_state.entities[0]!;
+    entity.fields = { ...(entity.fields as object), ...dictionary };
+  });
+  const entity = document.rea_state.entities[0]!;
+  const fields = entity.fields;
+  const owned = parseStateDocument(state, document, true);
+  expect(owned.ok).toBe(true);
+  if (!owned.ok) throw owned.error;
+  expect(owned.value.entities[0]?.fields).toBe(fields);
+  const copied = parseStateDocument(state, document);
+  expect(copied.ok).toBe(true);
+  if (!copied.ok) throw copied.error;
+  expect(copied.value.entities[0]?.fields).not.toBe(fields);
+  expect(copied.value.entities[0]?.fields).toEqual(fields);
+  expect(Object.hasOwn(copied.value.entities[0]!.fields, "__proto__")).toBe(
+    true,
+  );
+  const store = new EnvironmentStateStore(state);
+  expect(store.replace(document).ok).toBe(true);
+  const snapshot = JSON.stringify(store.snapshot());
+  expect(store.replace(JSON.parse(snapshot)).ok).toBe(true);
+  expect(JSON.stringify(store.snapshot())).toBe(snapshot);
+});
+
+it.each(["__proto__", "constructor", "prototype"])(
+  "refuses unknown structural member %s before projection",
+  (key) => {
+    const document = documentWith(() => undefined);
+    const structures = [
+      document,
+      document.rea_state,
+      document.rea_state.entities[0]!,
+    ];
+    const view = { tool: "fixture", fields: {} };
+    document.rea_state.entities[0]!.view_fields = [view];
+    const held = { tool: "fixture", path: "/fixture", value: {} };
+    document.rea_state.documents = [held];
+    structures.push(view, held);
+    for (const structure of structures) {
+      Object.defineProperty(structure, key, {
+        value: 1,
+        configurable: true,
+        enumerable: true,
+      });
+      expect(firstProblem(document).message).toBe(
+        "has a member rea-state/v1 does not define",
+      );
+      Reflect.deleteProperty(structure, key);
+    }
+  },
+);
+
+it("keeps missing fields distinct from invalid JSON field contents", () => {
+  const document = documentWith((value) => {
+    Reflect.deleteProperty(value.rea_state.entities[0]!, "fields");
+  });
+  expect(firstProblem(document)).toEqual({
+    path: "rea_state/entities/0/fields",
+    message: "is required",
   });
 });

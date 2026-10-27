@@ -1,3 +1,8 @@
+import {
+  cdpFrameRecordFacts,
+  cdpFrameEventFacts,
+  type CdpFrameFacts,
+} from "./CdpFrameIdentity.js";
 import { createHash } from "node:crypto";
 
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -179,15 +184,12 @@ const ingestInitialFrameTree = (
       omittedCount,
     ),
   )) {
-    const frame = recordValue(tree.frame);
-    const parent = cdpStringValue(frame?.parentId);
-    if (
-      frame !== undefined &&
-      (tree !== root || Object.hasOwn(frame, "parentId")) &&
-      (parent === undefined || parent === "")
-    )
-      state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    handleFrameUpdate(frame, state, true);
+    const facts = cdpFrameRecordFacts(recordValue(tree.frame));
+    if (tree !== root && facts.parentRelation === "root") {
+      invalidateFrameFacts(facts, state);
+      continue;
+    }
+    handleFrameUpdate(facts, state, true);
   }
 };
 
@@ -195,50 +197,54 @@ const ingestFrameScopeEvent = (
   event: CdpEvent,
   state: FrameScopeState,
 ): boolean => {
-  const params = recordValue(event.params);
-  if (params === undefined) return false;
-  switch (event.method) {
-    case "Page.frameDetached":
-      return handleFrameDetached(params, state);
-    case "Page.frameNavigated":
-      return handleFrameUpdate(recordValue(params.frame), state, true);
-    case "Page.navigatedWithinDocument":
-      return handleFrameUpdate(params, state, false);
+  const facts = cdpFrameEventFacts(event);
+  switch (facts.kind) {
+    case "detached":
+      if (facts.identityIssue !== null || facts.frameId === null) {
+        invalidateFrameFacts(facts, state);
+        return true;
+      }
+      removeFrame(facts.frameId, state.frames, state.tools);
+      state.transientFrames.delete(facts.frameId);
+      state.resolvedTransientFrames.delete(facts.frameId);
+      return true;
+    case "navigated":
+      return handleFrameUpdate(facts, state, true);
+    case "within_document":
+      return handleFrameUpdate(facts, state, false);
     default:
       return false;
   }
 };
 
-const handleFrameDetached = (
-  params: UnknownRecord,
+/** Malformed declarations cannot preserve cached authority for an attributable frame. */
+const invalidateFrameFacts = (
+  facts: CdpFrameFacts,
   state: FrameScopeState,
-): boolean => {
-  const frameId = cdpStringValue(params.frameId);
-  if (frameId === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return true;
-  }
-  removeFrame(frameId, state.frames, state.tools);
-  state.transientFrames.delete(frameId);
-  state.resolvedTransientFrames.delete(frameId);
-  return true;
+): void => {
+  state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+  if (facts.frameId === null) return;
+  removeFrame(facts.frameId, state.frames, state.tools);
+  state.transientFrames.delete(facts.frameId);
+  state.resolvedTransientFrames.delete(facts.frameId);
 };
 
 const handleFrameUpdate = (
-  frame: UnknownRecord | undefined,
+  sourceFacts: CdpFrameFacts,
   state: FrameScopeState,
   documentCommitted: boolean,
 ): boolean => {
-  if (frame === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+  const frameId = sourceFacts.frameId;
+  if (
+    sourceFacts.identityIssue !== null ||
+    sourceFacts.parentIssue !== null ||
+    sourceFacts.loaderIssue !== null ||
+    frameId === null
+  ) {
+    invalidateFrameFacts(sourceFacts, state);
     return true;
   }
-  const frameId = cdpStringValue(frame?.id) ?? cdpStringValue(frame?.frameId);
-  if (frameId === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return true;
-  }
-  const observation = observeCdpFrameUrl(frame);
+  const observation = observeCdpFrameUrl(sourceFacts.source);
   const facts = classifyCdpFrameUrl(observation, state.origins);
   if (observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
@@ -263,12 +269,12 @@ const handleFrameUpdate = (
     }
     return true;
   }
-  updateFrameScope(frame, frameId, facts, state, documentCommitted);
+  updateFrameScope(sourceFacts, frameId, facts, state, documentCommitted);
   return true;
 };
 
 const updateFrameScope = (
-  frame: UnknownRecord,
+  sourceFacts: CdpFrameFacts,
   frameId: string,
   facts: ReturnType<typeof classifyCdpFrameUrl>,
   state: FrameScopeState,
@@ -283,7 +289,9 @@ const updateFrameScope = (
     return;
   }
   const previous = state.frames.get(frameId);
-  const loaderId = cdpStringValue(frame?.loaderId);
+  const loaderId = documentCommitted
+    ? sourceFacts.loaderId
+    : previous?.loaderId;
   if (hasNewDocument(documentCommitted, previous, facts.url, loaderId))
     removeFrameTools(frameId, state.tools);
   if (documentCommitted && state.transientFrames.has(frameId))
@@ -293,10 +301,9 @@ const updateFrameScope = (
     origin: facts.origin,
     ...(loaderId === undefined ? {} : { loaderId }),
     parentFrameId:
-      (cdpStringValue(frame?.parentId) ??
-        state.frames.get(frameId)?.parentFrameId ??
-        "") ||
-      null,
+      sourceFacts.parentRelation === "not_applicable"
+        ? (previous?.parentFrameId ?? null)
+        : sourceFacts.parentId,
   });
 };
 

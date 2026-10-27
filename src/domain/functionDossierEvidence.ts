@@ -5,7 +5,10 @@ import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
 import type { JsonValue } from "./jsonValue.js";
 import { err, ok, type Result } from "./result.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
-import { functionDossierSchema, type FunctionDossier } from "./hopperValues.js";
+import {
+  functionDossierSchema,
+  type FunctionDossier,
+} from "./native/functionDossier.js";
 import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
 
 /** Complete function observation parsed from one analyze_function Evidence record. */

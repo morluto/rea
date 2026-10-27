@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { matchNativeFunctionsInputSchema } from "./native/functionMatchingContracts.js";
 import { z } from "zod";
 
@@ -14,7 +15,6 @@ import {
 import { reconstructionVerificationInputSchema } from "../domain/reconstructionVerificationSchemas.js";
 import { staticRuntimeCorrelationInputSchema } from "../domain/staticRuntimeCorrelation.js";
 import { sessionOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import {
   closeBinaryInputSchema,
   openBundleResourcesInputSchema,

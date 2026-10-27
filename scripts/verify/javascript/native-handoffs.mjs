@@ -17,10 +17,12 @@ import {
   runOwnedCommand,
 } from "../../../dist/process/OwnedCommand.js";
 import { withVerifierCleanup } from "../../lib/verifier-cleanup.mjs";
-import {
-  matchesStructuredScopeExpectation,
-  structuredScopeExpectationsSchema,
-} from "../../lib/javascript-file-scope-oracle.mjs";
+import { importVerifierSource } from "../../lib/verifier-source-loader.mjs";
+
+const { matchesStructuredScopeExpectation, structuredScopeExpectationsSchema } =
+  await importVerifierSource(
+    new URL("../../lib/javascript-file-scope-oracle.mts", import.meta.url).href,
+  );
 
 const { values } = parseArgs({
   options: {

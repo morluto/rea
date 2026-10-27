@@ -15,7 +15,14 @@ import { compactPresentationForMcpInputSchemaProfile } from "../dist/config/mcpI
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -108,10 +115,7 @@ await withVerifierCleanup(async () => {
     }
     const target = join(lab, "fixture α测试");
     await mkdir(target);
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const schemaValidator = new Ajv2020({
       strict: false,
       validateFormats: false,
@@ -123,27 +127,6 @@ await withVerifierCleanup(async () => {
           containsText(nested, text),
         );
       return false;
-    };
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return undefined;
-        }
-      }
-      if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes?.length > 0
-        )
-          return value;
-        for (const nested of Object.values(value)) {
-          const evidence = extractEvidence(nested);
-          if (evidence) return evidence;
-        }
-      }
-      return undefined;
     };
     fixture = await createOpenAiModelFixture({
       directory: lab,
@@ -204,35 +187,11 @@ await withVerifierCleanup(async () => {
           expectedSkillBody !== undefined &&
           containsText(body.messages, expectedSkillBody) &&
           containsText(body.messages, skillDirectory);
-        const observed = extractEvidence(replies);
+        const observed = findClientResult(replies, isClientJavaScriptEvidence);
         if (observed) {
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(observed);
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            observed,
+            target,
           );
           const bytes = JSON.stringify(evidence);
           artifactDigest = createHash("sha256").update(bytes).digest("hex");

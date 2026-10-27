@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
+  ownMember,
+  setOwnMember,
   at,
   isObject,
   pointerTo,
@@ -73,13 +75,6 @@ export type GenerateValue = (
 
 const kindOf = (value: JsonValue | undefined): string =>
   value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
-
-/** JSON objects contain only their own members, even when a name also exists on Object.prototype. */
-const ownMember = (
-  object: JsonObject,
-  member: string,
-): JsonValue | undefined =>
-  Object.hasOwn(object, member) ? object[member] : undefined;
 
 /** The JSON types `stored` holds members in, for those `observed` shows no value of. */
 export const storedKinds = (
@@ -197,7 +192,9 @@ export const recordedGeneratedValue = (
   value: JsonValue | undefined,
 ): Applied<JsonValue | undefined> => {
   if (rule.rule !== "nested-clock") return ok(value);
-  const clock = isObject(value) ? value[rule.members[0]!] : undefined;
+  const clock = isObject(value)
+    ? ownMember(value, rule.members[0]!)
+    : undefined;
   if (
     clock === undefined ||
     JSON.stringify(readClock(clock)?.format) !== JSON.stringify(rule.format)
@@ -251,7 +248,7 @@ const ruledValue = (
         ? err(
             `The call names no ${rule.from} path value, which ${rule.field} takes.`,
           )
-        : ok(pathValue(observed[rule.field], value));
+        : ok(pathValue(ownMember(observed, rule.field), value));
     }
     default:
       return ok(undefined);
@@ -264,9 +261,9 @@ const templated = (
   written: JsonObject,
   rule: Extract<FieldRule, { rule: "template" }>,
 ): JsonValue | undefined => {
-  const text = observed[rule.field];
-  const token = scalarText(observed[rule.from]);
-  const replacement = scalarText(written[rule.from]);
+  const text = ownMember(observed, rule.field);
+  const token = scalarText(ownMember(observed, rule.from));
+  const replacement = scalarText(ownMember(written, rule.from));
   return typeof text === "string" &&
     token !== undefined &&
     replacement !== undefined
@@ -283,14 +280,16 @@ const derive = (
 ): string | undefined => {
   for (const rule of rules) {
     if (rule.rule === "slug") {
-      const from = sent[rule.from];
-      if (typeof from === "string") written[rule.field] = slugOf(from);
+      const from = ownMember(sent, rule.from);
+      if (typeof from === "string")
+        setOwnMember(written, rule.field, slugOf(from, rule.ampersand));
     } else if (rule.rule === "template") {
       const value = templated(observed, written, rule);
-      if (value !== undefined) written[rule.field] = value;
-    } else if (rule.rule === "stamp") written[rule.field] = rule.value;
+      if (value !== undefined) setOwnMember(written, rule.field, value);
+    } else if (rule.rule === "stamp")
+      setOwnMember(written, rule.field, rule.value);
     else if (rule.rule === "derived" && Object.hasOwn(sent, rule.member))
-      written[rule.field] = rule.value;
+      setOwnMember(written, rule.field, rule.value);
   }
   // Composed strings read the fields the rules above wrote.
   for (const rule of rules)
@@ -302,7 +301,7 @@ const derive = (
         );
         return `The write composes ${JSON.stringify(rule.field)} from ${listed([...sources])}, and the entity holds no value one of them can spell.`;
       }
-      written[rule.field] = value;
+      setOwnMember(written, rule.field, value);
     }
   return undefined;
 };
@@ -341,9 +340,10 @@ export const createdFields = (
   for (const rule of plan.rules) {
     const value = ruledValue(rule, observed, call, generate, referenced);
     if (!value.ok) return value;
-    if (value.value !== undefined) written[rule.field] = value.value;
+    if (value.value !== undefined)
+      setOwnMember(written, rule.field, value.value);
     else if (rule.rule === "echo" && defaults.has(rule.field))
-      written[rule.field] = defaults.get(rule.field)!;
+      setOwnMember(written, rule.field, defaults.get(rule.field)!);
     else if (rule.rule === "echo" || rule.rule === "reference")
       delete written[rule.field];
   }
@@ -404,15 +404,20 @@ export const updatedFields = (
   const written: JsonObject = { ...before };
   for (const rule of plan.rules) {
     const stated = statedValue(rule, sent);
-    if (stated !== undefined) written[rule.field] = stated;
+    if (stated !== undefined) setOwnMember(written, rule.field, stated);
     else if (rule.rule === "reference" && Object.hasOwn(sent, rule.member)) {
       const value = referencedValue(rule, sent, referenced);
       if (!value.ok) return value;
-      if (value.value !== undefined) written[rule.field] = value.value;
+      if (value.value !== undefined)
+        setOwnMember(written, rule.field, value.value);
     } else if (rule.rule === "increment") {
-      const was = integerOf(before[rule.field]);
+      const was = integerOf(ownMember(before, rule.field));
       if (was !== undefined)
-        written[rule.field] = spelledLike(before[rule.field]!, was + 1);
+        setOwnMember(
+          written,
+          rule.field,
+          spelledLike(ownMember(before, rule.field)!, was + 1),
+        );
     } else if (
       regenerated(rule) ||
       // Child rows are renewed only on an entity that holds them.
@@ -420,7 +425,8 @@ export const updatedFields = (
     ) {
       const value = generate(rule);
       if (!value.ok) return value;
-      if (value.value !== undefined) written[rule.field] = value.value;
+      if (value.value !== undefined)
+        setOwnMember(written, rule.field, value.value);
     }
   }
   const unspelled = derive(
@@ -532,10 +538,10 @@ export const writtenResponse = (
       pointer,
       Object.fromEntries(
         fields.map((field) => {
-          const value = written.fields![field]!;
+          const value = ownMember(written.fields!, field)!;
           const clock =
             written.clocks?.includes(field) === true
-              ? readClock(shown[field])
+              ? readClock(ownMember(shown, field))
               : undefined;
           return [
             field,

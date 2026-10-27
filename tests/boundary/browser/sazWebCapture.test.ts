@@ -485,10 +485,7 @@ it("inspects native SAZ through the public CLI and MCP with equal evidence, byte
   expect(response.isError, JSON.stringify(response)).not.toBe(true);
   const fromMcp = parseEvidence(response.structuredContent);
   expect(fromMcp.normalized_result).toEqual(evidence.normalized_result);
-  const bundle = await client.callTool({
-    name: "get_evidence_bundle",
-    arguments: { detail: "complete" },
-  });
+  const bundle = await call("get_evidence_bundle", { detail: "complete" });
   const records = z
     .object({ result: z.object({ records: z.array(z.unknown()) }) })
     .parse(bundle.structuredContent)

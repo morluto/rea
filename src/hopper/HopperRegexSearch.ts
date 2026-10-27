@@ -6,11 +6,11 @@ import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
-import { analysisStringSchema } from "../domain/hopperValues.js";
+import { analysisStringSchema } from "../domain/native/nativeString.js";
 import { HopperRemoteError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { analysisSearchInput } from "../contracts/analysisSearchContract.js";
+import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -24,7 +24,7 @@ import { matchRegexValues } from "../process/RegexMatcher.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 
 const inputSchema = z.strictObject({
-  ...analysisSearchInput,
+  ...nativeSearchInput,
   mode: z.literal("regex"),
 });
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */

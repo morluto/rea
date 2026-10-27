@@ -7,11 +7,13 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   ASAR_HEADER_ADMISSION_SETTING,
   DEFAULT_ASAR_HEADER_ADMISSION,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
+import {
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+} from "../domain/analysisResourceLimits.js";
 
 /**
  * Resolve the admission from a composition root's selected environment; an
@@ -420,3 +422,39 @@ export const admitAsarHeader = async (
 export const createAsarHeaderSignatureProbe = (
   admission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): AsarHeaderSignatureProbe => new AsarHeaderSignatureProbeImpl(admission);
+
+/** Decode only admitted JSON bytes from the same owned descriptor as its extents. */
+export const readAsarHeader = async (
+  handle: Pick<FileHandle, "read">,
+  extents: AsarHeaderExtents,
+  signal?: AbortSignal,
+): Promise<unknown> => {
+  const bytes = Buffer.alloc(extents.jsonBytes);
+  let offset = 0;
+  while (offset < bytes.length) {
+    assertArtifactReadActive(signal);
+    const read = await handle.read(
+      bytes,
+      offset,
+      bytes.length - offset,
+      16 + offset,
+    );
+    assertArtifactReadActive(signal);
+    if (read.bytesRead === 0)
+      throw new ArtifactReaderFailure("format", "Truncated ASAR JSON header");
+    offset += read.bytesRead;
+  }
+  let json: string;
+  try {
+    json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
+  } catch (cause: unknown) {
+    throw new ArtifactReaderFailure(
+      "format",
+      "ASAR JSON header is not valid UTF-8",
+      { cause },
+    );
+  }
+  return JSON.parse(json) as unknown;
+};

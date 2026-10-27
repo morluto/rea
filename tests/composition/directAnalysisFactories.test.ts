@@ -1,7 +1,8 @@
+import { EvidenceFileError } from "../../src/domain/evidenceErrors.js";
+import { err, ok as resultOk } from "../../src/domain/result.js";
 import { dirname, join } from "node:path";
 import { parseConfig } from "../../src/config/parseConfig.js";
-import { ok as resultOk } from "../../src/domain/result.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   runDirectAnalysis,
   runProviderAnalysis,
@@ -322,4 +323,48 @@ it("direct analysis snapshot target mismatch retains actionable snapshot recover
       { snapshotPath },
     ),
   ).not.toHaveProperty("code");
+});
+
+it("retries snapshot file cleanup before final close even when a published identity is excluded", async () => {
+  const [path] = await createBinarySessionTargets();
+  const profile = createAnalysisProfile(
+    { id: "fixture", name: "Fixture analysis provider", version: "1" },
+    { fixture: true },
+  );
+  const factories = recordingFactories(undefined, profile);
+  const events: string[] = [];
+  const publication = new EvidenceFileError("write", "io", {
+    published: { bytes: 42 },
+  });
+  const dependencies: DirectAnalysisDependencies = {
+    ...factories.dependencies,
+    createBinarySession: async (...args) => {
+      const session = await factories.dependencies.createBinarySession(...args);
+      vi.spyOn(session, "writeAnalysisSnapshot").mockResolvedValue(
+        err(publication),
+      );
+      const closeResources = session.closeFileResources.bind(session);
+      vi.spyOn(session, "closeFileResources").mockImplementation(async () => {
+        events.push("file-cleanup");
+        return closeResources();
+      });
+      const close = session.close.bind(session);
+      vi.spyOn(session, "close").mockImplementation(async () => {
+        events.push("session-close");
+        return close();
+      });
+      return session;
+    },
+  };
+  const result = await runDirectAnalysis(
+    dependencies,
+    path,
+    "read_bytes",
+    {},
+    { snapshotPath: join(dirname(path), "excluded.snapshot") },
+  );
+  expect(events[0]).toBe("file-cleanup");
+  expect(events).toContain("session-close");
+  expect(result).toMatchObject({ details: { published: true, bytes: 42 } });
+  expect(result).not.toHaveProperty("details.published_path");
 });

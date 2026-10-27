@@ -23,9 +23,16 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { UnknownRegistryPort } from "./investigation/InvestigationRecordPort.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
+import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
+import {
+  recordEvidenceSources,
+  withEvidenceSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
 import { workflowUnknownInput } from "./investigation/WorkflowUnknown.js";
 import {
   renderSourceLimitations,
+  sourceLimitationGroupKey,
   sourceLimitationKey,
   type SourceLimitation,
 } from "./SourceLimitations.js";
@@ -70,18 +77,16 @@ export const executeComposedWorkflow = async (
   ) => Promise<Result<JsonValue, AnalysisError>>,
   budget?: ComposedLimitationBudget,
 ): Promise<
-  Result<
-    {
-      readonly result: JsonValue;
-      readonly limitations: readonly string[];
-      readonly cachePolicy?: "live";
-      readonly evidenceLinks?: readonly string[];
-    },
-    AnalysisError
-  >
+  AnalysisResultWithSources<{
+    readonly result: JsonValue;
+    readonly limitations: readonly string[];
+    readonly cachePolicy?: "live";
+    readonly evidenceLinks?: readonly string[];
+  }>
 > => {
   const limitations = new Map<string, SourceLimitation>();
   const evidenceLinks = new Set<string>();
+  const sourceLedger = new EvidenceLedger();
   const perItemGroups = new Set<string>();
   let perItemBytes = 0;
   let omittedObservations = 0;
@@ -92,6 +97,13 @@ export const executeComposedWorkflow = async (
       const execution = await analysis.execute(operation, parameters, options);
       if (execution.ok && execution.value.evidenceId !== undefined)
         evidenceLinks.add(execution.value.evidenceId);
+      if (execution.ok && execution.value.sourceEvidence !== undefined) {
+        const recorded = recordEvidenceSources(
+          (source) => sourceLedger.record(source),
+          execution.value.sourceEvidence,
+        );
+        if (!recorded.ok) return recorded;
+      }
       if (execution.ok && execution.value.cachePolicy === "live")
         cachePolicy = "live";
       if (execution.ok)
@@ -110,12 +122,7 @@ export const executeComposedWorkflow = async (
               omittedObservations += 1;
               continue;
             }
-            const group = JSON.stringify([
-              fact.provider.id,
-              fact.provider.name,
-              fact.provider.version,
-              limitation,
-            ]);
+            const group = sourceLimitationGroupKey(fact);
             if (!perItemGroups.has(group)) {
               if (
                 perItemGroups.size >= budget.maxDistinct ||
@@ -133,22 +140,27 @@ export const executeComposedWorkflow = async (
       return execution;
     },
   });
-  if (!result.ok) return result;
-  return ok({
-    result: result.value,
-    limitations: [
-      ...renderSourceLimitations([...limitations.values()]),
-      ...(omittedObservations === 0
-        ? []
-        : [
-            `${omittedObservations} per-item provider limitation observation${omittedObservations === 1 ? " was" : "s were"} omitted from this answer; ${budget?.retainedIn}.`,
-          ]),
-    ],
-    ...(cachePolicy === undefined ? {} : { cachePolicy }),
-    ...(evidenceLinks.size === 0
-      ? {}
-      : { evidenceLinks: [...evidenceLinks].sort(compareUnicodeCodePoints) }),
-  });
+  const sources = sourceLedger.recordsForAnalysis();
+  if (!result.ok) return withEvidenceSources(result, sources);
+  for (const source of sources) evidenceLinks.add(source.evidence_id);
+  return withEvidenceSources(
+    ok({
+      result: result.value,
+      limitations: [
+        ...renderSourceLimitations([...limitations.values()]),
+        ...(omittedObservations === 0
+          ? []
+          : [
+              `${omittedObservations} per-item provider limitation observation${omittedObservations === 1 ? " was" : "s were"} omitted from this answer; ${budget?.retainedIn}.`,
+            ]),
+      ],
+      ...(cachePolicy === undefined ? {} : { cachePolicy }),
+      ...(evidenceLinks.size === 0
+        ? {}
+        : { evidenceLinks: [...evidenceLinks].sort(compareUnicodeCodePoints) }),
+    }),
+    sources,
+  );
 };
 
 /** Build the shared Evidence record for a successful composed binary workflow. */

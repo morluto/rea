@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -6,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { PACKAGE_METADATA } from "../generatedPackageMetadata.js";
+import {
+  WINDOWS_NATIVE_ARTIFACT,
+  parseWindowsNativeManifest,
+  validateWindowsNativeArtifact,
+} from "../domain/windowsNativeArtifact.js";
 
 /** A native resource remains opaque until the addon validates its object tag. */
 export const windowsHandleSchema = z.custom<object>(
@@ -24,21 +28,10 @@ export const windowsFileIdentitySchema = z.strictObject({
   directory: z.boolean(),
 });
 
-/** Metadata bound to one packaged Windows x64 Node-API artifact. */
-export const windowsNativeManifestSchema = z.strictObject({
-  packageVersion: z.string(),
-  platform: z.literal("win32"),
-  architecture: z.literal("x64"),
-  abiVersion: z.literal(1),
-  nodeApiVersion: z.literal(8),
-  artifact: z.literal("rea-windows-x64.node"),
-  artifactSha256: z.string().regex(/^[a-f0-9]{64}$/u),
-});
-
 const inspectionSchema = z.strictObject({
-  abiVersion: z.literal(1),
-  nodeApiVersion: z.literal(8),
-  architecture: z.literal("x64"),
+  abiVersion: z.literal(WINDOWS_NATIVE_ARTIFACT.abiVersion),
+  nodeApiVersion: z.literal(WINDOWS_NATIVE_ARTIFACT.nodeApiVersion),
+  architecture: z.literal(WINDOWS_NATIVE_ARTIFACT.architecture),
   filesystem: windowsFileIdentitySchema,
   privateDacl: z.literal(true),
   privateBridgeDescriptorAccess: z.literal(true),
@@ -125,29 +118,27 @@ export const loadWindowsNativeAuthority = (
       reason: "REA Windows native controls require a Windows x64 host.",
     };
   const nodeApiVersion = Number(host.nodeApiVersion);
-  if (!Number.isSafeInteger(nodeApiVersion) || nodeApiVersion < 8)
+  if (
+    !Number.isSafeInteger(nodeApiVersion) ||
+    nodeApiVersion < WINDOWS_NATIVE_ARTIFACT.nodeApiVersion
+  )
     return {
       available: false,
       failureStage: "host",
       reason: "REA Windows native controls require Node-API 8 or newer.",
     };
   try {
-    const manifest = windowsNativeManifestSchema.parse(
+    const manifest = parseWindowsNativeManifest(
       readPackagedWindowsNativeFile("manifest.json", () => host.readManifest()),
+      host.packageVersion,
     );
-    if (manifest.packageVersion !== host.packageVersion)
-      throw new Error("Windows native artifact belongs to another REA version");
-    const artifact = readPackagedWindowsNativeFile("rea-windows-x64.node", () =>
-      host.readArtifact(),
+    if (!manifest.ok) throw manifest.error;
+    const artifact = readPackagedWindowsNativeFile(
+      WINDOWS_NATIVE_ARTIFACT.artifact,
+      () => host.readArtifact(),
     );
-    if (
-      createHash("sha256").update(artifact).digest("hex") !==
-      manifest.artifactSha256
-    )
-      throw new Error(
-        "Windows native artifact SHA-256 does not match package metadata",
-      );
-    assertWindowsX64Artifact(artifact);
+    const valid = validateWindowsNativeArtifact(manifest.value, artifact);
+    if (!valid.ok) throw valid.error;
     let loadedModule: unknown;
     try {
       loadedModule = host.loadArtifact();
@@ -186,19 +177,6 @@ export const loadWindowsNativeAuthority = (
       reason: `REA Windows native controls are unavailable: ${cause instanceof Error ? cause.message : String(cause)}`,
     };
   }
-};
-
-const assertWindowsX64Artifact = (bytes: Buffer): void => {
-  if (bytes.length < 64 || bytes.toString("latin1", 0, 2) !== "MZ")
-    throw new Error("Windows native artifact is not a PE image");
-  const offset = bytes.readUInt32LE(0x3c);
-  if (
-    offset > bytes.length - 26 ||
-    bytes.toString("latin1", offset, offset + 4) !== "PE\0\0" ||
-    bytes.readUInt16LE(offset + 4) !== 0x8664 ||
-    bytes.readUInt16LE(offset + 24) !== 0x20b
-  )
-    throw new Error("Windows native artifact is not a Windows x64 PE32+ image");
 };
 
 let cached: WindowsNativeLoadResult | undefined;

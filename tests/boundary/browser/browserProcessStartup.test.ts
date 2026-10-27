@@ -13,7 +13,7 @@ import {
   BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
   BrowserStartupError,
   waitForBrowserDevtoolsPort,
-} from "../../../src/browser/BrowserProcessStartup.js";
+} from "../../../scripts/lib/browser-process-startup.mjs";
 import { assertOrdinaryWindowsVerifierCaller } from "../../../scripts/lib/windows-ordinary-user-verifier.mjs";
 
 describe("browser process startup", () => {

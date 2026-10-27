@@ -455,7 +455,9 @@ const project = (
         header &&
           ["location", "referer", "origin"].includes(
             String(parent?.name).toLowerCase(),
-          ),
+          )
+          ? {}
+          : undefined,
       );
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))

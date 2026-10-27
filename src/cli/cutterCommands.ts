@@ -60,12 +60,6 @@ export const registerCutterCommands = (
         .describe(
           "Return command-specific JSON output when available (independent of CLI output formatting).",
         ),
-      json: z
-        .boolean()
-        .optional()
-        .describe(
-          "Deprecated compatibility input: use --json-output; pass --json=true or --json=false (bare --json formats CLI output).",
-        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -78,7 +72,7 @@ export const registerCutterCommands = (
                   session_id: args.sessionId,
                   expected_generation: args.expectedGeneration,
                   command: args.command,
-                  json: options.jsonOutput ?? options.json ?? false,
+                  json: options.jsonOutput ?? false,
                 },
                 { signal },
               ),

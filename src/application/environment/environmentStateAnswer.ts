@@ -1,6 +1,7 @@
 import { hasRepeatedQueryArgument } from "./environmentTools.js";
 import { stateBodyJson } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
+  ownMember,
   collectionMatch,
   collectionPathOf,
   decodedSegment,
@@ -439,7 +440,7 @@ const listSelection = (
   }
   const idField = store.type(view.type)?.id_field ?? "";
   const members = line.recorded.flatMap((item) => {
-    const id = scalarText(item[idField]);
+    const id = scalarText(ownMember(item, idField));
     const entity =
       id === undefined ? undefined : store.entity(view.type, collection, id);
     return entity === undefined ? [] : [entity];

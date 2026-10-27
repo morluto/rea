@@ -1,3 +1,4 @@
+import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   at,
@@ -114,6 +115,7 @@ export class EnvironmentStateWriteSimulation {
   readonly #touchedSince: PendingTargets = new Map();
   /** Timeline indexes of writes the gate does not model. */
   readonly #unmodelledAt: number[] = [];
+  readonly #writeCompletion: CapturedWriteCompletion;
   readonly #history: WriteHistory = {
     touched: this.#touched,
     pending: this.#touchedSince,
@@ -135,6 +137,7 @@ export class EnvironmentStateWriteSimulation {
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
+    this.#writeCompletion = new CapturedWriteCompletion(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     this.#unseen = new UnseenEntities(input.entities, {
       state: this.#state,
@@ -221,9 +224,19 @@ export class EnvironmentStateWriteSimulation {
         unstamped: new Set(),
         kept: new Set(),
         fixedWidth: new Map(),
+        ampersands: new Map(),
         linked: link.collection,
       });
     }
+    // Reads may finish after writes with the same or a later start: index the
+    // complete capture before replay so ordinal tie-breaking cannot create proof.
+    for (const record of this.#input.records)
+      if (this.#isWrite(record))
+        this.#writeCompletion.write(
+          record.path,
+          this.#input.chronology.endMs(record),
+          this.#input.chronology.startMs(record),
+        );
     this.#input.records.forEach((record, index) => this.#step(record, index));
     const views = new Map(
       this.views([...this.#input.views.values()]).map((view) => [
@@ -280,7 +293,7 @@ export class EnvironmentStateWriteSimulation {
                   : this.#input.io.requestBody(ordinal),
             },
       records: this.#input.records,
-      timed: this.#input.timed,
+      chronology: this.#input.chronology,
       viewOf: (ordinal) => {
         const view = this.#input.views.get(
           this.#toolOf.get(ordinal)?.name ?? "",
@@ -354,7 +367,7 @@ export class EnvironmentStateWriteSimulation {
           index,
           tool: tool.name,
           path: record.path,
-          end: record.end,
+          end: this.#input.chronology.endMs(record),
         });
     };
     // Item deletes use their path; calls outside a built plan's query never interpret their body.
@@ -370,7 +383,7 @@ export class EnvironmentStateWriteSimulation {
       readonly index: number;
       readonly tool: string;
       readonly path: string;
-      readonly end: number;
+      readonly end: number | undefined;
     },
   ): void {
     if (result.kind === "unknown") {
@@ -427,6 +440,7 @@ export class EnvironmentStateWriteSimulation {
   /** Whether an item read shows an entity an unmodelled write made, or one left unknown, again rather than checks it. */
   #resynced(view: StateView, record: StateRecordFacts, index: number): boolean {
     if (view.shape !== "item") return false;
+    if (this.#writeOverlapsRead(record)) return true;
     const adopted = this.#unseen.adopt(view, { record, index });
     if (adopted !== undefined) {
       this.#taint.known(adopted.type, adopted.collection, adopted.id);
@@ -436,7 +450,14 @@ export class EnvironmentStateWriteSimulation {
     if (!this.#taint.unknown(view.type, collection, id)) return false;
     // A read begun while a modelled write to the entity still ran may show either state, so it neither checks nor shows it.
     const target = entityTarget(view.type, collection, id);
-    if (runningAt(this.#touchedSince, target, record.start)) return true;
+    if (
+      runningAt(
+        this.#touchedSince,
+        target,
+        this.#input.chronology.startMs(record),
+      )
+    )
+      return true;
     // A failed read that is no absence shows nothing of the entity, so it stays unknown for a usable read.
     if (!succeeded(record) && !isAbsence(record.status)) return true;
     const entity = this.#state.entity(view.type, collection, id);
@@ -530,6 +551,7 @@ export class EnvironmentStateWriteSimulation {
     if (original === undefined) return;
     let view = this.#sorted.comparisonView(this.omitted.view(original));
     if (projectedRead(view, record, this.#input.io)) return;
+    if (this.#writeOverlapsRead(record)) return;
     const borrowers = this.#observations.get(record.ordinal);
     if (
       this.#viewOf(original).shape !== "recorded" &&
@@ -544,7 +566,11 @@ export class EnvironmentStateWriteSimulation {
       targets.some(
         (key) =>
           this.#taint.tainted(key) ||
-          runningAt(this.#touchedSince, key, record.start),
+          runningAt(
+            this.#touchedSince,
+            key,
+            this.#input.chronology.startMs(record),
+          ),
       );
     if (blocked(keys)) return;
     // A read the gate counts can show the view lists a written array sorted, or rule that out.
@@ -648,6 +674,15 @@ export class EnvironmentStateWriteSimulation {
         this.#placed.add(name);
     }
     return shown.unseen;
+  }
+
+  /** An overlapping captured write cannot supply a stable read baseline. */
+  #writeOverlapsRead(read: StateRecordFacts): boolean {
+    return this.#writeCompletion.runningAt(
+      read.path,
+      this.#input.chronology.startMs(read),
+      this.#input.chronology.endMs(read),
+    );
   }
 
   #unmodelled(path: string, index: number): void {

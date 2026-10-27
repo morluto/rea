@@ -4,7 +4,7 @@ import {
   resolveSwiftcCompileTimeoutMs,
   swiftcCompileTimeoutRecovery,
 } from "./DarwinProcessRunTokenReader.js";
-import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 
 describe("resolveSwiftcCompileTimeoutMs", () => {
   it("keeps the historical default when unset", () => {

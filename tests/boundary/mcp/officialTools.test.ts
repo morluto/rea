@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { HopperRemoteError } from "../../../src/domain/hopperErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -150,6 +152,40 @@ const connect = async (analysis: AnalysisOperationPort) => {
 };
 
 describe("official tool input contracts", () => {
+  it("preserves every batch naming destination and rejects malformed own values before dispatch", async () => {
+    const invocations: Invocation[] = [];
+    const client = await connect({
+      execute: (name, arguments_) => {
+        invocations.push({ name, arguments_ });
+        return Promise.resolve(ok(null));
+      },
+    });
+    const names = JSON.parse('{"0x1000":"entry","__proto__":"other"}');
+    await client.callTool({
+      name: "set_addresses_names",
+      arguments: { names },
+    });
+    expect(invocations).toEqual([
+      { name: "set_addresses_names", arguments_: { names } },
+    ]);
+    expect(JSON.stringify(invocations[0]!.arguments_)).toContain(
+      '"__proto__":"other"',
+    );
+    for (const value of [42, null, {}]) {
+      const result = await client.callTool({
+        name: "set_addresses_names",
+        arguments: {
+          names: Object.fromEntries([
+            ["0x1000", "entry"],
+            ["__proto__", value],
+          ]),
+        },
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(invocations).toHaveLength(1);
+  });
+
   it("rejects misspelled top-level inputs before dispatch and keeps record keys open", async () => {
     const invocations: Invocation[] = [];
     const client = await connect({
@@ -197,6 +233,35 @@ describe("official tool input contracts", () => {
 });
 
 describe("official Hopper proxy tools", () => {
+  it("delivers every batch naming readback key in structured and text Evidence", async () => {
+    const readback = JSON.parse(
+      '{"0x1000":true,"__proto__":false,"constructor":true}',
+    );
+    const client = await connect({
+      execute: () => Promise.resolve(ok(readback)),
+    });
+    const response = await client.callTool({
+      name: "set_addresses_names",
+      arguments: {
+        names: JSON.parse(
+          '{"0x1000":"entry","__proto__":"other","constructor":"named"}',
+        ),
+      },
+    });
+    expect(response.isError).toBeFalsy();
+    const evidence = toolContract("set_addresses_names").outputSchema.parse(
+      response.structuredContent,
+    );
+    const result = jsonObjectSchema.parse(evidence.normalized_result);
+    expect(result).toEqual(readback);
+    expect(Object.hasOwn(result, "__proto__")).toBe(true);
+    const text = response.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing serialized Evidence");
+    expect(
+      jsonObjectSchema.parse(JSON.parse(text.text)).normalized_result,
+    ).toEqual(readback);
+  });
+
   it("returns stable safe MCP error content", async () => {
     const client = await connect({
       execute: () => Promise.resolve(err(new HopperRemoteError(-1, "denied"))),

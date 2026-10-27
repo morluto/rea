@@ -3,7 +3,6 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { ElfNotesPort } from "./ElfNotesPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -13,11 +12,11 @@ import {
   elfNotesSchema,
   type ElfNotes,
 } from "../../domain/native/elfNotes.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { BINARY_ARCHITECTURES } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_elf_notes";
 
@@ -33,18 +32,14 @@ export class ElfNotesService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectElfNotesInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectElfNotesInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    if (!isAbsolute(input.value.path))
       return err(
         new AnalysisInputError(OPERATION, undefined, [
           {
@@ -54,16 +49,16 @@ export class ElfNotesService {
           },
         ]),
       );
-    const result = await this.provider.inspect(input.data, options);
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = elfNotesSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
       !validReport(
         report.data,
-        input.data.max_entries,
-        input.data.max_file_bytes,
+        input.value.max_entries,
+        input.value.max_file_bytes,
       )
     )
       return err(
@@ -95,7 +90,7 @@ export class ElfNotesService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

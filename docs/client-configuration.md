@@ -74,6 +74,17 @@ Connect Fiddler Everywhere's MCP server separately for HTTP traffic debugging,
 preserving your REA client entry. See the
 [setup instructions and public skills](web-network-captures.md#fiddler-everywhere-mcp-and-public-skills).
 
+## VS Code
+
+`rea setup --client vscode` configures the default VS Code user profile's
+`mcp.json`. Setup honors `VSCODE_PORTABLE` and `VSCODE_APPDATA` when they are
+present in its environment. It cannot infer a running window's named profile
+or `--user-data-dir`; configure that profile separately when needed.
+
+`rea setup --client copilot_cli` instead configures Copilot's user
+`mcp-config.json`. VS Code can forward eligible profile servers to Copilot
+sessions; see the [VS Code MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
+
 ## GitHub Copilot CLI
 
 Setup preserves an existing `tools` selection in the REA registration, including
@@ -204,14 +215,25 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
   `mcpServers.rea` entry in `~/.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`
   when that variable is set), then restart Claude Code. Setup keeps this
   override.
+- To remove entire tool families from the upfront catalog, run
+  `rea setup --client claude_code --tool-families <ids>` with the families the
+  workflow needs (see [the advertising scope contract](mcp-contracts.md#tool-family-advertising-scope)).
+  Out-of-scope tools are not advertised and their calls fail with the SDK's
+  disabled-tool error, so widen the selection when a task needs another
+  family. Setup writes the scope into the entry's `env` as
+  `REA_MCP_TOOL_FAMILIES`; rerun setup with a different selection to refresh
+  it, then restart Claude Code.
 
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
 
-For a client whose stdio reader rejects the complete catalog frame, add
-`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "off"` to REA's `env` object and restart the
-client. This omits only advertised output schemas; REA still validates complete
-structured results against its canonical contracts. See [MCP output schema
+For a client whose stdio reader rejects the complete catalog frame, set
+`"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
+schema, or `"off"` to omit them, in REA's `env` object, then restart the client.
+Both keep canonical result validation and complete structured results; `compact`
+keeps a widened root shape and `off` advertises nothing. On catalogs large
+enough that full input schemas alone approach the frame limit, also keep the
+input profile at its `compact` default. See [MCP output schema
 profiles](mcp-contracts.md#output-schemas).
 
 ## Kimi Code
@@ -244,6 +266,20 @@ registration but does not contribute to the derived tool timeout; raise
 `toolTimeoutMs` to cover a longer selected JADX deadline.
 This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
+
+Setup also forwards explicitly selected input/output schema profiles,
+`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+settings. It also forwards explicit executable and resource selections for ADB,
+apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
+signal tools, browser inspection, and pwntools/pwndbg. This includes their
+supported prlimit overrides, Darwin Swift compiler/SDK/module-cache selections,
+and compile timeout, logging level and explicitly configured reference-secret
+patterns. A provider being unavailable does not discard its selected paths;
+doctor reports its readiness separately. Explicit selections override discovered
+defaults, including when setup runs again with a changed selection. Unrelated
+environment variables, process ownership tokens and one-shot target paths are not
+copied. Existing client environment overrides remain intact unless setup supplies
+the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
@@ -565,9 +601,9 @@ with an installed native FreeBuff client/version; filesystem tests cover REA's
 editing, discovery, and ownership behavior only. Automatic applicability
 requires the FreeBuff profile directory even when the shared MCP file exists.
 
-FreeBuff is main-only and is not in a published release yet; npm 6.7.0 is the
-latest. `rea setup --client freebuff` against `@latest` reports an unsupported
-client until a release containing it is published.
+FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
+reject `rea setup --client freebuff` as an unsupported client. See the
+[installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness
 
@@ -634,8 +670,10 @@ become active again. Malformed applicable files block setup before changes.
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server
 table, `[mcp_servers.rea.env]`, and a root `disabled_mcp_servers` entry that
-names `rea`. It sets `startup_timeout_sec = 30` and leaves every other name
-in that list. The shared skill installed under `~/.agents/skills` is already
+names `rea`. It defaults `startup_timeout_sec` to 30 seconds, preserves an
+existing positive timeout, and leaves every other name in that list.
+[Grok supports longer startup timeouts](https://docs.x.ai/build/features/mcp-servers)
+for cold package-runner launches. The shared skill installed under `~/.agents/skills` is already
 on Grok Build's skill path.
 
 Grok Bot (`grok_bot`) is detected from `~/.grokbot`, or from `SAND_DATA_ROOT`

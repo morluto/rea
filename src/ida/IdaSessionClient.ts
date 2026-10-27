@@ -24,7 +24,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
-import { idaProtocol } from "./IdaConfiguration.js";
+import { idaCompatibilityProfile } from "./IdaConfiguration.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
@@ -305,7 +305,7 @@ export class IdaSessionClient implements AnalysisClient {
       );
     if (
       operation !== "health" &&
-      !idaProfileAdmits(operation, this.config.mode)
+      !idaProfileAdmits(operation, idaCompatibilityProfile(this.config))
     )
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -316,7 +316,7 @@ export class IdaSessionClient implements AnalysisClient {
       );
     if (
       operation === "procedure_callers" &&
-      idaProtocol(this.config) !== "legacy"
+      idaCompatibilityProfile(this.config).protocol !== "legacy"
     )
       return err(
         new AnalysisCapabilityUnavailableError(
@@ -418,7 +418,7 @@ export class IdaSessionClient implements AnalysisClient {
   #runner(options: ExecutionOptions | undefined): IdaOperationRunner {
     return new IdaOperationRunner(
       this.connection,
-      idaProtocol(this.config),
+      idaCompatibilityProfile(this.config).protocol,
       this.#database,
       {
         regexMatchingDeadline: this.regexSettings?.regexMatchingDeadline,
@@ -687,15 +687,15 @@ export class IdaSessionClient implements AnalysisClient {
     const tools = new Set(await this.connection.connect());
     this.#callGraphAdvertised = tools.has("callgraph");
     this.#surveyAdvertised = tools.has("survey_binary");
-    const expected =
-      this.config.protocol === "native"
-        ? nativeTools
-        : this.config.mode === "attached"
-          ? legacyTools
-          : modernTools;
+    const profile = idaCompatibilityProfile(this.config);
+    const expected = {
+      native: nativeTools,
+      legacy: legacyTools,
+      modern: modernTools,
+    }[profile.protocol];
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${this.config.protocol === "native" ? "native attached" : this.config.mode} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {
@@ -703,12 +703,7 @@ export class IdaSessionClient implements AnalysisClient {
         diagnostics: {
           reason: summary,
           mode: this.config.mode,
-          expected_profile:
-            this.config.protocol === "native"
-              ? "native"
-              : this.config.mode === "attached"
-                ? "legacy-1.4"
-                : "database-supervisor",
+          expected_profile: profile.diagnosticIdentity,
           missing_tools: [...missing],
           recovery:
             "Install an IDA MCP build that serves the selected profile; see docs/ida-provider.md.",
@@ -796,7 +791,7 @@ export class IdaSessionClient implements AnalysisClient {
     let identity: string;
     if (this.config.mode === "attached") {
       const raw =
-        this.config.protocol === "native"
+        idaCompatibilityProfile(this.config).protocol === "native"
           ? await this.#nativeMetadata(options?.signal)
           : await this.connection.call(
               "get_metadata",

@@ -1,3 +1,4 @@
+import type { NodeSeaAdmission } from "./nodeSea/NodeSeaAdmission.js";
 import { Readable, Transform, pipeline } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
@@ -28,6 +29,7 @@ import {
   locateNodeSea,
   readNodeSeaBlob,
   scanNodeSeaFuse,
+  type NodeSeaLocation,
 } from "./nodeSea/NodeSeaLocation.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
@@ -49,10 +51,19 @@ export class NodeSeaArtifactReader implements ArtifactReader {
   readonly #source: ArtifactFileSource;
   #prepared: Promise<void> | undefined;
   #header: NodeSeaMetadata | undefined;
+  #admission: NodeSeaAdmission | undefined;
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "Node SEA", admitted);
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor | NodeSeaAdmission,
+  ) {
+    if (admitted !== undefined && "kind" in admitted) {
+      this.#admission = admitted;
+      this.#source = new ArtifactFileSource(path, "Node SEA", admitted.source);
+    } else {
+      this.#source = new ArtifactFileSource(path, "Node SEA", admitted);
+    }
   }
 
   formatMetadata(): NodeSeaMetadata | undefined {
@@ -127,12 +138,14 @@ export class NodeSeaArtifactReader implements ArtifactReader {
       const output = this.#memberStream(stored, signal);
       output.on("error", () => undefined);
       this.#streams.add(output);
+      // A finished producer can leave source bytes buffered for its consumer.
+      // Keep the readable side owned until it closes as well.
+      output.once("close", () => this.#streams.delete(output));
       void this.#scope
         .run(
           () =>
             new Promise<void>((resolve) => {
               pipeline(source, output, () => {
-                this.#streams.delete(output);
                 resolve();
               });
             }),
@@ -157,6 +170,7 @@ export class NodeSeaArtifactReader implements ArtifactReader {
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
+    this.#admission = undefined;
   }
 
   provenance(): readonly [] {
@@ -174,16 +188,25 @@ export class NodeSeaArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
-    const location = await locateNodeSea(handle, initial.size, signal);
-    if (location === undefined) throw formatFailure("blob was not found");
-    if (location.blobLength > NODE_SEA_MAX_BLOB_BYTES)
-      throw new ArtifactReaderFailure("limit", NODE_SEA_BLOB_TOO_LARGE, {
-        boundary: "memory",
-      });
-    const decoded = await decodeNodeSeaBlob(
-      await readNodeSeaBlob(handle, location, initial.size, signal),
-      signal,
-    );
+    // Freshness remains owned by ArtifactFileSource even when classification
+    // already decoded this exact borrowed descriptor's blob.
+    let location: NodeSeaLocation;
+    let decoded: DecodedNodeSeaBlob;
+    if (this.#admission !== undefined) {
+      ({ location, decoded } = this.#admission);
+    } else {
+      const found = await locateNodeSea(handle, initial.size, signal);
+      if (found === undefined) throw formatFailure("blob was not found");
+      location = found;
+      if (location.blobLength > NODE_SEA_MAX_BLOB_BYTES)
+        throw new ArtifactReaderFailure("limit", NODE_SEA_BLOB_TOO_LARGE, {
+          boundary: "memory",
+        });
+      decoded = await decodeNodeSeaBlob(
+        await readNodeSeaBlob(handle, location, initial.size, signal),
+        signal,
+      );
+    }
     const fuse = await scanNodeSeaFuse(handle, initial.size, signal);
     let declaredBytes = 0n;
     const expansionBudget = BigInt(
@@ -246,6 +269,7 @@ export class NodeSeaArtifactReader implements ArtifactReader {
       fuse_contradiction: fuse.fuseContradiction,
     };
     await this.#source.read(signal);
+    this.#admission = undefined;
   }
 
   #memberStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {

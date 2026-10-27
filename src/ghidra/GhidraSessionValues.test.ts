@@ -239,3 +239,32 @@ describe("Ghidra mutation handshake", () => {
     }
   });
 });
+
+it("admits unknown analysis completeness only for a committed read-only existing project", () => {
+  const value = {
+    ...session(),
+    existing_project: true,
+    read_only: true,
+    analysis_complete: null,
+    capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+      (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+    ),
+  };
+  const project = {
+    ...expected,
+    expectedReadOnly: true,
+    expectedExistingProject: true,
+  };
+  expect(parseGhidraSessionInfo(value, project).ok).toBe(true);
+  expect(parseGhidraSessionInfo(value, expected).ok).toBe(false);
+  for (const analysis_complete of [false, true])
+    expect(
+      parseGhidraSessionInfo({ ...value, analysis_complete }, project).ok,
+    ).toBe(false);
+  expect(
+    parseGhidraSessionInfo(
+      { ...value, capabilities: [...GHIDRA_SESSION_CAPABILITIES] },
+      project,
+    ).ok,
+  ).toBe(false);
+});

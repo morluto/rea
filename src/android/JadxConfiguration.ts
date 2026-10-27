@@ -1,3 +1,7 @@
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import { DEFAULT_JADX_OPERATION_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import {
   jadxOperationTimeoutGuidance,
@@ -10,7 +14,7 @@ import {
 } from "./JadxInterruption.js";
 import { constants } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { delimiter, isAbsolute, resolve } from "node:path";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import { systemWindowsNativeAuthority } from "../windows/WindowsNativeLoader.js";
 import { providerStartupTimeoutSchema } from "../config/providerStartupTimeout.js";
@@ -23,6 +27,7 @@ import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderAvailability } from "../application/AnalysisProvider.js";
+import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -224,6 +229,8 @@ export const inspectJadxAvailability = async (
         reason: cause.message,
         diagnostics: { ...cause.diagnostics, failure_kind: cause.kind },
       };
+    const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+    if (prerequisite !== undefined) return prerequisite;
     throw cause;
   }
 };
@@ -599,30 +606,43 @@ const resolveJava = async (
 ): Promise<string> => {
   const executable = process.platform === "win32" ? "java.exe" : "java";
   if (environment.JAVA_HOME === undefined) {
-    if (process.platform !== "win32") return executable;
-    const path =
-      Object.entries(environment).find(
-        ([key]) => key.toLowerCase() === "path",
-      )?.[1] ?? "";
-    for (const directory of path
-      .split(delimiter)
-      .filter((entry) => entry !== "")) {
+    const windows = process.platform === "win32";
+    const path = windows
+      ? (Object.entries(environment).find(
+          ([key]) => key.toLowerCase() === "path",
+        )?.[1] ?? "")
+      : (environment.PATH ?? "/usr/bin:/bin");
+    // Resolve in the caller's directory once. The module probe and the engine
+    // run in different directories, and the selected executable also owns the
+    // retained session's cache identity. Empty POSIX PATH components select cwd.
+    const directories = path.split(delimiter);
+    for (const directory of windows
+      ? directories.filter((entry) => entry !== "")
+      : directories) {
       throwIfJadxInterrupted(signal);
       // Windows PATH commonly quotes individual entries containing spaces.
       const selected =
-        directory.startsWith('"') && directory.endsWith('"')
+        windows && directory.startsWith('"') && directory.endsWith('"')
           ? directory.slice(1, -1)
           : directory;
-      const candidate = resolve(selected, executable);
+      const candidate = windows
+        ? resolve(selected, executable)
+        : absoluteCallerPath(appendCallerPath(selected, executable));
       try {
-        await access(candidate, constants.R_OK | constants.X_OK);
-        if ((await stat(candidate)).isFile()) return await realpath(candidate);
+        await access(
+          candidate,
+          windows ? constants.R_OK | constants.X_OK : constants.X_OK,
+        );
+        if ((await stat(candidate)).isFile())
+          return windows ? await realpath(candidate) : candidate;
       } catch (cause: unknown) {
         if (
           typeof cause === "object" &&
           cause !== null &&
           "code" in cause &&
-          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+          (cause.code === "ENOENT" ||
+            cause.code === "ENOTDIR" ||
+            (!windows && (cause.code === "EACCES" || cause.code === "EPERM")))
         )
           continue;
         throw configurationFailure(
@@ -636,13 +656,13 @@ const resolveJava = async (
     }
     throw configurationFailure(
       "runtime_missing",
-      "Cannot find java.exe on the selected Windows PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.",
-      { java_executable: executable },
+      `Cannot find an executable ${executable} on the selected ${windows ? "Windows " : ""}PATH. Select a full JDK with JAVA_HOME or PATH, then verify it with java --list-modules. REA does not install Java.`,
+      { java_executable: executable, phase: "path-lookup" },
       "java_runtime",
     );
   }
   if (isAbsolute(environment.JAVA_HOME))
-    return join(environment.JAVA_HOME, "bin", executable);
+    return appendCallerPath(environment.JAVA_HOME, `bin/${executable}`);
   throw configurationFailure(
     "open_options_invalid",
     "JAVA_HOME must select an existing JDK by absolute path; omit it to use java on PATH.",

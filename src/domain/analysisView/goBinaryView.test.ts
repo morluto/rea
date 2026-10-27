@@ -1,3 +1,4 @@
+import { freezeOwnedJsonTreeSnapshot } from "../immutableJson.js";
 import { expect, it } from "vitest";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { createEvidence } from "../evidence.js";
@@ -130,3 +131,22 @@ it.each([
     }
   },
 );
+
+it("revalidates the parent subject after immutable Go report facts have been cached", () => {
+  const input = {
+    ...parent(),
+    normalizedResult: freezeOwnedJsonTreeSnapshot(structuredClone(report)),
+    sealedResult: true,
+  };
+  expect(projectAnalysisView(input, { kind: "summary" }).ok).toBe(true);
+  if (input.subject == null) throw new Error("Expected artifact subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...input,
+        subject: { ...input.subject, local_path: "/artifacts/other" },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+});

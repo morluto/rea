@@ -1,3 +1,4 @@
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real provider verification lives in
 // `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
@@ -873,4 +874,43 @@ describe("native UI trace boundaries", () => {
       ]),
     });
   });
+});
+
+it("retains both initial cleanup owners until each lease releases", async () => {
+  const failure = (operation: string, resource: string) =>
+    new AnalysisCapabilityUnavailableError(
+      provider.id,
+      operation,
+      "unavailable",
+      { cleanup: { reason: "release failed", resources: [resource] } },
+    );
+  const ui = failure("decode_interface_builder", "ui-owner");
+  const metadata = failure(
+    "inspect_native_dispatch_metadata",
+    "metadata-owner",
+  );
+  const uiLease = new AnalysisCleanupLease(async () => {}, ["ui-owner"]);
+  const metadataLease = new AnalysisCleanupLease(async () => {}, [
+    "metadata-owner",
+  ]);
+  uiLease.bindCleanupError(ui);
+  metadataLease.bindCleanupError(metadata);
+  const result = await new EnhancedTools(
+    testAnalysis({
+      decode_interface_builder: () => err(ui),
+      inspect_native_dispatch_metadata: () => err(metadata),
+    }),
+  ).execute("trace_native_ui_action", { action: "0x1000" });
+  if (result.ok) throw new Error("Expected cleanup error");
+  expect(result.error.cleanupPrimary).toBe(metadata);
+  expect(result.error.cleanupResources).toEqual(
+    expect.arrayContaining(["ui-owner", "metadata-owner"]),
+  );
+  await uiLease.release();
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(["metadata-owner"]);
+  await metadataLease.release();
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(result.error.cleanupResources).toEqual([]);
+  expect(result.error.cleanupPrimary).toBe(metadata);
 });

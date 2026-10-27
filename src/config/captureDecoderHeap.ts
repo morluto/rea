@@ -3,12 +3,7 @@ import {
   CAPTURE_DECODER_SEMI_SPACE_MIB,
   MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
 } from "../domain/analysisResourceLimits.js";
-export {
-  DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
-  CAPTURE_DECODER_SEMI_SPACE_MIB,
-  MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
-} from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -29,24 +24,13 @@ export const DEFAULT_CAPTURE_DECODER_HEAP: CaptureDecoderHeap = {
 
 export const captureDecoderHeapConstraint = `${CAPTURE_DECODER_OLD_GENERATION_SETTING} must be a decimal integer from ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} to ${String(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB; the default is ${String(DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB)} MiB. An old generation below the decoder's ${String(CAPTURE_DECODER_SEMI_SPACE_MIB)} MiB semi-space aborts Node during startup instead of enforcing a limit, and a larger value is refused.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinHeapRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(CAPTURE_DECODER_SEMI_SPACE_MIB) &&
-    parsed <= BigInt(MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB)
-  );
-};
-
 /** Optional decimal mebibyte count for the HAR/SAZ/qlog old-generation heap. */
-export const captureDecoderOldGenerationMiBSchema = z
-  .string()
-  .regex(decimalInteger, { error: captureDecoderHeapConstraint })
-  .refine(withinHeapRange, { error: captureDecoderHeapConstraint })
-  .transform(Number);
+export const captureDecoderOldGenerationMiBSchema =
+  positiveDecimalIntegerSchema(
+    CAPTURE_DECODER_SEMI_SPACE_MIB,
+    MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
+    captureDecoderHeapConstraint,
+  );
 
 /** Resolve the effective heap from one environment value. */
 export const parseCaptureDecoderHeap = (

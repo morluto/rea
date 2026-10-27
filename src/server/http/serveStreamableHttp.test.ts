@@ -4,7 +4,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Agent, request as httpRequest } from "node:http";
-import { connect as connectTcp } from "node:net";
+import { connect as connectTcp, createServer } from "node:net";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -20,6 +20,7 @@ import {
   type StreamableHttpServer,
 } from "./serveStreamableHttp.js";
 import { StreamableHttpListenError } from "./streamableHttpListenError.js";
+import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
 
 const servers: StreamableHttpServer[] = [];
@@ -88,6 +89,21 @@ const connect = async (url: string) => {
   await client.connect(transport);
   return { transport, client };
 };
+
+/** Reserve an ephemeral port, release it, and return the number for a later bind. */
+const listenEphemeral = async (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.unref();
+    probe.once("listening", () => {
+      const { port } = probe.address() as { port: number };
+      probe.close(() =>
+        port > 0 ? resolve(port) : reject(new Error("no port")),
+      );
+    });
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1");
+  });
 
 const echo = async (client: Client, text: string): Promise<unknown> => {
   const result = await client.callTool({ name: "echo", arguments: { text } });
@@ -282,6 +298,67 @@ it("refuses foreign Host headers on a loopback bind and frees the port on close"
   await expect(rawHttpRequest(url)).rejects.toMatchObject({
     code: "ECONNREFUSED",
   });
+});
+
+it("refuses a non-loopback bind without an operator host allowlist as a typed listen error and frees the port", async () => {
+  const port = await listenEphemeral();
+  const refused = start({ host: "0.0.0.0", port });
+  await expect(refused).rejects.toBeInstanceOf(StreamableHttpListenError);
+  await expect(refused).rejects.toThrow(/MCP_ALLOWED_HOSTS/u);
+  // The refusal happens after the bind, so the staged close must have released it.
+  // `start` owns the re-bound listener: afterEach closes it even if an assertion above throws.
+  const rebind = start({ host: "127.0.0.1", port });
+  await expect(rebind).resolves.toMatchObject({
+    served: { close: expect.any(Function) },
+  });
+});
+
+it.each([
+  ["REA.LAN", "rea.lan"],
+  ["rea.lan.", "rea.lan."],
+  ["bücher.example", "xn--bcher-kva.example"],
+  ["127.0.0.1", "127.0.0.1"],
+  ["::1", "[::1]"],
+  ["0:0:0:0:0:0:0:1", "[::1]"],
+  ["[0:0:0:0:0:0:0:1]", "[::1]"],
+])("preserves declared hostname %j as %j", async (name, normalized) => {
+  const { served } = await start({
+    host: "0.0.0.0",
+    allowedHosts: mcpAllowedHostsTextSchema.parse(name),
+    routes: [
+      {
+        method: "GET",
+        path: "/probe",
+        handle: () => Response.json({ allowed: true }),
+      },
+    ],
+  });
+  const url = new URL(served.url);
+  url.hostname = "127.0.0.1";
+  url.pathname = "/probe";
+  const response = await rawHttpRequest(url, {
+    headers: {
+      host: `${normalized}:${url.port}`,
+      origin: `http://${normalized}:${url.port}`,
+    },
+  });
+  expect(response.status).toBe(200);
+  expect(JSON.parse(response.body)).toEqual({ allowed: true });
+});
+
+it("announces an admitted non-loopback URL and gates it on the operator allowlist", async () => {
+  const { served } = await start({
+    host: "0.0.0.0",
+    allowedHosts: mcpAllowedHostsTextSchema.parse("127.0.0.1"),
+  });
+  const url = new URL(served.url);
+  expect(url.hostname).toBe("127.0.0.1");
+  const { client } = await connect(url.toString());
+  await expect(echo(client, "allowed")).resolves.toEqual([
+    { type: "text", text: "allowed" },
+  ]);
+  await client.close();
+  await expectForeignHostRefused(url);
 });
 
 it("reports a port that cannot be bound as a typed listen error naming the cause", async () => {

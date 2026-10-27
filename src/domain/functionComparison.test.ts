@@ -7,7 +7,7 @@ import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, type Evidence } from "./evidence.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";

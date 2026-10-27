@@ -4,24 +4,45 @@ import { servedFrom } from "../../../tests/fixtures/environmentStateServing.js";
 const uuid = (n: number): string =>
   `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
+/** Two held books and a create whose `mixed` joins the generated id and the sent slug; the held books put `heldPrefix` before theirs. */
+const slugBooks = (heldPrefix = "") => {
+  const item = (id: number, slug: string, prefix = "") => ({
+    id,
+    code: slug,
+    url: `/${slug}`,
+    mixed: `/${id}/${prefix}${slug}`,
+  });
+  const first = item(1, "first-slug", heldPrefix);
+  const second = item(2, "second-slug", heldPrefix);
+  const third = item(3, "abcdefgh");
+  return servedFrom([
+    ["GET", "/api/books", [first, second]],
+    ["GET", "/api/books/1", first],
+    ["GET", "/api/books/2", second],
+    ["POST", "/api/books", third, 201, { customSlug: "abcdefgh" }],
+    ["GET", "/api/books/3", third],
+  ]);
+};
+
 describe("assigned values preserve every recorded relation", () => {
-  it("freezes a copied member when another template would retain its old value", () => {
-    const item = (id: number, slug: string) => ({
-      id,
-      code: slug,
-      url: `/${slug}`,
-      mixed: `/${id}/${slug}`,
+  it("rebuilds a field a generated id and a copied member compose, accepting any value of the member", () => {
+    const books = slugBooks();
+    expect(books.state.writes.get("post_books")).toMatchObject({
+      served: true,
+      body: { fixed: [] },
     });
-    const first = item(1, "first-slug");
-    const second = item(2, "second-slug");
-    const third = item(3, "abcdefgh");
-    const books = servedFrom([
-      ["GET", "/api/books", [first, second]],
-      ["GET", "/api/books/1", first],
-      ["GET", "/api/books/2", second],
-      ["POST", "/api/books", third, 201, { customSlug: "abcdefgh" }],
-      ["GET", "/api/books/3", third],
-    ]);
+    expect(
+      books.answer("post_books", { body: { customSlug: "ijklmnop" } }).body,
+    ).toMatchObject({
+      code: "ijklmnop",
+      url: "/ijklmnop",
+      mixed: expect.stringMatching(/^\/\d+\/ijklmnop$/u),
+    });
+  });
+
+  it("freezes a copied member when another template would retain its old value", () => {
+    // The held books spell `mixed` otherwise, so no composition explains it and a template around the id keeps the slug.
+    const books = slugBooks("x-");
     expect(books.state.writes.get("post_books")).toMatchObject({
       served: true,
       body: { fixed: [{ member: "customSlug", sent: "abcdefgh" }] },

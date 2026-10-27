@@ -67,8 +67,11 @@ const untilAborted = (signal: AbortSignal): Promise<undefined> =>
 export const transportError = (
   endpoint: McpHttpEndpoint,
   cause: StreamableHttpListenError,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+): AnalysisResourceConstraintError => {
+  const failure = cause.classification.ok
+    ? cause.classification.value
+    : cause.classification.error;
+  return new AnalysisResourceConstraintError(
     CLI_COMMANDS.environmentServe,
     "transport",
     cause.message,
@@ -77,38 +80,22 @@ export const transportError = (
       cause,
       retryable: false,
       diagnostics: {
-        listener_failure: cause.classification.ok
-          ? {
-              kind: cause.classification.value.kind,
-              system_code: cause.classification.value.systemCode,
-            }
-          : {
-              kind: cause.classification.error.kind,
-              ...(cause.classification.error.systemCode === undefined
-                ? {}
-                : { system_code: cause.classification.error.systemCode }),
-            },
+        listener_failure: {
+          kind: failure.kind,
+          ...("systemCode" in failure && failure.systemCode !== undefined
+            ? { system_code: failure.systemCode }
+            : {}),
+          ...(failure.kind === "host_allowlist"
+            ? {
+                reason: failure.reason,
+              }
+            : {}),
+        },
         listener_phase: cause.phase,
       },
-      remediationAction: listenerRemediation(cause.classification),
+      remediationAction: cause.remediationAction,
     },
   );
-
-const listenerRemediation = (
-  classification: StreamableHttpListenError["classification"],
-): string => {
-  if (!classification.ok)
-    return "Check the selected listener host, port, and binding permissions, then retry.";
-  switch (classification.value.kind) {
-    case "host_lookup":
-      return "Check --host or MCP_HOST and host name resolution; correct the value or resolve the lookup failure, then retry.";
-    case "host_unavailable":
-      return "Choose an address assigned to this machine with --host or MCP_HOST, then retry.";
-    case "port_in_use":
-      return "Choose another --port or MCP_PORT, or stop the process using it.";
-    case "permission_denied":
-      return "Choose a host and port this process is permitted to bind; if the selected port is restricted, use an allowed port.";
-  }
 };
 
 interface ServeArguments {

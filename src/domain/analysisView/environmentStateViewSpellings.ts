@@ -1,5 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isObject, same, type JsonObject } from "./environmentStateRules.js";
+import {
+  ownMember,
+  isObject,
+  same,
+  type JsonObject,
+} from "./environmentStateRules.js";
 import { readClock, type ClockFormat } from "./environmentStateWriteValues.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
@@ -82,7 +87,7 @@ export class ClockSpellings {
 
   note(stored: JsonObject, shown: JsonObject): void {
     for (const [field, value] of Object.entries(shown)) {
-      if (isObject(value)) this.#shape(field, value, stored[field]);
+      if (isObject(value)) this.#shape(field, value, ownMember(stored, field));
       const now = readClock(value);
       if (now === undefined) continue;
       const was = Object.hasOwn(stored, field)

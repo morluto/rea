@@ -2,20 +2,18 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   access,
-  copyFile,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
   rm,
   stat,
-  symlink,
   writeFile,
 } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+
+import { prepareWindowsNativeInspectionWorkspace } from "./lib/windows-native-inspection-workspace.mjs";
 
 if (process.platform !== "win32")
   throw new Error("Native inspection ownership requires real Windows NTFS");
@@ -25,35 +23,11 @@ const artifact = resolve(
 );
 const workspace = await mkdtemp(join(tmpdir(), "rea-inspection-conformance-"));
 try {
-  // Isolate the fixture from the packaged production artifact and loader cache.
-  await mkdir(join(workspace, "dist", "windows"), { recursive: true });
-  await mkdir(join(workspace, "native", "windows", "build"), {
-    recursive: true,
+  const loader = await prepareWindowsNativeInspectionWorkspace({
+    root,
+    artifact,
+    workspace,
   });
-  await writeFile(join(workspace, "package.json"), '{"type":"module"}');
-  await copyFile(
-    join(root, "dist", "windows", "WindowsNativeLoader.js"),
-    join(workspace, "dist", "windows", "WindowsNativeLoader.js"),
-  );
-  await copyFile(
-    join(root, "dist", "generatedPackageMetadata.js"),
-    join(workspace, "dist", "generatedPackageMetadata.js"),
-  );
-  for (const name of ["manifest.json", "rea-windows-x64.node"])
-    await copyFile(
-      join(artifact, name),
-      join(workspace, "native", "windows", "build", name),
-    );
-  const require = createRequire(join(root, "package.json"));
-  await mkdir(join(workspace, "node_modules"));
-  await symlink(
-    dirname(require.resolve("zod/package.json")),
-    join(workspace, "node_modules", "zod"),
-    "junction",
-  );
-  const loader = pathToFileURL(
-    join(workspace, "dist", "windows", "WindowsNativeLoader.js"),
-  ).href;
   const source = `import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {existsSync,mkdirSync,readFileSync,readdirSync,renameSync,statSync,writeFileSync} from 'node:fs';

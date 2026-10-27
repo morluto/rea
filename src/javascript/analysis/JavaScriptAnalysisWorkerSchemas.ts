@@ -401,6 +401,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
         path: z.string(),
+        path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,
         mechanism: z.string(),
       }),

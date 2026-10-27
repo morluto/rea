@@ -63,7 +63,7 @@ const needsConstantOptions = (node: t.NewExpression): boolean => {
   const lookup = staticObjectProperty(options, "webPreferences");
   return (
     lookup.status === "explicit" &&
-    t.isIdentifier(unwrapJavaScriptExpression(lookup.property.value).node)
+    t.isIdentifier(unwrapJavaScriptExpression(lookup.value).node)
   );
 };
 
@@ -83,7 +83,7 @@ export function* finishElectronBrowserWindowsSteps(
       const lookup = staticObjectProperty(options, "webPreferences");
       return (
         lookup.status === "explicit" &&
-        hasElectronOptionObjectCandidate(lookup.property.value, index)
+        hasElectronOptionObjectCandidate(lookup.value, index)
       );
     })
   )
@@ -117,7 +117,7 @@ const inspectBrowserWindow = (
   const lookup = staticObjectProperty(resolvedOptions, "webPreferences");
   const declaredPreferences =
     lookup.status === "explicit"
-      ? unwrapJavaScriptExpression(lookup.property.value).node
+      ? unwrapJavaScriptExpression(lookup.value).node
       : undefined;
   const resolvedPreferences =
     (index && resolveElectronOptionObject(declaredPreferences, node, index)) ??
@@ -215,14 +215,14 @@ const collectWebPreferences = (
   const effectivePreload = staticObjectProperty(object, "preload");
   const preloadPath =
     effectivePreload.status === "explicit"
-      ? staticPath(effectivePreload.property.value, pathIntrinsics)
+      ? staticPath(effectivePreload.value, pathIntrinsics)
       : undefined;
   const preload: ElectronBrowserWindowPreload =
     effectivePreload.status === "explicit" && preloadPath !== undefined
       ? {
           preload_path: preloadPath,
           preload_resolution_context: staticPathResolutionContext(
-            effectivePreload.property.value,
+            effectivePreload.value,
             pathIntrinsics,
           ),
         }
@@ -344,8 +344,8 @@ const inspectUtilityProcess = (
   // A nullish serviceName selects Electron's default display name.
   const declaredName =
     serviceNameProperty.status === "explicit" &&
-    !shapes.isNullish(serviceNameProperty.property.value)
-      ? serviceNameProperty.property.value
+    !shapes.isNullish(serviceNameProperty.value)
+      ? serviceNameProperty.value
       : undefined;
   const serviceName =
     declaredName === undefined

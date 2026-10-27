@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { bundleResourceBoundResultSchema } from "./bundleResourceRoot.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../jsonValue.js";
 import { localPathStringSchema } from "../localPath.js";
 import { plistUidValue } from "./plistUid.js";
 import { projectPlistValue } from "./plistValue.js";
@@ -43,7 +47,7 @@ export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
     archive_path: z.string(),
     archive_sha256: z.string(),
     archive_format: z.enum(["binary-plist", "xml-plist"]),
-    roots: z.record(z.string(), jsonValueSchema),
+    roots: jsonObjectSchema,
     objects: z.array(
       z.strictObject({
         id: z.int().nonnegative(),

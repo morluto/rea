@@ -1,3 +1,7 @@
+import { pythonPycFixture } from "../../python/PythonPyc.fixture.js";
+import { parsePythonPyc } from "../../python/PythonPycParser.js";
+import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { createHash } from "node:crypto";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -18,7 +22,7 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
   if (!parsed.ok || parsed.value.kind !== "entries") return;
   expect(parsed.value.pythonVersion).toBe("3.9");
   expect(parsed.value.entries).toMatchObject([
-    { name: "json.decoder", typeCode: 0, package: false },
+    { name: "json.decoder", typeCode: 0, role: "module" },
   ]);
 
   const opaque = await readImage(
@@ -31,6 +35,7 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
   if (!opaque.ok || opaque.value.kind !== "opaque") return;
   expect(Buffer.compare(opaque.value.pythonMagic, Buffer.alloc(4))).toBe(0);
   expect(opaque.value.limitation).toContain("left opaque");
+  expect(opaque.value.pythonVersion).toBeUndefined();
 });
 
 it("leaves a PYZ opaque when the table uses an unsupported marshal type", async () => {
@@ -44,6 +49,10 @@ it("leaves a PYZ opaque when the table uses an unsupported marshal type", async 
   if (!parsed.ok || parsed.value.kind !== "opaque") return;
   expect(parsed.value.limitation).toContain("left opaque");
   expect(parsed.value.pythonMagic).toEqual(PYTHON_39_MAGIC);
+  expect(parsed.value.pythonVersion).toBe("3.9");
+  expect(parsed.value.sha256).toBe(
+    createHash("sha256").update(image).digest("hex"),
+  );
 });
 
 it("reports an entry that extends outside the PYZ as an integrity error", async () => {
@@ -58,26 +67,29 @@ it("reports an entry that extends outside the PYZ as an integrity error", async 
   expect(parsed.error.reason).toBe("integrity");
 });
 
-it("rejects an oversized sparse PYZ table before allocating its bytes", async () => {
-  const root = await createTestTempDirectory("rea-pyz-table-budget-");
-  const path = join(root, "image.pyz");
-  const header = Buffer.alloc(12);
-  header.write("PYZ\0");
-  PYTHON_39_MAGIC.copy(header, 4);
-  header.writeUInt32BE(12, 8);
-  await writeFile(path, header);
-  const handle = await open(path, "r+");
-  try {
-    const size = 12 + MAX_PYZ_TABLE_BYTES + 1;
-    await handle.truncate(size);
-    expect(await readPyzArchive(handle, 0, size)).toMatchObject({
-      ok: false,
-      error: { reason: "limit" },
-    });
-  } finally {
-    await handle.close();
-  }
-});
+it.each(["PYZ\0", "BAD\0"])(
+  "rejects an oversized sparse table before deferred signature rejection (%s)",
+  async (signature) => {
+    const root = await createTestTempDirectory("rea-pyz-table-budget-");
+    const path = join(root, "image.pyz");
+    const header = Buffer.alloc(12);
+    header.write(signature);
+    PYTHON_39_MAGIC.copy(header, 4);
+    header.writeUInt32BE(12, 8);
+    await writeFile(path, header);
+    const handle = await open(path, "r+");
+    try {
+      const size = 12 + MAX_PYZ_TABLE_BYTES + 1;
+      await handle.truncate(size);
+      expect(await readPyzArchive(handle, 0, size)).toMatchObject({
+        ok: false,
+        error: { reason: "limit" },
+      });
+    } finally {
+      await handle.close();
+    }
+  },
+);
 
 it("rejects a PYZ table whose back-references repeat one long row", async () => {
   // One namespace row with a 16 KiB name, flagged for reference, then 999
@@ -124,14 +136,90 @@ const int32 = (value: number): Buffer => {
   return bytes;
 };
 
-const readImage = async (bytes: Buffer) => {
+const readImage = async (bytes: Buffer, declaredSize = bytes.length) => {
   const root = await createTestTempDirectory("rea-pyz-file-");
   const path = join(root, "image.pyz");
   await writeFile(path, bytes);
   const handle = await open(path, "r");
   try {
-    return await readPyzArchive(handle, 0, bytes.length);
+    return await readPyzArchive(handle, 0, declaredSize);
   } finally {
     await handle.close();
   }
 };
+
+it.each([0, 0xffffffff])(
+  "retains an unknown Python magic and full-image digest with invalid TOC offset %s",
+  async (offset) => {
+    const image = pyzArchive({ magic: Buffer.from([1, 2, 3, 4]), modules: [] });
+    image.writeUInt32BE(offset, 8);
+    expect(await readImage(image)).toMatchObject({
+      ok: true,
+      value: {
+        kind: "opaque",
+        pythonMagic: Buffer.from([1, 2, 3, 4]),
+        pythonVersion: undefined,
+        sha256: createHash("sha256").update(image).digest("hex"),
+        limitation: expect.stringContaining("not in the supported set"),
+      },
+    });
+  },
+);
+
+it("reports a truncated table before deferred signature rejection", async () => {
+  const header = Buffer.alloc(12);
+  header.write("BAD\0");
+  PYTHON_39_MAGIC.copy(header, 4);
+  header.writeUInt32BE(12, 8);
+  expect(await readImage(header, 16)).toMatchObject({
+    ok: false,
+    error: { reason: "format", message: "PYZ table is truncated" },
+  });
+});
+
+it("reports the signature after completing a readable table and image hash", async () => {
+  const image = pyzArchive({ magic: PYTHON_39_MAGIC, modules: [] });
+  image.write("BAD\0");
+  expect(await readImage(image)).toMatchObject({
+    ok: false,
+    error: { reason: "format", message: "PYZ archive magic does not match" },
+  });
+});
+
+it.each([
+  { magic: 3412, layout: "py38", version: "3.8", reconstructable: false },
+  { magic: 3571, layout: "py311", version: "3.13", reconstructable: true },
+] as const)(
+  "keeps standalone identity separate from PYZ reconstruction for magic $magic",
+  async ({ magic, layout, version, reconstructable }) => {
+    const pyc = pythonPycFixture(layout, { magic });
+    const standalone = parsePythonPyc(
+      pyc,
+      {
+        path: "/fixtures/module.pyc",
+        bytes: pyc.length,
+        sha256: createHash("sha256").update(pyc).digest("hex"),
+      },
+      inspectPythonPycInputSchema.parse({ path: "/fixtures/module.pyc" }),
+    );
+    expect(standalone.header.python_version).toBe(version);
+    const image = pyzArchive({
+      magic: pyc.subarray(0, 4),
+      modules: [{ name: "module", typeCode: 0, body: pyc.subarray(16) }],
+    });
+    const parsed = await readImage(image);
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        kind: reconstructable ? "entries" : "opaque",
+        pythonMagic: pyc.subarray(0, 4),
+        pythonVersion: reconstructable ? version : undefined,
+        sha256: createHash("sha256").update(image).digest("hex"),
+      },
+    });
+    if (parsed.ok && parsed.value.kind === "entries")
+      expect(parsed.value.entries).toMatchObject([
+        { name: "module", typeCode: 0, role: "module" },
+      ]);
+  },
+);

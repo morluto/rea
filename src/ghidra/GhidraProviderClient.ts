@@ -1,3 +1,6 @@
+import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
+import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
+import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { z } from "zod";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -53,7 +56,6 @@ import {
   resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { EvidenceLocation } from "../domain/evidence.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import {
   providerRetryAction,
@@ -93,7 +95,7 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   GHIDRA_PROVIDER_IDENTITY,
-  healthLimitations,
+  ghidraHealthLimitations,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
@@ -133,6 +135,7 @@ export type GhidraProviderClientFactory = (
 type GhidraProviderClientInstance = ReturnType<GhidraProviderClientFactory>;
 
 interface GhidraExecutionMetadata {
+  readonly sourceEvidence?: readonly Evidence[];
   readonly cachePolicy?: "live";
   readonly rawResult?: JsonValue;
   readonly limitations?: readonly string[];
@@ -207,6 +210,29 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const extensions = extensionProfile.data;
+  const projectProfile = ghidraProjectCommitmentSchema
+    .optional()
+    .safeParse(committedProfile.parameters.existing_project);
+  if (
+    !projectProfile.success ||
+    (config.ghidraExistingProject === undefined) !==
+      (projectProfile.data === undefined) ||
+    (projectProfile.data !== undefined &&
+      (projectProfile.data.configured_path !==
+        config.ghidraExistingProject?.path ||
+        (config.ghidraExistingProject?.programName !== undefined &&
+          config.ghidraExistingProject.programName !==
+            projectProfile.data.program_name)))
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the selected Ghidra project into a fresh analysis profile before opening the session.",
+        },
+      }),
+    );
+  const project = projectProfile.data;
   const seedProfile = ghidraSeedCommitmentSchema
     .optional()
     .safeParse(committedProfile.parameters.analysis_seeds);
@@ -381,7 +407,18 @@ export const createGhidraProviderClient = (input: {
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
     platform: installation.platform,
+    ...(project === undefined ? {} : { existingProject: true }),
     launcher: new GhidraHeadlessLauncher({
+      ...(project === undefined
+        ? {}
+        : {
+            existingProject: {
+              projectPath: project.project_path,
+              projectName: project.project_name,
+              programName: project.program_name,
+              sha256: project.sha256,
+            },
+          }),
       environment: input.environment,
       analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
       configurationDirectoryName:
@@ -474,6 +511,7 @@ export const createGhidraProviderClient = (input: {
   let providerStarted = false;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
+  let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
     operation: AnalysisOperation,
     info: GhidraSessionInfo,
@@ -485,48 +523,62 @@ export const createGhidraProviderClient = (input: {
         ...ghidraPePdbLimitations(target, info.pdb),
       );
     }
-    const softFloatReason = ghidraMipsSoftFloatFailure(
-      softFloat,
-      info.mips_soft_float_storage,
-    );
-    extensionFailure =
-      ghidraExtensionFailure(
+    if (project !== undefined) {
+      extensionFailure = ghidraExtensionFailure(
         extensions,
         info.analysis_extensions ?? [],
         operation,
-      ) ??
-      ghidraSeedFailure(seeds, info.analysis_seeds, operation) ??
-      ghidraDisabledAnalyzerFailure(
-        disabledAnalyzers,
-        info.disabled_analyzers,
-        operation,
-      ) ??
-      (softFloatReason === undefined
-        ? undefined
-        : new ProviderAdapterError("ghidra", operation, {
-            diagnostics: { reason: softFloatReason },
-          }));
-    if (extensionFailure === undefined && info.analysis_seeds !== undefined)
-      seedLimitations.splice(
-        0,
-        seedLimitations.length,
-        ...ghidraSeedLimitations(seeds, info.analysis_seeds),
       );
-    if (extensionFailure === undefined)
-      softFloatLimitations.splice(
-        0,
-        softFloatLimitations.length,
-        ...ghidraMipsSoftFloatLimitations(
-          softFloat,
-          info.mips_soft_float_storage,
-        ),
+      if (extensionFailure === undefined)
+        projectHistory ??= ghidraProjectHistoryEvidence(
+          target,
+          committedProfile,
+          info,
+        );
+    } else {
+      const softFloatReason = ghidraMipsSoftFloatFailure(
+        softFloat,
+        info.mips_soft_float_storage,
       );
-    if (extensionFailure === undefined)
-      disabledAnalyzerLimitations.splice(
-        0,
-        disabledAnalyzerLimitations.length,
-        ...ghidraDisabledAnalyzerLimitations(info.disabled_analyzers),
-      );
+      extensionFailure =
+        ghidraExtensionFailure(
+          extensions,
+          info.analysis_extensions ?? [],
+          operation,
+        ) ??
+        ghidraSeedFailure(seeds, info.analysis_seeds, operation) ??
+        ghidraDisabledAnalyzerFailure(
+          disabledAnalyzers,
+          info.disabled_analyzers,
+          operation,
+        ) ??
+        (softFloatReason === undefined
+          ? undefined
+          : new ProviderAdapterError("ghidra", operation, {
+              diagnostics: { reason: softFloatReason },
+            }));
+      if (extensionFailure === undefined && info.analysis_seeds !== undefined)
+        seedLimitations.splice(
+          0,
+          seedLimitations.length,
+          ...ghidraSeedLimitations(seeds, info.analysis_seeds),
+        );
+      if (extensionFailure === undefined)
+        softFloatLimitations.splice(
+          0,
+          softFloatLimitations.length,
+          ...ghidraMipsSoftFloatLimitations(
+            softFloat,
+            info.mips_soft_float_storage,
+          ),
+        );
+      if (extensionFailure === undefined)
+        disabledAnalyzerLimitations.splice(
+          0,
+          disabledAnalyzerLimitations.length,
+          ...ghidraDisabledAnalyzerLimitations(info.disabled_analyzers),
+        );
+    }
     if (extensionFailure === undefined) return undefined;
     const closed = await client.close();
     return closed.ok
@@ -586,9 +638,17 @@ export const createGhidraProviderClient = (input: {
   ) => {
     return createAnalysisExecution(normalized, committedProfile.provider, {
       ...observation,
+      ...(projectHistory === undefined
+        ? {}
+        : {
+            sourceEvidence: [
+              ...(observation.sourceEvidence ?? []),
+              projectHistory,
+            ],
+          }),
       analysisProfile: committedProfile,
       limitations: [
-        ...limitationsFor(operation),
+        ...limitationsFor(operation, project !== undefined),
         ...(observation.limitations ?? []),
         ...sessionLimitations(),
       ],
@@ -679,7 +739,10 @@ export const createGhidraProviderClient = (input: {
         return ok(
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
-            limitations: [...healthLimitations, ...sessionLimitations()],
+            limitations: [
+              ...ghidraHealthLimitations(project !== undefined),
+              ...sessionLimitations(),
+            ],
           }),
         );
       }
@@ -688,6 +751,7 @@ export const createGhidraProviderClient = (input: {
         : parseGhidraInventoryInput(operation, parameters);
       if (!input.ok) return input;
       if (
+        project !== undefined ||
         target.format === "pe" ||
         extensions.length > 0 ||
         seeds !== undefined ||

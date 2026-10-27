@@ -11,7 +11,7 @@ import { WebArtifactCleanup } from "../WebArtifactCleanup.js";
 import type { WebModuleTraceInput } from "../../domain/webModuleTrace.js";
 import { LocalWebScriptArtifacts } from "../assets/LocalWebScriptArtifacts.js";
 import {
-  readWebArtifactJson,
+  WebArtifactAcquisition,
   webArtifactReadError,
 } from "../assets/WebArtifactReads.js";
 
@@ -44,34 +44,50 @@ export class LocalWebModuleArtifacts implements WebModuleArtifactPort {
 
   /** Read selected source and optional map without website requests. */
   async load(input: WebModuleTraceInput, options?: ExecutionOptions) {
+    const acquisition = new WebArtifactAcquisition();
     try {
-      return await this.#resources.run(() => this.#load(input, options));
+      return await this.#resources.run(() =>
+        this.#load(input, acquisition, options),
+      );
     } catch (cause: unknown) {
       return err(
-        webArtifactReadError(
-          cause,
-          {
-            operation: "trace_web_module_imports",
-            field:
-              input.import_map === undefined
-                ? ["manifest_path"]
-                : ["import_map", "path"],
-            targetPath: input.import_map?.path ?? input.manifest_path,
-            callerSelected: input.import_map !== undefined,
-          },
-          options?.signal,
+        acquisition.retain(
+          webArtifactReadError(
+            cause,
+            {
+              operation: "trace_web_module_imports",
+              field:
+                input.import_map === undefined
+                  ? ["manifest_path"]
+                  : ["import_map", "path"],
+              targetPath: input.import_map?.path ?? input.manifest_path,
+              callerSelected: input.import_map !== undefined,
+            },
+            options?.signal,
+          ),
         ),
       );
     }
   }
 
-  async #load(input: WebModuleTraceInput, options?: ExecutionOptions) {
+  async #load(
+    input: WebModuleTraceInput,
+    acquisition: WebArtifactAcquisition,
+    options?: ExecutionOptions,
+  ) {
     const loaded = await this.scripts.load(input, options);
     if (!loaded.ok) return loaded;
+    acquisition.record(
+      "manifest",
+      loaded.value.manifestFile,
+      "manifest-validated",
+    );
+    acquisition.record("source", loaded.value.sourceFile, "source-verified");
     if (input.import_map === undefined)
       return ok({ ...loaded.value, importMap: null });
     const selected = input.import_map;
-    const data = await readWebArtifactJson(
+    const data = await acquisition.readJson(
+      "import-map",
       selected.path,
       4 * 1024 * 1024,
       options?.signal,

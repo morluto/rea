@@ -20,7 +20,6 @@ import {
   toolAvailabilitySummaryInventory,
   TOOL_ANNOTATION_NAMES,
   TOOL_EFFECT_NAMES,
-  type ClientFeatureAvailability,
   type ProviderCapability,
   type ToolAvailabilityInventory,
   type ToolAvailabilitySummaryInventory,
@@ -42,10 +41,6 @@ import type {
 import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import {
-  clientRequirementsFor,
-  NO_CLIENT_FEATURES,
-} from "./CapabilityClientRequirements.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
@@ -254,7 +249,6 @@ const NAVIGATION_CONTEXT_MODES = [
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
-  clientFeatures: ClientFeatureAvailability = NO_CLIENT_FEATURES,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
@@ -273,11 +267,6 @@ export const buildCapabilityInventory = (
       descriptors,
       policy,
     });
-    const clientRequirements = clientRequirementsFor(
-      contract.name,
-      clientFeatures,
-    );
-    const clientBlocked = clientRequirements.missing_required.length > 0;
     const effects = composedEffects(
       contract.name,
       contract.effects,
@@ -293,7 +282,7 @@ export const buildCapabilityInventory = (
       ...(availability.modes === undefined
         ? {}
         : { modes: [...availability.modes] }),
-      client_requirements: clientRequirements,
+      client_requirements: emptyClientRequirements(),
       effects,
       annotations: {
         read_only: annotations.readOnlyHint,
@@ -302,13 +291,6 @@ export const buildCapabilityInventory = (
         open_world: annotations.openWorldHint,
       },
     };
-    if (clientBlocked)
-      return {
-        ...facts,
-        available: false,
-        reason: "client_capability_missing",
-        remediation: `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`,
-      };
     return availability.reason === "available"
       ? {
           ...facts,
@@ -327,12 +309,13 @@ export const buildCapabilityInventory = (
 
 type ClientRequirements = ToolAvailability["client_requirements"];
 
-const EMPTY_CLIENT_REQUIREMENTS: ClientRequirements = {
+// Current workflows do not require negotiated MCP client features.
+const emptyClientRequirements = (): ClientRequirements => ({
   required: [],
   optional: [],
   missing_required: [],
   missing_optional: [],
-};
+});
 
 /**
  * Group every operation's current availability inline. Complete detail also
@@ -352,7 +335,7 @@ export function compactToolAvailability(
   detail: BinarySessionDetail = "complete",
 ): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory {
   const clientRequirements =
-    availability[0]?.client_requirements ?? EMPTY_CLIENT_REQUIREMENTS;
+    availability[0]?.client_requirements ?? emptyClientRequirements();
   const groups = new Map<string, { names: string[] }>();
 
   for (const entry of availability) {

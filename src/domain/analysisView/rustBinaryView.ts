@@ -8,11 +8,6 @@ import {
   rustcCommitSchema,
   type RustBinary,
 } from "../rust/rustBinary.js";
-import {
-  canBorrowParsedJsonSnapshot,
-  freezeOwnedJsonTreeSnapshot,
-  isImmutableJsonSnapshot,
-} from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   AnalysisViewParent,
@@ -25,7 +20,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
@@ -63,31 +58,7 @@ export const rustBinaryViewContextSchema = z.strictObject({
   }),
 });
 
-// Exact immutable Evidence identity, not a path or a live-file result cache.
-// Mutable/merely frozen imports are validated normally; no failures are cached.
-const checkedReports = new WeakMap<object, RustBinary>();
-const parseReport = (
-  parent: AnalysisViewParent,
-): Result<RustBinary, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const known = reusable ? checkedReports.get(key) : undefined;
-  if (known !== undefined) return ok(known);
-  const parsed = parseAnalysisViewResult(rustBinarySchema, parent);
-  if (!parsed.ok) return parsed;
-  if (reusable) {
-    const report = canBorrowParsedJsonSnapshot(key, parsed.value)
-      ? key
-      : freezeOwnedJsonTreeSnapshot(parsed.value);
-    checkedReports.set(key, report);
-    return ok(report);
-  }
-  return parsed;
-};
+const parseReport = createAnalysisViewResultReader(rustBinarySchema);
 
 const summarize = (
   report: RustBinary,

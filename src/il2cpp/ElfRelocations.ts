@@ -1,3 +1,5 @@
+import { readElfRelocationEntry } from "../domain/elfRelocation.js";
+import { readElfDynamicEntry } from "../domain/elfDynamicEntry.js";
 import {
   BinaryMappingFailure,
   mappedFileOffset,
@@ -113,11 +115,17 @@ function* dynamicTags(
   ]);
   for (let at = dynamic.offset; at < dynamic.offset + dynamic.size; at += 16) {
     if ((at - dynamic.offset) % 65536 === 0) yield;
-    const tag = image.readBigInt64LE(at);
+    const parsedEntry = readElfDynamicEntry(
+      image.subarray(at, at + 16),
+      64,
+      true,
+    );
+    if (!parsedEntry.ok) throw malformed(parsedEntry.error.message);
+    const { tag, value } = parsedEntry.value;
     if (tag === 0n) return tags;
     if (tags.has(tag) && unique.has(tag))
       throw malformed(`duplicate dynamic tag ${tag}`);
-    tags.set(tag, image.readBigUInt64LE(at + 8));
+    tags.set(tag, value);
   }
   throw malformed("PT_DYNAMIC has no DT_NULL terminator");
 }
@@ -167,11 +175,21 @@ function* applyRelaTable(
   if (start === null) throw malformed("RELA table is not file-backed");
   for (let at = start; at < start + Number(size); at += 24) {
     if ((at - start) % (24 * 4096) === 0) yield;
-    const info = source.image.readBigUInt64LE(at + 8),
-      kind = Number(info & 0xffffffffn);
+    const parsedEntry = readElfRelocationEntry(
+      source.image.subarray(at, at + 24),
+      64,
+      true,
+      "rela",
+    );
+    if (!parsedEntry.ok) throw malformed(parsedEntry.error.message);
+    const {
+      type: kind,
+      offset: destination,
+      symbolIndex,
+      addend,
+    } = parsedEntry.value;
     if (kind === 0) continue;
-    const destination = source.image.readBigUInt64LE(at);
-    if (kind !== source.relative || info >> 32n !== 0n) {
+    if (kind !== source.relative || symbolIndex !== 0) {
       const width = source.unknownPointerWidths.get(kind);
       if (width === undefined)
         throw unsupported(`ELF relocation kind ${kind} is not decoded`);
@@ -185,7 +203,7 @@ function* applyRelaTable(
       continue;
     }
     const target = fileOffset(source, destination, 8);
-    const value = source.image.readBigInt64LE(at + 16) & 0xffffffffffffffffn;
+    const value = BigInt.asUintN(64, addend);
     if (target !== null) output.bytes.writeBigUInt64LE(value, target);
     else if (
       isZeroFilledSpan(source.mappings, source.zeroFills, destination, 8)

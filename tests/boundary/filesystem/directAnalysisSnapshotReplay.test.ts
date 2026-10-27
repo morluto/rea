@@ -37,6 +37,7 @@ import {
   createTestBinarySession,
   createTestProviderRouter,
 } from "../../fixtures/binarySession.js";
+import { routeProviderIdentity } from "../../../src/application/binary/SessionProviderPolicy.js";
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { isProfilelessNativeDispatchSnapshot } from "../../../src/application/binary/ProfilelessNativeWorkflowSnapshot.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
@@ -213,8 +214,12 @@ const makeProvider = (
               },
             ],
             list_documents: ["fixture"],
-            list_procedures: ["0x1000"],
-            list_strings: { "0x1000": "fixture" },
+            list_procedures: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.names>,
+            list_strings: [
+              { address: "0x1000", value: "fixture" },
+            ] satisfies z.infer<typeof nativeInventoryRowsSchemas.strings>,
             analyze_function: functionDossier,
             list_names: [
               { address: "0x1000", value: "fixture" },
@@ -963,6 +968,86 @@ it.skipIf(process.platform === "win32")(
     );
   },
 );
+
+describe("preview and active route policies", () => {
+  it.each([
+    {
+      tool: "search_strings",
+      arguments: { pattern: "fixture", document: "fixture" },
+      replayed: true,
+    },
+    { tool: "binary_overview", arguments: {}, replayed: false },
+  ] as const)(
+    "keeps $tool replay policy consistent across a composite route",
+    async ({ tool, arguments: arguments_, replayed }) => {
+      const fixture = await createSnapshotReplayFixture(
+        "rea-composite-replay-policy-",
+      );
+      const provider = fixture.createProvider({
+        supportedOperations: [...operations, "search_strings"],
+      });
+      const auxiliary = fixture.createProvider({
+        identity: { id: "auxiliary", name: "Auxiliary", version: "1" },
+        supportedOperations: ["read_bytes"],
+      });
+      const liveAuxiliary: AnalysisProvider = {
+        ...auxiliary,
+        capabilities: () =>
+          auxiliary
+            .capabilities()
+            .map((descriptor) => ({ ...descriptor, cachePolicy: "live" })),
+      };
+      const createSession = () =>
+        createTestBinarySession(provider, {
+          auxiliaryProviders: [liveAuxiliary],
+        });
+      const session = createSession();
+      try {
+        const target = await session.resolveTarget(fixture.path);
+        if (!target.ok) throw target.error;
+        const preview = await session.previewTarget(target.value);
+        if (!preview.ok) throw preview.error;
+        const opened = await session.openResolvedTarget(preview.value);
+        if (!opened.ok) throw opened.error;
+        // An enhanced operation has no exact descriptor here. Both stages must
+        // attribute it to the selected deep provider rather than the composite.
+        expect(
+          routeProviderIdentity(preview.value.route, "analyze_function"),
+        ).toEqual(IDENTITY);
+        expect(session.providerIdentity("analyze_function")).toEqual(IDENTITY);
+        expect(session.allowsSnapshotReplay(tool)).toBe(replayed);
+        expect(session.allowsSnapshotReplay("decompile_all")).toBe(false);
+      } finally {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      }
+      const dependencies = {
+        ...fixture.dependencies(provider),
+        createBinarySession: createSession,
+      };
+      const first = parseEvidence(
+        await runDirectAnalysis(dependencies, fixture.path, tool, arguments_, {
+          snapshotPath: fixture.snapshotPath,
+        }),
+      );
+      const starts = fixture.starts.length;
+      const queries = fixture.queries.length;
+      const second = parseEvidence(
+        await runDirectAnalysis(dependencies, fixture.path, tool, arguments_, {
+          snapshotPath: fixture.snapshotPath,
+        }),
+      );
+      if (replayed) expect(second).toEqual(first);
+      expect(second).toMatchObject({
+        operation: tool,
+        subject: first.subject,
+        analysis_profile: first.analysis_profile,
+      });
+      expect(fixture.starts.length).toBe(starts + (replayed ? 0 : 1));
+      expect(fixture.queries.length > queries).toBe(!replayed);
+    },
+  );
+});
 
 describe("snapshot replay provider identity", () => {
   it("uses the resolved provider version when capability metadata omits it", async () => {

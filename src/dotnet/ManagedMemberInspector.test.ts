@@ -571,6 +571,56 @@ const genericRef = Buffer.from([0x30, 0x01, 0x00, 0x01]);
 // GENERIC, one generic parameter, no parameters, void.
 const genericDef = Buffer.from([0x10, 0x01, 0x00, 0x01]);
 
+it.each([
+  { badName: true, parent: 0, expectedHeap: "#Strings" },
+  { badName: false, parent: 0, expectedHeap: "#Blob" },
+  { badName: true, parent: 17, expectedHeap: "#Strings" },
+  { badName: false, parent: 17, expectedHeap: "#Blob" },
+])(
+  "reports $expectedHeap before invalid MemberRef parent $parent (bad name $badName)",
+  ({ badName, parent, expectedHeap }) => {
+    const bytes = buildManagedPeFixture({ memberRefParentRaw: parent });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("fixture has no CLI header");
+    const { rva, size } = pe.cli.metadata;
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(rva, size, "metadata"),
+      size,
+    );
+    const nameColumn =
+      metadataRowOffset(layout, 10, 1) +
+      layout.codedIndexSize("MemberRefParent");
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.member_refs).toEqual([]);
+    expect(result.coverage.state).toBe("partial");
+    expect(
+      result.coverage.issues.filter(
+        ({ scope }) =>
+          scope === "metadata.#Strings" ||
+          scope === "metadata.#Blob" ||
+          scope === "metadata.MemberRef:0x0a000001",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: `metadata.${expectedHeap}`,
+      }),
+    ]);
+  },
+);
+
 describe("managed TypeSpec declaring names", () => {
   it("names a generic TypeSpec parent by its generic type and leaves other TypeSpecs unknown", () => {
     // GENERICINST CLASS TypeRef(1) <string>
@@ -954,6 +1004,55 @@ describe("managed MethodSpec call targets", () => {
       ["invalid-blob", "metadata.MethodSpec:0x2b000002"],
     ]);
   });
+});
+
+it("reads MethodSpec arity from an unnamed MemberRef independently of parent admission", () => {
+  const bytes = buildManagedPeFixture({
+    memberRefSignature: genericRef,
+    memberRefParentRaw: 17,
+    methodSpecMethods: [(1 << 1) | 1],
+    methodSpecInstantiation: Buffer.from([0x0a, 0x01, 0x0e]),
+    ilBody: tokenBody([[call, 0x2b00_0001]]),
+  });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("fixture has no CLI header");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "metadata"),
+    size,
+  );
+  const nameColumn =
+    metadataRowOffset(layout, 10, 1) + layout.codedIndexSize("MemberRefParent");
+  if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+  else bytes.writeUInt32LE(0xffffffff, nameColumn);
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+  );
+  expect(result.member_refs).toEqual([]);
+  expect(result.call_edges).toMatchObject([
+    {
+      target_token: "0x2b000001",
+      target_kind: "method-spec",
+      target_name: null,
+      target_declaring_type: null,
+    },
+  ]);
+  expect(result.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      expect.objectContaining({
+        code: "invalid-heap-index",
+        scope: "metadata.#Strings",
+      }),
+    ],
+  });
+  expect(
+    result.coverage.issues.some(({ scope }) =>
+      scope.startsWith("metadata.MethodSpec:"),
+    ),
+  ).toBe(false);
 });
 
 describe("managed MethodDef heap admission", () => {
@@ -2764,3 +2863,74 @@ describe("managed member method paging", () => {
     ).toThrow(RangeError);
   });
 });
+
+it("retains names of unselected fields without admitting their malformed signatures", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  const field = metadataRowOffset(layout, 4, 1);
+  bytes.writeUIntLE(
+    layout.blobIndexSize === 2 ? 0xffff : 0xffffffff,
+    field + 2 + layout.stringIndexSize,
+    layout.blobIndexSize,
+  );
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[ldsfld, 0x04000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.fields).toMatchObject([{ token: "0x04000002", name: "F" }]);
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.field_accesses).toMatchObject([
+    {
+      field_token: "0x04000001",
+      field_name: "F",
+      field_declaring_type: "Inner",
+    },
+  ]);
+  expect(
+    result.coverage.issues.filter(
+      ({ scope }) =>
+        scope === "metadata.#Blob" || scope === "Field:0x04000001.signature",
+    ),
+  ).toEqual([]);
+});
+
+it.each([false, true])(
+  "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",
+  (generic) => {
+    const bytes = buildManagedPeFixture({
+      typeSpecSignatures: [Buffer.from([0x15, 0x12, 0x05, 0x01, 0x0e])],
+      fieldSignature: Buffer.from(
+        generic ? [0x06, 0x15, 0x12, 0x06, 0x01, 0x0e] : [0x06, 0x12, 0x06],
+      ),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.fields[0]?.signature).toMatchObject({
+      kind: "field",
+      parse_status: generic ? "malformed" : "decoded",
+      field_type: generic ? null : "class:6",
+    });
+    const issues = result.coverage.issues.filter(
+      ({ scope }) => scope === "Field:0x04000001.signature",
+    );
+    expect(issues).toEqual(
+      generic ? [expect.objectContaining({ code: "invalid-row" })] : [],
+    );
+  },
+);

@@ -53,9 +53,12 @@ Optimize in this order:
 3. CPU and memory. Avoid unnecessary work and copies; bound concurrency,
    retained state and serialization growth.
 
-For changes affecting these costs, measure representative completed tasks and
-compare equivalent workflows before and after where available. Report token
-usage, elapsed time, CPU time and peak process-family memory. Separate cold
+Reserve performance measurements for changes that target performance or have a
+concrete regression concern. Routine cleanup uses correctness checks; changes
+to helper calls, imports, or representations alone do not require synthetic
+benchmarks. When measurement is warranted, measure representative completed
+tasks and compare equivalent workflows before and after where available. Report
+token usage, elapsed time, CPU time and peak process-family memory. Separate cold
 and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone
 do not establish fewer tokens or faster analysis.
 

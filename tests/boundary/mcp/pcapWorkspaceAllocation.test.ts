@@ -118,7 +118,10 @@ it.each<readonly [string, string]>([
         diagnostics: {
           stage: "workspace",
           workspace_path: null,
-          path: expect.stringContaining(join(parent, "rea-pcap-")) as unknown,
+          path:
+            code === "ENOTDIR"
+              ? `${parent}/.`
+              : (expect.stringContaining(join(parent, "rea-pcap-")) as unknown),
           system_code: code,
         },
       },

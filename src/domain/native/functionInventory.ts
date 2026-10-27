@@ -4,11 +4,11 @@ import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidencePayload } from "../evidenceValidation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
   functionBodySchema,
   functionBodyEntryAgrees,
-  functionDossierSchema,
-} from "../hopperValues.js";
+} from "../native/functionBody.js";
 import { nativeSymbolOrigin } from "./nativeSymbol.js";
 import {
   addressedValueSchema,

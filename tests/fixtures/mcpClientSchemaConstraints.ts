@@ -1,8 +1,5 @@
-import {
-  schemaArrays,
-  schemaChildren,
-  schemaMaps,
-} from "../../src/contracts/jsonSchemaKeywords.js";
+import { geminiUnsupportedLiteral } from "../../scripts/lib/gemini-schema-literals.mjs";
+import { clientSchemaPositions } from "../../scripts/lib/client-schema-positions.mjs";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -12,30 +9,14 @@ export const arrayItemSchemaError = (
   schema: unknown,
   path: string,
 ): string | undefined => {
-  if (!isRecord(schema)) return undefined;
-  const admitsArrays =
-    schema.type === "array" ||
-    (Array.isArray(schema.type) && schema.type.includes("array"));
-  if (admitsArrays && !schema.items)
-    return `${path}: tool parameters array type must have items`;
-  for (const [key, value] of Object.entries(schema)) {
-    const children =
-      schemaMaps.has(key) && isRecord(value)
-        ? Object.entries(value).map(
-            ([name, child]) => [`${key}.${name}`, child] as const,
-          )
-        : (schemaArrays.has(key) || schemaChildren.has(key)) &&
-            Array.isArray(value)
-          ? value.map(
-              (child: unknown, index) => [`${key}.${index}`, child] as const,
-            )
-          : schemaChildren.has(key)
-            ? [[key, value] as const]
-            : [];
-    for (const [suffix, child] of children) {
-      const error = arrayItemSchemaError(child, `${path}.${suffix}`);
-      if (error !== undefined) return error;
-    }
+  for (const position of clientSchemaPositions(schema)) {
+    if (position.kind !== "schema") continue;
+    const value = position.schema;
+    const admitsArrays =
+      value.type === "array" ||
+      (Array.isArray(value.type) && value.type.includes("array"));
+    if (admitsArrays && !value.items)
+      return `${path}${position.path.slice(1)}: tool parameters array type must have items`;
   }
   return undefined;
 };
@@ -45,38 +26,17 @@ export const unsupportedInputLiteralSchemaError = (
   schema: unknown,
   path: string,
 ): string | undefined => {
-  if (!isRecord(schema)) return undefined;
-  if (typeof schema.const === "boolean") return `${path}.const is boolean`;
-  if (schema.const === "") return `${path}.const is an empty string`;
-  if (
-    Array.isArray(schema.enum) &&
-    schema.enum.some((value) => typeof value === "boolean")
-  )
-    return `${path}.enum contains a boolean`;
-  if (Array.isArray(schema.enum) && schema.enum.includes(""))
-    return `${path}.enum contains an empty string`;
-  for (const [key, value] of Object.entries(schema)) {
-    const children =
-      schemaMaps.has(key) && isRecord(value)
-        ? Object.entries(value).map(
-            ([name, child]) => [`${key}.${name}`, child] as const,
-          )
-        : schemaArrays.has(key) && Array.isArray(value)
-          ? value.map(
-              (child: unknown, index) => [`${key}[${index}]`, child] as const,
-            )
-          : schemaChildren.has(key)
-            ? [[key, value] as const]
-            : [];
-    for (const [suffix, child] of children) {
-      const error = unsupportedInputLiteralSchemaError(
-        child,
-        `${path}.${suffix}`,
-      );
-      if (error !== undefined) return error;
-    }
-  }
-  return undefined;
+  const finding = geminiUnsupportedLiteral(schema);
+  if (finding === undefined) return undefined;
+  const reason =
+    finding.reason === "boolean"
+      ? finding.keyword === "const"
+        ? "is boolean"
+        : "contains a boolean"
+      : finding.keyword === "const"
+        ? "is an empty string"
+        : "contains an empty string";
+  return `${path}${finding.path.slice(1)} ${reason}`;
 };
 
 /**
@@ -89,36 +49,23 @@ export const strictGatewayItemSchemaErrors = (
   schema: unknown,
   path = "$",
 ): readonly string[] => {
-  if (!isRecord(schema)) return [];
-  const here: string[] = [];
-  if (schema.items !== undefined && schema.type !== "array")
-    here.push(`${path}.items is beside type ${JSON.stringify(schema.type)}`);
-  const items = schema.items;
-  if (
-    schema.type === "array" &&
-    isRecord(items) &&
-    items.type === undefined &&
-    (Array.isArray(items.oneOf) || Array.isArray(items.anyOf))
-  )
-    here.push(`${path}.items is an untyped union`);
-  return [
-    ...here,
-    ...Object.entries(schema).flatMap(([key, value]) => {
-      if (schemaMaps.has(key) && isRecord(value))
-        return Object.entries(value).flatMap(([name, child]) =>
-          strictGatewayItemSchemaErrors(child, `${path}.${key}.${name}`),
-        );
-      if (schemaArrays.has(key) && Array.isArray(value))
-        return value.flatMap((child: unknown, index) =>
-          strictGatewayItemSchemaErrors(child, `${path}.${key}[${index}]`),
-        );
-      if (schemaChildren.has(key))
-        return Array.isArray(value)
-          ? value.flatMap((child: unknown, index) =>
-              strictGatewayItemSchemaErrors(child, `${path}.${key}[${index}]`),
-            )
-          : strictGatewayItemSchemaErrors(value, `${path}.${key}`);
-      return [];
-    }),
-  ];
+  const errors: string[] = [];
+  for (const position of clientSchemaPositions(schema)) {
+    if (position.kind !== "schema") continue;
+    const value = position.schema;
+    const selectedPath = `${path}${position.path.slice(1)}`;
+    if (value.items !== undefined && value.type !== "array")
+      errors.push(
+        `${selectedPath}.items is beside type ${JSON.stringify(value.type)}`,
+      );
+    const items = value.items;
+    if (
+      value.type === "array" &&
+      isRecord(items) &&
+      items.type === undefined &&
+      (Array.isArray(items.oneOf) || Array.isArray(items.anyOf))
+    )
+      errors.push(`${selectedPath}.items is an untyped union`);
+  }
+  return errors;
 };

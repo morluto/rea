@@ -1,3 +1,9 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { ghidraProfileInstallationHost } from "./GhidraInstallation.fixture.js";
+import { inspectGhidraInstallation } from "./GhidraInstallation.js";
+import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
 import { describe, expect, it, afterEach } from "vitest";
 import { probeGhidraJava, parseGhidraJavaOutput } from "./GhidraJavaProbe.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
@@ -127,6 +133,8 @@ describe("Ghidra Java prerequisite process facts", () => {
 });
 
 it.each([
+  "21 ",
+  " 21",
   "21garbage",
   "garbage",
   "21.foo",
@@ -165,4 +173,96 @@ it.each([
       ),
     }),
   ).toMatchObject({ ok: true, value: { version, major } });
+});
+
+// This inert JVM stand-in exercises the real probe process boundary and doctor
+// projection. Its scalar format matches OpenJDK LauncherHelper.printPropertyValue.
+it.skipIf(process.platform === "win32").each([
+  { suffix: "", newline: "\n" },
+  { suffix: " ", newline: "\n" },
+  { suffix: "\t", newline: "\n" },
+  { suffix: " \t", newline: "\n" },
+  { suffix: " ", newline: "\r\n" },
+])(
+  "preserves JDK home and doctor registration with property framing %j",
+  async ({ suffix, newline }) => {
+    const directory = await createTestTempDirectory("rea-java-home-");
+    const home = join(directory, `jdk${suffix}`);
+    await mkdir(join(home, "bin"), { recursive: true });
+    const command = join(home, "bin", "java");
+    const properties = [
+      "Property settings:",
+      `    java.home = ${home}`,
+      "    java.version = 21.0.11",
+      "    java.vm.name = OpenJDK 64-Bit Server VM",
+      `    os.arch = ${process.arch === "arm64" ? "aarch64" : "amd64"}`,
+      `    os.name = ${process.platform === "darwin" ? "Mac OS X" : "Linux"}`,
+      "    sun.arch.data.model = 64",
+      "",
+    ].join(newline);
+    await writeFile(
+      command,
+      `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(properties)});\n`,
+      { mode: 0o755 },
+    );
+    await writeFile(join(home, "bin", "javac"), "", { mode: 0o755 });
+    const inspection = await inspectGhidraInstallation(
+      {
+        resourceOwner: resources.owner,
+        environment: process.env,
+        installDir: "/selected/ghidra",
+        javaHome: home,
+        platform: process.platform,
+        architecture: process.arch,
+      },
+      { ...ghidraProfileInstallationHost, probeJava: probeGhidraJava },
+    );
+    expect(inspection).toMatchObject({ status: "available", javaHome: home });
+    expect(projectGhidraDoctorInspection(inspection)).toMatchObject({
+      available: true,
+      registrationEnvironment: { JAVA_HOME: home },
+    });
+  },
+);
+
+it.each(["java.home=/selected/jdk", "java.home =\t/selected/jdk"])(
+  "keeps nonstandard property framing unresolved: %s",
+  (line) => {
+    expect(
+      probe({ stdout: Buffer.from(`${line}\n    java.version = 21\n`) }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "version_unresolved",
+        properties: { home: null, version: "21" },
+      },
+    });
+  },
+);
+
+it("preserves scalar whitespace for architecture and bitness validation", () => {
+  expect(
+    probe({
+      stdout: Buffer.from(
+        [
+          "    java.home = /selected/jdk",
+          "    java.version = 21",
+          "    java.vm.name = OpenJDK 64-Bit Server VM ",
+          "    os.arch = amd64 ",
+          "    os.name = Linux\t",
+          "    sun.arch.data.model = 64 ",
+          "",
+        ].join("\r\n"),
+      ),
+    }),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      vmName: "OpenJDK 64-Bit Server VM ",
+      osArch: "amd64 ",
+      osName: "Linux\t",
+      bits: null,
+      unparsedBits: "64 ",
+    },
+  });
 });

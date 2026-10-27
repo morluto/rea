@@ -446,3 +446,63 @@ it("passes a discovery budget above the SDK default to connect and every catalog
     }
   }
 });
+
+it.each([false, true])(
+  "retains structured own members and nested dictionaries in a JEB reply (isError=%s)",
+  (isError) => {
+    const structured: unknown = JSON.parse(
+      '{"__proto__":{"observed":true},"success":false,"message":"missing","nested":[{"__proto__":"nested fact"}]}',
+    );
+    const decoded = decodeJebToolResult({
+      isError,
+      structuredContent: structured,
+      content: [],
+    });
+    expect(Object.hasOwn(decoded as object, "__proto__")).toBe(true);
+    expect(JSON.stringify(decoded)).toBe(JSON.stringify(structured));
+  },
+);
+
+it("accepts omitted JEB content only when structured evidence establishes an observation", () => {
+  expect(
+    decodeJebToolResult({ structuredContent: { result: "ordinary field" } }),
+  ).toEqual({ result: "ordinary field" });
+  expect(() => decodeJebToolResult({})).toThrow("empty observation");
+  for (const content of [null, {}, [null], [{ type: "text", text: 42 }]])
+    expect(() =>
+      decodeJebToolResult({ content, structuredContent: { success: true } }),
+    ).toThrow();
+});
+
+it("selects structured JEB evidence ahead of text while admitting mixed content", () => {
+  const image = { type: "image", data: "AA==", mimeType: "image/png" };
+  expect(
+    decodeJebToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+      structuredContent: { observed: true },
+    }),
+  ).toEqual({ observed: true });
+  expect(
+    decodeJebToolResult({
+      content: [image, { type: "text", text: "fallback" }],
+    }),
+  ).toBe("fallback");
+  for (const structuredContent of [null, [], "invalid", { observed: Infinity }])
+    expect(() =>
+      decodeJebToolResult({
+        content: [{ type: "text", text: "fallback" }],
+        structuredContent,
+      }),
+    ).toThrow();
+  expect(() => decodeJebToolResult({ content: [image] })).toThrow(
+    "empty observation",
+  );
+  expect(() =>
+    decodeJebToolResult({
+      content: [
+        { type: "text", text: "first" },
+        { type: "text", text: "second" },
+      ],
+    }),
+  ).toThrow("empty observation");
+});

@@ -774,3 +774,48 @@ it.each(["return", "throw"] as const)(
     expect(failure.hasCleanupOwner).toBe(false);
   },
 );
+
+it("stops setup after interrupted prewarm and retains cleanup through host close retry", async () => {
+  const host = new FakeSetupHost();
+  host.hopper = "/Applications/Hopper";
+  host.clients = [{ name: "codex", configPath: "/fixture/codex.json" }];
+  let doctorCalls = 0;
+  const doctor = host.doctor.bind(host);
+  host.doctor = async (...args) => {
+    doctorCalls++;
+    return doctor(...args);
+  };
+  let callsAtInterrupt = -1;
+  let released = false;
+  const cleanup = new SetupCleanupOwner([
+    {
+      close: async () => {
+        if (!released) throw new Error("controlled runner cleanup refusal");
+      },
+    },
+  ]);
+  const selected = Object.assign(host, {
+    prewarmRegistrationRunner: async () => {
+      callsAtInterrupt = doctorCalls;
+      return {
+        status: "failed" as const,
+        reason: "interrupted prewarm",
+        interruptedSignal: "SIGINT",
+      };
+    },
+    close: () => cleanup.close(),
+  });
+  const result = await runSetup(
+    { ...options(true), clientIds: ["codex"], installSkill: false },
+    selected,
+  );
+  expect(callsAtInterrupt).toBeGreaterThanOrEqual(0);
+  expect(doctorCalls).toBe(callsAtInterrupt);
+  expect(result.status).toBe("needs_human");
+  expect(result.appliedActions).toContain("configured_codex");
+  expect(result.prewarm).toMatchObject({ interruptedSignal: "SIGINT" });
+  expect(result.cleanup?.reason).toContain("controlled runner cleanup refusal");
+  released = true;
+  await cleanup.close();
+  expect(result.cleanup).toBeUndefined();
+});

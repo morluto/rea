@@ -1505,6 +1505,24 @@ exit 1`,
   }
 });
 
+it("preserves process names printed by Toybox without treating their whitespace as column padding", async () => {
+  // Toybox's final NAME column is left justified without padding; only the
+  // single separator after S belongs to the table (toys/posix/ps.c show_ps).
+  const name = " native tool ";
+  const { binary } = await writeAdbStub(
+    shellStub({
+      ps: `USER PID PPID VSZ RSS WCHAN ADDR S NAME\nroot 1234 567 123456 7890 0 0 S ${name}\r\n`,
+    }),
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_processes",
+    input: { serial: "emulator-5554" },
+  });
+  expect(result.processes).toEqual([
+    { user: "root", pid: 1234, ppid: 567, rss: 7890, state: "S", name },
+  ]);
+});
+
 it("lists processes, features, and services through fixed commands", async () => {
   const { binary } = await writeAdbStub(
     shellStub({

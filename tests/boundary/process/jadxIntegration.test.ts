@@ -1,6 +1,15 @@
 import { SdkErrorCode } from "@modelcontextprotocol/client";
 import { expect, it as test, onTestFinished, vi } from "vitest";
-import { access, readFile, truncate, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
@@ -20,9 +29,97 @@ import {
   verifyJadxFixtureCleanup as verifyCleanup,
 } from "../../fixtures/android/jadx.js";
 import { writeJadxJarInventory } from "../../fixtures/android/jadxJar.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const it = test.skipIf(process.platform === "win32");
+
+it.each(["alias/../bin", ""])(
+  "keeps PATH=%j Java tied to each caller directory across private-workspace launches",
+  async (searchPath) => {
+    const root = await createTestTempDirectory("rea-jadx-relative-java-");
+    const apk = join(root, "fixture.apk"),
+      jar = join(root, "fixture.jar");
+    await writeOrderedZip(apk, ["AndroidManifest.xml", "classes.dex"]);
+    await writeJadxJarInventory(jar);
+    const fixture = new URL(
+      "../../fixtures/android/jadx-mcp.mjs",
+      import.meta.url,
+    );
+    const command = [process.execPath, fileURLToPath(fixture)]
+      .map((value) => `'${value.replaceAll("'", `'"'"'`)}'`)
+      .join(" ");
+    const shim = join(root, "java-shim");
+    await writeFile(
+      shim,
+      `#!/bin/sh\nselected="\${0%/*}"\n[ -f "$selected/runtime-marker" ] || exit 19\npwd >> "$selected/java.log"\nif [ "$1" = "--list-modules" ]; then\n  printf 'java.base@21.0.0\\njdk.compiler@21.0.0\\n'\nelse\n  exec ${command}\nfi\n`,
+    );
+    await chmod(shim, 0o755);
+    const directories = [join(root, "first"), join(root, "second")];
+    for (const directory of directories) {
+      await mkdir(join(directory, "real/deep"), { recursive: true });
+      await mkdir(join(directory, "real/bin"));
+      await symlink(join(directory, "real/deep"), join(directory, "alias"));
+      await symlink(shim, join(directory, "real/bin/java"));
+      await writeFile(join(directory, "real/bin/runtime-marker"), directory);
+      await symlink(shim, join(directory, "java"));
+      await writeFile(join(directory, "runtime-marker"), directory);
+    }
+    const logPath = (directory: string) =>
+      join(directory, searchPath === "" ? "java.log" : "real/bin/java.log");
+    const provider = new JadxProvider({
+      ...process.env,
+      JAVA_HOME: undefined,
+      PATH: searchPath,
+      REA_JADX_MCP_JAR: jar,
+      REA_JADX_OPERATION_TIMEOUT_MS: "5000",
+      REA_FAKE_JADX_CLASS_COUNT: "0",
+    });
+    const service = new AndroidAnalysisService(provider);
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(directories[0]!);
+      const availability = await provider.inspectAvailability();
+      expect(availability, JSON.stringify(availability)).toMatchObject({
+        status: "available",
+      });
+      const first = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!first.ok) throw first.error;
+      const firstStarts = (await readFile(logPath(directories[0]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(firstStarts).toHaveLength(3);
+      const firstWorkspace = firstStarts.at(-1)!;
+      expect(firstWorkspace).not.toBe(directories[0]);
+      process.chdir(directories[1]!);
+      const second = await service.execute("inspect_android_package", {
+        path: apk,
+      });
+      if (!second.ok) throw second.error;
+      expect(second.value.subject?.digest.sha256).toBe(
+        first.value.subject?.digest.sha256,
+      );
+      const secondStarts = (await readFile(logPath(directories[1]!), "utf8"))
+        .trim()
+        .split("\n");
+      expect(secondStarts).toHaveLength(2);
+      const secondWorkspace = secondStarts.at(-1)!;
+      expect(secondWorkspace).not.toBe(firstWorkspace);
+      await expect(access(firstWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await provider.close();
+      await expect(access(secondWorkspace)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      process.chdir(previousCwd);
+      await provider.close();
+    }
+  },
+);
 
 // Select the provider's source hash after resolver and engine admission complete.
 const failInputHashCloses = (path: string, failures: number) => {
@@ -360,6 +457,38 @@ it("retire sessions when APK bytes, engine bytes or JVM options change", async (
   expect(launches[3]?.arguments).not.toContain("-XX:ActiveProcessorCount=1");
   await provider.close();
   await verifyCleanup(launches);
+});
+
+it("keeps one operation's JVM environment aligned with its retained session identity", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  const allocation = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      // Configuration and the reuse key are already admitted; launch follows
+      // this asynchronous workspace boundary.
+      environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+      return createRoot(options);
+    });
+  try {
+    const first = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!first.ok) throw first.error;
+    expect(allocation).toHaveBeenCalledOnce();
+    environment.JAVA_TOOL_OPTIONS = "-Xmx512m";
+    const second = await service.execute("inspect_android_package", {
+      path: apk,
+    });
+    if (!second.ok) throw second.error;
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.javaToolOptions).toBe("-Xmx512m");
+  } finally {
+    allocation.mockRestore();
+    await provider.close();
+    await verifyCleanup(launches);
+  }
 });
 
 it("retires an idle engine and starts a fresh one for a later request", async () => {

@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { nativeCallObservationInputSchema } from "../../domain/native/nativeCallObservation.js";
 import {
@@ -10,7 +11,6 @@ import { nativeOutputSchemas } from "../toolOutputSchemaGroups.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { localPathStringSchema } from "../../domain/localPath.js";
 import { toolContractMetadata } from "../toolEffects.js";
-import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { analysisDetailSchema } from "../analysisDetail.js";
 import { nativeCommandTimeoutField } from "../../domain/native/nativeDeadlines.js";
 
@@ -41,10 +41,14 @@ const examples: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   },
 };
 
-const native = <Name extends string, Schema extends z.ZodObject>(
+const native = <
+  Name extends keyof typeof nativeOutputSchemas,
+  Schema extends z.ZodObject,
+>(
   name: Name,
   description: string,
   inputSchema: Schema,
+  retainedSummary?: ToolContract["retainedSummary"],
 ) => {
   const outputSchema = requireOutputSchema(nativeOutputSchemas, name);
   const strictInputSchema = inputSchema.strict();
@@ -54,6 +58,7 @@ const native = <Name extends string, Schema extends z.ZodObject>(
     description,
     kind: "native-provider",
     requiresActiveTarget: true,
+    ...(retainedSummary === undefined ? {} : { retainedSummary }),
     inputSchema: strictInputSchema,
     outputSchema,
     examples: [
@@ -105,6 +110,7 @@ export const NATIVE_TOOL_CONTRACTS = [
         ),
       native_command_timeout_ms: nativeCommandTimeoutField,
     }),
+    { evidenceParameters: "omit-detail" },
   ),
   native(
     "inspect_signature",

@@ -1,11 +1,10 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
+  containingProcedureResolutionSchema,
 } from "../domain/native/nativeObservation.js";
-import { nativeObservationSummaryViewResultSchemas } from "../domain/analysisView/analysisView.js";
-import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
-import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import {
+  nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
@@ -17,30 +16,29 @@ import {
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
+import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
+import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import {
   functionDossierSchema,
-  analysisBookmarkSchema,
   functionInstructionWindowSchema,
+} from "../domain/native/functionDossier.js";
+import {
+  analysisBookmarkSchema,
+  nativeInventoryRowsSchemas,
+} from "../domain/native/nativeInventory.js";
+import {
   referenceEdgeSchema,
   unresolvedCallSchema,
-  procedureIdentitySchema,
-  containingProcedureResolutionSchema,
-} from "../domain/hopperValues.js";
-import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
+} from "../domain/native/nativeReference.js";
+import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import { evidenceBundleSummarySchema } from "../domain/evidenceRecordSummary.js";
-import {
-  BINARY_ARCHITECTURES,
-  RAW_ONLY_ARCHITECTURES,
-} from "../domain/binaryTargetTypes.js";
-import {
-  binaryArchitectureSchema,
-  rawBinaryEntryPointSchema,
-} from "../domain/rawBinary.js";
+import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
@@ -104,8 +102,6 @@ import {
   sessionProviderFacts,
   sessionStatusDetailShapes,
   symbolDiscoveryOutput,
-  targetFormatSchema,
-  targetKindSchema,
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
@@ -131,7 +127,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
 ]);
 
 /** Exact structured-content schemas shared by direct analysis providers. */
-export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const officialOutputSchemas = {
   search_bytes: evidenceResultOf(byteSearchResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
   inspect_native_load_image: analysisDetailOutputSchemaOf(
@@ -243,13 +239,13 @@ export const officialOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
     }),
   ),
   set_address_name: evidenceResultOf(z.boolean()),
-  set_addresses_names: evidenceResultOf(z.record(z.string(), z.boolean())),
+  set_addresses_names: evidenceResultOf(jsonRecordSchema(z.boolean())),
   set_bookmark: evidenceResultOf(z.boolean()),
   set_comment: evidenceResultOf(z.boolean()),
   set_inline_comment: evidenceResultOf(z.boolean()),
   unset_bookmark: evidenceResultOf(z.boolean()),
   xrefs: evidenceResultOf(nativeAddressListSchema),
-};
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 const literalTraceOutput = evidenceResultOf(
   z.object({
@@ -322,7 +318,7 @@ const batchProcedureIdentity = z.discriminatedUnion("status", [
 ]);
 
 /** Exact structured-content schemas for composed analysis workflows. */
-export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const enhancedOutputSchemas = {
   inspect_native_dispatch_metadata: evidenceResultOf(
     nativeDispatchMetadataResultSchema,
   ),
@@ -429,7 +425,7 @@ export const enhancedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_native_api: evidenceResultOf(nativeApiInspectionResultSchema),
   trace_feature: literalTraceOutput,
   trace_call_path: callPathTraceOutput,
-};
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Complete entropy Evidence or its retained summary, shared by the named contract. */
 export const byteEntropyOutputSchema = analysisDetailOutputSchemaOf(
@@ -438,7 +434,7 @@ export const byteEntropyOutputSchema = analysisDetailOutputSchemaOf(
 );
 
 /** Exact Evidence schemas for provider-neutral native inspection. */
-export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const nativeOutputSchemas = {
   inspect_byte_entropy: byteEntropyOutputSchema,
   observe_native_ui: evidenceResultOf(nativeUiResultSchema),
   capture_native_ui_scenario: evidenceResultOf(nativeUiResultSchema),
@@ -450,10 +446,10 @@ export const nativeOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_plist: evidenceResultOf(inspectPlistSchema),
   list_architectures: evidenceResultOf(listArchitecturesSchema),
   demangle_swift: evidenceResultOf(demangleSwiftSchema),
-};
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact Evidence schemas for provider-neutral artifact graph operations. */
-export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const artifactOutputSchemas = {
   inspect_artifact: evidenceResultOf(
     z.union([
       artifactInspectionResultSchema,
@@ -470,10 +466,10 @@ export const artifactOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_keyed_archive: evidenceResultOf(keyedArchiveResultSchema),
   inspect_asset_catalog: evidenceResultOf(appleAssetCatalogResultSchema),
   trace_dylib_resolution: evidenceResultOf(dylibResolutionResultSchema),
-};
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact Evidence schema for execution-free managed static analysis. */
-export const managedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
+export const managedOutputSchemas = {
   inspect_managed_artifact: evidenceResultOf(
     z.union([
       managedArtifactInspectionSchema,
@@ -489,12 +485,10 @@ export const managedOutputSchemas: Readonly<Record<string, z.ZodObject>> = {
   inspect_managed_native_boundaries: evidenceResultOf(
     managedNativeBoundaryInspectionSchema,
   ),
-};
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact Evidence schema for provider-neutral managed workflows. */
-export const managedWorkflowOutputSchemas: Readonly<
-  Record<string, z.ZodObject>
-> = {
+export const managedWorkflowOutputSchemas = {
   compare_managed_members: evidenceResultOf(
     managedMemberComparisonResultSchema,
   ),
@@ -507,54 +501,12 @@ export const managedWorkflowOutputSchemas: Readonly<
   project_managed_application_graph: evidenceResultOf(
     managedApplicationGraphResultSchema,
   ),
-};
-
-const lifecycleTargetFields = {
-  path: z.string(),
-  kind: targetKindSchema,
-  sha256: z.string().regex(/^[a-f0-9]{64}$/u),
-};
-const detectedLifecycleTargetSchema = z.object({
-  ...lifecycleTargetFields,
-  format: targetFormatSchema.exclude(["raw-binary", "gamecube-dol"]),
-  architecture: z
-    .enum(BINARY_ARCHITECTURES)
-    .exclude([...RAW_ONLY_ARCHITECTURES])
-    .nullable(),
-});
-const rawLifecycleTargetSchema = z.object({
-  ...lifecycleTargetFields,
-  format: z.literal("raw-binary"),
-  kind: z.literal("executable"),
-  architecture: binaryArchitectureSchema,
-  entry_point: rawBinaryEntryPointSchema.describe(
-    "Canonical caller-selected address where raw file offset 0 is mapped and execution is seeded.",
-  ),
-});
-const dolLifecycleTargetSchema = z.object({
-  ...lifecycleTargetFields,
-  format: z.literal("gamecube-dol"),
-  kind: z.literal("executable"),
-  architecture: z.literal("powerpc"),
-  entry_point: rawBinaryEntryPointSchema.describe(
-    "Canonical entry address taken from the caller-selected DOL header.",
-  ),
-});
-
-/**
- * Every open-target variant. open_binary and binary_session share this list so
- * a target that open_binary returns is always valid in binary_session status.
- */
-const openLifecycleTargetVariants = [
-  detectedLifecycleTargetSchema,
-  rawLifecycleTargetSchema,
-  dolLifecycleTargetSchema,
-] as const;
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
   open_binary: lifecycleResultOf(
-    z.discriminatedUnion("format", [...openLifecycleTargetVariants]),
+    z.discriminatedUnion("format", [...liveBinaryTargetSummaryVariants]),
   ),
   open_bundle_resources: lifecycleResultOf(bundleResourceRootSchema),
   close_binary: lifecycleResultOf(
@@ -592,7 +544,7 @@ export const sessionOutputSchemas = {
           resource_root: bundleResourceRootSchema,
           ...detail,
         }),
-        ...openLifecycleTargetVariants.map((variant) =>
+        ...liveBinaryTargetSummaryVariants.map((variant) =>
           sessionProviderFacts.extend({
             open: z.literal(true),
             ...variant.shape,
@@ -674,7 +626,7 @@ export const sessionOutputSchemas = {
       unknown: residualUnknownSchema,
     }),
   ),
-} satisfies Readonly<Record<string, z.ZodObject>>;
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact Evidence schema for read-only Electron fuse inspection. */
 export const electronFuseOutputSchemas = {

@@ -434,6 +434,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 "Ghidra auto-analysis did not complete for this Program"
             );
         }
+        if (descriptor.existingProject && isMutatingOperation(request.method))
+            throw new RequestFailure("method_unavailable", "Existing Ghidra project sessions are read-only");
         return switch (request.method) {
             case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
@@ -486,6 +488,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
         };
     }
 
+    private static boolean isMutatingOperation(String method) {
+        return method.equals("annotate_native_function") || method.equals("set_address_name") || method.equals("set_addresses_names");
+    }
+
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
         boolean timedOut = analysisTimeoutOccurred();
         JsonObject provider = new JsonObject();
@@ -511,14 +517,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("run_id", descriptor.runId);
         result.addProperty("profile_digest", descriptor.profileDigest);
         result.add("provider", provider);
-        boolean readOnly = !descriptor.transport.equals("unix-socket");
+        boolean readOnly = descriptor.existingProject || !descriptor.transport.equals("unix-socket");
         result.addProperty("read_only", readOnly);
-        result.addProperty("analysis_complete", !timedOut);
+        if (descriptor.existingProject) {
+            result.add("analysis_complete", JsonNull.INSTANCE);
+            result.addProperty("existing_project", true);
+        } else result.addProperty("analysis_complete", !timedOut);
         result.addProperty("analysis_timed_out", timedOut);
         result.add("capabilities", GSON.toJsonTree(
             java.util.Arrays.stream(CAPABILITIES)
-                .filter(value -> !readOnly || !(value.equals("annotate_native_function")
-                    || value.equals("set_address_name") || value.equals("set_addresses_names")))
+                .filter(value -> !readOnly || !isMutatingOperation(value))
                 .toArray(String[]::new)
         ));
         result.add("target", target);
@@ -2091,10 +2099,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         Address query = requireAddress(params, "address");
-        Function function = currentProgram.getFunctionManager().getFunctionAt(query);
-        if (function == null && query.isMemoryAddress()) {
-            function = currentProgram.getFunctionManager().getFunctionContaining(query);
-        }
+        Function function = functionAtOrContaining(query);
         JsonObject result = new JsonObject();
         result.addProperty("query_address", canonicalAddress(query));
         if (function != null) {
@@ -2283,6 +2288,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return function;
     }
 
+    /** Exact entries include externals; containment applies only to memory addresses. */
     private Function functionAtOrContaining(Address address) {
         Function function = currentProgram.getFunctionManager().getFunctionAt(address);
         return function == null && address.isMemoryAddress()
@@ -2987,7 +2993,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (!currentProgram.getLanguageID().getIdAsString().startsWith("AARCH64:")) {
             return null;
         }
-        Function function = containingFunction(jumpTable.getSwitchAddress());
+        Function function = functionAtOrContaining(jumpTable.getSwitchAddress());
         if (function == null) return null;
 
         List<Instruction> instructions = new ArrayList<>();
@@ -3487,7 +3493,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private boolean unrepresentedCaller(Reference reference, Set<Function> callers) {
         if (!reference.getReferenceType().isCall()) return false;
-        Function caller = containingFunction(reference.getFromAddress());
+        Function caller = functionAtOrContaining(reference.getFromAddress());
         return caller == null || !callers.contains(caller);
     }
 
@@ -3634,7 +3640,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         void observe(Reference reference) {
             if (!reference.getReferenceType().isCall()) return;
             // Reference identity follows the same containing-function owner as referenceEdge.
-            Function target = containingFunction(reference.getToAddress());
+            Function target = functionAtOrContaining(reference.getToAddress());
             if (returnedCallees != null && (target == null || !returnedCallees.contains(target)))
                 unrepresented++;
             if (target == null) unresolved(reference.getFromAddress(),
@@ -3804,8 +3810,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonObject result = new JsonObject();
         result.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
         result.addProperty("target_address", canonicalAddress(reference.getToAddress()));
-        Function source = containingFunction(reference.getFromAddress());
-        Function target = containingFunction(reference.getToAddress());
+        Function source = functionAtOrContaining(reference.getFromAddress());
+        Function target = functionAtOrContaining(reference.getToAddress());
         result.add(
             "source_procedure",
             source == null ? JsonNull.INSTANCE : procedureIdentity(source)
@@ -3837,14 +3843,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.addProperty("primary", reference.isPrimary());
         result.addProperty("operand_index", reference.getOperandIndex());
         result.addProperty("external", reference.isExternalReference());
-        return result;
-    }
-
-    private Function containingFunction(Address address) {
-        Function result = currentProgram.getFunctionManager().getFunctionAt(address);
-        if (result == null && address.isMemoryAddress()) {
-            result = currentProgram.getFunctionManager().getFunctionContaining(address);
-        }
         return result;
     }
 
@@ -4752,6 +4750,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("analysis_extensions");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("decompile_timeout_seconds"))
             keys.add("decompile_timeout_seconds");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("existing_project"))
+            keys.add("existing_project");
         JsonObject object = requireObject(parsed, keys);
         int decompileTimeout = 0;
         if (object.has("decompile_timeout_seconds")) {
@@ -4768,7 +4768,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireString(object, "provider_version"),
             requireString(object, "profile_digest"),
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
-            decompileTimeout
+            decompileTimeout,
+            object.has("existing_project") && requireBoolean(object, "existing_project")
         );
     }
 
@@ -4985,7 +4986,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String providerVersion,
         String profileDigest,
         JsonArray analysisExtensions,
-        int decompileTimeoutSeconds
+        int decompileTimeoutSeconds,
+        boolean existingProject
     ) {}
     private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds) {}
 

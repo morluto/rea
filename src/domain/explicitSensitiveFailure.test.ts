@@ -1,6 +1,6 @@
-import { AnalysisAccessDeniedError } from "./analysisErrorCore.js";
-import { expect, it } from "vitest";
+import { EvidenceFileError } from "./evidenceErrors.js";
 import {
+  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -9,6 +9,7 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
+import { expect, it } from "vitest";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
@@ -283,4 +284,26 @@ it("does not reinterpret an unknown argument name as a JSON pointer", () => {
   if (!(result instanceof AnalysisInputError))
     throw new Error("Input error required");
   expect(result.issues[0]?.path).toEqual([]);
+});
+
+it("preserves completed publication and live cleanup while excluding marked file identities", () => {
+  const original = new EvidenceFileError("write", "io", {
+    path: "/private-marker/output.json",
+    published: { path: "/private-marker/output.json", bytes: 42 },
+    cleanup: {
+      reason: "private-marker staging failed",
+      resources: ["/private-marker/stage"],
+    },
+  });
+  const redacted = redactExplicitFailure(original, ["private-marker"]);
+  const projected = projectAnalysisError(redacted);
+  expect(projected).toMatchObject({
+    code: "cleanup_incomplete",
+    details: { published: true, bytes: 42 },
+  });
+  expect(projected.details).not.toHaveProperty("path");
+  expect(projected.details).not.toHaveProperty("published_path");
+  expect(JSON.stringify(projected)).not.toContain("private-marker");
+  original.resolveCleanup();
+  expect(redacted.cleanupIncomplete).toBe(false);
 });

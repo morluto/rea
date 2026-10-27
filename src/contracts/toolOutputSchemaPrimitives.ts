@@ -1,13 +1,14 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
   validateAnalysisProfileProvider,
 } from "../domain/evidence.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import {
   PROVIDER_REJECTION_CODES,
   type ProviderRejectionCode,
@@ -18,8 +19,10 @@ import {
   PROVIDER_RETRY_ACTIONS,
 } from "../domain/providerOperationHealth.js";
 import { analysisErrorProjectionSchema } from "./errorSchemas.js";
-import { ZIP_PACKAGE_FORMATS } from "../domain/zipPackageFormat.js";
-import { objcClassImportIdentitySchema } from "../domain/native/objcSwiftMetadata.js";
+import {
+  objcClassDiscoveryCoverageSchema,
+  objcClassImportIdentitySchema,
+} from "../domain/native/objcSwiftMetadata.js";
 import { BINARY_SESSION_SUMMARY_OMITTED_FIELDS } from "./sessionStatusContract.js";
 
 /** Specialize the single normalized result inside a complete Evidence record. */
@@ -45,34 +48,6 @@ export const requireOutputSchema = <
     throw new Error(`Missing output schema for ${name}`);
   return schema;
 };
-
-export const targetFormatSchema = z.enum([
-  "hopper",
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  ...ZIP_PACKAGE_FORMATS,
-  "asar",
-  "godot-pck",
-  "dmg",
-  "pkg",
-  "plist",
-  "javascript",
-  "source-map",
-]);
-
-export const targetKindSchema = z.enum([
-  "executable",
-  "database",
-  "archive",
-  "artifact",
-]);
 
 const providerCapabilityFacts = {
   operation: z.string(),
@@ -179,13 +154,13 @@ const processCoordinates = {
 const processLineageObservation = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("unavailable"),
-    observed_at: z.iso.datetime(),
+    observed_at: utcDateTimeSchema,
     ...processCoordinates,
     reason: z.string().min(1),
   }),
   z.object({
     status: z.literal("verified"),
-    observed_at: z.iso.datetime(),
+    observed_at: utcDateTimeSchema,
     ...processCoordinates,
     launcher_parent_pid: z.int().min(0),
     descendants: z.array(
@@ -254,8 +229,6 @@ const providerRejectionCode: z.ZodType<ProviderRejectionCode> = z.enum(
   PROVIDER_REJECTION_CODES,
 );
 
-const providerDiagnostics = z.record(z.string(), jsonValueSchema);
-
 const providerAvailabilityStates = {
   unknown: z.object({
     status: z.literal("unknown"),
@@ -276,13 +249,13 @@ const providerAvailabilityStates = {
 
 const providerAvailability = z.discriminatedUnion("status", [
   providerAvailabilityStates.unknown.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
   providerAvailabilityStates.available.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
   providerAvailabilityStates.unavailable.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
 ]);
 
@@ -312,13 +285,13 @@ const providerTargetSupportStates = {
 
 const providerTargetSupport = z.discriminatedUnion("status", [
   providerTargetSupportStates.unknown.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
   providerTargetSupportStates.supported.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
   providerTargetSupportStates.unsupported.extend({
-    diagnostics: providerDiagnostics,
+    diagnostics: jsonObjectSchema,
   }),
 ]);
 
@@ -713,17 +686,7 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
           .optional(),
       }),
     ),
-    identity_coverage: z.strictObject({
-      status: z.enum([
-        "complete",
-        "partial",
-        "unsupported",
-        "not_requested",
-        "unknown",
-        "not_applicable",
-      ]),
-      reason: z.string().nullable(),
-    }),
+    identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
 

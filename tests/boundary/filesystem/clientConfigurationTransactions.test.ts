@@ -55,7 +55,7 @@ it
       { requestedPath, state },
     );
     await publication.verify(async () => {
-      await publication.assertCurrent();
+      await publication.assertCurrent(await readFile(publication.path, "utf8"));
       expect(await readFile(selected, "utf8")).toBe("updated");
       expect(await readFile(join(second, "config.json"), "utf8")).toBe(
         "original",

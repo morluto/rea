@@ -18,7 +18,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 import { WEB_NETWORK_CAPTURE_LIMITS } from "../dist/domain/webNetworkCapture.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  mcpTextValue,
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const executable = process.env.REA_MITMDUMP_COMMAND;
@@ -903,15 +907,15 @@ async function inspect(mode, input, errorCategory) {
       name: "inspect_web_network_capture",
       arguments: input,
     });
-    const value = JSON.parse(mcpTextValue(result));
     if (errorCategory !== undefined) {
-      assert.equal(result.isError, true);
-      assert.equal(value.error.category, errorCategory);
+      const error = requireMcpToolError(result);
+      assert.equal(error.category, errorCategory);
+      const rawError = JSON.parse(mcpTextValue(result)).error;
       for (const literal of input.sensitive_values ?? [])
-        assert.ok(!JSON.stringify(value.error).includes(literal));
-      return value.error;
+        assert.ok(!JSON.stringify(rawError).includes(literal));
+      return error;
     }
-    assert.notEqual(result.isError, true, mcpTextValue(result));
+    const value = requireMcpOutput(result, "inspect_web_network_capture");
     assertSensitiveLimitations(value, input.sensitive_values ?? []);
     if (input.format === "har") {
       const surface = await client.callTool({
@@ -923,13 +927,12 @@ async function inspect(mode, input, errorCategory) {
       });
       if ((input.sensitive_values ?? []).length > 0) {
         // Derived view text cannot be checked against undisclosed declarations.
-        assert.equal(surface.isError, true);
+        requireMcpToolError(surface);
         const refused = JSON.parse(mcpTextValue(surface));
         for (const literal of input.sensitive_values)
           assert.ok(!JSON.stringify(refused).includes(literal));
       } else {
-        assert.notEqual(surface.isError, true, mcpTextValue(surface));
-        const projected = JSON.parse(mcpTextValue(surface));
+        const projected = requireMcpOutput(surface, "inspect_analysis_view");
         assert.equal(projected.normalized_result.kind, "api-surface");
         assert.equal(
           projected.normalized_result.records.examined,
@@ -944,13 +947,12 @@ async function inspect(mode, input, errorCategory) {
         },
       });
       if ((input.sensitive_values ?? []).length > 0) {
-        assert.equal(manifest.isError, true);
+        requireMcpToolError(manifest);
         const refusedManifest = JSON.parse(mcpTextValue(manifest));
         for (const literal of input.sensitive_values)
           assert.ok(!JSON.stringify(refusedManifest).includes(literal));
       } else {
-        assert.notEqual(manifest.isError, true, mcpTextValue(manifest));
-        const projected = JSON.parse(mcpTextValue(manifest));
+        const projected = requireMcpOutput(manifest, "inspect_analysis_view");
         assert.equal(projected.normalized_result.kind, "environment-manifest");
         assert.equal(projected.normalized_result.unknowns.length, 3);
         for (const record of projected.normalized_result.records)

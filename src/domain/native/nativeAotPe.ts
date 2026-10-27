@@ -1,4 +1,8 @@
+import { observeMzWindowsHeader } from "../dosMz.js";
 import { createHash } from "node:crypto";
+import { readPeOptionalHeaderFixedFields } from "../peOptionalHeader.js";
+import { readPeCoffHeader } from "../peCoffHeader.js";
+import { readPeSectionHeader } from "../peSectionHeader.js";
 import type { NativeMetadataRecovery } from "./nativeMetadataRecovery.js";
 
 const RTR_SIGNATURE = 0x00525452;
@@ -13,7 +17,7 @@ export const NATIVE_AOT_MAX_WORK_UNITS = 64 * 1024 * 1024;
 export const NATIVE_AOT_MAX_WORKING_MEMORY_BYTES = 64 * 1024 * 1024;
 /** Version of the built-in read-only PE metadata interpretation in profiles. */
 export const NATIVE_AOT_PROFILE_CONTRACT_REVISION =
-  "rtr-9.1-x64-pe-read-only-v7";
+  "rtr-9.1-x64-pe-read-only-v8";
 
 export type NativeAotParserLimits = {
   readonly sourceBytes: number;
@@ -115,7 +119,6 @@ const nativeAotHydrationFailure = (cause: unknown): string =>
       : "DEHYDRATED_DATA could not be hydrated";
 
 type Section = {
-  readonly name: string;
   readonly rva: number;
   readonly virtualSize: number;
   readonly rawOffset: number;
@@ -488,18 +491,21 @@ class PeImage {
     this.#bytes = bytes;
     if (bytes.length < 0x40 || bytes.toString("latin1", 0, 2) !== "MZ")
       throw new Error("Not a PE image");
-    const peOffset = this.#u32(0x3c);
+    const observed = observeMzWindowsHeader(bytes);
+    if (observed.state !== "declared" || observed.signature !== "PE")
+      throw new Error("MZ header does not declare a PE image");
+    const peOffset = observed.offset;
     if (peOffset < 0x40) throw new Error("PE header overlaps the DOS header");
     this.#range(peOffset, 24);
-    if (bytes.toString("latin1", peOffset, peOffset + 4) !== "PE\0\0")
-      throw new Error("Invalid PE signature");
-    this.#machine = this.#u16(peOffset + 4);
-    const count = this.#u16(peOffset + 6);
+    const coff = readPeCoffHeader(bytes.subarray(peOffset + 4, peOffset + 24));
+    if (!coff.ok) throw new Error(coff.error.message);
+    this.#machine = coff.value.machine;
+    const { sectionCount: count, optionalHeaderSize: optionalSize } =
+      coff.value;
     // Microsoft documents a 96-section Windows image-loader limit. This
     // parser accepts executable PE images, not arbitrary COFF object files.
     if (count > 96)
       throw new Error("PE image exceeds the Windows 96-section limit");
-    const optionalSize = this.#u16(peOffset + 20);
     const optional = peOffset + 24;
     this.#range(optional, optionalSize);
     // Mapping fields through SizeOfHeaders must belong to this header,
@@ -508,12 +514,14 @@ class PeImage {
       throw new Error(
         "PE optional header is too short for image mapping fields",
       );
-    const magic = this.#u16(optional);
-    if (magic !== 0x20b || this.#machine !== 0x8664)
+    const fixed = readPeOptionalHeaderFixedFields(
+      bytes.subarray(optional, optional + optionalSize),
+    );
+    if (!fixed.ok || fixed.value.magic !== 0x20b || this.#machine !== 0x8664)
       throw new Error("Only x64 PE32+ is supported");
-    this.imageBase = this.#u64(optional + 24);
-    this.sizeOfImage = this.#u32(optional + 56);
-    this.#sizeOfHeaders = this.#u32(optional + 60);
+    this.imageBase = fixed.value.imageBase;
+    this.sizeOfImage = fixed.value.sizeOfImage;
+    this.#sizeOfHeaders = fixed.value.sizeOfHeaders;
     if (count < 1 || this.sizeOfImage === 0)
       throw new Error("Unsupported PE image extent");
     if (this.imageBase + BigInt(this.sizeOfImage) > 1n << 64n)
@@ -530,14 +538,15 @@ class PeImage {
       );
     this.sections = Array.from({ length: count }, (_, index) => {
       const p = sectionOffset + index * 40;
-      const name = bytes.toString("ascii", p, p + 8).replace(/\0.*$/u, "");
+      const parsed = readPeSectionHeader(bytes.subarray(p, p + 40));
+      if (!parsed.ok) throw new Error(parsed.error.message);
+      const section = parsed.value;
       return {
-        name,
-        virtualSize: this.#u32(p + 8),
-        rva: this.#u32(p + 12),
-        rawSize: this.#u32(p + 16),
-        rawOffset: this.#u32(p + 20),
-        characteristics: this.#u32(p + 36),
+        virtualSize: section.virtual_size,
+        rva: section.virtual_address,
+        rawSize: section.raw_size,
+        rawOffset: section.offset,
+        characteristics: section.characteristics,
       };
     });
     for (const section of this.sections) {
@@ -653,18 +662,6 @@ class PeImage {
       offset > this.#bytes.length - size
     )
       throw new Error("PE field leaves the captured file");
-  }
-  #u16(offset: number): number {
-    this.#range(offset, 2);
-    return this.#bytes.readUInt16LE(offset);
-  }
-  #u32(offset: number): number {
-    this.#range(offset, 4);
-    return this.#bytes.readUInt32LE(offset);
-  }
-  #u64(offset: number): bigint {
-    this.#range(offset, 8);
-    return this.#bytes.readBigUInt64LE(offset);
   }
 }
 

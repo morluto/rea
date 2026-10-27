@@ -4,6 +4,18 @@ import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptA
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
 
+const contextFor = (
+  files: readonly JavaScriptArtifactFile[],
+  documents: JavaScriptJsonDocuments,
+  directories: ReadonlySet<string>,
+) =>
+  createJavaScriptNextAppContext(
+    { files, unavailable_relevant_files: [] },
+    documents,
+    directories,
+    { scope: "container-entries", status: "complete" },
+  );
+
 const file = (path: string, text = ""): JavaScriptArtifactFile => ({
   path,
   container_sha256: "a".repeat(64),
@@ -23,7 +35,7 @@ it("keeps package applicability and its root cache scoped to the source containe
   };
   const page = file("app/page.js");
   const foreignPage = { ...page, container_sha256: foreign.container_sha256 };
-  const context = createJavaScriptNextAppContext(
+  const context = contextFor(
     [manifest, foreign, page, foreignPage],
     new JavaScriptJsonDocuments(),
     new Set(["app"]),
@@ -49,7 +61,7 @@ it("uses the nearest declared Next package and root directory precedence", () =>
     file("node_modules/ordinary/package.json", '{"name":"ordinary"}'),
     file("node_modules/ordinary/app/page.js"),
   ];
-  const context = createJavaScriptNextAppContext(
+  const context = contextFor(
     files,
     new JavaScriptJsonDocuments(),
     new Set([
@@ -76,7 +88,7 @@ it("uses the nearest declared Next package and root directory precedence", () =>
 it("keeps default compiled output under its declared package and unrelated chunk-like paths unknown", () => {
   const manifest = file("package.json", '{"dependencies":{"next":"16.4.2"}}');
   const chunk = file(".next/static/chunks/app/build/page-abc.js");
-  const context = createJavaScriptNextAppContext(
+  const context = contextFor(
     [manifest, chunk],
     new JavaScriptJsonDocuments(),
     new Set(),
@@ -86,11 +98,7 @@ it("keeps default compiled output under its declared package and unrelated chunk
     directory: ".next/static/chunks/app",
   });
   expect(
-    createJavaScriptNextAppContext(
-      [chunk],
-      new JavaScriptJsonDocuments(),
-      new Set(),
-    )(chunk),
+    contextFor([chunk], new JavaScriptJsonDocuments(), new Set())(chunk),
   ).toMatchObject({ kind: "unknown" });
 });
 
@@ -101,17 +109,97 @@ it("supports src/app only when app is not inventoried and retains missing framew
   );
   const page = file("src/app/control/page.js");
   expect(
-    createJavaScriptNextAppContext(
+    contextFor(
       [manifest, page],
       new JavaScriptJsonDocuments(),
       new Set(["src/app"]),
     )(page),
   ).toMatchObject({ kind: "app-directory", directory: "src/app" });
   expect(
-    createJavaScriptNextAppContext(
+    contextFor(
       [page],
       new JavaScriptJsonDocuments(),
       new Set(["src/app"]),
     )(page),
   ).toMatchObject({ kind: "unknown", package: null });
+});
+
+it("does not infer absent manifests or higher-priority directories from incomplete traversal", () => {
+  const manifest = file("package.json", '{"dependencies":{"next":"16.4.2"}}');
+  const page = file("src/app/control/page.js");
+  const files = { files: [manifest, page], unavailable_relevant_files: [] };
+  const context = createJavaScriptNextAppContext(
+    files,
+    new JavaScriptJsonDocuments(),
+    new Set(["src/app"]),
+    { scope: "container-entries", status: "unknown" },
+  );
+  expect(context(page)).toMatchObject({
+    kind: "unknown",
+    package: null,
+    reason: expect.stringContaining("src/app/control/package.json"),
+  });
+  const rootPage = file("page.js");
+  expect(
+    createJavaScriptNextAppContext(
+      files,
+      new JavaScriptJsonDocuments(),
+      new Set(["src/app"]),
+      { scope: "container-entries", status: "unknown" },
+    )(rootPage),
+  ).toMatchObject({
+    kind: "unknown",
+    package: { path: "package.json" },
+    reason: expect.stringContaining("higher-priority app directory"),
+  });
+});
+
+it("retains the nearest unavailable manifest's evidence instead of borrowing an ancestor's Next declaration", () => {
+  const parent = file("package.json", '{"dependencies":{"next":"16.4.2"}}');
+  const page = file("app/widget/app/page.js");
+  const unavailable = {
+    path: "app/widget/package.json",
+    container_sha256: parent.container_sha256,
+    sha256: null,
+    bytes: 42,
+    inventory_artifact_id: null,
+    inventory_occurrence_id: "unreadable-nested-package",
+    kind: "package-json" as const,
+    limitations: ["The unpacked package companion is missing."],
+  };
+  const context = createJavaScriptNextAppContext(
+    { files: [parent, page], unavailable_relevant_files: [unavailable] },
+    new JavaScriptJsonDocuments(),
+    new Set(["app", "app/widget/app"]),
+    { scope: "container-entries", status: "complete" },
+  );
+  expect(context(page)).toMatchObject({
+    kind: "unknown",
+    package: null,
+    reason: expect.stringContaining(unavailable.path),
+  });
+  const result = context(page);
+  if (result.kind !== "unknown")
+    throw new Error("Expected unknown package ownership");
+  expect(result.reason).toContain(unavailable.inventory_occurrence_id);
+  expect(result.reason).toContain(unavailable.limitations[0]);
+  expect(context(file("app/page.js"))).toMatchObject({
+    kind: "app-directory",
+    package: { path: parent.path },
+  });
+  const foreign = createJavaScriptNextAppContext(
+    {
+      files: [parent, page],
+      unavailable_relevant_files: [
+        { ...unavailable, container_sha256: "c".repeat(64) },
+      ],
+    },
+    new JavaScriptJsonDocuments(),
+    new Set(["app", "app/widget/app"]),
+    { scope: "container-entries", status: "complete" },
+  );
+  expect(foreign(page)).toMatchObject({
+    kind: "app-directory",
+    package: { path: parent.path },
+  });
 });

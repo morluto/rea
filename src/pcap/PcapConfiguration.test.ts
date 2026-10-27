@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -392,3 +392,22 @@ describe("parseTsharkJsonOutput", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "resolves Wireshark tools through native PATH traversal instead of a decoy directory",
+  async () => {
+    const root = await createTestTempDirectory("rea-wireshark-native-path-");
+    const intended = join(root, "intended");
+    await mkdir(join(intended, "nested"), { recursive: true });
+    await symlink(join(intended, "nested"), join(root, "alias"));
+    for (const directory of [root, intended])
+      for (const tool of ["tshark", "capinfos"])
+        await writeFile(join(directory, tool), "", { mode: 0o755 });
+    const selected = resolvePcapTools({ PATH: `${root}/alias/..` });
+    for (const tool of ["tshark", "capinfos"] as const)
+      expect(await realpath(selected[tool].command)).toBe(join(intended, tool));
+    expect(() => resolvePcapTools({ PATH: `${root}/missing/..` })).toThrow(
+      /tshark was not found/u,
+    );
+  },
+);

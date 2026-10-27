@@ -1,4 +1,10 @@
-import { expect, it } from "vitest";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { expect, it, onTestFinished } from "vitest";
+import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { ok } from "../../../src/domain/result.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import {
@@ -93,3 +99,71 @@ it("preserves raw and DOL verification facts and selected DOL sections through t
     });
   }
 }, 30_000);
+
+it("delivers load-image summaries from the complete retained public-tool observation", async () => {
+  const report = nativeRawLoadImageFixture();
+  const inputs: unknown[] = [];
+  const session = createTestBinarySession(() => ({
+    execute: async (operation, parameters) => {
+      if (operation === "inspect_native_load_image") inputs.push(parameters);
+      return ok(
+        createAnalysisExecution(operation === "health" ? null : report, {
+          id: "fixture",
+          name: "Fixture",
+          version: "1",
+        }),
+      );
+    },
+    close: async () => ok(null),
+  }));
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "load-image-summary", version: "1" });
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const opened = await client.callTool({
+    name: "open_binary",
+    arguments: { path: process.execPath },
+  });
+  expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
+  const contract = toolContract("inspect_native_load_image");
+  const completeReply = await client.callTool({
+    name: contract.name,
+    arguments: {},
+  });
+  expect(completeReply.isError, JSON.stringify(completeReply.content)).not.toBe(
+    true,
+  );
+  const complete = parseEvidence(
+    contract.outputSchema.parse(completeReply.structuredContent),
+  );
+  const summaryReply = await client.callTool({
+    name: contract.name,
+    arguments: { detail: "summary" },
+  });
+  expect(summaryReply.isError, JSON.stringify(summaryReply.content)).not.toBe(
+    true,
+  );
+  const summary = parseEvidence(
+    contract.outputSchema.parse(summaryReply.structuredContent),
+  );
+  expect(complete.parameters).toEqual({});
+  expect(complete.normalized_result).toEqual(report);
+  expect(summary.normalized_result).toMatchObject({
+    kind: "summary",
+    parent_operation: contract.name,
+    parent_evidence_id: complete.evidence_id,
+    source_parameters: {},
+  });
+  expect(session.evidenceById(complete.evidence_id)).toEqual(complete);
+  expect(inputs.length).toBeGreaterThan(0);
+  expect(inputs).not.toContainEqual(
+    expect.objectContaining({ detail: expect.anything() }),
+  );
+});

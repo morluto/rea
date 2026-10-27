@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { access } from "node:fs/promises";
 import { afterEach, expect, it, vi } from "vitest";
 
 const faults = vi.hoisted(() => ({
   lowHeadroom: false,
   sourceRemoval: false,
   removals: 0,
+  onSourceRemoval: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:v8", async (original) => {
@@ -35,6 +37,7 @@ vi.mock("node:fs/promises", async (original) => {
         String(args[0]).endsWith(".source")
       ) {
         faults.removals += 1;
+        faults.onSourceRemoval?.();
         throw Object.assign(
           new Error("controlled source-file removal failure"),
           { code: "EACCES" },
@@ -71,6 +74,7 @@ afterEach(() => {
   faults.lowHeadroom = false;
   faults.sourceRemoval = false;
   faults.removals = 0;
+  faults.onSourceRemoval = undefined;
 });
 
 it.each(["io", "output"] as const)(
@@ -118,6 +122,9 @@ it.each([false, true])(
   async (removalFailure) => {
     faults.lowHeadroom = true;
     faults.sourceRemoval = removalFailure;
+    const controller = new AbortController();
+    const reason = new Error("cancel during denied source-file cleanup");
+    faults.onSourceRemoval = () => controller.abort(reason);
     const sourceMapUrls = [
       {
         declared_url: "app.map",
@@ -144,8 +151,13 @@ it.each([false, true])(
           ],
         }),
     );
+    let cleanupFailure: ProviderCleanupError | undefined;
     try {
-      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      const result = await worker.analyze(
+        file,
+        { nodes: 100, unknowns: 100 },
+        controller.signal,
+      );
       expect(result.ok).toBe(!removalFailure);
       const retained = result.ok ? result.value : result.error;
       expect(retained.javascript?.source_map_urls).toEqual(sourceMapUrls);
@@ -156,11 +168,110 @@ it.each([false, true])(
       if (!result.ok) {
         expect(result.error.error).toBeInstanceOf(ProviderCleanupError);
         expect(result.error.error.cleanupIncomplete).toBe(true);
+        expect(worker.canReuse()).toBe(false);
+        if (result.error.error instanceof ProviderCleanupError)
+          cleanupFailure = result.error.error;
       }
       expect(faults.removals).toBe(removalFailure ? 1 : 0);
+      expect(controller.signal.aborted).toBe(removalFailure);
+      expect(controller.signal.reason).toBe(
+        removalFailure ? reason : undefined,
+      );
     } finally {
       faults.sourceRemoval = false;
       await worker.close();
     }
+    expect(cleanupFailure?.cleanupIncomplete).toBe(
+      removalFailure ? false : undefined,
+    );
+  },
+);
+
+it.each([
+  { malformed: true, advertised: true },
+  { malformed: false, advertised: true },
+  { malformed: true, advertised: false },
+  { malformed: false, advertised: false },
+])(
+  "reads checkpoint bytes strictly with malformed=$malformed and advertised=$advertised",
+  async ({ malformed, advertised }) => {
+    const valid = Buffer.from(
+      JSON.stringify({
+        ...staticCheckpointFacts,
+        limitations: ["literal � checkpoint"],
+      }),
+    );
+    const replacementAt = valid.indexOf(Buffer.from("�"));
+    expect(replacementAt).toBeGreaterThanOrEqual(0);
+    const checkpoint = malformed
+      ? Buffer.concat([
+          valid.subarray(0, replacementAt),
+          Buffer.from([0xff]),
+          valid.subarray(replacementAt + Buffer.byteLength("�")),
+        ])
+      : valid;
+    let runtimeRoot: string | undefined;
+    const worker = new JavaScriptAnalysisWorker(
+      { heapMb: 128, timeoutMs: 30_000 },
+      async (request) => {
+        runtimeRoot = request.cwd;
+        return spawnOwnedProviderProcess({
+          ...request,
+          arguments: [
+            "-e",
+            `${ready}
+             const fs=require("node:fs");
+             const {createHash}=require("node:crypto");
+             const checkpoint=Buffer.from(${JSON.stringify(checkpoint.toString("base64"))},"base64");
+             require("node:readline").createInterface({input:process.stdin}).on("line",line=>{
+               const request=JSON.parse(line);
+               if(request.file){
+                 fs.writeFileSync(request.id+".static.json",checkpoint);
+                 if(!${advertised}) process.exit(2);
+                 process.stdout.write(JSON.stringify({kind:"static",id:request.id,bytes:checkpoint.length,sha256:createHash("sha256").update(checkpoint).digest("hex")})+"\\n");
+               } else process.stdout.write(JSON.stringify({kind:"complete",id:request.id,descriptor:null})+"\\n");
+             });`,
+          ],
+        });
+      },
+    );
+    try {
+      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      expect(result.ok).toBe(advertised && !malformed);
+      const retained = result.ok ? result.value : result.error;
+      if (malformed) {
+        expect(retained.javascript).toBeNull();
+        if (result.ok) throw new Error("Expected malformed checkpoint failure");
+        if (advertised) {
+          expect(result.error.error).toMatchObject({
+            _tag: "AnalysisOutputError",
+            cause: expect.any(TypeError),
+          });
+          expect(projectAnalysisError(result.error.error).code).toBe(
+            "unreadable_output",
+          );
+          expect(result.error.error.message).not.toContain(
+            "digest does not match",
+          );
+        }
+      } else {
+        expect(retained.javascript?.limitations).toEqual([
+          "literal � checkpoint",
+        ]);
+      }
+      if (!advertised) {
+        if (result.ok) throw new Error("Expected worker crash failure");
+        expect(result.error.error).toMatchObject({
+          _tag: "ProviderAdapterError",
+        });
+      }
+    } finally {
+      await worker.close();
+    }
+    if (runtimeRoot === undefined)
+      throw new Error(
+        "Owned analyzer did not expose its runtime root to launcher",
+      );
+    await expect(access(runtimeRoot)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

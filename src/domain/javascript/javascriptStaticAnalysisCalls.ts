@@ -19,6 +19,7 @@ import {
   rangeForOffsets,
   sourceSlice,
   stringValue,
+  staticFileExpressionPath,
 } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticStaticPropertyKey,
@@ -149,40 +150,54 @@ export const inspectCall = (
   inspectStorageCall(node, name, first, context, bindings);
   if (
     (name === "loadFile" || name.endsWith(".loadFile")) &&
-    context.rendererLoad?.(node.callee, node) === true &&
-    first !== undefined
-  )
-    addLocatedFinding(context, {
-      collection: accumulator.roles,
-      key: `role\0renderer\0${first}`,
-      node,
-      value: {
-        role: "renderer",
-        path: first,
-        resolution_context: "filesystem-expression",
-        mechanism: `call:${name}`,
-        module_key: null,
-        location: range(node),
-      },
-    });
+    context.rendererLoad?.(node.callee, node) === true
+  ) {
+    const argument = argumentNode(node.arguments[0]);
+    const filePath =
+      first === undefined && argument !== undefined
+        ? staticFileExpressionPath(argument, context.pathIntrinsics)
+        : first === undefined
+          ? undefined
+          : { path: first, base: "literal-path" as const };
+    if (filePath === undefined) accumulator.unknownFindings += 1;
+    else
+      addLocatedFinding(context, {
+        collection: accumulator.roles,
+        key: `role\0renderer\0${filePath.path}\0${filePath.base}`,
+        node,
+        value: {
+          role: "renderer",
+          path: filePath.path,
+          ...(filePath.base === "source-directory"
+            ? { path_base: "source-directory" as const }
+            : {}),
+          resolution_context: "filesystem-expression",
+          mechanism: `call:${name}`,
+          module_key: null,
+          location: range(node),
+        },
+      });
+  }
   if (
     (name === "loadURL" || name.endsWith(".loadURL")) &&
-    context.rendererLoad?.(node.callee, node) === true &&
-    first !== undefined
-  )
-    addLocatedFinding(context, {
-      collection: accumulator.roles,
-      key: `role\0renderer\0${first}`,
-      node,
-      value: {
-        role: "renderer",
-        path: first,
-        resolution_context: "module-specifier",
-        mechanism: `call:${name}`,
-        module_key: null,
-        location: range(node),
-      },
-    });
+    context.rendererLoad?.(node.callee, node) === true
+  ) {
+    if (first === undefined) accumulator.unknownFindings += 1;
+    else
+      addLocatedFinding(context, {
+        collection: accumulator.roles,
+        key: `role\0renderer\0${first}`,
+        node,
+        value: {
+          role: "renderer",
+          path: first,
+          resolution_context: "module-specifier",
+          mechanism: `call:${name}`,
+          module_key: null,
+          location: range(node),
+        },
+      });
+  }
 };
 
 const moduleUrlSpecifier = (

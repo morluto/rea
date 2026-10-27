@@ -132,6 +132,14 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
+  // The advertised family scope is a registration setting, not a detected
+  // provider fact; merge it after discovery so it cannot suppress the
+  // Hopper installation offer on an otherwise unconfigured machine.
+  if (options.toolFamilies !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
@@ -393,6 +401,16 @@ const runSetupWorkflow = async (
       detail: "Preparing the pinned package entry",
     });
     prewarm = await host.prewarmRegistrationRunner();
+    if (prewarm.status === "failed" && prewarm.interruptedSignal !== undefined)
+      return {
+        status: "cancelled",
+        plannedActions,
+        appliedActions,
+        clients,
+        clientStates,
+        doctor: summarizeDoctor(discovery.initialDoctor),
+        prewarm,
+      };
     if (prewarm.status === "failed")
       emitProgress(options, {
         actionId: "prewarm_registration_runner",

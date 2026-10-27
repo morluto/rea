@@ -3,7 +3,8 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -155,9 +156,9 @@ export class ToolResultDelivery {
   ): CallToolResult {
     if (recordEvidence === undefined)
       return this.toErrorToolResult(error, targetContent);
-    const partial = evidenceSchema.safeParse(error.partialObservation);
-    if (!partial.success) return this.toErrorToolResult(error, targetContent);
-    const recorded = recordEvidence(partial.data);
+    const partial = safeParseEvidence(error.partialObservation);
+    if (!partial.ok) return this.toErrorToolResult(error, targetContent);
+    const recorded = recordEvidence(partial.value);
     if (!recorded.ok) return this.toErrorToolResult(error, targetContent);
     const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
@@ -167,7 +168,7 @@ export class ToolResultDelivery {
           ...projected.details,
           partial_observation: {
             kind: "retained-evidence",
-            evidence_id: partial.data.evidence_id,
+            evidence_id: partial.value.evidence_id,
           },
         },
       },

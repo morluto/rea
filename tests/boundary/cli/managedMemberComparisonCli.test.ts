@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect } from "vitest";
+import { expect, it, vi } from "vitest";
+
+import * as comparison from "../../../src/application/managed/ManagedMemberComparisonService.js";
+import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
+import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
+import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { silentLogger } from "../../../src/logger.js";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { managedMemberInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
@@ -184,3 +192,102 @@ cliTest(
     }
   },
 );
+
+const managedComparisonEvidence = async () => {
+  const directory = await createTestTempDirectory("rea-managed-finalization-");
+  const path = join(directory, "comparison.dll");
+  await writeFile(path, buildManagedPeFixture());
+  const result = await comparison.compareManagedMemberPaths({
+    leftPath: path,
+    rightPath: path,
+  });
+  if (!result.ok) throw result.error;
+  return result.value;
+};
+
+const registeredComparisonCommand = () => {
+  const commands = new Map<string, { run(input: unknown): Promise<unknown> }>();
+  const cli = {
+    command: (
+      name: string,
+      definition: { run(input: unknown): Promise<unknown> },
+    ) => {
+      commands.set(name, definition);
+      return cli;
+    },
+  } as unknown as Parameters<typeof registerManagedCommands>[0];
+  registerManagedCommands(cli, silentLogger, async () => null);
+  return commands.get(CLI_COMMANDS.compareManagedMembers)!;
+};
+
+it.each([true, false])(
+  "retains the comparison outcome when final cleanup fails (success: %s)",
+  async (success) => {
+    const evidence = await managedComparisonEvidence();
+    const run = vi
+      .spyOn(comparison, "compareManagedMemberPaths")
+      .mockResolvedValue(
+        success
+          ? ok(evidence)
+          : err(
+              new AnalysisOutputError(
+                "compare_managed_members",
+                "primary comparison failure",
+                {
+                  partialObservation: evidence,
+                },
+              ),
+            ),
+      );
+    const close = vi
+      .spyOn(ArtifactResourceScope.prototype, "close")
+      .mockRejectedValue(new Error("comparison close denied"));
+    try {
+      const result = await registeredComparisonCommand().run({
+        args: { leftPath: "left.dll", rightPath: "right.dll" },
+      });
+      expect(result).toMatchObject({
+        error: "Managed member comparison failed",
+        code: "cleanup_incomplete",
+        details: {
+          partial_observation: { evidence_id: evidence.evidence_id },
+        },
+      });
+      expect(JSON.stringify(result)).toContain("comparison close denied");
+      if (!success)
+        expect(JSON.stringify(result)).toContain("primary comparison failure");
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      run.mockRestore();
+      close.mockRestore();
+    }
+  },
+);
+
+it("retains completed comparison Evidence when interrupted during final cleanup", async () => {
+  const evidence = await managedComparisonEvidence();
+  const run = vi
+    .spyOn(comparison, "compareManagedMemberPaths")
+    .mockResolvedValue(ok(evidence));
+  const close = vi
+    .spyOn(ArtifactResourceScope.prototype, "close")
+    .mockImplementation(async () => {
+      process.emit("SIGINT");
+    });
+  const previousExitCode = process.exitCode;
+  try {
+    const result = await registeredComparisonCommand().run({
+      args: { leftPath: "left.dll", rightPath: "right.dll" },
+    });
+    expect(result).toMatchObject({
+      error: "Managed member comparison failed",
+      code: "cancelled",
+      details: { partial_observation: { evidence_id: evidence.evidence_id } },
+    });
+    expect(process.exitCode).toBe(130);
+  } finally {
+    process.exitCode = previousExitCode;
+    run.mockRestore();
+    close.mockRestore();
+  }
+});

@@ -8,12 +8,13 @@ export const createJavaScriptArtifactReader = (
   path: string,
   format: "asar" | "directory",
   asarHeaderAdmission?: AsarHeaderAdmission,
+  selectedPath?: string,
 ): ArtifactReader =>
   format === "asar"
-    ? new AsarArtifactReader(
-        path,
-        asarHeaderAdmission === undefined
+    ? new AsarArtifactReader(path, {
+        ...(asarHeaderAdmission === undefined
           ? {}
-          : { headerAdmission: asarHeaderAdmission },
-      )
+          : { headerAdmission: asarHeaderAdmission }),
+        ...(selectedPath === undefined ? {} : { selectedPath }),
+      })
     : new DirectoryArtifactReader(path, "omit");

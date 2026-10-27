@@ -9,10 +9,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
-import {
-  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
-  waitForBrowserDevtoolsPort,
-} from "../dist/browser/BrowserProcessStartup.js";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
 import { createBrowserScenarioProvider } from "../dist/composition/browserScenario.js";
 import {
   inspectWebPageInputSchema,
@@ -56,6 +54,12 @@ import { verifyScenarioStorage } from "./lib/browser-scenario-storage-e2e.mjs";
 import { verifyScenarioStorageFingerprints } from "./lib/browser-scenario-storage-fingerprints-e2e.mjs";
 import { verifyScenarioServiceWorkers } from "./lib/browser-scenario-service-workers-e2e.mjs";
 import { verifyBrowserUrlUserInfo } from "./lib/browser-url-userinfo-e2e.mjs";
+
+const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS, waitForBrowserDevtoolsPort } =
+  await importVerifierSource(
+    new URL("./lib/browser-process-startup.mts", import.meta.url).href,
+    import.meta.url,
+  );
 
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
 const SCENARIO_URL_SECRET_VALUE = "rea-browser-url-verifier-secret";

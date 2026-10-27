@@ -1,5 +1,4 @@
-import { z } from "zod";
-import { parseBinary } from "plist";
+import { decodeBinaryPlistValue } from "../../artifacts/apple/BinaryPlistMaterializer.js";
 
 import {
   AnalysisOutputError,
@@ -18,11 +17,7 @@ import {
   type ProjectedPlistValue,
   PlistNestingLimitError,
 } from "../../domain/apple/plistValue.js";
-import {
-  omitPrototypeKeys,
-  omittedPrototypeKeysLimitation,
-  parseXmlPropertyList,
-} from "../../domain/propertyListKeys.js";
+import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 import {
@@ -31,7 +26,6 @@ import {
   type PlistNumberLiterals,
 } from "../../domain/apple/plistNumbers.js";
 import {
-  decodeBinaryPlistScalars,
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
 } from "../../artifacts/apple/PlistScalars.js";
@@ -62,8 +56,6 @@ const mebibytes = (bytes: number): string =>
 
 /** Recovery name for the fixed source-size ceiling. */
 export const NATIVE_PLIST_INPUT_ALLOWANCE = `the fixed ${mebibytes(MAX_NATIVE_PLIST_BYTES)} (${String(MAX_NATIVE_PLIST_BYTES)}-byte) native plist input allowance (no runtime override)`;
-
-const plistObject = z.record(z.string(), z.unknown());
 
 /** Stable bundle metadata projected from one plist value. */
 export interface PlistBundleMetadata {
@@ -234,7 +226,7 @@ const projectPlistJsonAttempt = (
       );
     return item;
   };
-  let decoded: ReturnType<typeof omitPrototypeKeys>;
+  let value: unknown;
   try {
     // Preserve XML-before-JSON failure precedence during final projection.
     literals =
@@ -243,12 +235,10 @@ const projectPlistJsonAttempt = (
         : parseXmlPropertyList(xmlConversion, MAX_NATIVE_PLIST_NESTING_DEPTH)
             .numberLiterals;
     if (!attempt.ok) return err(plistOutputError(attempt.error));
-    // Numeric limitations also account for values under omitted source keys.
-    decoded = omitPrototypeKeys(project(attempt.value, 0));
+    value = project(attempt.value, 0);
   } catch (cause: unknown) {
     return err(plistOutputError(cause));
   }
-  const { value } = decoded;
   return ok({
     value,
     bundle: projectPlistBundle(value),
@@ -258,7 +248,6 @@ const projectPlistJsonAttempt = (
         ? [incompletePlistNumberLimitation]
         : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(decoded.omittedPrototypeKeys),
     ],
   });
 };
@@ -323,14 +312,12 @@ const projectPlistXml = (
   failureReason?: string,
 ): Result<ParsedPlist, PlistParseError> => {
   let projected: ProjectedPlistValue;
-  let omittedPrototypeKeys: number;
   let literals: PlistNumberLiterals;
   try {
     const decoded = parseXmlPropertyList(
       output,
       MAX_NATIVE_PLIST_NESTING_DEPTH,
     );
-    omittedPrototypeKeys = decoded.omittedPrototypeKeys;
     literals = decoded.numberLiterals;
     projected = projectPlistValue(
       decoded.value,
@@ -367,7 +354,6 @@ const projectPlistXml = (
       ...projectedScalarLimitations(projected),
       ...(literals.incomplete ? [incompletePlistNumberLimitation] : []),
       ...numberLimitations(exactIntegerCount, ambiguousNumberCount),
-      ...prototypeKeyLimitations(omittedPrototypeKeys),
     ],
   });
 };
@@ -400,9 +386,7 @@ export const parsePlistBinary = (
       },
     );
     const scalarMetadata = scanBinaryPlistScalars(bytes, expansion);
-    const decoded = parseBinary(
-      decodeBinaryPlistScalars(bytes, scalarMetadata, expansion),
-    );
+    const decoded = decodeBinaryPlistValue(bytes, expansion, scalarMetadata);
     const projected = projectPlistValue(
       decoded,
       undefined,
@@ -423,9 +407,6 @@ export const parsePlistBinary = (
               ),
             ]),
         ...numbers.limitations(),
-        ...(expansion.binaryPrototypeKeyObserved
-          ? [omittedPrototypeKeysLimitation(null)]
-          : []),
       ],
     });
   } catch (cause: unknown) {
@@ -461,9 +442,6 @@ export const parsePlistBinary = (
     );
   }
 };
-
-const prototypeKeyLimitations = (count: number): string[] =>
-  count === 0 ? [] : [omittedPrototypeKeysLimitation(count)];
 
 const projectedScalarLimitations = (
   projected: ProjectedPlistValue,
@@ -517,10 +495,13 @@ const mapJsonNumbers = (
 };
 
 const projectPlistBundle = (value: unknown): PlistBundleMetadata => {
-  const object = plistObject.safeParse(value);
+  const object =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
   const field = (name: string): string | null => {
-    if (!object.success) return null;
-    const candidate = object.data[name];
+    if (object === undefined || !Object.hasOwn(object, name)) return null;
+    const candidate = object[name];
     return typeof candidate === "string" ? candidate : null;
   };
   return {

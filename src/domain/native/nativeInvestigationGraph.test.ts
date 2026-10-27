@@ -455,3 +455,15 @@ it("counts an authored action with an unresolved receiver in dispatch coverage",
     }),
   );
 });
+
+it("keeps all own Interface Builder attributes through the graph schema", () => {
+  const attributes = JSON.parse(
+    '{"__proto__":{"recorded":true},"constructor":"authored","prototype":null}',
+  );
+  const projected = nativeInvestigationGraphSchema.parse({
+    ...graph,
+    nodes: graph.nodes.map((node) => ({ ...node, attributes })),
+  });
+  expect(projected.nodes[0]?.attributes).toEqual(attributes);
+  expect(Object.hasOwn(projected.nodes[0]!.attributes, "__proto__")).toBe(true);
+});

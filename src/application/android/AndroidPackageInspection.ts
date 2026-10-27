@@ -6,11 +6,10 @@ import {
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { androidPackageInspectionInputSchema } from "../../domain/android/androidAnalysis.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, type Result } from "../../domain/result.js";
+import type { Result } from "../../domain/result.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Preserve the complete provider request; select retained delivery explicitly. */
 export const inspectAndroidPackage = async (
@@ -20,26 +19,22 @@ export const inspectAndroidPackage = async (
   options?: ExecutionOptions,
 ): Promise<Result<Evidence, AnalysisError>> => {
   const operation = "inspect_android_package";
-  if (options?.signal?.aborted === true)
-    return err(
-      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-    );
-  const parsed = androidPackageInspectionInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(operation, parsed.error.issues, rawInput, {
-        cause: parsed.error,
-      }),
-    );
-  if (parsed.data.detail === "summary") {
+  const parsed = parseAnalysisInput(
+    operation,
+    rawInput,
+    androidPackageInspectionInputSchema,
+    options?.signal,
+  );
+  if (!parsed.ok) return parsed;
+  if (parsed.value.detail === "summary") {
     const ready = requireAnalysisViewRetention(operation, retention);
     if (!ready.ok) return ready;
   }
   const executed = await service.execute(
     operation,
-    { path: parsed.data.path },
+    { path: parsed.value.path },
     options,
   );
-  if (!executed.ok || parsed.data.detail !== "summary") return executed;
+  if (!executed.ok || parsed.value.detail !== "summary") return executed;
   return summarizeRetainedAnalysis(executed.value, retention);
 };

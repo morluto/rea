@@ -245,7 +245,7 @@ describe("state data plane", () => {
       },
     });
     expect(loginOf(plane.store)).toBe("probe");
-    // Values parsing would alter are refused where they sit, never rounded or turned into a prototype.
+    // Numbers parsing or serialization would alter are refused where they sit.
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 2,
@@ -256,7 +256,6 @@ describe("state data plane", () => {
       '"login":9007199254740993',
       // Exact in this spelling, but data/get would write it as digits it could not load again.
       '"login":1e20',
-      '"__proto__":{"polluted":true},"login":"renamed"',
     ]) {
       const reply = await plane.post(
         body.replace('"login":"renamed"', altered),
@@ -267,10 +266,43 @@ describe("state data plane", () => {
           data: { path: expect.stringMatching(/\/fields$/u) },
         },
       });
-      expect(JSON.stringify(reply.json)).not.toContain("polluted");
     }
     expect(loginOf(plane.store)).toBe("probe");
   });
+});
+
+it("preserves arbitrary own data keys in inline and encoded file parts", async () => {
+  const plane = dataPlane();
+  const initial = renamedDocument();
+  const original = initial.rea_state.entities[0]!;
+  const members = JSON.parse(
+    '{"__proto__":{"constructor":0},"toString":false}',
+  );
+  const entity = { ...original, fields: { ...original.fields, ...members } };
+  const document = {
+    rea_state: {
+      ...initial.rea_state,
+      entities: [entity, ...initial.rea_state.entities.slice(1)],
+    },
+  };
+  for (const part of [
+    { kind: "data", data: document },
+    {
+      kind: "file",
+      file: {
+        bytes: Buffer.from(JSON.stringify(document)).toString("base64"),
+      },
+    },
+  ]) {
+    await expect(plane.add(part)).resolves.toMatchObject({ result: {} });
+    const retained = plane.store.entity(
+      entity.type,
+      entity.collection,
+      entity.id,
+    )!;
+    expect(Object.hasOwn(retained.fields, "__proto__")).toBe(true);
+    expect(retained.fields).toEqual(entity.fields);
+  }
 });
 
 describe("state data plane intake", () => {

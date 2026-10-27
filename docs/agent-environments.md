@@ -86,8 +86,9 @@ name it `.har`.
   manifest's, unless the capture's origin is a loopback name or an IP literal:
   the capture file then names it (`grafana.har` and `grafana.capture.json`
   become `grafana`) and a `name-from-file` warning says so. A file name that
-  yields no portable label (kebab-case, at most 64 characters, not a Windows
-  device name) is refused; pass `--name`.
+  yields no portable label (kebab-case, at most 63 characters for a DNS service
+  label, not a Windows device name or a label interpreted as an IP address) is
+  refused; pass `--name`.
 - `--package-tarball` works as for the export, and `--capture-timeout-ms`
   as for `inspect-web-network-capture`.
 - `--dry-run` runs every stage and prints the report with `status: "planned"`
@@ -182,6 +183,7 @@ what to record next; hints never change what is served:
 | `side-effect`         | The write changed something besides its own entity, which the environment does not model.                                                                                                                                                        |
 | `unconfirmed`         | No later read showed the effect. Read the entity and its list after the write.                                                                                                                                                                   |
 | `incomplete-entities` | The write is confirmed, but the views that show its entity cannot render it in full. Read the written entity through every view that lists it.                                                                                                   |
+| `unknown-clock`       | The learned rules generate timestamps, but the capture establishes no global served clock start. Record usable start times and completed durations for every request.                                                                            |
 
 The bundle ships `evidence.json`, the whole capture Evidence, response bodies
 included. Inspection excludes the values of the standard authentication headers
@@ -203,7 +205,10 @@ attached and a transaction no record represents, and each transaction URL's
 query once. Bodies larger than 4 MiB of UTF-8 text are not
 scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
 event pointers, including base64 bodies whose decoded scan was cut. An empty name
-warning does not establish that these bodies were checked. Names do not establish sensitivity,
+warning does not establish that these bodies were checked. A browser scenario's
+saved values (`save` and `save_response`) named like credentials but not marked
+`secret: true` are recorded unredacted; `credential-named-saved-values` lists up
+to 20 of them by parameter pointer. Names do not establish sensitivity,
 so the build never refuses on them. Capture
 
 Evidence also records the capture file's absolute path (`subject.local_path`,
@@ -767,7 +772,10 @@ any. A refused call leaves the state unchanged. Values a write generates are
 deterministic: the clock starts at `write_clock` and advances one second per
 served write, sequences take one past both the largest held value and the
 largest they generated, and UUIDs and tokens derive from the state Evidence
-id, tool, field and write count, skipping held values. `data/reset` and
+id, tool, field and write count, skipping held values. If `write_clock` is null,
+plans needing `clock`, `held-clock`, or `nested-clock` retain their learned rules
+but are withheld with `unknown-clock`; other confirmed plans can still be served.
+`data/reset` and
 `data/add` restart the clock, counter and sequences, so the same calls after a
 reset give the same state. Answers carry `state: {"source": "state", "view":
 "create" | "update" | "delete", …}` or `"document-write"`; a bulk answer adds
@@ -871,8 +879,9 @@ names a `document` view once, at its initial document's `path`. The `version`,
 and the `state_evidence_id` and `types` that `data/get` reports, must match
 the served state, so a `data/get` result loads back unchanged. A number without
 an exact native value, or whose serialized spelling would not be read as exact
-(an integer from 2^53 below 1e21, such as `1e20`, in any spelling), or a
-`__proto__` member is refused rather than altered.
+(an integer from 2^53 below 1e21, such as `1e20`, in any spelling), is refused
+rather than altered. Caller data preserves all own JSON members, including
+`__proto__`; unknown members of the state document's structure are refused.
 An invalid document is `-32602` naming the first problem by JSON pointer, as in
 `/rea_state/entities/3/collection` (also in `error.data.path`); a problem
 inside caller data (`fields`, `value`, `types`) is located at that member, so
@@ -981,7 +990,8 @@ serves replay. The complete tool catalog the bundle serves must also fit the
 server's advertised catalog budget before any files are written. Privately parsed JSON is sealed once so authentication
 and replay share immutable response trees rather than copying the capture repeatedly.
 `--name` replaces the manifest's portable kebab-case name as the env folder and env id
-(Windows device names such as `con` and `lpt1` are refused);
+(at most 63 characters for its DNS service label; Windows device names and
+labels interpreted as IP addresses are refused);
 `--package-tarball <path>` copies a packed `rea-agents` tarball into the env
 folder and makes the Dockerfile install it instead of the registry package and
 remove it in the same layer, which is how a checkout rather than a release is
@@ -999,7 +1009,12 @@ Windows inherits ACLs and REA does not establish owner-only access there. Choose
 an already private Windows destination when captured content needs it.
 
 The Dockerfile sets `MCP_HOST=0.0.0.0` and `MCP_PORT=18765`, the port the
-framework maps for an MCP server env; the framework's own deploy supplies
+framework maps for an MCP server env, and `MCP_ALLOWED_HOSTS` naming the loopback
+addresses and the environment name, because the container binds outside loopback
+and the server refuses to serve on such a bind without an operator-declared
+allowlist: the framework's published port is reached over loopback and its
+gateway proxies to the env container by the compose service name (the
+environment name). The framework's own deploy supplies
 `MCP_HOST`, `MCP_PORT` and `ENVIRONMENT_NAME`, so the served card carries the
 env's name. It installs Debian's `python3` because the framework's local
 sandbox probes a container's readiness with `python3` inside it, which the slim

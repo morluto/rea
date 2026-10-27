@@ -746,6 +746,40 @@ it.each(["full", "compact"] as const)(
   },
 );
 
+it.each([
+  ["inspect_web_page", 0],
+  ["analyze_web_bundle", 0],
+  ["observe_web_session", 1],
+  ["discover_webmcp_tools", 0],
+  ["capture_web_screenshot", undefined],
+] as const)(
+  "selects the exact opaque target ID through %s",
+  async (name, observationMs) => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const { client } = await connectBrowser();
+    const args = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      ...(observationMs === undefined ? {} : { observation_ms: observationMs }),
+    };
+    const rejected = await client.callTool({
+      name,
+      arguments: { ...args, target_id: " allowed-page " },
+    });
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { details: { reason: "target_not_found" } },
+    });
+    expect(browser.commands).toHaveLength(0);
+    const accepted = await client.callTool({
+      name,
+      arguments: { ...args, target_id: "allowed-page" },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(browser.commands.length).toBeGreaterThan(0);
+  },
+);
+
 it("does not attach to a target outside the request's allowed origin scope", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);

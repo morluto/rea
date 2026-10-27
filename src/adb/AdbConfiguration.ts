@@ -4,6 +4,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { isAbsolute } from "node:path";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 
 import {
   execFileOutput,
@@ -26,6 +27,7 @@ const VERSION_MAX_OUTPUT_BYTES = 64 * 1024;
 export interface AdbBinarySelection {
   readonly binary: string;
   readonly pathSource: "environment" | "path";
+  readonly environment: Readonly<Record<string, string | undefined>>;
 }
 
 /**
@@ -36,16 +38,25 @@ export interface AdbBinarySelection {
 export const resolveAdbBinary = (
   environment: Readonly<Record<string, string | undefined>>,
 ): AdbBinarySelection => {
-  const configured = environment[ADB_BINARY_ENV];
+  const selectedEnvironment = snapshotEnvironment(environment);
+  const configured = selectedEnvironment[ADB_BINARY_ENV];
   if (configured === undefined || configured.trim() === "")
-    return { binary: "adb", pathSource: "path" };
+    return {
+      binary: "adb",
+      pathSource: "path",
+      environment: selectedEnvironment,
+    };
   if (!isAbsolute(configured))
     throw new AdbConfigurationFailure(
       "not_absolute",
       `${ADB_BINARY_ENV} must be an absolute path to the adb binary`,
       { configured_path: configured },
     );
-  return { binary: configured, pathSource: "environment" };
+  return {
+    binary: configured,
+    pathSource: "environment",
+    environment: selectedEnvironment,
+  };
 };
 
 export type AdbConfigurationFailureCode =
@@ -98,6 +109,7 @@ export const inspectAdbClient = async (
       selection.binary,
       ["version"],
       {
+        env: selection.environment,
         timeout: VERSION_TIMEOUT_MS,
         stopSignal: "SIGTERM",
         maxBuffer: VERSION_MAX_OUTPUT_BYTES,

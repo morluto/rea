@@ -43,10 +43,6 @@ const ASSETUTIL = "/usr/bin/assetutil";
 const MAX_CATALOG_BYTES = 64 * 1024 * 1024;
 const MAX_TOTAL_METADATA_BYTES = 64 * 1024 * 1024;
 
-/** The command owner wraps the exact caller reason; do not replace it with the wrapper. */
-const cancellationCause = (cause: unknown, signal?: AbortSignal): unknown =>
-  cause instanceof ExecFileOutputCancelledError ? cause.cause : signal?.reason;
-
 /** Inspect compiled asset catalog metadata without extracting rendition bytes. */
 export const analyzeAppleAssetCatalogs = async (input: {
   readonly bundlePath: string;
@@ -132,6 +128,13 @@ export const analyzeAppleAssetCatalogs = async (input: {
   const resourceReferences = collectInterfaceBuilderResourceKeys(
     interfaceBuilder.graph.nodes,
   );
+  const resourceObjectsIncomplete = interfaceBuilder.graph.coverage.some(
+    ({ facet, status }) =>
+      (facet === "archive_object_decode" ||
+        facet === "documents" ||
+        facet.startsWith("objects:")) &&
+      status !== "complete",
+  );
   const result = projectAppleAssetCatalogPage({
     targetSha256: input.targetSha256,
     ...(input.resourceRoot === undefined
@@ -143,7 +146,7 @@ export const analyzeAppleAssetCatalogs = async (input: {
     resourceKeyCoverage:
       catalogCoverage.status !== "complete"
         ? catalogCoverage
-        : interfaceBuilder.graph.truncated
+        : resourceObjectsIncomplete
           ? { status: "partial", reason: "interface_builder_graph_incomplete" }
           : { status: "complete", reason: null },
     offset: page.offset,
@@ -168,9 +171,9 @@ export const analyzeAppleAssetCatalogs = async (input: {
             `Asset catalog entries that are not regular files were not inspected, so resource keys reported as unmatched may resolve there: ${uninspected.join(", ")}`,
           ]),
       "Exact resource-key joins use only recognized image or asset key fields on decoded Interface Builder resource objects; other archive resource references are not inferred.",
-      ...(interfaceBuilder.graph.truncated
+      ...(resourceObjectsIncomplete
         ? [
-            "Interface Builder resource-key joins may be incomplete because the decoded UI graph was truncated.",
+            "Interface Builder resource-key joins may be incomplete because the decoded object inventory is incomplete.",
           ]
         : []),
     ],
@@ -317,7 +320,7 @@ const inspectAssetCatalogEntry = async (input: {
   try {
     output = await input.runAssetUtil(entry.adapterKey, signal);
   } catch (cause) {
-    throw assetUtilFailure(cause, entry, signal);
+    throw assetUtilFailure(cause, entry);
   }
   const after = await lstat(entry.adapterKey, { bigint: true });
   if (
@@ -415,17 +418,13 @@ const runAssetUtil = async (
   ).stdout;
 
 /** Preserve the command owner's failure and captured output before artifact adaptation. */
-const assetUtilFailure = (
-  cause: unknown,
-  entry: ArtifactEntry,
-  signal?: AbortSignal,
-): unknown => {
+const assetUtilFailure = (cause: unknown, entry: ArtifactEntry): unknown => {
   if (cause instanceof AnalysisError) return cause;
-  if (signal?.aborted || cause instanceof ExecFileOutputCancelledError)
+  if (cause instanceof ExecFileOutputCancelledError)
     return new ArtifactReaderFailure(
       "cancelled",
       "Asset catalog inspection cancelled",
-      { cause: cancellationCause(cause, signal) },
+      { cause: cause.cause },
     );
   const output = execFileOutputFailure(cause);
   const code =

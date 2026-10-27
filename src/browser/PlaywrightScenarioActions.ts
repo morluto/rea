@@ -1,11 +1,17 @@
 import type { Locator, Page } from "playwright-core";
 
-import type {
-  BrowserScenarioAction,
-  BrowserScenarioValue,
+import {
+  SAVED_URL_PLACEHOLDER,
+  type BrowserScenarioAction,
+  type BrowserScenarioValue,
 } from "../domain/browserScenarioValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
-import { performScenarioRequest } from "./PlaywrightScenarioRequest.js";
+import {
+  awaitSavedResponse,
+  performScenarioRequest,
+  withSavedPlaceholders,
+  type SavedResponseWait,
+} from "./PlaywrightScenarioRequest.js";
 
 type ScenarioLocator = Extract<
   BrowserScenarioAction,
@@ -41,6 +47,23 @@ interface PerformActionInput {
   readonly signal?: AbortSignal | undefined;
 }
 
+/** Watch the response selector before the UI action; matching does not prove action causality. */
+const savingResponse = (
+  input: PerformActionInput,
+  action: Extract<BrowserScenarioAction, { action: "click" | "press" }>,
+  timeout: number | undefined,
+): SavedResponseWait | undefined =>
+  action.save_response === undefined
+    ? undefined
+    : awaitSavedResponse(input.page, {
+        stepId: action.step_id,
+        spec: action.save_response,
+        startOrigin: input.startOrigin,
+        timeout,
+        secrets: input.secrets,
+        signal: input.signal,
+      });
+
 /** Execute one admitted declarative action; a request step sends one declared request through the page's own fetch, and no action runs caller-supplied code. */
 export const performPlaywrightScenarioAction = async (
   input: PerformActionInput,
@@ -50,27 +73,49 @@ export const performPlaywrightScenarioAction = async (
   const options = timeout === undefined ? {} : { timeout };
   switch (action.action) {
     case "goto":
-      await page.goto(secrets.url(action.destination), {
-        ...options,
-        waitUntil: action.wait_until,
-      });
+      // Placeholders fill the URL as written, before structured query values join it.
+      await page.goto(
+        secrets.url({
+          ...action.destination,
+          url: withSavedPlaceholders(
+            action.destination.url,
+            secrets,
+            SAVED_URL_PLACEHOLDER,
+          ),
+        }),
+        { ...options, waitUntil: action.wait_until },
+      );
       return;
-    case "click":
-      await resolveLocator(page, action.locator).click({
-        ...options,
-        button: action.button,
-        clickCount: action.click_count,
-      });
+    case "click": {
+      const saving = savingResponse(input, action, timeout);
+      try {
+        await resolveLocator(page, action.locator).click({
+          ...options,
+          button: action.button,
+          clickCount: action.click_count,
+        });
+        await saving?.saved();
+      } finally {
+        saving?.stop();
+      }
       return;
+    }
     case "fill":
       await resolveLocator(page, action.locator).fill(
         resolveValue(action.value, secrets),
         options,
       );
       return;
-    case "press":
-      await resolveLocator(page, action.locator).press(action.key, options);
+    case "press": {
+      const saving = savingResponse(input, action, timeout);
+      try {
+        await resolveLocator(page, action.locator).press(action.key, options);
+        await saving?.saved();
+      } finally {
+        saving?.stop();
+      }
       return;
+    }
     case "select_option":
       await resolveLocator(page, action.locator).selectOption(
         resolveValue(action.value, secrets),

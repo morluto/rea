@@ -6,7 +6,7 @@ import { createTestBinarySession } from "../../tests/fixtures/binarySession.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { silentLogger } from "../logger.js";

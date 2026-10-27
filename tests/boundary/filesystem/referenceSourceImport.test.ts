@@ -497,7 +497,7 @@ describe("reference source symlink import", () => {
       limitations: [],
     };
 
-    const parsed = parseReferenceSourceEntries(read, new Set(), []);
+    const parsed = parseReferenceSourceEntries(read, []);
     expect(parsed.entries).toContainEqual(
       expect.objectContaining({
         kind: "symlink",

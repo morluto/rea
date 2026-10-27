@@ -1,3 +1,4 @@
+import { cdpFrameRecordFacts } from "./CdpFrameIdentity.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
@@ -56,12 +57,13 @@ export const captureFrames = (
     completeness?.exclude("frames", "invalid_protocol_value", omittedCount),
   )) {
     const frame = recordValue(tree.frame);
-    const frameId = cdpStringValue(frame?.id);
+    const identity = cdpFrameRecordFacts(frame);
+    const frameId = identity.frameId;
     const observation = observeCdpFrameUrl(frame);
     const scopeUrl =
       observation.kind === "missing" ? undefined : observation.scopeUrl;
     const facts = classifyCdpFrameUrl(observation, allowedOrigins);
-    if (frame === undefined || frameId === undefined) {
+    if (frameId === null) {
       completeness?.exclude("frames", "invalid_protocol_value");
       continue;
     }
@@ -76,16 +78,15 @@ export const captureFrames = (
       continue;
     }
     if (maximum !== undefined && items.length >= maximum) continue;
-    const parentFrameId = cdpStringValue(frame.parentId);
     // Only the enclosing tree's root may legitimately omit parent evidence.
     if (
-      (tree !== root || Object.hasOwn(frame, "parentId")) &&
-      (parentFrameId === undefined || parentFrameId.length === 0)
+      identity.parentIssue !== null ||
+      (tree !== root && identity.parentRelation === "root")
     )
       completeness?.exclude("frames", "invalid_protocol_value");
     items.push({
       frame_id: frameId,
-      parent_frame_id: parentFrameId ?? null,
+      parent_frame_id: identity.parentId,
       url: facts.url,
       origin: facts.origin,
     });

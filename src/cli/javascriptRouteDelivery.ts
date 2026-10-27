@@ -18,6 +18,13 @@ export const javascriptRouteDeliveryOptions = {
     ),
 };
 
+export const webBundleDeliveryOptions = {
+  ...javascriptRouteDeliveryOptions,
+  view: javascriptRouteDeliveryOptions.view.describe(
+    "JSON web-bundle (endpoints, inferences, summary) or javascript-routes view; requires --detail summary and --evidence_output",
+  ),
+};
+
 /** Validate delivery before opening artifacts or attaching a browser. */
 export const parseJavaScriptRouteDelivery = (
   operation: string,

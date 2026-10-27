@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../../scripts/lib/artifact-e2e.mjs";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -113,7 +114,7 @@ cliTest.skipIf(process.platform === "win32")(
       expect(
         (await client.listTools()).tools.map(({ name }) => name),
       ).toContain("binary_session");
-      const session = await client.callTool({
+      const session = await artifactMcpCall(client, {
         name: "binary_session",
         arguments: {},
       });

@@ -552,7 +552,9 @@ const assertLiveIdentity = async (client: Client): Promise<void> => {
         client: { name: "identity-test", version: "9" },
         negotiated_protocol_version: expect.any(String),
         catalog: createCatalogIdentity({
-          budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          compactPresentation: {
+            budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+          },
         }),
         alignment: { state: "unknown" },
       },

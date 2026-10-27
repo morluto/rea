@@ -6,10 +6,8 @@ import type {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import {
-  analysisBookmarkSchema,
-  parseContainingProcedureResolution,
-} from "../domain/hopperValues.js";
+import { analysisBookmarkSchema } from "../domain/native/nativeInventory.js";
+import { parseContainingProcedureResolution } from "../domain/native/nativeObservation.js";
 import { resolveAnalysisDocument } from "./AnalysisDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 

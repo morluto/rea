@@ -62,7 +62,7 @@ binaries and Ghidra projects are never committed.
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
 verifier requires the verified bring-your-own Ghidra 12.1.4 installation through
 `GHIDRA_INSTALL_DIR` and validates header classification before starting the
-provider. Provider admission accepts the rest of the 12.1.x line; this lane does
+provider. Provider admission accepts newer 12.x (>=12.1) builds with an unverified-build limitation; this lane does
 not.
 
 Conformance compares semantic facts: provider/profile identity, function

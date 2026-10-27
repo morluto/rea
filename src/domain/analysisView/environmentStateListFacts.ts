@@ -8,6 +8,7 @@ import {
   mintedFor,
 } from "./environmentStateResponseMembers.js";
 import {
+  ownMember,
   collectionPathOf,
   isObject,
   listItems,
@@ -62,7 +63,7 @@ export const listFacts = (
         Object.keys(parent).some((name) => continues(name, parent[name]))
       )
         return;
-      const ids = items.map((item) => scalarText(item[field]) ?? "");
+      const ids = items.map((item) => scalarText(ownMember(item, field)) ?? "");
       const expected = context
         .inCollection(plan.type, collectionPathOf(record, false))
         .map((entity) => entity.id);

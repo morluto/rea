@@ -1,3 +1,4 @@
+import { readGodotPckHeaderFacts } from "../domain/godotPckFormat.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type { FileHandle } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
@@ -12,7 +13,12 @@ import {
 } from "./ArtifactReader.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
-import { locateGodotPck, readPckBytes } from "./GodotPckLocation.js";
+import {
+  locateGodotPck,
+  readPckBytes,
+  type GodotPckAdmission,
+  type GodotPckLocation,
+} from "./GodotPckLocation.js";
 import type { GodotPckMetadata } from "../domain/artifactFormatMetadata.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
@@ -36,12 +42,23 @@ export class GodotPckArtifactReader implements ArtifactReader {
   readonly #entries = new Map<string, ArtifactEntry>();
   readonly #streams = new Set<Readable>();
   readonly #source: ArtifactFileSource;
+  readonly #location: GodotPckLocation | undefined;
   #prepared: Promise<void> | undefined;
   #header: GodotPckMetadata | undefined;
   #closing = false;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
-    this.#source = new ArtifactFileSource(path, "Godot PCK", admitted);
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor | GodotPckAdmission,
+  ) {
+    const admission =
+      admitted !== undefined && "kind" in admitted ? admitted : undefined;
+    this.#source = new ArtifactFileSource(
+      path,
+      "Godot PCK",
+      admitted !== undefined && "kind" in admitted ? admitted.source : admitted,
+    );
+    this.#location = admission?.location;
   }
 
   formatMetadata(): GodotPckMetadata | undefined {
@@ -124,12 +141,14 @@ export class GodotPckArtifactReader implements ArtifactReader {
       // retirement before a caller has attached its own error listener.
       output.on("error", () => undefined);
       this.#streams.add(output);
+      // Writable completion can leave an unread member buffered on the readable
+      // side. The returned stream stays owned until that side closes too.
+      output.once("close", () => this.#streams.delete(output));
       void this.#scope
         .run(
           () =>
             new Promise<void>((resolve) => {
               pipeline(source, output, () => {
-                this.#streams.delete(output);
                 resolve();
               });
             }),
@@ -171,7 +190,12 @@ export class GodotPckArtifactReader implements ArtifactReader {
 
   async #prepare(signal?: AbortSignal): Promise<void> {
     const { handle, initial } = await this.#source.read(signal);
-    const header = await readGodotPckHeader(handle, initial.size, signal);
+    const header = await readGodotPckHeader(
+      handle,
+      initial.size,
+      signal,
+      this.#location,
+    );
     this.#header = header;
     if (header.directory_status !== "available") return;
     const cursor = new PckCursor(
@@ -295,13 +319,16 @@ const readGodotPckHeader = async (
   handle: FileHandle,
   size: number,
   signal?: AbortSignal,
+  admittedLocation?: GodotPckLocation,
 ): Promise<GodotPckMetadata> => {
-  const location = await locateGodotPck(handle, size, signal);
+  const location =
+    admittedLocation ?? (await locateGodotPck(handle, size, signal));
   if (location === undefined)
     throw formatFailure("no standalone header or executable trailer");
   const { start, end, embedded } = location;
   const fixed = await readPckBytes(handle, start, 40, end, signal);
-  const version = fixed.readUInt32LE(4);
+  const header = readGodotPckHeaderFacts(fixed);
+  const version = header.formatVersion;
   if (![2, 3, 4].includes(version))
     throw new ArtifactReaderFailure(
       "unavailable",
@@ -343,9 +370,9 @@ const readGodotPckHeader = async (
   return {
     kind: "godot-pck",
     format_version: version,
-    engine_major: fixed.readUInt32LE(8),
-    engine_minor: fixed.readUInt32LE(12),
-    engine_patch: fixed.readUInt32LE(16),
+    engine_major: header.engineMajor,
+    engine_minor: header.engineMinor,
+    engine_patch: header.enginePatch,
     pack_start: start,
     pack_end: end,
     embedded,

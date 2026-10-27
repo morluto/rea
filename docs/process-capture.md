@@ -228,6 +228,12 @@ from launch, must be ordered, and must fall within `timeout_ms`. Inputs marked
 Environment overrides are recorded in the scenario commitment; inherited
 values are not copied into Evidence.
 
+A bare executable name uses the scenario's `PATH` override, then the inherited
+`PATH`. When neither supplies `PATH`, lookup uses `/usr/bin:/bin`, matching
+[Node's Unix default](https://nodejs.org/api/child_process.html#child-process).
+An explicitly empty `PATH` searches only the working directory. Executable,
+working-directory, and observation paths preserve native `symlink/..` traversal.
+
 Terminal dimensions must satisfy `columns × (rows + scrollback) ≤ 1,000,000`.
 Every scheduled resize uses the same selected scrollback and must fit this
 working-buffer budget. REA rejects oversized scenarios before launching the

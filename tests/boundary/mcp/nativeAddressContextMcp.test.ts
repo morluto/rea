@@ -9,7 +9,7 @@ import {
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { err } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
-import type { SegmentSummary } from "../../../src/domain/hopperValues.js";
+import type { SegmentSummary } from "../../../src/domain/native/nativeSegments.js";
 
 afterEach(closeEnhancedToolResources);
 

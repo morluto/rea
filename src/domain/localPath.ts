@@ -19,9 +19,17 @@ export const nulFreeStringSchema = z
 /** A selected local filesystem path: nonempty and free of NUL bytes. */
 export const localPathStringSchema = nulFreeStringSchema.min(1);
 
+/**
+ * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
+ * backslash and slash as `\x5C` and `\x2F` because `v` mode rejects an
+ * unescaped `/` inside a class, and Windows hosts advertise this pattern.
+ */
+export const windowsAbsolutePathPattern =
+  /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
+
 /** A caller-selected path that is absolute on the host running REA. */
 export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  process.platform === "win32" ? /^(?:[\\/]|[A-Za-z]:[\\/])/u : /^\//u,
+  process.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
   "must be an absolute local filesystem path",
 );
 

@@ -11,6 +11,8 @@ import {
   RegularFileOperationCancelled,
   assertRegularFileActive,
   sameRegularFileState,
+  regularFileState,
+  type RegularFileState,
 } from "./RegularFile.js";
 import type { OwnedFileHandle } from "./OwnedFileHandle.js";
 
@@ -20,6 +22,7 @@ export interface StableFileHashOptions {
 }
 
 export interface StableFileObservation {
+  readonly state: RegularFileState;
   readonly sha256: string;
   readonly bytes: number;
   /** The first two bytes, read from the same descriptor and stream as the hash. */
@@ -131,7 +134,9 @@ async function readStableFile(
           throw new RegularFileChangedError(path);
         assertRegularFileActive(options.signal);
         const fingerprint = { sha256: hash.digest("hex"), bytes: position };
-        return includePrefix ? { ...fingerprint, prefix } : fingerprint;
+        return includePrefix
+          ? { ...fingerprint, prefix, state: regularFileState(initial) }
+          : fingerprint;
       },
     );
   } catch (cause: unknown) {

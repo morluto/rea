@@ -11,7 +11,10 @@ import { ok, type Result } from "../domain/result.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { readGhidraExecutableHeader } from "./GhidraExecutableHeader.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import {
   readGhidraInstallationProperties,
   type GhidraInstallationFileOptions,
@@ -457,14 +460,14 @@ const installationCoordinates = async (
   const applicationPropertiesPath =
     installDir === null
       ? null
-      : path.join(installDir, "Ghidra", "application.properties");
+      : appendCallerPath(installDir, "Ghidra/application.properties", platform);
   const analyzeHeadlessPath =
     installDir === null
       ? null
-      : path.join(
+      : appendCallerPath(
           installDir,
-          "support",
-          platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless",
+          `support/${platform === "win32" ? "analyzeHeadless.bat" : "analyzeHeadless"}`,
+          platform,
         );
   const decompilerPlatform = NATIVE_PLATFORMS[platform]?.[architecture];
   const decompilerExecutable =
@@ -473,24 +476,15 @@ const installationCoordinates = async (
     installDir === null || decompilerPlatform === undefined
       ? null
       : ([
-          path.join(
+          appendCallerPath(
             installDir,
-            "Ghidra",
-            "Features",
-            "Decompiler",
-            "os",
-            decompilerPlatform,
-            decompilerExecutable,
+            `Ghidra/Features/Decompiler/os/${decompilerPlatform}/${decompilerExecutable}`,
+            platform,
           ),
-          path.join(
+          appendCallerPath(
             installDir,
-            "Ghidra",
-            "Features",
-            "Decompiler",
-            "build",
-            "os",
-            decompilerPlatform,
-            decompilerExecutable,
+            `Ghidra/Features/Decompiler/build/os/${decompilerPlatform}/${decompilerExecutable}`,
+            platform,
           ),
         ].find((candidate) => host.executable(candidate)) ?? null);
   const properties =
@@ -532,10 +526,10 @@ const installationCoordinates = async (
     if (options.javaHome !== undefined)
       return {
         source: "configured",
-        command: path.join(
+        command: appendCallerPath(
           options.javaHome,
-          "bin",
-          platform === "win32" ? "java.exe" : "java",
+          `bin/${platform === "win32" ? "java.exe" : "java"}`,
+          platform,
         ),
       };
     if (platform !== "darwin")
@@ -829,10 +823,7 @@ export const ghidraJavaEnvironment = (
     : {
         ...boundedEnvironment,
         JAVA_HOME: javaHome,
-        PATH: `${(platform === "win32" ? win32 : posix).join(
-          javaHome,
-          "bin",
-        )}${platform === "win32" ? win32.delimiter : posix.delimiter}${selectedEnvironment.PATH ?? ""}`,
+        PATH: `${appendCallerPath(javaHome, "bin", platform)}${platform === "win32" ? win32.delimiter : posix.delimiter}${selectedEnvironment.PATH ?? ""}`,
       };
 };
 
@@ -1101,19 +1092,23 @@ export const discoverGhidraInstallationOnPath = (
   if (platform !== process.platform) return undefined;
   const path = platform === "win32" ? win32 : posix;
   const pathValue = environment.PATH;
-  if (pathValue === undefined || pathValue.length === 0) return undefined;
+  if (pathValue === undefined) return undefined;
   const launchers =
     platform === "win32"
       ? ["ghidra.bat", "ghidraRun.bat", "ghidra.exe", "ghidraRun.exe"]
       : ["ghidra", "ghidraRun"];
   for (const directory of pathValue.split(pathDelimiter)) {
-    if (directory.length === 0) continue;
+    // POSIX empty PATH entries select cwd, including an entirely empty PATH.
+    if (directory.length === 0 && platform === "win32") continue;
     for (const launcher of launchers) {
       let resolved: string;
       try {
-        const candidate = path.resolve(directory, launcher);
+        const candidate = absoluteCallerPath(
+          appendCallerPath(directory, launcher, platform),
+          { platform },
+        );
         if (!executablePath(candidate)) continue;
-        resolved = realpathSync(candidate);
+        resolved = realpathSync.native(candidate);
       } catch (cause: unknown) {
         void cause;
         continue;
@@ -1164,7 +1159,7 @@ const stableGhidraInstallationRoot = (
   const prefix = posix.join(parsed.root, ...segments.slice(0, cellarIndex));
   const candidate = posix.join(prefix, "opt", formula, "libexec");
   try {
-    return realpathSync(candidate) === root ? candidate : root;
+    return realpathSync.native(candidate) === root ? candidate : root;
   } catch (cause: unknown) {
     // An absent or unresolved alias cannot establish a stable installation identity.
     void cause;
@@ -1182,7 +1177,9 @@ const stableJavaHome = (
   if (platform !== process.platform) return observedHome;
   const sameHome = (candidate: string): boolean => {
     try {
-      return realpathSync(candidate) === realpathSync(observedHome);
+      return (
+        realpathSync.native(candidate) === realpathSync.native(observedHome)
+      );
     } catch (cause: unknown) {
       // Missing or unresolved aliases do not prove identity.
       void cause;

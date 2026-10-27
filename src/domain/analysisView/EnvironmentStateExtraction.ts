@@ -1,3 +1,4 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
 import { jsonByteLength } from "../jsonSerialization.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -5,10 +6,10 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   apiBaseLengths,
   at,
   collectionPathOf,
-  hasPrototypeKey,
   identifies,
   IDENTITY_NAMES,
   identityCandidates,
@@ -107,14 +108,13 @@ const memberNames = (body: JsonValue, pointer: string): string[] => {
 export class EnvironmentStateExtraction {
   readonly #tools: readonly StateToolFacts[];
   readonly #records: readonly StateRecordFacts[];
-  readonly #timeline: StateTimeline;
+  readonly #chronology: StateRecordChronology;
   readonly #budget: StateBudget;
-  readonly #position: ReadonlyMap<number, number>;
   readonly #byOrdinal: ReadonlyMap<number, StateRecordFacts>;
   /** POST tools whose calls the capture shows read state rather than change it. */
   #readOnly: ReadonlySet<string> = new Set();
   #writes: readonly StateRecordFacts[] = [];
-  #writeWithin: ReturnType<typeof writeSpanCheck> = writeSpanCheck([]);
+  #writeWithin: ReturnType<typeof writeSpanCheck> = () => false;
   readonly #bases: ReadonlyMap<string, number>;
   #writeCutoffs: StateWriteCutoffs | undefined;
   readonly #initLimits = new Map<string, StateRecordFacts | undefined>();
@@ -146,11 +146,8 @@ export class EnvironmentStateExtraction {
   }) {
     this.#tools = input.tools;
     this.#records = input.records;
-    this.#timeline = input.timeline;
+    this.#chronology = new StateRecordChronology(input.records, input.timeline);
     this.#budget = input.budget;
-    this.#position = new Map(
-      input.records.map((record, index) => [record.ordinal, index]),
-    );
     this.#byOrdinal = new Map(
       input.records.map((record) => [record.ordinal, record]),
     );
@@ -169,9 +166,10 @@ export class EnvironmentStateExtraction {
         request: (ordinal) => this.#requestBody(ordinal),
         retain: (bytes) => this.#retain(bytes),
       },
+      this.#chronology,
     ));
     release();
-    this.#writeWithin = writeSpanCheck(this.#writes);
+    this.#writeWithin = writeSpanCheck(this.#writes, this.#chronology);
   }
 
   /** The extracted state, or null when the representation budget is exhausted. */
@@ -183,8 +181,8 @@ export class EnvironmentStateExtraction {
           this.#writes,
           this.#bases,
           (left, right) =>
-            this.#position.get(left.ordinal)! <
-            this.#position.get(right.ordinal)!,
+            this.#chronology.positions.get(left.ordinal)! <
+            this.#chronology.positions.get(right.ordinal)!,
           (bytes) => this.#retain(bytes),
         );
         this.#creations();
@@ -240,7 +238,7 @@ export class EnvironmentStateExtraction {
       const split = withoutVariants(plan, {
         shapeOf: (record) => shapes.get(record.ordinal),
         queryOf: (ordinal) => this.#byOrdinal.get(ordinal)?.query,
-        position: (ordinal) => this.#position.get(ordinal)!,
+        position: (ordinal) => this.#chronology.positions.get(ordinal)!,
         retain: (bytes) => this.#retain(bytes),
         checkpoint: () => this.#budget.checkpoint(),
       });
@@ -259,6 +257,7 @@ export class EnvironmentStateExtraction {
       this.#spans.filter((span) => this.#rewritten.has(span.type)),
       this.#writes,
       this.#byOrdinal,
+      this.#chronology,
     );
     if (this.#cuts.size === 0) return false;
     for (const map of [this.#initLimits, this.#identity, this.#views])
@@ -282,7 +281,7 @@ export class EnvironmentStateExtraction {
         tools: this.#tools,
         records: this.#records,
         readOnly: this.#readOnly,
-        timed: this.#timeline === "recorded-start-time",
+        chronology: this.#chronology,
         volatileOf: (type) => this.#volatileOf(type),
         io: {
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
@@ -355,9 +354,10 @@ export class EnvironmentStateExtraction {
         this.#creations(),
         {
           type: template,
+          chronology: this.#chronology,
           tools: this.#tools,
           records: this.#byOrdinal,
-          position: (record) => this.#position.get(record.ordinal)!,
+          position: (record) => this.#chronology.positions.get(record.ordinal)!,
           withBody: (ordinal, use) => this.#withBody(ordinal, use),
           retain: (bytes) => this.#retain(bytes),
         },
@@ -367,7 +367,8 @@ export class EnvironmentStateExtraction {
     const limit =
       cut !== undefined &&
       (bound === undefined ||
-        this.#position.get(cut.ordinal)! < this.#position.get(bound.ordinal)!)
+        this.#chronology.positions.get(cut.ordinal)! <
+          this.#chronology.positions.get(bound.ordinal)!)
         ? cut
         : bound;
     this.#retain(ENTRY_BYTES + textBytes(template.length));
@@ -391,9 +392,9 @@ export class EnvironmentStateExtraction {
   ): boolean {
     return (
       limit === undefined ||
-      (this.#position.get(record.ordinal)! <
-        this.#position.get(limit.ordinal)! &&
-        (this.#timeline === "record-order" || record.end <= limit.start))
+      (this.#chronology.positions.get(record.ordinal)! <
+        this.#chronology.positions.get(limit.ordinal)! &&
+        this.#chronology.completedBefore(record, limit))
     );
   }
 
@@ -412,8 +413,8 @@ export class EnvironmentStateExtraction {
       )
       .sort(
         (left, right) =>
-          this.#position.get(left.ordinal)! -
-          this.#position.get(right.ordinal)!,
+          this.#chronology.positions.get(left.ordinal)! -
+          this.#chronology.positions.get(right.ordinal)!,
       );
   }
 
@@ -553,7 +554,9 @@ export class EnvironmentStateExtraction {
     this.#identity.set(type, { field, basis: "path-parameter" });
     const late = this.#addLateProjections(tool, type, projected);
     projected.sort(
-      (left, right) => this.#position.get(left)! - this.#position.get(right)!,
+      (left, right) =>
+        this.#chronology.positions.get(left)! -
+        this.#chronology.positions.get(right)!,
     );
     this.#addPlan(candidate, pointer, kept, { projected, late });
   }
@@ -675,7 +678,8 @@ export class EnvironmentStateExtraction {
     const field = this.#identity.get(plan.type)!.field;
     let changed = previous.ids.size !== objects.length;
     for (const object of objects)
-      if (!previous.ids.delete(scalarText(object[field])!)) changed = true;
+      if (!previous.ids.delete(scalarText(ownMember(object, field))!))
+        changed = true;
     if (previous.ids.size > 0) changed = true;
     if (
       earlier !== undefined &&
@@ -691,7 +695,8 @@ export class EnvironmentStateExtraction {
       });
     }
     previous.ids.clear();
-    for (const object of objects) previous.ids.add(scalarText(object[field])!);
+    for (const object of objects)
+      previous.ids.add(scalarText(ownMember(object, field))!);
     previous.record = record;
   }
 
@@ -703,11 +708,11 @@ export class EnvironmentStateExtraction {
     index: number,
   ): void {
     const field = this.#identity.get(plan.type)!.field;
-    const id = scalarText(object[field]);
+    const id = scalarText(ownMember(object, field));
     if (id === undefined) return;
     const collection = collectionPathOf(record, plan.item);
     const key = entityKey(plan.type, collection, id);
-    const position = this.#position.get(record.ordinal)!;
+    const position = this.#chronology.positions.get(record.ordinal)!;
     let entity = this.#entities.get(key);
     if (entity === undefined) {
       this.#retain(ENTRY_BYTES * 4 + textBytes(key.length));

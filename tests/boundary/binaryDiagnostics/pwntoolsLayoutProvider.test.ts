@@ -519,6 +519,9 @@ it
     "output-limit",
     "wrong-profile",
     "malformed-reply",
+    "invalid-utf8",
+    "literal-replacement",
+    "bom-reply",
   ])(
   "preserves process/reply boundaries and cleans private snapshots: %s",
   async (scenario) => {
@@ -542,32 +545,50 @@ it
           diagnostics: _diagnostics,
           ...value
         } = binaryLayoutFixture(path);
-        await writeFile(
-          request.reply_path,
-          scenario === "malformed-reply"
-            ? "broken-json"
-            : JSON.stringify(
-                [
-                  "format",
-                  "unavailable",
-                  "unsupported",
-                  "output-limit",
-                ].includes(scenario)
-                  ? {
-                      ok: false,
-                      reason: scenario,
-                      message: "ELF table is truncated.",
-                    }
-                  : {
-                      ok: true,
-                      profile:
-                        scenario === "wrong-profile"
-                          ? "pwntools@other"
-                          : PWNTOOLS_PROVIDER_IDENTITY.version,
-                      value,
-                    },
-              ),
-        );
+        const encodedReplies: Partial<Record<string, string | Buffer>> = {
+          "invalid-utf8": Buffer.concat([
+            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from([0xff]),
+            Buffer.from('"}'),
+          ]),
+          "literal-replacement": JSON.stringify({
+            ok: false,
+            reason: "format",
+            message: "valid �",
+          }),
+          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+        };
+        const encodedReply = encodedReplies[scenario];
+        if (encodedReply !== undefined)
+          await writeFile(request.reply_path, encodedReply);
+        else {
+          await writeFile(
+            request.reply_path,
+            scenario === "malformed-reply"
+              ? "broken-json"
+              : JSON.stringify(
+                  [
+                    "format",
+                    "unavailable",
+                    "unsupported",
+                    "output-limit",
+                  ].includes(scenario)
+                    ? {
+                        ok: false,
+                        reason: scenario,
+                        message: "ELF table is truncated.",
+                      }
+                    : {
+                        ok: true,
+                        profile:
+                          scenario === "wrong-profile"
+                            ? "pwntools@other"
+                            : PWNTOOLS_PROVIDER_IDENTITY.version,
+                        value,
+                      },
+                ),
+          );
+        }
         return spawnOwnedProviderProcess({
           ...spawn,
           command: process.execPath,
@@ -576,6 +597,11 @@ it
       },
     );
     const result = await provider.inspect({ path });
+    if (scenario === "literal-replacement")
+      expect(result).toMatchObject({
+        ok: false,
+        error: { issues: [{ message: "valid �" }] },
+      });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
       expect(result.value.artifact).toMatchObject({
@@ -589,7 +615,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format"
+            scenario === "format" || scenario === "literal-replacement"
               ? "AnalysisInputError"
               : scenario === "unavailable"
                 ? "ProviderSelectionError"

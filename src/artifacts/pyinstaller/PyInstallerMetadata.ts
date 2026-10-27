@@ -2,11 +2,14 @@ import type {
   PyInstallerMetadata,
   PyInstallerEntryMetadata,
 } from "../../domain/artifactFormatMetadata.js";
-import type { CArchiveEntry, PyInstallerCookie } from "./CArchiveLayout.js";
+import {
+  isCArchivePythonModule,
+  type CArchiveEntry,
+  type PyInstallerCookie,
+} from "./CArchiveLayout.js";
 import type { PyzArchive, PyzEntry } from "./PyzArchive.js";
-import { pythonVersionForMagic } from "./PythonBytecode.js";
 
-const pythonVersion = (value: number) =>
+const cookiePythonVersion = (value: number) =>
   value >= 100
     ? { major: Math.floor(value / 100), minor: value % 100 }
     : value >= 20
@@ -18,7 +21,7 @@ export const cookieMetadata = (
   entries: readonly CArchiveEntry[],
   encryptionMarker: boolean,
 ): PyInstallerMetadata => {
-  const version = pythonVersion(cookie.pythonVersion);
+  const version = cookiePythonVersion(cookie.pythonVersion);
   return {
     kind: "pyinstaller",
     layout_version: cookie.layout,
@@ -28,10 +31,12 @@ export const cookieMetadata = (
     toc_offset: cookie.tocOffset,
     toc_size: cookie.tocLength,
     entry_count: entries.length,
-    runtime_option_count: entries.filter((entry) => entry.typeCode === "o")
-      .length,
-    external_dependency_count: entries.filter((entry) => entry.typeCode === "d")
-      .length,
+    runtime_option_count: entries.filter(
+      (entry) => entry.role === "runtime-option",
+    ).length,
+    external_dependency_count: entries.filter(
+      (entry) => entry.role === "dependency",
+    ).length,
     python_version_raw: cookie.pythonVersion,
     python_major: version?.major ?? null,
     python_minor: version?.minor ?? null,
@@ -45,13 +50,13 @@ export const scriptPythonMagic = (
   cookie: PyInstallerCookie,
   archives: Iterable<PyzArchive>,
 ): Buffer | undefined => {
-  const version = pythonVersion(cookie.pythonVersion);
+  const version = cookiePythonVersion(cookie.pythonVersion);
   if (version === undefined) return undefined;
   let selected: Buffer | undefined;
   for (const archive of archives) {
     const magic = archive.pythonMagic;
     if (
-      pythonVersionForMagic(magic) !==
+      archive.pythonVersion !==
         `${String(version.major)}.${String(version.minor)}` ||
       (selected !== undefined && !selected.equals(magic))
     )
@@ -109,10 +114,10 @@ export const cArchiveEntryMetadata = (
       relative_offset: entry.offset,
       compression_flag: entry.compressionFlag === 1 ? 1 : 0,
     },
-    ["s", "m", "M"].includes(entry.typeCode),
+    entry.role === "script" || isCArchivePythonModule(entry),
     header,
   ),
-  ...(entry.typeCode === "d" ? dependencyMetadata(entry.name) : {}),
+  ...(entry.role === "dependency" ? dependencyMetadata(entry.name) : {}),
   pyz_status:
     archive?.kind === "entries"
       ? "decoded"
@@ -123,10 +128,7 @@ export const cArchiveEntryMetadata = (
   directory_record_size: entry.tocRecordLength,
   pyz_sha256: archive?.sha256 ?? null,
   pyz_python_magic: archive?.pythonMagic.toString("hex") ?? null,
-  pyz_python_version:
-    archive === undefined
-      ? null
-      : (pythonVersionForMagic(archive.pythonMagic) ?? null),
+  pyz_python_version: archive?.pythonVersion ?? null,
   pyz_entry_count: archive?.kind === "entries" ? archive.entries.length : null,
   encryption_source:
     archive !== undefined && encryptionMarker ? "carchive-marker" : null,
@@ -170,7 +172,7 @@ export const pyzEntryMetadata = (
       relative_offset: entry.offset,
       compression_flag: entry.compressionFlag,
     },
-    entry.typeCode === 0 || entry.typeCode === 1,
+    entry.role === "module" || entry.role === "package",
     header,
   ),
   encryption_source: pyzEntryEncrypted(entry, encryptionMarker)

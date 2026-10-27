@@ -23,14 +23,15 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisProtocolError,
   AnalysisTimeoutError,
-  AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   parseJebMcpEndpoint,
   DEFAULT_JEB_MCP_ENDPOINT,
-} from "./JebMcpEndpoint.js";
+} from "../config/jebMcpEndpoint.js";
 import {
   createStreamableHttpJebMcpConnection,
   JEB_ENGINE_TOOLS,
@@ -57,7 +58,7 @@ export interface JebProviderOptions {
   readonly connectionFactory?: JebMcpConnectionFactory;
 }
 
-/** JEB's tool envelope: success with typed fields, or a message-only failure. */
+/** Published JEB refusal facts; retain the original JSON alongside parsed facts. */
 const failure = z
   .object({
     success: z.literal(false),
@@ -67,6 +68,7 @@ const failure = z
         code: z.string().optional(),
         message: z.string().optional(),
         recovery_tool: z.string().optional(),
+        recovery_required_before_retry: z.boolean().optional(),
       })
       .optional(),
   })
@@ -103,14 +105,54 @@ const decompiledItem = z
   .object({ success: z.literal(true), text: z.string() })
   .passthrough();
 
-const refusalReason = (payload: unknown, fallback: string): string => {
-  const parsed = failure.safeParse(payload);
-  if (!parsed.success) return fallback;
-  const envelope = parsed.data;
-  const reason =
-    envelope.error?.message ?? envelope.message ?? envelope.error?.code;
-  if (reason !== undefined && reason.length > 0) return reason;
-  return fallback;
+const envelope = z.discriminatedUnion("success", [
+  z.object({ success: z.literal(true) }).passthrough(),
+  failure,
+]);
+
+/** Parse success/refusal once; operation-specific success data has its own owner. */
+const parseJebEnvelope = (
+  payload: JsonValue,
+  operation: JebOperation,
+  endpoint: string,
+  input?: Readonly<Record<string, JsonValue | undefined>>,
+): Result<JsonValue, AnalysisError> => {
+  const diagnostics = {
+    endpoint,
+    upstream_response: payload,
+    ...(input === undefined
+      ? {}
+      : {
+          // Typed optional request fields can carry undefined; JSON omission is
+          // established here before these selected inputs become diagnostics.
+          input: Object.fromEntries(
+            Object.entries(input).filter(
+              (entry): entry is [string, JsonValue] => entry[1] !== undefined,
+            ),
+          ),
+        }),
+  };
+  const parsed = envelope.safeParse(payload);
+  if (!parsed.success)
+    return err(
+      new AnalysisProtocolError(
+        "JEB MCP omitted or malformed its observation envelope",
+        { cause: parsed.error, diagnostics },
+      ),
+    );
+  if (parsed.data.success) return ok(payload);
+  const refusal = parsed.data;
+  const reason = [
+    refusal.error?.message,
+    refusal.message,
+    refusal.error?.code,
+  ].find((value) => value !== undefined && value.trim().length > 0);
+  return err(
+    new ProviderAdapterError("jeb", operation, {
+      userMessage: reason ?? "The engine refused the request",
+      diagnostics,
+    }),
+  );
 };
 
 /** Serve REA's JEB operations from a running engine client over MCP. */
@@ -172,6 +214,18 @@ export class JebProvider implements JebAnalysisPort {
       };
     } catch (cause) {
       if (signal?.aborted === true) throw cause;
+      if (cause instanceof AnalysisError) {
+        const projected = projectAnalysisError(cause);
+        return {
+          status: "unavailable",
+          code: "runtime_unavailable",
+          reason: projected.message,
+          diagnostics: {
+            endpoint: this.#endpoint.toString(),
+            ...cause.diagnostics,
+          },
+        };
+      }
       return {
         status: "unavailable",
         code: "not_configured",
@@ -299,7 +353,11 @@ export class JebProvider implements JebAnalysisPort {
       signal,
     );
     const information = clientInformation.parse(
-      this.#requireSuccess(payload, operation),
+      this.#requireSuccess(
+        payload,
+        operation,
+        operation === "inspect_jeb_client" ? {} : undefined,
+      ),
     );
     this.#clientInformation = {
       version: information.version,
@@ -346,7 +404,7 @@ export class JebProvider implements JebAnalysisPort {
       signal,
     );
     const opened = openProject.parse(
-      this.#requireSuccess(payload, request.operation, request.input.path),
+      this.#requireSuccess(payload, request.operation, request.input),
     );
     const engine = await this.#engineForObservation(
       request,
@@ -387,7 +445,7 @@ export class JebProvider implements JebAnalysisPort {
       signal,
     );
     const listed = listUnits.parse(
-      this.#requireSuccess(payload, request.operation),
+      this.#requireSuccess(payload, request.operation, request.input),
     );
     const units = listed.units;
     const engine = await this.#engineForObservation(
@@ -430,7 +488,7 @@ export class JebProvider implements JebAnalysisPort {
       signal,
     );
     const decompiled = decompiledItem.parse(
-      this.#requireSuccess(payload, request.operation),
+      this.#requireSuccess(payload, request.operation, request.input),
     );
     const engine = await this.#engineForObservation(
       request,
@@ -459,26 +517,18 @@ export class JebProvider implements JebAnalysisPort {
   }
 
   #requireSuccess(
-    payload: unknown,
+    payload: JsonValue,
     operation: JebOperation,
-    targetPath?: string,
-  ): unknown {
-    if (typeof payload !== "object" || payload === null)
-      throw new AnalysisProtocolError(
-        "JEB MCP returned a non-object envelope; no observation can be established",
-      );
-    const success = (payload as { success?: unknown }).success;
-    if (success === false)
-      throw new AnalysisUnsupportedTargetError(
-        operation,
-        targetPath ?? this.#endpoint.toString(),
-        refusalReason(payload, "The engine refused the request"),
-      );
-    if (success !== true)
-      throw new AnalysisProtocolError(
-        "JEB MCP omitted its success field; no observation can be established",
-      );
-    return payload;
+    input?: Readonly<Record<string, JsonValue | undefined>>,
+  ): JsonValue {
+    const parsed = parseJebEnvelope(
+      payload,
+      operation,
+      this.#endpoint.toString(),
+      input,
+    );
+    if (!parsed.ok) throw parsed.error;
+    return parsed.value;
   }
 
   #providerFailure(operation: JebOperation, cause: unknown): AnalysisError {

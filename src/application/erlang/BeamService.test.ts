@@ -31,6 +31,7 @@ const report: ErlangBeam = {
 it("rejects a relative path and extra arguments before reading", async () => {
   let calls = 0;
   const service = new BeamService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -62,6 +63,7 @@ it("rejects a relative path and extra arguments before reading", async () => {
 
 it("records the selected BEAM form", async () => {
   const result = await new BeamService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
@@ -78,6 +80,7 @@ it("discards an observation if the caller cancels while the provider completes",
   const controller = new AbortController();
   const reason = { source: "caller-request", operation: "cancel" };
   const service = new BeamService({
+    close: async () => {},
     identity,
     inspect: () => {
       controller.abort(reason);

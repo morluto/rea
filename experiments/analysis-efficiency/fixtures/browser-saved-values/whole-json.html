@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Declared JSON payload privacy fixture</title>
+<output id="result">pending</output>
+<script>
+  fetch("/api/collections/rea_items/records", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: localStorage.getItem("whole_json"),
+  }).then((response) => {
+    const result = document.querySelector("#result");
+    result.textContent = String(response.status);
+    result.dataset.ready = "yes";
+  });
+</script>

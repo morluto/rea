@@ -241,7 +241,7 @@ describe("read-only NativeAOT PE parser", () => {
 describe("NativeAOT PE signature admission", () => {
   it.each([
     ["MZ", "Not a PE image"],
-    ["PE", "Invalid PE signature"],
+    ["PE", "MZ header does not declare a PE image"],
   ])(
     "rejects a high-bit lookalike of the %s signature",
     (signature, reason) => {

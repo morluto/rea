@@ -13,6 +13,8 @@ import {
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { classifyClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
+import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
+import { err } from "../../../src/domain/result.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 
 beforeEach(clearClientLocationEnvironment);
@@ -122,6 +124,72 @@ describe("client registration status", () => {
       ]);
     },
   );
+});
+
+describe("client registration environment validation", () => {
+  it("reports an otherwise aligned registration invalid for a bad tool-family scope", async () => {
+    const home = await createTestTempDirectory("rea-registration-env-");
+    await mkdir(join(home, ".cursor"));
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: "npx",
+            args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+            env: { REA_MCP_TOOL_FAMILIES: "session,typo" },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, "/current/rea");
+
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        client: "cursor",
+        state: "invalid",
+        command: [],
+        remediation: expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
+      }),
+    ]);
+  });
+
+  it("resolves provider budgets only for Kimi/Codex registrations", async () => {
+    const home = await createTestTempDirectory("rea-registration-budget-");
+    await mkdir(join(home, ".cursor"));
+    await mkdir(join(home, ".codex"));
+    const entry = {
+      command: "npx",
+      args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
+    };
+    await writeFile(
+      join(home, ".cursor/mcp.json"),
+      JSON.stringify({ mcpServers: { rea: entry } }),
+    );
+    await writeFile(
+      join(home, ".codex/config.toml"),
+      `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\n`,
+    );
+    const resolveProviderRequestBudget = async () =>
+      err(new ConfigurationError("budget unavailable"));
+
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      "/current/rea",
+      {
+        resolveProviderRequestBudget,
+      },
+    );
+
+    const byClient = new Map(statuses.map((status) => [status.client, status]));
+    // The failing resolver must not invalidate non-Kimi/Codex registrations.
+    expect(byClient.get("cursor")?.state).not.toBe("invalid");
+    expect(byClient.get("codex")).toMatchObject({
+      state: "invalid",
+      remediation: expect.stringContaining("budget unavailable"),
+    });
+  });
 });
 
 describe("client registration launcher identity", () => {
@@ -501,8 +569,8 @@ describe("Node-wrapped registration policy", () => {
     });
   });
 
-  it.each([1, 30])(
-    "checks Grok Build startup timeout %d independently of launcher",
+  it.each([1, 30, 90])(
+    "accepts Grok Build caller-selected startup timeout %d independently of launcher",
     async (timeout) => {
       const home = await createTestTempDirectory("rea-grok-registration-");
       await mkdir(join(home, ".grok"));
@@ -517,7 +585,7 @@ describe("Node-wrapped registration policy", () => {
       expect(statuses).toEqual([
         expect.objectContaining({
           client: "grok_build",
-          state: timeout === 30 ? "aligned" : "stale",
+          state: "aligned",
         }),
       ]);
     },

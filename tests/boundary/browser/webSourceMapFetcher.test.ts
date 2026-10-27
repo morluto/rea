@@ -32,6 +32,120 @@ const expectInvalidIncludedSourceMaps = (result: WebSourceMaps): void => {
 };
 
 it.each(["regular", "indexed"])(
+  "retains declaration identity for duplicate source URLs in HTTP %s maps",
+  async (format) => {
+    const contents = [
+      null,
+      'import "./shared.js"; import "./shared.js"; import "./first.js";',
+      'import "./shared.js"; import "./second.js";',
+    ];
+    const leaf = (sourcesContent: (string | null)[]) => ({
+      version: 3,
+      sources: sourcesContent.map(() => "same.ts"),
+      sourcesContent,
+      names: [],
+      mappings: "",
+    });
+    const map =
+      format === "regular"
+        ? leaf(contents)
+        : {
+            version: 3,
+            sections: contents.map((content, line) => ({
+              offset: { line, column: 0 },
+              map: leaf([content]),
+            })),
+          };
+    const server = createServer((_incoming, response) => {
+      response.setHeader("content-type", "application/source-map+json");
+      response.end(JSON.stringify(map));
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new TypeError("Expected a TCP listener address");
+      const localOrigin = `http://127.0.0.1:${String(address.port)}`;
+      const url = `${localOrigin}/app.js.map`;
+      const result = await fetchWebSourceMapsOk(
+        [{ ...request, fetchUrl: url, declaredUrl: url }],
+        input({ allowed_origins: [localOrigin] }),
+      );
+      const item = result.items[0];
+      if (item?.status !== "included") throw new Error("map not included");
+      expect(item.limitation).toBeNull();
+      expect(
+        item.original_sources.map((source) => ({
+          declaration_index: source.declaration_index,
+          source_index: source.source_index,
+          source: source.source,
+          text: source.artifact?.text ?? null,
+        })),
+      ).toEqual(
+        contents.map((text, declaration_index) => ({
+          declaration_index,
+          source_index: format === "regular" ? declaration_index : 0,
+          source: `${localOrigin}/same.ts`,
+          text,
+        })),
+      );
+      expect(item.original_module_edges).toEqual(
+        [
+          [1, "./shared.js"],
+          [1, "./first.js"],
+          [2, "./shared.js"],
+          [2, "./second.js"],
+        ].map(([declaration_index, specifier]) => ({
+          declaration_index,
+          from_source: `${localOrigin}/same.ts`,
+          kind: "static_import",
+          specifier,
+          resolved_source: new URL(String(specifier), url).href,
+        })),
+      );
+      expect(webSourceMapsSchema.parse(result)).toEqual(result);
+      const historical = {
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: item.original_module_edges.map(
+              ({ declaration_index: _index, ...edge }) => edge,
+            ),
+          },
+        ],
+      };
+      expect(webSourceMapsSchema.parse(historical)).toEqual(historical);
+      expectInvalidSourceMaps({
+        ...result,
+        items: [
+          {
+            ...item,
+            original_module_edges: [
+              {
+                ...item.original_module_edges[0],
+                declaration_index: -1,
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      server.closeAllConnections();
+      if (server.listening)
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) =>
+            error === undefined ? resolve() : reject(error),
+          );
+        });
+    }
+  },
+);
+
+it.each(["regular", "indexed"])(
   "collects an HTTP %s source map with omitted names without accepting invalid names",
   async (format) => {
     const leaf = {

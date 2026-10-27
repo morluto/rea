@@ -15,6 +15,7 @@ import {
 } from "../../domain/evidence.js";
 import {
   wasmArtifactSchema,
+  wasmArtifactMatchesSubject,
   type WasmArtifact,
 } from "../../domain/wasm/wasmArtifact.js";
 import type { WasmInterfaceEntry } from "../../domain/wasm/wasmInterface.js";
@@ -44,8 +45,16 @@ const parseInspection = (
     throw new TypeError("Expected complete inspect_wasm_artifact Evidence");
   const result = wasmArtifactSchema.parse(evidence.normalized_result);
   if (
-    evidence.subject?.digest.sha256 !== result.artifact.sha256 ||
-    evidence.subject.local_path !== result.artifact.path ||
+    !wasmArtifactMatchesSubject(
+      result.artifact,
+      evidence.subject === null
+        ? null
+        : {
+            path: evidence.subject.local_path,
+            sha256: evidence.subject.digest.sha256,
+            format: evidence.subject.format,
+          },
+    ) ||
     evidence.parameters.path !== result.artifact.path
   )
     throw new TypeError(

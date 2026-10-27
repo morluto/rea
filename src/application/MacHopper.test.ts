@@ -12,6 +12,9 @@ import {
 class FakeMacHopperHost implements MacHopperInstallHost {
   readonly archive = new TextEncoder().encode("hopper-dmg");
   archiveOk = true;
+  feedBytes: Uint8Array | undefined;
+  packageDownloads = 0;
+  mounts = 0;
   verification: MacHopperBundleVerification = "verified";
   existing = false;
   mountSucceeds = true;
@@ -25,33 +28,39 @@ class FakeMacHopperHost implements MacHopperInstallHost {
   opens = 0;
   replaces = false;
 
-  download = (url: string) =>
-    Promise.resolve(
+  download = (url: string) => {
+    if (!url.includes("files-api")) this.packageDownloads += 1;
+    return Promise.resolve(
       url.includes("files-api")
         ? {
             ok: true,
-            bytes: new TextEncoder().encode(
-              JSON.stringify({
-                "OS X": {
-                  filename:
-                    "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
-                  file_length: String(this.archive.byteLength),
-                  file_hash: this.badHash
-                    ? "0".repeat(40)
-                    : createHash("sha1").update(this.archive).digest("hex"),
-                },
-              }),
-            ),
+            bytes:
+              this.feedBytes ??
+              new TextEncoder().encode(
+                JSON.stringify({
+                  "OS X": {
+                    filename:
+                      "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+                    file_length: String(this.archive.byteLength),
+                    file_hash: this.badHash
+                      ? "0".repeat(40)
+                      : createHash("sha1").update(this.archive).digest("hex"),
+                  },
+                }),
+              ),
           }
         : { ok: this.archiveOk, bytes: this.archive },
     );
+  };
   createTemporaryDirectory = () => Promise.resolve("/tmp/rea-hopper-test");
   createMountDirectory = () => Promise.resolve();
   writePackage = () => Promise.resolve();
-  mount = () =>
-    this.mountFailure === undefined
+  mount = () => {
+    this.mounts += 1;
+    return this.mountFailure === undefined
       ? Promise.resolve(this.mountSucceeds)
       : Promise.reject(this.mountFailure);
+  };
   unmount = () => {
     this.unmounts += 1;
     return Promise.resolve();
@@ -261,3 +270,40 @@ it("retains the exact DMG temporary root with its retry capability", async () =>
   allowCleanup = true;
   await expect(retained[0]!.close()).resolves.toBeUndefined();
 });
+
+it("refuses malformed UTF-8 release metadata before downloading or mounting the package", async () => {
+  const host = new FakeMacHopperHost();
+  const feed = await host.download("files-api");
+  const text = new TextDecoder().decode(feed.bytes);
+  // Replacement decoding would produce valid JSON and hide the malformed transport byte.
+  host.feedBytes = new Uint8Array([
+    ...new TextEncoder().encode('{"vendor_note":"'),
+    0xff,
+    ...new TextEncoder().encode('",' + text.slice(1)),
+  ]);
+  expect(await installMacHopper({}, host)).toMatchObject({
+    status: "failed",
+    reason: "release_metadata",
+  });
+  expect(host.packageDownloads).toBe(0);
+  expect(host.mounts).toBe(0);
+  expect(host.installs).toBe(0);
+});
+
+it.each([false, true])(
+  "accepts a genuine replacement character in release metadata (BOM=%s)",
+  async (bom) => {
+    const host = new FakeMacHopperHost();
+    const feed = await host.download("files-api");
+    const text = new TextDecoder()
+      .decode(feed.bytes)
+      .replace('{"OS X":{', '{"OS X":{"vendor_note":"雪�",');
+    host.feedBytes = new TextEncoder().encode((bom ? "\uFEFF" : "") + text);
+    expect(await installMacHopper({}, host)).toMatchObject({
+      status: "installed",
+    });
+    expect(host.packageDownloads).toBe(1);
+    expect(host.mounts).toBe(1);
+    expect(host.installs).toBe(1);
+  },
+);

@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,7 +72,12 @@ describe("Trae configuration paths", () => {
         ({ path }) => path,
       ),
     ).toEqual([
-      join("C:\\Users\\a", ".trae", "skills", "reverse-engineer-anything"),
+      win32.join(
+        "C:\\Users\\a",
+        ".trae",
+        "skills",
+        "reverse-engineer-anything",
+      ),
     ]);
   });
 });

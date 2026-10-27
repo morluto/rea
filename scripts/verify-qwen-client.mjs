@@ -15,12 +15,16 @@ import { createHash } from "node:crypto";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
+import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -191,36 +195,7 @@ await withVerifierCleanup(async () => {
     }
     const target = join(lab, "fixture α测试");
     await mkdir(target, { recursive: true });
-    await writeFile(
-      `${target}/app.js`,
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return null;
-        }
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const result = extractEvidence(item);
-          if (result) return result;
-        }
-      } else if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes?.length > 0
-        )
-          return value;
-        for (const nested of Object.values(value)) {
-          const result = extractEvidence(nested);
-          if (result) return result;
-        }
-      }
-      return null;
-    };
+    await writeFile(`${target}/app.js`, CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: `${client}-${mode}`,
@@ -257,34 +232,9 @@ await withVerifierCleanup(async () => {
           assert(artifactPath);
           const artifact = await readFile(artifactPath);
           artifactDigest = createHash("sha256").update(artifact).digest("hex");
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(JSON.parse(artifact.toString("utf8")));
-          assert(extractEvidence(evidence));
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            JSON.parse(artifact.toString("utf8")),
+            target,
           );
           evidenceSeen = true;
           await writeFile(
@@ -294,12 +244,14 @@ await withVerifierCleanup(async () => {
         }
         for (const message of body.messages ?? []) {
           if (message.role !== "tool") continue;
-          const evidence = extractEvidence(message.content);
-          if (evidence) {
-            assert(
-              JSON.stringify(evidence.normalized_result).includes(
-                "REA_CLIENT_FIXTURE",
-              ),
+          const candidate = findClientResult(
+            message.content,
+            isClientJavaScriptEvidence,
+          );
+          if (candidate) {
+            const { evidence } = await assertClientJavaScriptFixtureEvidence(
+              candidate,
+              target,
             );
             evidenceSeen = true;
             await writeFile(

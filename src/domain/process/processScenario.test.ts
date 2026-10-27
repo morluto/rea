@@ -3,6 +3,8 @@ import { z } from "zod";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { SESSION_TOOL_CONTRACTS } from "../../contracts/sessionToolContracts.js";
+import { projectInputIssues } from "../inputIssueProjection.js";
+import { nativeCallObservationInputSchema } from "../native/nativeCallObservation.js";
 import {
   digestProcessCommitment,
   PROCESS_TERMINAL_CELL_BUDGET,
@@ -295,7 +297,9 @@ it.each(["selected-value", 7])(
     expect(parsed.success).toBe(false);
     if (parsed.success)
       throw new Error("Expected the unsupported PTY name to be rejected");
-    expect(parsed.error.issues).toContainEqual(
+    expect(
+      projectInputIssues(parsed.error.issues, { ...baseScenario, environment }),
+    ).toContainEqual(
       expect.objectContaining({
         path: ["environment", "__proto__"],
         message: expect.stringContaining("PTY backend cannot preserve"),
@@ -303,3 +307,23 @@ it.each(["selected-value", 7])(
     );
   },
 );
+
+it("keeps native and PTY environment admission distinct through Standard Schema export", () => {
+  const environment = Object.fromEntries([
+    ["__proto__", "selected"],
+    ["constructor", "ordinary"],
+  ]);
+  const native = nativeCallObservationInputSchema.shape.environment;
+  const parsed = native.parse(environment);
+  expect(Object.hasOwn(parsed, "__proto__")).toBe(true);
+  expect(JSON.stringify(parsed)).toBe(JSON.stringify(environment));
+  const ajv = new Ajv2020({ strict: false });
+  const options = { target: "draft-2020-12" as const };
+  const nativePublished = native["~standard"].jsonSchema.input(options);
+  const ptyPublished =
+    processScenarioSchema.shape.environment["~standard"].jsonSchema.input(
+      options,
+    );
+  expect(ajv.compile(nativePublished)(environment)).toBe(true);
+  expect(ajv.compile(ptyPublished)(environment)).toBe(false);
+});

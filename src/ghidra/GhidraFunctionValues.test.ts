@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import {
   compactReference,
   compactInstruction,
@@ -1120,4 +1120,209 @@ describe("Ghidra bridge script processor context contract", () => {
     expect(content).toContain('"ISA_MODE"');
     expect(content).toContain('"ghidra-program-context"');
   });
+});
+
+describe("Ghidra dossier nested boundary composition", () => {
+  const identityLocations = [
+    "caller",
+    "callee",
+    "incoming source",
+    "incoming target",
+    "outgoing source",
+    "outgoing target",
+  ] as const;
+  const withIdentity = (
+    location: (typeof identityLocations)[number],
+    identity: JsonValue,
+  ): JsonValue => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    if (location === "caller") return { ...dossier, callers: [identity] };
+    if (location === "callee") return { ...dossier, callees: [identity] };
+    const collection = location.startsWith("incoming")
+      ? "incoming_references"
+      : "outgoing_references";
+    const field = location.endsWith("source")
+      ? "source_procedure"
+      : "target_procedure";
+    return {
+      ...dossier,
+      [collection]: [{ ...ghidraReferenceEdge(), [field]: identity }],
+    };
+  };
+
+  it.each(identityLocations)(
+    "retains the dossier's optional symbol and empty name on a nested %s identity",
+    (location) => {
+      const { symbol: omitted, ...identity } = ghidraFunctionIdentity();
+      expect(omitted).toBeDefined();
+      const value = withIdentity(location, { ...identity, name: "" });
+      expect(
+        parseFunctionValueFixture("analyze_function", value),
+      ).toMatchObject({
+        ok: true,
+        value,
+      });
+    },
+  );
+
+  it.each(identityLocations)(
+    "rejects noncanonical address and foreign body/classification provenance on a nested %s identity",
+    (location) => {
+      const identity = ghidraFunctionIdentity();
+      for (const change of [
+        { address: "401000" },
+        { body: { ...identity.body, provenance: "foreign-provider" } },
+        { body: { ...identity.body, contains_entry: false } },
+        {
+          classification: {
+            ...identity.classification,
+            provenance: "foreign-provider",
+          },
+        },
+      ])
+        expect(
+          parseFunctionValueFixture(
+            "analyze_function",
+            withIdentity(location, { ...identity, ...change }),
+          ),
+        ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    },
+  );
+
+  it.each(["incoming_references", "outgoing_references"] as const)(
+    "requires Ghidra reference-manager provenance inside %s",
+    (collection) => {
+      const edge = ghidraReferenceEdge();
+      expect(
+        parseFunctionValueFixture("analyze_function", {
+          ...functionDossierSchema.parse(ghidraFunctionDossier()),
+          [collection]: [
+            {
+              ...edge,
+              kind: { ...edge.kind, provenance: "hopper-public-python-api" },
+            },
+          ],
+        }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    },
+  );
+
+  it.each([
+    {
+      name: "comment address",
+      fixture: (address: string) => ({
+        comments: [{ address, kind: "comment", text: "observed comment" }],
+      }),
+    },
+    {
+      name: "basic-block start",
+      fixture: (address: string) => ({
+        basic_blocks: [{ start: address, end: "0x401006", successors: [] }],
+      }),
+    },
+    {
+      name: "basic-block successor",
+      fixture: (address: string) => ({
+        basic_blocks: [
+          { start: "0x401000", end: "0x401006", successors: [address] },
+        ],
+      }),
+    },
+    {
+      name: "referenced name source",
+      fixture: (address: string) => ({
+        referenced_names: [
+          { address: "0x402000", source_address: address, value: "observed" },
+        ],
+      }),
+    },
+    {
+      name: "referenced string source",
+      fixture: (address: string) => ({
+        referenced_strings: [
+          { address: "0x402000", source_address: address, value: "observed" },
+        ],
+      }),
+    },
+  ])("requires a canonical $name", ({ fixture }) => {
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    expect(
+      parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        ...fixture("0x401000"),
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseFunctionValueFixture("analyze_function", {
+        ...dossier,
+        ...fixture("401000"),
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+  });
+});
+
+describe("Ghidra native facet coordinate admission", () => {
+  it.each(["dispatch", "data source"] as const)(
+    "requires canonical jump-table %s coordinates",
+    (location) => {
+      const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+      const boundary = dossier.native_api;
+      if (boundary?.available !== true)
+        throw new Error("Missing native API fixture");
+      const table = boundary.jump_tables[0];
+      const source = table?.data_sources[0];
+      if (table === undefined || source === undefined)
+        throw new Error("Missing jump-table fixture");
+      expect(parseFunctionValueFixture("analyze_function", dossier).ok).toBe(
+        true,
+      );
+      expect(
+        parseFunctionValueFixture("analyze_function", {
+          ...dossier,
+          native_api: {
+            ...boundary,
+            jump_tables: [
+              {
+                ...table,
+                ...(location === "dispatch"
+                  ? { dispatch_address: "401010" }
+                  : { data_sources: [{ ...source, address: "403000" }] }),
+              },
+            ],
+          },
+        }),
+      ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
+    },
+  );
+
+  it.each(["operation", "input", "output"] as const)(
+    "requires canonical p-code %s coordinates without inventing null locations",
+    (location) => {
+      const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+      const flow = dossier.native_value_flow;
+      if (flow?.available !== true) throw new Error("Missing p-code fixture");
+      const operation = flow.operations[0];
+      const input = operation?.inputs[0];
+      const output = operation?.output;
+      if (operation === undefined || input === undefined || output == null)
+        throw new Error("Missing p-code operation fixture");
+      for (const address of ["register:0x0", null, "register:0"] as const) {
+        if (location === "operation" && address === null) continue;
+        const changed = {
+          ...operation,
+          ...(location === "operation"
+            ? { address }
+            : location === "input"
+              ? { inputs: [{ ...input, location: address }] }
+              : { output: { ...output, location: address } }),
+        };
+        expect(
+          parseFunctionValueFixture("analyze_function", {
+            ...dossier,
+            native_value_flow: { ...flow, operations: [changed] },
+          }).ok,
+        ).toBe(address !== "register:0");
+      }
+    },
+  );
 });

@@ -65,6 +65,7 @@ mcpTest(
     const provider = new GoBinaryProvider();
     const session = createTestBinarySession(createCacheProvider([]));
     const service = new GoBinaryService({
+      close: () => provider.close(),
       identity: provider.identity,
       inspect: async (input, options) => {
         const result = await provider.inspect(input, options);

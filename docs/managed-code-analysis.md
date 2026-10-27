@@ -660,13 +660,15 @@ name and raw signature digest available while marking that signature malformed
 and coverage partial.
 A fat method header's nonzero LocalVarSigTok must name an existing StandAloneSig
 row whose blob is a structurally valid LocalVarSig. REA validates its local
-types and exact blob coverage but does not project their identities. An invalid
+types and exact blob coverage, retaining `local_var_signature` with the raw blob
+digest and whether named types, modifiers, or generic variables require metadata
+or declaring context. Historical Evidence defaults this field to null. An invalid
 token or malformed signature leaves decoded CIL anchors intact but marks the
 body malformed and coverage partial. Unsupported local type encodings retain
 the readable body with partial coverage. Zero continues to mean no locals
-signature. Comparison detects whether a locals declaration is present, but raw
-table tokens are not cross-build identities and local type contents are not
-compared.
+signature. Raw table tokens are not cross-build identities. Comparison uses
+validated context-free signature digests; signatures requiring metadata or
+declaring context remain unknown across artifacts.
 
 ## Decoded-CIL fingerprint
 
@@ -868,9 +870,14 @@ MethodDef flags or implementation flags value differs, including accessibility
 or synchronization changes. Observed method-body `init_locals` and `max_stack`
 differences also contribute to `metadata`, even when CIL decoding is incomplete.
 For complete bodies, presence or absence of a locals signature also contributes;
-the locals table token is build-local and is not compared. Local type contents
-are not currently compared, so this facet does not establish equivalent locals
-declarations.
+the locals table token is build-local and is not compared. Different validated
+context-free LocalVarSig digests report a metadata encoding difference without
+asserting a semantic type change. Equal digests establish unchanged bytes only
+when neither signature requires metadata or declaring context. Historical
+unrecorded signatures and context-dependent signatures keep local identity
+unknown, preserving any independently observed changes. The same method token
+in an artifact with the same authenticated SHA-256 identifies the same local
+signature bytes, including for retained historical Evidence.
 An unavailable header value keeps body coverage unknown rather than establishing
 equality or a difference. These comparisons are separate from the CIL/signature
 matching tiers: identical instructions do not establish unchanged method metadata.

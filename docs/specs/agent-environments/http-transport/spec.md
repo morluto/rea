@@ -67,8 +67,11 @@ initialize, tools/list, `binary_session` and `DELETE` with the SDK streamable
 HTTP client, then proves `binary_session` still answers in the next session and
 in a session that replaced one left open; a process-boundary test asserts
 `143`/`130` exits and a released port. Concurrent clients are not supported:
-the newest `initialize` owns the server. The non-loopback relaxation is covered
-only through its pure allowlist helper; no wide bind runs in tests. Response
+the newest `initialize` owns the server. Non-loopback binds require the
+operator's parsed hostname allowlist, retain Host/Origin gates, and announce a
+client URL admitted by that list. Current listener regressions exercise a
+wildcard bind, refusal/port release and a direct SDK connection to the
+announced endpoint. Response
 budgets keep their stdio-derived floor; registrations, `rea mcp doctor` and
 `server.json` stay stdio.
 

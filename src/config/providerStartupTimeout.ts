@@ -1,13 +1,6 @@
 import {
-  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
   MAX_PROVIDER_STARTUP_TIMEOUT_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
-} from "../domain/analysisResourceLimits.js";
-export {
-  DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
-  DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
 } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 

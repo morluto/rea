@@ -19,7 +19,7 @@ import {
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readWithoutFifoWriter } from "../../fixtures/fifoInput.js";
-import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/config/asarHeaderAdmission.js";
+import { DEFAULT_ASAR_MAX_HEADER_BYTES } from "../../../src/domain/analysisResourceLimits.js";
 import {
   CPU,
   arArchive,

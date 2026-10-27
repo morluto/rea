@@ -7,6 +7,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/client/stdio";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { webSourceLocationFixture } from "../fixtures/webSourceLocation.js";
@@ -121,7 +122,21 @@ cliTest(
     expect(invalid.exitCode).toBe(1);
     expect(invalid.json).toMatchObject({
       code: "invalid_request",
-      details: { issues: [{ path: ["generated_position"] }] },
+      details: {
+        issues: [{ path: ["generated_position"] }],
+        partial_observation: {
+          kind: "web-trace-observation",
+          analysis: "incomplete",
+          manifest: { path: manifest },
+          source: { path: join(root, "files", "modules", "main.js") },
+          source_map: {
+            path: map,
+            sha256: createHash("sha256")
+              .update(fixture.sourceMap.text)
+              .digest("hex"),
+          },
+        },
+      },
     });
   },
   // Allow cold CLI and MCP ownership preparation across the full parity sequence.
@@ -198,6 +213,27 @@ cliTest(
         const failure = {
           code: "invalid_request",
           details: {
+            partial_observation: {
+              kind: "web-trace-observation",
+              analysis: "incomplete",
+              manifest: {
+                path: manifest,
+                sha256: createHash("sha256")
+                  .update(JSON.stringify(fixture.manifest))
+                  .digest("hex"),
+              },
+              source: {
+                path: join(root, "files", "modules", "main.js"),
+                sha256: createHash("sha256")
+                  .update(fixture.source)
+                  .digest("hex"),
+              },
+              source_map: {
+                path,
+                sha256: createHash("sha256").update(text).digest("hex"),
+                bytes: Buffer.byteLength(text),
+              },
+            },
             issues: [
               {
                 path: ["source_map", "path"],

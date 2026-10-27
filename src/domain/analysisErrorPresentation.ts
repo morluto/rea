@@ -70,7 +70,9 @@ export const analysisErrorRemediationAction = (
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
   if (error instanceof EvidenceFileError && error.published !== undefined)
-    return "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
+    return error.published.path === undefined
+      ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."
+      : "Use the published file at details.published_path and resolve the reported staging cleanup failure.";
   if (
     error instanceof ProviderSelectionError &&
     error.remediationAction !== undefined

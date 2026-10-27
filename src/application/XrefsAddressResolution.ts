@@ -1,7 +1,7 @@
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
 import { addressedValueSchema } from "../domain/native/nativeInventory.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
@@ -10,20 +10,12 @@ import { err, ok, type Result } from "../domain/result.js";
 import type { AnalysisOperationPort } from "./AnalysisProvider.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 
-/** Resolve a CLI symbol selector without changing existing address spellings. */
+/** Resolve an exact symbol after the provider rejects the caller address format. */
 export const resolveXrefsAddress = async (
   analysis: AnalysisOperationPort,
   selector: string,
   signal: AbortSignal,
 ): Promise<Result<string, AnalysisError>> => {
-  if (
-    selector.length === 0 ||
-    /^[0-9a-f]+$/iu.test(selector) ||
-    /^0x/iu.test(selector) ||
-    /:0x/iu.test(selector)
-  )
-    return ok(selector);
-
   const named = await resolveXrefsName(analysis, selector, signal);
   if (!named.ok) return named;
   return named.value !== null
@@ -56,9 +48,8 @@ export const resolveXrefsName = async (
   if (!inventory.ok) {
     if (
       operation === "xrefs" &&
-      inventory.error instanceof AnalysisCapabilityUnavailableError &&
-      inventory.error.operation === "list_names" &&
-      !inventory.error.cleanupIncomplete
+      permitsCapabilityFallback(inventory.error) &&
+      inventory.error.operation === "list_names"
     )
       return resolveProcedureAddress(
         async (operation, parameters, signal) => {

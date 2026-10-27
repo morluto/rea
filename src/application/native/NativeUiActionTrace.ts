@@ -1,3 +1,5 @@
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../AnalysisProvider.js";
@@ -48,7 +50,31 @@ export const traceNativeUiAction = async (
     ),
     inspectNativeDispatch(analysis, 20_000, { signal }),
   ]);
-  if (!uiExecution.ok && uiExecution.error._tag === "AnalysisCancelledError")
+  if (!uiExecution.ok && !metadataExecution.ok) {
+    const primary =
+      uiExecution.error._tag === "AnalysisCancelledError"
+        ? uiExecution.error
+        : metadataExecution.error;
+    const secondary =
+      primary === uiExecution.error
+        ? metadataExecution.error
+        : uiExecution.error;
+    if (secondary.cleanupIncomplete)
+      return err(
+        analysisErrorWithCleanupFailure(
+          primary,
+          secondary,
+          "trace_native_ui_action",
+        ).bindCleanupDependencies([primary, secondary]),
+      );
+    if (primary.cleanupIncomplete) primary.retainSecondaryFailure(secondary);
+    return err(primary);
+  }
+  if (
+    !uiExecution.ok &&
+    (uiExecution.error._tag === "AnalysisCancelledError" ||
+      uiExecution.error.cleanupIncomplete)
+  )
     return err(uiExecution.error);
   if (!metadataExecution.ok) return err(metadataExecution.error);
   const metadata = nativeDispatchMetadataResultSchema.parse(
@@ -134,12 +160,7 @@ export const traceNativeUiAction = async (
       { procedure: input.action },
       signal === undefined ? {} : { signal },
     );
-    if (!native.ok && native.error._tag === "AnalysisCancelledError")
-      return err(native.error);
-    if (
-      !native.ok &&
-      native.error._tag !== "AnalysisCapabilityUnavailableError"
-    )
+    if (!native.ok && !permitsCapabilityFallback(native.error))
       return err(native.error);
     if (native.ok) {
       const address = z.string().safeParse(native.value.result);
@@ -438,7 +459,8 @@ const expandNativeCalls = async (input: {
     sourceLimitations.push(...execution.limitations);
     if (
       !execution.outcome.ok &&
-      execution.outcome.error._tag === "AnalysisCancelledError"
+      (execution.outcome.error._tag === "AnalysisCancelledError" ||
+        execution.outcome.error.cleanupIncomplete)
     )
       return { error: execution.outcome.error };
     const unknowns = execution.unknowns;

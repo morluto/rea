@@ -5,6 +5,7 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -44,12 +45,14 @@ export const CAPTURE_PROCESS_MEMORY_LIMIT_REASON =
 /** Preserve the origin and typed cause of a historical capture failure. */
 export const historicalCaptureFailure = (
   input: InspectWebNetworkCaptureInput,
-  cause: unknown,
+  rawCause: unknown,
   phase: "capture-read" | "descriptor-read" | "decoder",
   options?: ExecutionOptions,
   heap: CaptureDecoderHeap = DEFAULT_CAPTURE_DECODER_HEAP,
 ): AnalysisError => {
-  if (cause instanceof AnalysisError) return cause;
+  const { cause, origin } = artifactFilePrimaryFacts(rawCause);
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   const descriptorRead = phase === "descriptor-read";
   const sourcePath = descriptorRead
     ? (input.protobuf?.schema?.descriptor_set_path ?? input.capture_path)
@@ -58,9 +61,12 @@ export const historicalCaptureFailure = (
     ? ["protobuf", "schema", "descriptor_set_path"]
     : ["capture_path"];
   const sourceLabel = descriptorRead ? "descriptor set" : "capture";
-  if (cause instanceof OwnedCommandFailure) {
-    if (cause.cleanupFailure !== null)
-      return new ProviderCleanupError(
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof OwnedCommandFailure
+  ) {
+    if (cause.cleanupFailure !== null) {
+      const cleanup = new ProviderCleanupError(
         input.format,
         cause.resources,
         {
@@ -77,6 +83,14 @@ export const historicalCaptureFailure = (
         },
         { operation: OPERATION, cause },
       );
+      return cause.cause instanceof OwnedCommandFailure
+        ? analysisErrorWithCleanupFailure(
+            historicalCaptureFailure(input, cause.cause, phase, options, heap),
+            cleanup,
+            OPERATION,
+          )
+        : cleanup;
+    }
     if (cause.reason === "cancelled")
       return new AnalysisCancelledError(OPERATION, {
         cause:
@@ -128,6 +142,7 @@ export const historicalCaptureFailure = (
   }
   if (
     phase !== "decoder" &&
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
@@ -137,12 +152,17 @@ export const historicalCaptureFailure = (
       cause.message,
       { cause },
     );
-  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof ArtifactReaderFailure &&
+    cause.reason === "cancelled"
+  )
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
   if (
     phase !== "decoder" &&
+    origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     (cause.reason === "limit" ||
       cause.reason === "format" ||
@@ -191,6 +211,10 @@ export const historicalCaptureFailure = (
       },
     ]);
   if (
+    // Stable source reads report owned cancellation with ArtifactReaderFailure.
+    // Bare syscall rejections remain physical even when they equal the abort reason.
+    phase === "decoder" &&
+    origin === "owned-or-classified" &&
     options?.signal?.aborted === true &&
     (cause === options.signal.reason ||
       (cause instanceof Error &&
@@ -210,10 +234,13 @@ export const historicalCaptureFailure = (
         ? { source_path: sourcePath, input_path: inputPath }
         : {}),
       reason: cause instanceof Error ? cause.message : String(cause),
-      ...(cause instanceof ArtifactReaderFailure
+      ...(origin === "owned-or-classified" &&
+      cause instanceof ArtifactReaderFailure
         ? { failure_kind: cause.reason }
         : {}),
-      ...(cause instanceof OwnedCommandFailure && cause.snapshot !== null
+      ...(origin === "owned-or-classified" &&
+      cause instanceof OwnedCommandFailure &&
+      cause.snapshot !== null
         ? {
             exit_code: cause.snapshot.exitCode ?? null,
             signal: cause.snapshot.signal ?? null,

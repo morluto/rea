@@ -12,7 +12,11 @@ import { LldbCallTracer } from "../../../../src/native/LldbCallTracer.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 import * as processBoundary from "../../../../src/process/ProviderProcess.js";
 
-const tool = { path: "/usr/bin/true", sha256: "b".repeat(64) };
+const tool = {
+  invocationPath: "/usr/bin/true",
+  resolvedPath: "/usr/bin/true",
+  sha256: "b".repeat(64),
+};
 const request = {
   executable: "/fixture",
   architecture: "arm64" as const,

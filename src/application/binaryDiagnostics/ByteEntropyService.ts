@@ -14,7 +14,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import {
   byteEntropySchema,
   computeBlockEntropy,
@@ -38,6 +37,7 @@ import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorClean
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 /** Bound retained result rows before constructing the Evidence representation. */
 export const MAX_BYTE_ENTROPY_BLOCKS = 32_768;
@@ -97,18 +97,14 @@ export class ByteEntropyService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const parsed = inspectByteEntropyInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectByteEntropyInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const input = parsed.value;
     if (!isAbsolute(input.path))
       return err(
         invalid("path", "Expected an absolute filesystem path on this host."),

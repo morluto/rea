@@ -104,8 +104,10 @@ unreadable path; the process-boundary test asserts a `143` exit with a
 released port. Replay validates no supplied values, performs no network
 activity and establishes no authorization, response semantics or state
 transitions. One MCP client is served at a time, as the shared listener
-defines. Non-loopback binds relax the `Host` check and are not exercised; a
-listener `error` after binding is wired but not provoked by a test.
+defines. Non-loopback binds require `MCP_ALLOWED_HOSTS` and retain both Host
+and Origin checks. Shared listener regressions exercise a wildcard bind,
+configuration refusal, port release and admitted/foreign request headers;
+the original environment-serving fixture runs below used loopback.
 
 ## Resource and cancellation boundaries
 

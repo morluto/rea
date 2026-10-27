@@ -26,7 +26,7 @@ import {
   locateApkSigningBlock,
   parseZipTail,
 } from "../dist/domain/apkSignature/apkSigningBlock.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { mcpTextValue, requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
@@ -261,7 +261,7 @@ try {
       ajv.validate(advertised.outputSchema, reply.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const mcp = parseEvidence(reply.structuredContent);
+    const mcp = parseEvidence(requireMcpOutput(reply, "inspect_apk_signature"));
     assert.deepEqual(cli, mcp, "CLI and MCP evidence differ");
     cases += 2;
     return mcp.normalized_result;

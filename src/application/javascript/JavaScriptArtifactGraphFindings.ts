@@ -492,7 +492,7 @@ const addDiscoveredRole = (
   changedRoots: ReadonlySet<string> | null,
 ): void => {
   const root = applicationRootPath(context, input.file);
-  const resolution = resolveArtifactPathByContext({
+  const resolved = resolveArtifactPathByContext({
     declaredPath: input.value.path,
     sourcePath: input.file.path,
     context: input.value.resolution_context,
@@ -500,7 +500,8 @@ const addDiscoveredRole = (
     jsonDocuments: context.analysis.jsonDocuments,
     directoryPaths: context.directoryPaths,
     unanalyzedFiles: context.unanalyzedFiles,
-    ...(input.value.role === "preload"
+    ...(input.value.role === "preload" ||
+    input.value.path_base === "source-directory"
       ? { runtimePathKind: "exact-file" as const }
       : input.value.role === "renderer" &&
           input.value.resolution_context === "filesystem-expression"
@@ -520,6 +521,16 @@ const addDiscoveredRole = (
           ? { runtimePathKind: "url-resource" as const }
           : {}),
   });
+  const resolution =
+    input.value.path_base === "source-directory"
+      ? {
+          ...resolved,
+          limitations: [
+            ...resolved.limitations,
+            "The source-directory anchor is inferred from authored code; bundled or transformed runtime path behavior was not verified.",
+          ],
+        }
+      : resolved;
   const role = createElectronRoleNode(context, {
     kind:
       input.value.role === "preload" ? "electron-preload" : "electron-renderer",
@@ -543,7 +554,12 @@ const addDiscoveredRole = (
     range: input.value.location,
     coverage: input.coverage,
     relation: "loads",
-    properties: { mechanism: input.value.mechanism },
+    properties: {
+      mechanism: input.value.mechanism,
+      ...(input.value.path_base === undefined
+        ? {}
+        : { path_base: input.value.path_base }),
+    },
   });
   linkElectronRoleToAsset(context, {
     role,

@@ -8,9 +8,9 @@ import {
   type ManagedReconstructionImportResult,
   type ResolvedManagedReconstructionImport,
 } from "../../domain/managed/managedReconstruction.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { ok, type Result } from "../../domain/result.js";
 import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
@@ -18,14 +18,13 @@ const OPERATION = "import_managed_reconstruction" as const;
 export const resolveManagedReconstructionEvidenceInput = (
   rawInput: unknown,
 ): Result<ResolvedManagedReconstructionImport, AnalysisError> => {
-  const parsed = managedReconstructionImportRequestSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-        cause: parsed.error,
-      }),
-    );
-  return resolveManagedReconstructionImport(parsed.data);
+  const parsed = parseAnalysisInput(
+    OPERATION,
+    rawInput,
+    managedReconstructionImportRequestSchema,
+  );
+  if (!parsed.ok) return parsed;
+  return resolveManagedReconstructionImport(parsed.value);
 };
 
 /** Execute from the source facts returned by the resolver. */

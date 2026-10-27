@@ -3710,11 +3710,11 @@ pkce-challenge@5.0.1 | runtime | MIT
   Package: https://www.npmjs.com/package/pkce-challenge/v/5.0.1
   Archive: https://registry.npmjs.org/pkce-challenge/-/pkce-challenge-5.0.1.tgz
   Integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==
-playwright-core@1.58.2 | runtime | Apache-2.0
+playwright-core@1.64.1 | runtime | Apache-2.0
   Lockfile path: node_modules/playwright-core
-  Package: https://www.npmjs.com/package/playwright-core/v/1.58.2
-  Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.58.2.tgz
-  Integrity: sha512-yZkEtftgwS8CsfYo7nm0KE8jsvm6i/PTgVtB8DL726wNf6H2IMsDuxCpJj59KDaxCtSnrWan2AeDqM7JBaultg==
+  Package: https://www.npmjs.com/package/playwright-core/v/1.64.1
+  Archive: https://registry.npmjs.org/playwright-core/-/playwright-core-1.64.1.tgz
+  Integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==
 plist@5.0.0 | runtime | MIT
   Lockfile path: node_modules/plist
   Package: https://www.npmjs.com/package/plist/v/5.0.0
@@ -4810,11 +4810,11 @@ yoctocolors@2.2.0 | development | MIT
   Package: https://www.npmjs.com/package/yoctocolors/v/2.2.0
   Archive: https://registry.npmjs.org/yoctocolors/-/yoctocolors-2.2.0.tgz
   Integrity: sha512-xYqdZFUK/VYazNl/oCDYN+3WloWQwMfZxBoiNt6qNyk+xfOdi598muWE42rNZFp1kNOiqW936q5RhUdnpqElSg==
-zod@4.4.3 | runtime | MIT
+zod@4.6.6 | runtime | MIT
   Lockfile path: node_modules/zod
-  Package: https://www.npmjs.com/package/zod/v/4.4.3
-  Archive: https://registry.npmjs.org/zod/-/zod-4.4.3.tgz
-  Integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==
+  Package: https://www.npmjs.com/package/zod/v/4.6.6
+  Archive: https://registry.npmjs.org/zod/-/zod-4.6.6.tgz
+  Integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==
 zwitch@2.0.4 | development | MIT
   Lockfile path: node_modules/zwitch
   Package: https://www.npmjs.com/package/zwitch/v/2.0.4

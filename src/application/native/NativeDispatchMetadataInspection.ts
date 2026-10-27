@@ -1,3 +1,4 @@
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { nativeInventoryRowsSchemas } from "../../domain/native/nativeInventory.js";
 import {
   nativeDispatchMetadataResultSchema,
@@ -59,7 +60,7 @@ export const inspectNativeDispatch = async (
         nativeDispatchMetadataResultSchema.parse(binaryMetadata.value.result),
       ),
     );
-  if (binaryMetadata.error._tag !== "AnalysisCapabilityUnavailableError")
+  if (!permitsCapabilityFallback(binaryMetadata.error))
     return err(binaryMetadata.error);
   const execution = await analysis.execute(
     NATIVE_DISPATCH_METADATA_SOURCES.symbols,

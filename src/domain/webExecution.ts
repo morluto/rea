@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 import { MAX_BROWSER_DEADLINE_MS } from "./browserDeadline.js";
 import { jsonObjectSchema } from "./jsonValue.js";
 import {
@@ -34,8 +35,8 @@ export const webExecutionObservationSchema = z.object({
   browser: browserVersionSchema,
   target: webRuntimeTargetSchema,
   window: z.object({
-    armed_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    armed_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     requested_ms: z.int().min(1),
     end_reason: z.enum([
       "window_elapsed",

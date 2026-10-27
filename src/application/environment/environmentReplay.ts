@@ -1,6 +1,9 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { pathSegmentMatches } from "../../domain/analysisView/environmentStateRules.js";
+import {
+  ownMember,
+  pathSegmentMatches,
+} from "../../domain/analysisView/environmentStateRules.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   iterateUrlQueryParameters,
@@ -62,7 +65,7 @@ const scoreExchange = (
 ): MatchScore => {
   const providedPaths: { index: number; value: string }[] = [];
   for (const param of tool.params) {
-    const value = args[pathArguments.get(param.name) ?? param.name];
+    const value = ownMember(args, pathArguments.get(param.name) ?? param.name);
     if (typeof value === "string")
       providedPaths.push({ index: param.index, value });
   }
@@ -84,7 +87,7 @@ const scoreExchange = (
   }
   const supplied = new Map<string, readonly string[]>();
   for (const [name, argument] of queryArguments) {
-    const value = args[argument];
+    const value = ownMember(args, argument);
     if (typeof value === "string") supplied.set(name, [value]);
     else if (
       Array.isArray(value) &&
@@ -128,7 +131,8 @@ const scoreExchange = (
             const occurrence = observedOccurrences.get(name) ?? 0;
             observedOccurrences.set(name, occurrence + 1);
             const argument = queryArguments.get(name);
-            const value = argument === undefined ? undefined : args[argument];
+            const value =
+              argument === undefined ? undefined : ownMember(args, argument);
             const normalized =
               typeof value === "string"
                 ? occurrence === 0
@@ -201,7 +205,7 @@ export const selectReplayExchange = (
   if (best === undefined) return undefined;
   const suppliedQueryNames = new Set(
     [...argumentsMap.query].flatMap(([name, argument]) =>
-      args[argument] === undefined ? [] : [name],
+      ownMember(args, argument) === undefined ? [] : [name],
     ),
   );
   const queryWasSupplied = suppliedQueryNames.size > 0;
@@ -266,8 +270,10 @@ export const selectsRecordedLine = (
   if (
     !tool.params.every(
       (param) =>
-        typeof args[argumentsMap.path.get(param.name) ?? param.name] ===
-        "string",
+        typeof ownMember(
+          args,
+          argumentsMap.path.get(param.name) ?? param.name,
+        ) === "string",
     ) ||
     !scoreExchange(
       tool,
@@ -287,7 +293,7 @@ export const selectsRecordedLine = (
   }
   for (const [name, values] of recorded) {
     const argument = argumentsMap.query.get(name);
-    const supplied = args[argument ?? ""];
+    const supplied = ownMember(args, argument ?? "");
     if (
       argument === undefined ||
       (typeof supplied === "string"

@@ -7,9 +7,9 @@ import { z } from "zod";
 
 import {
   DEFAULT_SWIFTC_COMPILE_TIMEOUT_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
   providerStartupTimeoutSchema,
 } from "../config/providerStartupTimeout.js";
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type {
@@ -19,6 +19,7 @@ import type {
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import { boundedUtf8Text } from "./boundedUtf8Text.js";
+import { snapshotEnvironment } from "./snapshotEnvironment.js";
 import {
   execFileOutput,
   execFileOutputFailure,
@@ -407,7 +408,7 @@ export const createDarwinProcessRunTokenReader = (
     readonly compiler?: DarwinProcessReaderCompiler;
     /** Deadline for helper compilation, independent of provider execution. */
     readonly compileTimeoutMs?: number;
-    /** Environment consulted when `compileTimeoutMs` is omitted. */
+    /** Captured compiler/helper environment and default compile deadline. */
     readonly environment?: Readonly<Record<string, string | undefined>>;
     /**
      * Caller-owned directory holding the compiler's module cache. Unset keeps
@@ -421,7 +422,11 @@ export const createDarwinProcessRunTokenReader = (
     kind: "xcrun",
     executable: "/usr/bin/xcrun",
   };
-  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs(options);
+  const environment = snapshotEnvironment(options.environment ?? process.env);
+  const compilerTimeoutMs = resolveSwiftcCompileTimeoutMs({
+    ...options,
+    environment,
+  });
   const moduleCachePath = options.moduleCachePath ?? "";
   let root: ProcessReaderRoot | undefined;
   let executable: string | undefined;
@@ -496,7 +501,7 @@ export const createDarwinProcessRunTokenReader = (
       const compilerTemporary = join(operationRoot.path, "tmp");
       await mkdir(compilerTemporary);
       const compilerEnvironment: NodeJS.ProcessEnv = {
-        ...process.env,
+        ...environment,
         TMPDIR: compilerTemporary,
       };
       const compilerArguments =
@@ -640,6 +645,7 @@ export const createDarwinProcessRunTokenReader = (
     const pending = (async () => {
       const binary = await compile(signal);
       const { stdout } = await execFileOutput(binary, arguments_, {
+        env: environment,
         timeout: 15_000,
         stopSignal: "SIGTERM",
         ...(signal === undefined ? {} : { signal }),

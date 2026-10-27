@@ -1,5 +1,7 @@
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
+  ownMember,
   collectionPathOf,
   IDENTITY_NAMES,
   identityCandidates,
@@ -37,7 +39,7 @@ const succeeded = (record: StateRecordFacts): boolean =>
 const identityValues = (object: JsonValue | undefined): string[] =>
   isObject(object)
     ? IDENTITY_NAMES.flatMap((name) => {
-        const value = scalarText(object[name]);
+        const value = scalarText(ownMember(object, name));
         return value === undefined ? [] : [value];
       })
     : [];
@@ -101,7 +103,7 @@ const listedIds = (body: JsonValue | undefined): Set<string> => {
     ...items.flatMap(identityValues),
     ...(suffixed === undefined
       ? []
-      : items.flatMap((item) => scalarText(item[suffixed]) ?? [])),
+      : items.flatMap((item) => scalarText(ownMember(item, suffixed)) ?? [])),
   ]);
 };
 
@@ -139,7 +141,7 @@ const keptIds = (
 /** One read of a type: where it ran, when it finished, whether it reads one item, and the ids it shows. */
 interface ShownRead {
   readonly at: number;
-  readonly end: number;
+  readonly end: number | undefined;
   readonly item: boolean;
   readonly ids: ReadonlySet<string>;
 }
@@ -153,11 +155,14 @@ interface ShownRead {
 const freshIds = (
   ids: readonly string[],
   shown: readonly ShownRead[],
-  post: { readonly at: number; readonly start: number },
+  post: { readonly at: number; readonly start: number | undefined },
   until: number,
 ): string[] => {
   const before = (read: ShownRead): boolean =>
-    read.at < post.at && read.end <= post.start;
+    read.at < post.at &&
+    read.end !== undefined &&
+    post.start !== undefined &&
+    read.end <= post.start;
   const seen = shown.some(before);
   return ids.filter((id) => {
     const short = id.length < MIN_ID_LENGTH;
@@ -214,6 +219,7 @@ export const creationLimit = (
   creations: readonly CreatedIds[],
   reads: {
     readonly type: string;
+    readonly chronology: StateRecordChronology;
     readonly tools: readonly StateToolFacts[];
     readonly records: ReadonlyMap<number, StateRecordFacts>;
     readonly position: (record: StateRecordFacts) => number;
@@ -248,7 +254,7 @@ export const creationLimit = (
       return [
         {
           at,
-          end: record.end,
+          end: reads.chronology.endMs(record),
           item,
           ids: keptIds(ids, returned, reads.retain),
         },
@@ -260,7 +266,7 @@ export const creationLimit = (
   )) {
     const at = reads.position(creation.record);
     if (at >= end) break;
-    const post = { at, start: creation.record.start };
+    const post = { at, start: reads.chronology.startMs(creation.record) };
     if (freshIds(creation.ids, shown, post, end).length > 0)
       return creation.record;
   }
@@ -275,6 +281,7 @@ export const creationLimit = (
  */
 export const linkedCreate = (input: {
   readonly tool: StateToolFacts;
+  readonly chronology: StateRecordChronology;
   readonly records: readonly StateRecordFacts[];
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
@@ -295,7 +302,7 @@ export const linkedCreate = (input: {
   // Only a read finished before the call began shows what was there before it, as `freshIds` decides.
   const before = records
     .slice(0, first)
-    .filter((record) => record.end <= post.start);
+    .filter((record) => input.chronology.completedBefore(record, post));
   for (const record of records.slice(first + 1)) {
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
@@ -416,6 +423,7 @@ export const linkedTarget = (
   classified: { readonly effect: WriteEffect; readonly target: string | null },
   input: {
     readonly records: readonly StateRecordFacts[];
+    readonly chronology: StateRecordChronology;
     readonly isWrite: (record: StateRecordFacts) => boolean;
     readonly viewOf: (ordinal: number) => StateView | undefined;
     readonly entities: readonly StateEntity[];
@@ -436,6 +444,7 @@ export const linkedTarget = (
       ? linkedCreate({
           tool,
           records: input.records,
+          chronology: input.chronology,
           isWrite: input.isWrite,
           viewOf: input.viewOf,
           entities: input.entities,

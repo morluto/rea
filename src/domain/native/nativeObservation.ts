@@ -1,6 +1,47 @@
+import { invalidNativeOutput } from "./nativeProviderOutput.js";
 import { z } from "zod";
-import { containingProcedureResolutionSchema } from "../hopperValues.js";
+import { procedureIdentitySchema } from "./procedureInfo.js";
+import { AnalysisOutputError } from "../analysisErrorCore.js";
+import type { JsonValue } from "../jsonValue.js";
+import { err, ok, type Result } from "../result.js";
 import { nativeCallGraphSchema } from "./nativeCallGraph.js";
+
+/** Exact containing-procedure outcome; valid absence is distinct from unreadable output. */
+export const containingProcedureResolutionSchema = z.discriminatedUnion(
+  "found",
+  [
+    z.object({
+      query_address: z.string(),
+      found: z.literal(true),
+      procedure: procedureIdentitySchema,
+    }),
+    z.object({
+      query_address: z.string(),
+      found: z.literal(false),
+      procedure: z.null(),
+      reason: z.enum(["outside_segments", "not_in_procedure"]),
+    }),
+  ],
+);
+export type ContainingProcedureResolution = z.infer<
+  typeof containingProcedureResolutionSchema
+>;
+
+/** Validate provider procedure facts before a workflow interprets absence. */
+export const parseContainingProcedureResolution = (
+  value: JsonValue,
+): Result<ContainingProcedureResolution, AnalysisOutputError> => {
+  const parsed = containingProcedureResolutionSchema.safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : err(
+        new AnalysisOutputError(
+          "resolve_containing_procedure",
+          "expected a containing-procedure resolution",
+          { cause: parsed.error },
+        ),
+      );
+};
 
 export const NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS = [
   "procedure_address",
@@ -34,3 +75,17 @@ export const isNativeObservationOperation = (
   operation: string,
 ): operation is NativeObservationOperation =>
   NATIVE_OBSERVATION_OPERATIONS.some((supported) => supported === operation);
+
+/** Parse the provider callee/caller address array. */
+export const parseRelatedAddresses = (
+  value: JsonValue,
+  relation: "callees" | "callers",
+  operation = relation === "callees"
+    ? "procedure_callees"
+    : "procedure_callers",
+): Result<readonly string[], AnalysisOutputError> => {
+  const parsed = z.array(z.string()).safeParse(value);
+  return parsed.success
+    ? ok(parsed.data)
+    : invalidNativeOutput(operation, `${relation} list`, parsed.error);
+};

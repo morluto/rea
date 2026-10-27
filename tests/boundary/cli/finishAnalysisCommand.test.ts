@@ -105,3 +105,93 @@ it("retains late cancellation and completed Evidence when close also fails", asy
     },
   });
 });
+
+it.each([false, true])(
+  "recovers only producer-attested completed output after confirmed cleanup (cancel=%s)",
+  async (cancel) => {
+    const evidence = scriptCaptureEvidenceFixture();
+    const controller = new AbortController();
+    const failure = new ProviderCleanupError(
+      "fixture-provider",
+      ["root"],
+      { reason: "initial cleanup refused" },
+      {
+        operation: "inspect_web_page",
+        partialObservation: evidence,
+        completedObservation: evidence,
+      },
+    );
+    const result = await finishAnalysisCommand(
+      async () => err(failure),
+      {
+        close: async () => {
+          failure.resolveCleanup();
+          if (cancel) controller.abort("cancelled during successful retry");
+        },
+      },
+      "fixture-provider",
+      "inspect_web_page",
+      controller.signal,
+      undefined,
+      { recoverCompletedObservation: (observation) => observation },
+    );
+    if (!cancel) expect(result).toEqual(evidence);
+    else
+      expect(result).toMatchObject({
+        code: "cancelled",
+        details: {
+          partial_observation: evidence,
+          diagnostics: {
+            cleanup_history: {
+              details: { diagnostics: { reason: "initial cleanup refused" } },
+            },
+          },
+        },
+      });
+  },
+);
+
+it.each(["unresolved", "ordinary-partial", "initial-projection"] as const)(
+  "does not recover %s cleanup output",
+  async (kind) => {
+    const evidence = scriptCaptureEvidenceFixture();
+    const failure = new ProviderCleanupError(
+      "fixture-provider",
+      ["root"],
+      { reason: "cleanup refused" },
+      {
+        partialObservation: evidence,
+        ...(kind === "ordinary-partial"
+          ? {}
+          : { completedObservation: evidence }),
+      },
+    );
+    const initial = projectAnalysisError(failure);
+    let attemptedRecovery = false;
+    const result = await finishAnalysisCommand(
+      async () => err(failure),
+      {
+        close: async () => {
+          if (kind !== "unresolved") failure.resolveCleanup();
+        },
+      },
+      "fixture-provider",
+      "inspect_web_page",
+      new AbortController().signal,
+      undefined,
+      {
+        ...(kind === "initial-projection"
+          ? { failureProjection: "initial" as const }
+          : {}),
+        recoverCompletedObservation: (observation) => {
+          attemptedRecovery = true;
+          return observation;
+        },
+      },
+    );
+    expect(attemptedRecovery).toBe(false);
+    expect(result).toEqual(
+      kind === "initial-projection" ? initial : projectAnalysisError(failure),
+    );
+  },
+);

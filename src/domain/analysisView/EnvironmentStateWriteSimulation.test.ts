@@ -1,9 +1,12 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
 import { OmittedFields } from "./environmentStateWriteOmitted.js";
 import { checkedLines, servedLine } from "./environmentStateCheckedLines.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   timedCaptureEvidence,
+  analysisViewCaptureEvidence,
+  environmentManifestCaptureFixture,
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -34,6 +37,7 @@ import {
 import { updatedFields } from "./environmentStateWriteApply.js";
 import {
   retainFixed,
+  retainCreateExemplar,
   type EffectContext,
 } from "./environmentStateWriteEffects.js";
 
@@ -1298,8 +1302,7 @@ describe("encoded parent spellings", () => {
       path: "/api/orgs/uid/acme1/books",
       query: undefined,
       status: 200,
-      start: 0,
-      end: 0,
+      timing: { start: undefined, endMs: undefined },
     };
     const lines = checkedLines({
       tools: [tool],
@@ -1502,8 +1505,7 @@ describe("resolved encoded item observations", () => {
       path: "/api/orgs/acme1/books/%61",
       query: undefined,
       status: 204,
-      start: 0,
-      end: 0,
+      timing: { start: undefined, endMs: undefined },
     };
     const target = itemTarget(state, "/api/orgs/{org_id}/books", write);
     const itemView = {
@@ -1516,19 +1518,20 @@ describe("resolved encoded item observations", () => {
       checked_record_ordinals: [1],
       envelope_ordinal: 1,
     };
+    const records = [
+      write,
+      {
+        ordinal: 1,
+        method: "GET",
+        path: "/api/orgs/acme1/books/%61",
+        query: undefined,
+        status: 200,
+        timing: { start: undefined, endMs: undefined },
+      },
+    ];
     const search: ObservationSearch = {
-      records: [
-        write,
-        {
-          ordinal: 1,
-          method: "GET",
-          path: "/api/orgs/acme1/books/%61",
-          query: undefined,
-          status: 200,
-          start: 1,
-          end: 1,
-        },
-      ],
+      records,
+      chronology: new StateRecordChronology(records, "record-order"),
       from: 0,
       viewOf: () => itemView,
       withBody: (_ordinal, use) => use({ id: "%61", name: "After" }),
@@ -2130,7 +2133,54 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
+it("leaves the global served clock unknown when any record completion is unknown", () => {
+  const rows = (duration: number): TimedCaptureRow[] => [
+    ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
+    // Even an earlier record with an unknown end may finish after the final known record.
+    ["GET", "/api/books/1", FIRST_BOOK, 200, undefined, duration],
+    ["GET", "/api/books/2", SECOND_BOOK],
+  ];
+  expect(
+    environmentStateViewOf(timedCaptureEvidence(rows(5))).write_clock,
+  ).toBe(new Date(bookClock(3)).toISOString());
+  expect(
+    environmentStateViewOf(timedCaptureEvidence(rows(-1))).write_clock,
+  ).toBeNull();
+});
+
 describe("reads and calls on an entity an unmodelled write left unknown", () => {
+  it.each([
+    { duration: 5, target: "1", served: true },
+    { duration: -1, target: "1", served: false },
+    { duration: -1, target: "2", served: true },
+  ])(
+    "requires unmodelled completion before resync and later confirmation: $target duration=$duration",
+    ({ duration, target, served }) => {
+      const rows: TimedCaptureRow[] = [
+        [
+          "GET",
+          "/api/books",
+          [
+            { id: 1, name: "A" },
+            { id: 2, name: "B" },
+          ],
+        ],
+        ["GET", "/api/books/1", { id: 1, name: "A" }],
+        ["GET", "/api/books/2", { id: 2, name: "B" }],
+        ["POST", `/api/books/${target}/archive`, null, 204, {}, duration],
+        // This read may re-establish a baseline only after the related action finished.
+        ["GET", "/api/books/1", { id: 1, name: "A" }],
+        ["PATCH", "/api/books/1", { id: 1, name: "Z" }, 200, { name: "Z" }],
+        ["GET", "/api/books/1", { id: 1, name: "Z" }],
+      ];
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served,
+        checked_record_ordinals: served ? [6] : [],
+        contradicted_by: null,
+      });
+    },
+  );
+
   const named = (name: string) => ({ id: 1, name });
   const other = { id: 2, name: "B" };
   const ARCHIVE: TimedCaptureRow = [
@@ -2307,8 +2357,7 @@ describe("entities an unmodelled write made", () => {
       path: "/api/books/3",
       query: undefined,
       status: 200,
-      start: 1,
-      end: 1,
+      timing: { start: undefined, endMs: undefined },
     };
     expect(
       unseen.adopt(view as unknown as StateItemView, { record, index: 1 }),
@@ -2333,8 +2382,7 @@ describe("entities an unmodelled write made", () => {
         path: "/api/books/3",
         query: undefined,
         status: 200,
-        start: index,
-        end: index,
+        timing: { start: undefined, endMs: undefined },
       },
       index,
     });
@@ -3042,8 +3090,7 @@ it("learns omitted fields using the raw ID resolved by the item owner", () => {
     path: "/api/books/%63",
     query: undefined,
     status: 200,
-    start: 1,
-    end: 1,
+    timing: { start: undefined, endMs: undefined },
   };
   const target = itemTarget(state, view.type, record);
   expect(target.id).toBe("%63");
@@ -3066,3 +3113,188 @@ it("learns omitted fields using the raw ID resolved by the item owner", () => {
     required_fields: ["id", "name"],
   });
 });
+
+describe("create exemplar retention", () => {
+  const facts = () => {
+    const snapshot = { id: "held", payload: "p".repeat(1_000_000) };
+    const held = Array.from({ length: 1000 }, () => snapshot);
+    return {
+      entity: { id: "new", url: "/new" },
+      call: {
+        path: "/items",
+        pathValues: new Map<string, string>(),
+        body: { payload: "x".repeat(10_000) },
+      },
+      idField: "id",
+      startMs: undefined,
+      collection: held,
+      type: held,
+    };
+  };
+  it("charges temporary request facts and shared snapshot references without rebilling owned entity payloads", () => {
+    let retained = 0;
+    const context = {
+      io: {
+        retain: (bytes: number) => {
+          retained += bytes;
+        },
+      },
+    } as unknown as EffectContext;
+    const input = facts();
+    expect(retainCreateExemplar(context, input, [])).toBe(input);
+    expect(retained).toBeGreaterThan(28_000);
+    expect(retained).toBeLessThan(40_000);
+  });
+  it("retains no exemplar when every string field is already explained", () => {
+    const retain = vi.fn();
+    const context = { io: { retain } } as unknown as EffectContext;
+    expect(
+      retainCreateExemplar(context, facts(), [
+        { field: "id", rule: "echo" },
+        { field: "url", rule: "echo" },
+      ]),
+    ).toBeUndefined();
+    expect(retain).not.toHaveBeenCalled();
+  });
+  it("does not adopt request facts when the retained budget refuses them", () => {
+    const context = {
+      io: {
+        retain: () => {
+          throw new Error("budget exhausted");
+        },
+      },
+    } as unknown as EffectContext;
+    expect(() => retainCreateExemplar(context, facts(), [])).toThrow(
+      "budget exhausted",
+    );
+  });
+});
+it.each([
+  {
+    label: "point read with simultaneous unknown action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: -1,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "point read with simultaneous point action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: 0,
+    target: "1",
+    served: true,
+  },
+  {
+    label: "point read with unrelated unknown action",
+    archiveStart: 4,
+    duration: 0,
+    archiveDuration: -1,
+    target: "2",
+    served: true,
+  },
+  {
+    label: "same-start later ordinal",
+    archiveStart: 4,
+    duration: 5,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "later start within response interval",
+    archiveStart: 5,
+    duration: 1500,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "unknown response completion",
+    archiveStart: 5,
+    duration: -1,
+    target: "1",
+    served: false,
+  },
+  {
+    label: "known disjoint response interval",
+    archiveStart: 6,
+    duration: 1500,
+    target: "1",
+    served: true,
+  },
+  {
+    label: "unrelated overlapping write",
+    archiveStart: 5,
+    duration: 1500,
+    target: "2",
+    served: true,
+  },
+])(
+  "requires a read free of captured write overlap: $label",
+  ({ archiveStart, duration, target, served, ...options }) => {
+    const rows: TimedCaptureRow[] = [
+      [
+        "GET",
+        "/api/books",
+        [
+          { id: 1, name: "A" },
+          { id: 2, name: "B" },
+        ],
+      ],
+      ["GET", "/api/books/1", { id: 1, name: "A" }],
+      ["GET", "/api/books/2", { id: 2, name: "B" }],
+      ["PATCH", "/api/books/1", { id: 1, name: "Z" }, 200, { name: "Z" }],
+      ["GET", "/api/books/1", { id: 1, name: "Z" }, 200, undefined, duration],
+      [
+        "POST",
+        `/api/books/${target}/archive`,
+        null,
+        204,
+        {},
+        "archiveDuration" in options ? options.archiveDuration : 5,
+      ],
+    ];
+    const entries = rows.map(
+      (
+        [method, path, body = null, status = 200, request, time = 5],
+        index,
+      ) => ({
+        startedDateTime: new Date(
+          Date.parse(bookClock(index === 5 ? archiveStart : index)),
+        ).toISOString(),
+        time,
+        request: {
+          method,
+          url: `http://app.example${path}`,
+          bodySize:
+            request === undefined
+              ? 0
+              : Buffer.byteLength(JSON.stringify(request)),
+          ...(request === undefined
+            ? {}
+            : {
+                postData: {
+                  mimeType: "application/json",
+                  text: JSON.stringify(request),
+                },
+              }),
+        },
+        response: {
+          status,
+          content: { mimeType: "application/json", text: JSON.stringify(body) },
+        },
+      }),
+    );
+    const capture = analysisViewCaptureEvidence(
+      environmentManifestCaptureFixture(entries),
+    );
+    const plan = environmentStateViewOf(capture).writes.find(
+      (write) => write.tool === "patch_books_by_id",
+    );
+    expect(plan).toMatchObject({
+      served,
+      checked_record_ordinals: served ? [4] : [],
+      contradicted_by: null,
+    });
+  },
+);

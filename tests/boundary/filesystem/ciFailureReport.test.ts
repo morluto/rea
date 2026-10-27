@@ -121,6 +121,54 @@ it("attributes only an identical structured lint failure with matching task, con
 });
 
 it.each([
+  ...[
+    "nodeVersion",
+    "npmVersion",
+    "turboVersion",
+    "platform",
+    "architecture",
+  ].map((field) => [field, { [field]: "" }] as const),
+  ["optional head hash", { prHeadSha: "bad" }],
+  [
+    "unrelated task hash",
+    { taskHashes: { "lint:built": "a".repeat(16), typecheck: "bad" } },
+  ],
+] as const)(
+  "keeps malformed %s provenance unknown on either side",
+  (_label, invalid) => {
+    for (const side of ["context", "mainContext"] as const) {
+      const input = comparison();
+      expect(
+        classifyFailure({
+          ...input,
+          [side]: { ...input[side], ...invalid },
+        }),
+      ).toEqual({
+        classification: "unknown",
+        reason: "static_task_context_missing_or_invalid",
+      });
+    }
+  },
+);
+
+it.each(["path", "code"] as const)(
+  "keeps applicability unknown when the lint %s is unavailable on both runs",
+  (missing) => {
+    const { [missing]: _omitted, ...retained } = diagnostic;
+    expect(
+      classifyFailure({
+        ...comparison(),
+        diagnostics: [retained],
+        mainDiagnostics: [retained],
+      }),
+    ).toEqual({
+      classification: "unknown",
+      reason: "diagnostic_shape_not_supported",
+    });
+  },
+);
+
+it.each([
   ["task hash", { mainContext: context(sha("c"), "b".repeat(16)) }],
   ["dirty source", { context: { ...context(sha("a")), sourceClean: false } }],
   [

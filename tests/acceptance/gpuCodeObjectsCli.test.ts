@@ -16,6 +16,7 @@ import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import {
   cudaFixture,
+  peGpuFixture,
   ccobFixture,
   ptxFixture,
   amdFixture,
@@ -1149,3 +1150,39 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
   );
   expect(identityFailure.error).toMatchObject({ code: "invalid_request" });
 });
+
+cliTest(
+  "uses DOS relocation ownership before GPU section discovery through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gpu-dos-relocations-cli-");
+    const path = join(root, "selected.exe");
+    const bytes = peGpuFixture();
+    bytes.writeUInt16LE(bytes.length % 512, 2);
+    bytes.writeUInt16LE(Math.ceil(bytes.length / 512), 4);
+    bytes.writeUInt16LE(2, 8);
+    await writeFile(path, bytes);
+    const args = [
+      "inspect-gpu-code-objects",
+      path,
+      "--analysis",
+      "inventory",
+      "--json",
+    ];
+    const valid = await cli.run({ arguments: args });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    bytes.writeUInt16LE(1, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(60, 24);
+    await writeFile(path, bytes);
+    const refused = await cli.run({ arguments: args });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        path,
+        constraint: "file_format_rejected",
+        reason: "MZ header does not declare a PE image",
+      },
+    });
+  },
+);

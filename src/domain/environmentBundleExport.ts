@@ -105,6 +105,7 @@ export const environmentBuildReportSchema = z.strictObject({
         "name-from-file",
         "credential-named-members",
         "credential-scan-incomplete",
+        "credential-named-saved-values",
       ]),
       message: z.string(),
       pointers: z

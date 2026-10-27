@@ -12,7 +12,7 @@ import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   REGEX_MATCHING_DEADLINE_SETTING,
 } from "../config/regexMatchingDeadline.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   AnalysisProtocolError,

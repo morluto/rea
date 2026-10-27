@@ -12,7 +12,7 @@ import type { Result } from "../../domain/result.js";
 /** Stable read and CPython pyc decoding, independent of a disassembler session. */
 export interface PythonPycPort {
   readonly identity: ProviderIdentity;
-  close?(): Promise<void>;
+  close(): Promise<void>;
   inspect(
     input: InspectPythonPycInput,
     options?: ExecutionOptions,

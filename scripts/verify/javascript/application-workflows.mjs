@@ -42,8 +42,8 @@ const [leftPath, rightPath] = await Promise.all([
 if (leftPath === rightPath)
   throw new Error("--left and --right must resolve to distinct paths");
 const [left, right] = await Promise.all([
-  analyze(leftPath),
-  analyze(rightPath),
+  analyze(options.left),
+  analyze(options.right),
 ]);
 const comparison = compareApplicationVersionsEvidence({ left, right });
 if (!comparison.ok) throw comparison.error;

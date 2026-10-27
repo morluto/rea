@@ -24,7 +24,10 @@ import {
   publishAttempt,
   finishProducerGroups,
 } from "./lib/http3-verifier-lifecycle.mjs";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 
 const root = process.argv[2];
 const inspectExisting = process.argv[3] === "--inspect-existing";
@@ -134,14 +137,11 @@ async function mcp(input, name) {
     join(directory, `${name}.mcp.reply.json`),
     JSON.stringify(reply, null, 2),
   );
-  const value = JSON.parse(mcpTextValue(reply));
-  assert.notEqual(reply.isError, true, mcpTextValue(reply));
+  const evidence = requireMcpOutput(reply, contract.name, contract);
   assert.ok(
     validateOutput(reply.structuredContent),
     JSON.stringify(validateOutput.errors),
   );
-  const evidence = contract.outputSchema.parse(value);
-  assert.deepEqual(reply.structuredContent, value);
   retainedEvidence.push(evidence);
   return evidence;
 }
@@ -288,10 +288,8 @@ try {
     name: "get_evidence_bundle",
     arguments: {},
   });
-  assert.notEqual(bundleReply.isError, true, mcpTextValue(bundleReply));
-  const bundle = JSON.parse(mcpTextValue(bundleReply)).result;
+  const bundle = requireMcpEvidenceBundle(bundleReply);
   const records = bundle.records;
-  assert.ok(Array.isArray(records), "Evidence bundle omitted its records");
   for (const evidence of retainedEvidence) {
     const retained = records.find(
       (record) => record.evidence_id === evidence.evidence_id,

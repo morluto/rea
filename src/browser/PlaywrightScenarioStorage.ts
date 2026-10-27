@@ -1,3 +1,8 @@
+import {
+  storageScriptParsedSchema,
+  storageContextSchema,
+  storageContextDestroyedSchema,
+} from "./CdpScriptContextFacts.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { randomUUID } from "node:crypto";
 
@@ -70,19 +75,6 @@ const nestedProtocolMessage = z.object({
   result: z.unknown().optional(),
   error: z.object({ message: z.string() }).optional(),
 });
-const executionContextEvent = z.object({
-  context: z.object({
-    id: z.number(),
-    origin: z.string(),
-    name: z.string(),
-    auxData: z.object({ frameId: z.string().optional() }).optional(),
-  }),
-});
-const scriptParsedEvent = z.object({
-  scriptId: z.string(),
-  executionContextId: z.number(),
-  url: z.string(),
-});
 const pausedEvent = z.object({
   callFrames: z.array(
     z.object({
@@ -111,7 +103,7 @@ interface StorageTarget {
   ) => Promise<unknown>;
   readonly contexts: Map<
     number,
-    z.infer<typeof executionContextEvent>["context"]
+    z.infer<typeof storageContextSchema>["context"]
   >;
   readonly scripts: Map<string, number>;
   ready: Promise<void>;
@@ -411,19 +403,18 @@ export class PlaywrightScenarioStorage {
     if (target === undefined) return;
     try {
       if (method === "Runtime.executionContextCreated") {
-        const { context } = executionContextEvent.parse(params);
+        const { context } = storageContextSchema.parse(params);
         if (context.name === this.#sourceUrl)
           target.contexts.set(context.id, context);
       } else if (method === "Runtime.executionContextDestroyed") {
-        const { executionContextId } = z
-          .object({ executionContextId: z.number() })
-          .parse(params);
+        const { executionContextId } =
+          storageContextDestroyedSchema.parse(params);
         target.contexts.delete(executionContextId);
       } else if (method === "Runtime.executionContextsCleared") {
         target.contexts.clear();
         target.scripts.clear();
       } else if (method === "Debugger.scriptParsed") {
-        const script = scriptParsedEvent.parse(params);
+        const script = storageScriptParsedSchema.parse(params);
         if (script.url === this.#sourceUrl)
           target.scripts.set(script.scriptId, script.executionContextId);
       } else if (method === "Debugger.paused") {

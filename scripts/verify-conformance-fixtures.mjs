@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import {
+  bindConformanceFixtureArtifact,
+  resolveConformanceFixturePath,
   generateLargeFixture,
   sha256,
   sourceDigest,
@@ -63,7 +65,10 @@ async function resolveSourceRoot(manifestPath, declaredSourceRoot) {
 }
 
 async function verifyFixture(fixture) {
-  const artifactPath = await confinedPath(root, fixture.artifact);
+  const artifactPath = await resolveConformanceFixturePath(
+    root,
+    fixture.artifact,
+  );
   const sources = [];
   for (const source of fixture.sources ?? []) {
     if (typeof source.path !== "string" || typeof source.sha256 !== "string")
@@ -71,7 +76,9 @@ async function verifyFixture(fixture) {
     const content =
       source.path === "generated/large.c"
         ? generateLargeFixture()
-        : await readFile(await confinedPath(sourceRoot, source.path));
+        : await readFile(
+            await resolveConformanceFixturePath(sourceRoot, source.path),
+          );
     if (sha256(content) !== source.sha256)
       throw new Error(
         `${fixture.name}: source hash mismatch for ${source.path}`,
@@ -80,9 +87,7 @@ async function verifyFixture(fixture) {
   }
   if (sourceDigest(sources) !== fixture.sourceSha256)
     throw new Error(`${fixture.name}: source manifest digest mismatch`);
-  const artifact = await readFile(artifactPath);
-  if (sha256(artifact) !== fixture.artifactSha256)
-    throw new Error(`${fixture.name}: artifact hash mismatch`);
+  await bindConformanceFixtureArtifact(artifactPath, fixture);
   const fileOutput = (await exec("file", [artifactPath])).stdout;
   if (!fileOutput.includes(fileMarker))
     throw new Error(`${fixture.name}: not ${fileMarker}`);
@@ -113,20 +118,6 @@ async function verifyFixture(fixture) {
     expectations.stringCount,
     fixture.name,
   );
-}
-
-async function confinedPath(rootPath, declaredPath) {
-  if (typeof declaredPath !== "string")
-    throw new Error("Conformance manifest path is invalid");
-  const path = await realpath(resolve(rootPath, declaredPath));
-  const relation = relative(rootPath, path);
-  if (
-    relation === ".." ||
-    relation.startsWith(`..${sep}`) ||
-    isAbsolute(relation)
-  )
-    throw new Error(`Conformance path escapes its root: ${declaredPath}`);
-  return path;
 }
 
 function verifyCount(output, prefix, expected, fixture) {

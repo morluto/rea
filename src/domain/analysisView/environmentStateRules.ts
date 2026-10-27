@@ -1,3 +1,5 @@
+import type { OffsetDateTimeInstant } from "../offsetDateTime.js";
+import type { StateRecordChronology } from "./StateRecordChronology.js";
 import type { ListQuery } from "./environmentStateListQuery.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -21,8 +23,12 @@ export interface StateRecordFacts {
   /** WHATWG query spelling including `?`, or undefined when the request had none. */
   readonly query: string | undefined;
   readonly status: number | null;
-  readonly start: number;
-  readonly end: number;
+  readonly timing: {
+    readonly start:
+      | { readonly instant: OffsetDateTimeInstant; readonly ms: number }
+      | undefined;
+    readonly endMs: number | undefined;
+  };
 }
 
 /** The manifest tool facts extraction uses. */
@@ -33,7 +39,7 @@ export interface StateToolFacts {
   readonly record_ordinals: readonly number[];
 }
 
-/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable or carrying a `__proto__` member. */
+/** A record's response body as JSON, or unusable when absent, cut, not JSON, not exactly representable. */
 export type ParsedBody =
   | { readonly kind: "json"; readonly value: JsonValue }
   | { readonly kind: "unusable" };
@@ -265,6 +271,29 @@ export const scalarText = (value: JsonValue | undefined): string | undefined =>
     : typeof value === "number"
       ? String(value)
       : undefined;
+/** A JSON dictionary lookup observes only its own members, preserving absent fields. */
+export const ownMember = <Value>(
+  object: Readonly<Record<string, Value>> | undefined,
+  member: string,
+): Value | undefined =>
+  object !== undefined && Object.hasOwn(object, member)
+    ? object[member]
+    : undefined;
+
+/** Write one JSON member without interpreting its name as an inherited setter. */
+export const setOwnMember = (
+  object: JsonObject,
+  member: string,
+  value: JsonValue,
+): void => {
+  Object.defineProperty(object, member, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+};
+
 /** Equal JSON values; object member order carries no meaning. */
 export const same = (
   left: JsonValue | undefined,
@@ -369,24 +398,52 @@ export const isStateWrite = (record: StateRecordFacts): boolean =>
   changesState(record.method, record.path) &&
   (record.status === null || (record.status >= 200 && record.status < 400));
 
-/** Whether any write overlaps the span from one record's start to a later record's end; writes come in timeline order. */
-export const writeSpanCheck = (
+/** Index possible write interference without inventing completion for unknown intervals. */
+export const writeSpanIndex = (
   writes: readonly StateRecordFacts[],
-): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
-  // The latest end among each prefix of writes, so one search answers a span.
-  const reach: number[] = [];
-  for (const write of writes)
-    reach.push(Math.max(reach.at(-1) ?? Number.NEGATIVE_INFINITY, write.end));
+  chronology: StateRecordChronology,
+): ((
+  earlier: StateRecordFacts,
+  later: StateRecordFacts,
+) => number | undefined) => {
+  const reach: (number | undefined)[] = [];
+  const starts: (number | undefined)[] = [];
+  let maximum: number | undefined;
+  let unknown = false;
+  for (const write of writes) {
+    const end = chronology.endMs(write);
+    if (end === undefined) unknown = true;
+    else maximum = maximum === undefined ? end : Math.max(maximum, end);
+    reach.push(unknown ? undefined : maximum);
+    starts.push(chronology.startMs(write));
+  }
   return (earlier, later) => {
+    const beginning = chronology.startMs(earlier);
+    const ending = chronology.endMs(later);
     let low = 0;
     let high = writes.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      if (writes[middle]!.start < later.end) low = middle + 1;
-      else high = middle;
+      const end = reach[middle];
+      if (beginning === undefined || end === undefined || end > beginning)
+        high = middle;
+      else low = middle + 1;
     }
-    return low > 0 && reach[low - 1]! > earlier.start;
+    const start = starts[low];
+    return low < writes.length &&
+      (ending === undefined || start === undefined || start < ending)
+      ? low
+      : undefined;
   };
+};
+
+/** Whether a write may overlap the span; unknown completion cannot prove absence. */
+export const writeSpanCheck = (
+  writes: readonly StateRecordFacts[],
+  chronology: StateRecordChronology,
+): ((earlier: StateRecordFacts, later: StateRecordFacts) => boolean) => {
+  const index = writeSpanIndex(writes, chronology);
+  return (earlier, later) => index(earlier, later) !== undefined;
 };
 
 /** Literal leading segments shared by every template with the same first segment: each path's API base. */
@@ -463,15 +520,6 @@ export const deeperThan = (value: JsonValue, limit: number): boolean => {
   return false;
 };
 
-/** JSON parsers keep a `__proto__` member that plain object construction would turn into a prototype. */
-export const hasPrototypeKey = (value: JsonValue): boolean =>
-  Array.isArray(value)
-    ? value.some(hasPrototypeKey)
-    : isObject(value) &&
-      Object.entries(value).some(
-        ([name, item]) => name === "__proto__" || hasPrototypeKey(item),
-      );
-
 export const pointerTo = (name: string): string =>
   `/${name.replaceAll("~", "~0").replaceAll("/", "~1")}`;
 /** The unescaped reference tokens of a pointer. */
@@ -487,7 +535,7 @@ const memberOf = (
   body: JsonValue | undefined,
   name: string,
 ): JsonValue | undefined =>
-  isObject(body) && Object.hasOwn(body, name) ? body[name] : undefined;
+  isObject(body) ? ownMember(body, name) : undefined;
 
 /** The element of a one-element array. */
 const soleElement = (value: JsonValue | undefined): JsonValue | undefined =>
@@ -570,7 +618,7 @@ export const identifies = (
   // Stop at the first missing or repeated value, so a sparse list costs one read per field.
   const seen = new Set<string>();
   for (const item of items) {
-    const value = scalarText(item[name]);
+    const value = scalarText(ownMember(item, name));
     if (value === undefined || seen.has(value)) return false;
     seen.add(value);
   }
@@ -603,7 +651,9 @@ export const locateList = (
   if (Array.isArray(body)) return body.every(isObject) ? "" : undefined;
   if (
     !isObject(body) ||
-    IDENTITY_NAMES.some((name) => scalarText(body[name]) !== undefined)
+    IDENTITY_NAMES.some(
+      (name) => scalarText(ownMember(body, name)) !== undefined,
+    )
   )
     return undefined;
   const arrays = Object.entries(body).filter(

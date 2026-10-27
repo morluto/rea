@@ -2,6 +2,7 @@ import { ServedOrder } from "./environmentStateWriteOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   at,
   decodedSegment,
   isObject,
@@ -408,7 +409,10 @@ const listCheck = (
   )
     return { pass: false };
   const observed = new Map(
-    check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
+    check.items.map((item) => [
+      scalarText(ownMember(item, check.idField)) ?? "",
+      item,
+    ]),
   );
   const rendered = members.map((entity) =>
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
@@ -450,7 +454,7 @@ const listedTargets = (
   const targets: string[] = [];
   const unheld: string[] = [];
   const ids = [...check.baseItems, ...check.items].map(
-    (item) => scalarText(item[check.idField]) ?? "",
+    (item) => scalarText(ownMember(item, check.idField)) ?? "",
   );
   for (const id of new Set(ids))
     (state.entity(view.type, check.collection, id) === undefined
@@ -525,7 +529,7 @@ const checkAllList = (
       ),
     ],
     unheld: check.items
-      .map((item) => scalarText(item[check.idField]) ?? "")
+      .map((item) => scalarText(ownMember(item, check.idField)) ?? "")
       .filter((id) => !held.has(id))
       .map((id) => entityTarget(view.type, collection, id)),
   };
@@ -538,7 +542,8 @@ const checkRecordedList = (
   check: ListBodies,
 ): CheckOutcome => {
   const { collection } = check;
-  const idOf = (item: JsonObject) => scalarText(item[check.idField]) ?? "";
+  const idOf = (item: JsonObject) =>
+    scalarText(ownMember(item, check.idField)) ?? "";
   const members = check.baseItems.flatMap((item) => {
     const entity = state.entity(view.type, collection, idOf(item));
     return entity === undefined ? [] : [entity];

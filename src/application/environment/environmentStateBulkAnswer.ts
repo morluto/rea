@@ -9,9 +9,10 @@ import {
   writtenBulkResponse,
 } from "../../domain/analysisView/environmentStateWriteApply.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
-import type {
-  JsonObject,
-  StateEntity,
+import {
+  ownMember,
+  type JsonObject,
+  type StateEntity,
 } from "../../domain/analysisView/environmentStateRules.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -57,7 +58,8 @@ const namedTargets = (
   const { address } = plan;
   const type = plan.target ?? "";
   const name = environmentToolArguments(tool, true).body;
-  const body = name === undefined ? undefined : (args[name] as JsonValue);
+  const body =
+    name === undefined ? undefined : (ownMember(args, name) as JsonValue);
   if (body !== undefined && !isLoadableValue(body))
     return err(unloadable(tool, "The body"));
   const named =

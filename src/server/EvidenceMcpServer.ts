@@ -2,18 +2,17 @@ import type {
   Implementation,
   McpServerOptions,
 } from "@modelcontextprotocol/server";
+
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
-  FULL_CATALOG_IDENTITY,
-  createCatalogIdentity,
+  catalogIdentityForToolFamilies,
+  type createCatalogIdentity,
 } from "../catalogIdentity.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
-import {
-  EvidenceMcpServerCore,
-  type CompactInputSchemaPresentation,
-} from "./EvidenceMcpServerCore.js";
-
-export type { CompactInputSchemaPresentation } from "./EvidenceMcpServerCore.js";
+import type { McpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
+import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
+import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 
 /** Canonical composition retains the constructor's existing identity defaults. */
 export class EvidenceMcpServer extends EvidenceMcpServerCore {
@@ -23,8 +22,9 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
     recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
     delivery: ToolResultDelivery,
     compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-    omitOutputSchemas = false,
+    outputSchemaProfile: McpOutputSchemaProfile = "full",
     identity?: ReturnType<typeof createCatalogIdentity>,
+    advertisedToolFamilies: ReadonlySet<string> | undefined = undefined,
   ) {
     super(
       info,
@@ -32,14 +32,26 @@ export class EvidenceMcpServer extends EvidenceMcpServerCore {
       recordEvidence,
       delivery,
       compactPresentation,
-      omitOutputSchemas,
+      outputSchemaProfile,
       identity ??
-        (compactPresentation === undefined && !omitOutputSchemas
-          ? FULL_CATALOG_IDENTITY
-          : createCatalogIdentity(
-              compactPresentation,
-              omitOutputSchemas ? "off" : "full",
-            )),
+        catalogIdentityForToolFamilies(
+          compactPresentation,
+          outputSchemaProfile,
+          advertisedToolFamilies,
+        ),
+      advertisedToolFamilies,
     );
+  }
+
+  /**
+   * Out-of-scope tools stay registered but disabled: `tools/list` omits them
+   * and calls fail with the SDK's disabled-tool error, so status reports
+   * cannot direct agents to calls that always fail.
+   */
+  override advertisesTool(name: string): boolean {
+    const families = this.advertisedToolFamilies;
+    if (families === undefined) return true;
+    const family = toolFamilyId(name);
+    return family !== undefined && families.has(family);
   }
 }

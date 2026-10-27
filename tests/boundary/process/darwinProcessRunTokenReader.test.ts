@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -456,6 +456,84 @@ const existsPath = async (target: string) =>
     () => true,
     () => false,
   );
+
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "selected environment",
+    "selected environment and deadline",
+    "default environment",
+  ] as const)(
+  "captures the compiler and helper environment from %s",
+  async (selection) => {
+    const directory = await createTestTempDirectory(
+      "rea-process-token-selected-environment-",
+    );
+    const developerDirectory = join(directory, "selected Xcode.app");
+    const compileState = join(directory, "compile-environment.json");
+    const executable = join(directory, "fixture-xcrun");
+    const helper = `#!${process.execPath}
+console.log(JSON.stringify({ results: process.argv.slice(2).map(pid => ({
+  pid: Number(pid), state: "readable", run_id: process.env.DEVELOPER_DIR,
+})) }));
+`;
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+const fs = process.getBuiltinModule("node:fs");
+fs.writeFileSync(${JSON.stringify(compileState)}, JSON.stringify({
+  developerDirectory: process.env.DEVELOPER_DIR ?? null,
+}));
+const output = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(output, ${JSON.stringify(helper)});
+fs.chmodSync(output, 0o755);
+`,
+      { mode: 0o755 },
+    );
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    vi.stubEnv("DEVELOPER_DIR", developerDirectory);
+    const environment = { ...process.env };
+    const compiler = { kind: "xcrun" as const, executable };
+    const reader =
+      selection === "default environment"
+        ? createDarwinProcessRunTokenReader({ compiler })
+        : createSystemProcessOwnershipHost("darwin", environment, {
+            darwinCompiler: compiler,
+            ...(selection === "selected environment and deadline"
+              ? { compileTimeoutMs: 15_000 }
+              : {}),
+          });
+    environment.DEVELOPER_DIR = join(directory, "later caller selection");
+    vi.stubEnv("DEVELOPER_DIR", join(directory, "later ambient selection"));
+    try {
+      await reader.prepare?.(AbortSignal.timeout(15_000));
+      expect(JSON.parse(await readFile(compileState, "utf8"))).toEqual({
+        developerDirectory,
+      });
+      const processes = [
+        {
+          pid: 123,
+          parentPid: 1,
+          processGroupId: 123,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const observations =
+        "read" in reader
+          ? await reader.read(processes)
+          : await reader.runTokens?.(processes);
+      expect(observations?.get(123)).toEqual({
+        state: "readable",
+        runId: developerDirectory,
+      });
+    } finally {
+      await reader.close?.();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "forwards a caller-owned module cache and keeps it after the helper root is removed",

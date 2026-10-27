@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { estimateTokenCount } from "tokenx";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -46,9 +51,7 @@ const assertRejectedSelector = (
   field,
   expectedExitCode = 1,
 ) => {
-  assert.equal(response.isError, true);
-  const text = response.content.find((item) => item.type === "text")?.text;
-  const { error } = JSON.parse(text ?? "{}");
+  const error = requireMcpToolError(response);
   assert.equal(error.code, "invalid_request");
   assert.equal(error.details.operation, operation);
   assert.deepEqual(
@@ -122,12 +125,13 @@ await withVerifierCleanup(async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       ajv.validate(advertised.outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "decode_signal_recording"),
+    );
     const report = evidence.normalized_result;
     for (const byte of ["52", "45", "41"])
       assert.match(
@@ -171,11 +175,17 @@ await withVerifierCleanup(async () => {
       ).stdout,
     );
     assert.equal(parseEvidence(cli).evidence_id, evidence.evidence_id);
-    const bundle = await client.callTool({
-      name: "get_evidence_bundle",
-      arguments: {},
-    });
-    assert.ok(JSON.stringify(bundle).includes(evidence.evidence_id));
+    const bundle = requireMcpEvidenceBundle(
+      await client.callTool({
+        name: "get_evidence_bundle",
+        arguments: {},
+      }),
+    );
+    assert.ok(
+      bundle.records.some(
+        (record) => record.evidence_id === evidence.evidence_id,
+      ),
+    );
     assert.equal(await readFile(path, "utf8"), source);
     cases++;
   }
@@ -231,12 +241,13 @@ await withVerifierCleanup(async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       ajv.validate(advertised.outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "decode_signal_recording"),
+    );
     const report = evidence.normalized_result;
     assert.deepEqual(report.output_window, {
       total_lines: 120,
@@ -291,9 +302,9 @@ await withVerifierCleanup(async () => {
       name: advertised.name,
       arguments: input,
     });
-    assert.equal(response.isError, true);
     if (rejectedField !== undefined)
       assertRejectedSelector(response, advertised.name, rejectedField);
+    else requireMcpToolError(response);
     await client.ping();
     cases++;
   }
@@ -302,7 +313,7 @@ await withVerifierCleanup(async () => {
     name: advertised.name,
     arguments: { path, decoders: "uart" },
   });
-  assert.equal(invalid.isError, true);
+  requireMcpToolError(invalid);
   cases++;
   const discoveryTool = (await client.listTools()).tools.find(
     ({ name }) => name === "inspect_signal_decoders",
@@ -360,12 +371,13 @@ await withVerifierCleanup(async () => {
       name: discoveryTool.name,
       arguments: input,
     });
-    assert.notEqual(response.isError, true, JSON.stringify(response));
     assert.ok(
       ajv.validate(discoveryTool.outputSchema, response.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const evidence = parseEvidence(response.structuredContent);
+    const evidence = parseEvidence(
+      requireMcpOutput(response, "inspect_signal_decoders"),
+    );
     const report = evidence.normalized_result;
     discoveryMeasurements.push({
       input,

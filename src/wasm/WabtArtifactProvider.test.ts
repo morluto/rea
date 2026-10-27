@@ -284,7 +284,6 @@ it.each([
             "-e",
             `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)});`,
           ],
-          expectedCommand: null,
         });
       },
     );
@@ -497,7 +496,6 @@ it.each([
             "-e",
             `process.stdout.write(${JSON.stringify(selected ? stdout : "1.0.42\n")}); process.stderr.write(${JSON.stringify(selected ? stderr : "")}); process.exit(${String(selected ? exitCode : 0)});`,
           ],
-          expectedCommand: null,
         });
       },
     );
@@ -564,7 +562,6 @@ it("retries a retained input descriptor before admitting the next WABT operation
           "-e",
           `process.stdout.write(${JSON.stringify(stdout)}); process.exit(0);`,
         ],
-        expectedCommand: null,
       });
       return launched;
     },
@@ -768,7 +765,6 @@ const launchWabtOutcome = async (
     hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
     command: process.execPath,
     arguments: ["-e", script],
-    expectedCommand: null,
   });
   if (!version && mode === "cancelled") {
     setImmediate(() => controller.abort());
@@ -793,7 +789,6 @@ it("enforces a selected command deadline and completes a corrected retry after c
             "-e",
             'setTimeout(() => process.stdout.write("1.0.42\\n"), 250)',
           ],
-          expectedCommand: null,
         });
       }
       return launchWabtOutcome(input, "success", {
@@ -1237,7 +1232,6 @@ it("reports WABT output beyond the budget as a resource constraint with a bounde
         hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
         command: process.execPath,
         arguments: ["-e", script],
-        expectedCommand: null,
       });
     },
   );
@@ -1302,7 +1296,6 @@ it("does not attribute wasm-objdump output to a wasm2wat launch failure", async 
         hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
         command: process.execPath,
         arguments: ["-e", script],
-        expectedCommand: null,
       });
     },
   );

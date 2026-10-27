@@ -850,6 +850,85 @@ describe("CdpElectronProvider malformed inventory replies", () => {
   });
 
   it.each([
+    ["missing type", { type: undefined }],
+    ["non-string type", { type: 7 }],
+    ["empty type", { type: "" }],
+    ["missing target identity", { targetId: undefined }],
+    ["non-string target identity", { targetId: 7 }],
+    ["empty target identity", { targetId: "" }],
+    ["missing URL", { url: undefined }],
+    ["non-string URL", { url: 7 }],
+    ["missing attached state", { attached: undefined }],
+    ["non-boolean attached state", { attached: "false" }],
+    ["non-string opener relationship", { openerId: 7 }],
+    ["empty opener relationship", { openerId: "" }],
+    ["non-string frame relationship", { parentFrameId: 7 }],
+    ["empty frame relationship", { parentFrameId: "" }],
+  ] as const)(
+    "retains valid workers while reporting %s before target policy",
+    async (_kind, malformed) => {
+      const inspected = await inspectWith("Target.getTargets", (fileUrl) => ({
+        targetInfos: [
+          {
+            targetId: "selected-worker",
+            type: "worker",
+            url: fileUrl,
+            attached: false,
+            openerId: "electron-page",
+          },
+          {
+            targetId: "malformed-worker",
+            type: "worker",
+            url: fileUrl,
+            attached: false,
+            openerId: "foreign-page",
+            ...malformed,
+          },
+          {
+            targetId: "foreign-worker",
+            type: "shared_worker",
+            url: fileUrl,
+            attached: true,
+            openerId: "foreign-page",
+          },
+          {
+            targetId: "unattributed-worker",
+            type: "service_worker",
+            url: fileUrl,
+            attached: false,
+          },
+          // Non-worker rows do not need worker identity or relationship fields.
+          { type: "page", targetId: 7, openerId: null },
+        ],
+      }));
+      expect(inspected.workers).toEqual([
+        expect.objectContaining({
+          target_id: "selected-worker",
+          type: "worker",
+          attached: false,
+          opener_target_id: "electron-page",
+          parent_frame_id: null,
+        }),
+      ]);
+      const workerExclusions = inspected.completeness.excluded.filter(
+        ({ section }) => section === "workers",
+      );
+      expect(workerExclusions).toHaveLength(3);
+      expect(workerExclusions).toEqual(
+        expect.arrayContaining([
+          { section: "workers", reason: "invalid_protocol_value", count: 1 },
+          { section: "workers", reason: "out_of_target_scope", count: 1 },
+          { section: "workers", reason: "unattributed_target", count: 1 },
+        ]),
+      );
+      expect(inspected.completeness.unavailable_sections).toContain("workers");
+      expect(inspected.completeness.policy_filtered_sections).toContain(
+        "workers",
+      );
+    },
+  );
+
+  it.each([
     ["dom", "DOMSnapshot.captureSnapshot", () => ({ strings: [] })],
     [
       "dom",

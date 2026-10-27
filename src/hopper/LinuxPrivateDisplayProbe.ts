@@ -155,24 +155,22 @@ export const runLinuxPrivateDisplayProbe: LinuxPrivateDisplayProbeRunner =
     let cleanup: LinuxPrivateDisplayProbeProcessResult["cleanup"] = {
       status: "released",
     };
-    if (outcome !== "exit") {
-      const lease = new AnalysisCleanupLease(async () => {
-        const stopped = await supervisor.stop();
-        if (stopped.status === "incomplete") throw new Error(stopped.reason);
-        if (stopped.status === "not-owned")
-          throw new Error("Private-display probe ownership remains unresolved");
-        supervisor.dispose();
-      }, [`hopper-private-display-probe:${started.ownership.runId}`]);
-      try {
-        await lease.release();
-      } catch (cause: unknown) {
-        cleanup = {
-          status: "pending",
-          lease,
-          reason: cause instanceof Error ? cause.message : String(cause),
-        };
-      }
-    } else supervisor.dispose();
+    const lease = new AnalysisCleanupLease(async () => {
+      const stopped = await supervisor.stop();
+      if (stopped.status === "incomplete") throw new Error(stopped.reason);
+      if (stopped.status === "not-owned")
+        throw new Error("Private-display probe ownership remains unresolved");
+      supervisor.dispose();
+    }, [`hopper-private-display-probe:${started.ownership.runId}`]);
+    try {
+      await lease.release();
+    } catch (cause: unknown) {
+      cleanup = {
+        status: "pending",
+        lease,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
     const snapshot = supervisor.snapshot();
     return {
       outcome:

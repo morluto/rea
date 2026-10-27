@@ -67,10 +67,16 @@ it.each(
       operation: "list_jeb_units",
       tool: "list_units",
       argv: ["list-jeb-units", "--count", "2", "--json"],
+      input: { count: 2, index: 0 },
     },
     {
       operation: "decompile_jeb_item",
       tool: "decompile_code_item",
+      input: {
+        item_address: "LSample;->value()I",
+        item_kind: "method",
+        unit_path: "sample.dex",
+      },
       argv: [
         "decompile-jeb-item",
         "LSample;->value()I",
@@ -84,6 +90,7 @@ it.each(
       operation: "open_jeb_project",
       tool: "open_project",
       argv: ["open-jeb-project", "sample.apk", "--json"],
+      input: { path: "sample.apk" },
     },
   ].flatMap((request) =>
     ["metadata-refusal", "primary-refusal", "success"].map((stage) => ({
@@ -93,11 +100,20 @@ it.each(
   ),
 )(
   "preserves $operation attribution and primary payload with $stage",
-  async ({ operation, tool, argv, stage }) => {
+  async ({ operation, tool, argv, input, stage }) => {
+    const refusal = {
+      success: false,
+      message: "Selected stage refused",
+      error: {
+        code: "future_engine_code",
+        recovery_required_before_retry: false,
+        recovery_tool: "get_client_information",
+      },
+    };
     const fixture = await startJebMcpFixture((name) =>
       (stage === "metadata-refusal" && name === "get_client_information") ||
       (stage === "primary-refusal" && name === tool)
-        ? { success: false, message: "Selected stage refused" }
+        ? refusal
         : jebPrimaryResponses[name]!,
     );
     const processes = createTestProcessRegistry();
@@ -117,10 +133,27 @@ it.each(
       } else {
         expect(result.exitCode).toBe(1);
         expect(output).toMatchObject({
-          code: "unsupported_target",
-          details: { operation, reason: "Selected stage refused" },
+          code: "execution_failure",
+          message: refusal.message,
+          details: {
+            provider_id: "jeb",
+            operation,
+            diagnostics: {
+              endpoint: fixture.endpoint,
+              upstream_response: refusal,
+            },
+          },
         });
-        expect(output.message).toContain(operation);
+        if (stage === "primary-refusal") {
+          expect(output.details.diagnostics.input).toEqual(input);
+          expect(output.details).not.toHaveProperty("partial_observation");
+        } else {
+          expect(output.details.diagnostics).not.toHaveProperty("input");
+          expect(output.details.partial_observation).toMatchObject({
+            operation,
+            raw_result: jebPrimaryResponses[tool],
+          });
+        }
       }
       expect(fixture.calls).toEqual(
         stage === "primary-refusal" ? [tool] : [tool, "get_client_information"],

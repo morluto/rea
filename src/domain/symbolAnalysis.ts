@@ -1,9 +1,9 @@
 import { objcClassSymbol } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { AddressedName } from "./hopperValues.js";
+import type { AddressedName } from "./native/nativeInventory.js";
 import type {
   MachoImportBinding,
-  ObjcClassImportBindingCoverage,
+  ObjcClassDiscoveryCoverage,
 } from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
@@ -19,14 +19,6 @@ const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
  * share the substring but are uses, not definitions.
  */
 const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
-
-export interface ObjcClassDiscoveryCoverage {
-  readonly status:
-    | ObjcClassImportBindingCoverage["status"]
-    | "unknown"
-    | "not_applicable";
-  readonly reason: string | null;
-}
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];

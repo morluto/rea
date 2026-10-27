@@ -1,4 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
@@ -51,35 +52,57 @@ import {
   type ArtifactInventoryOptions,
 } from "./types.js";
 
-export interface TransferredZipInventorySource {
-  readonly source: RootInventorySource;
+export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
+  readonly admission: NonNullable<Parameters<typeof createReader>[3]>;
 }
 
 export const scanCanonicalArtifactInventoryInScope = async (
   path: string,
   options: ArtifactInventoryOptions,
   readerFactory: typeof createReader = createReader,
+  selectedPath: string = path,
 ): Promise<ArtifactInventorySnapshot> =>
-  (await scanCanonical(path, options, readerFactory, "release")).snapshot;
+  (
+    await scanCanonical(
+      path,
+      options,
+      readerFactory,
+      "release",
+      undefined,
+      selectedPath,
+    )
+  ).snapshot;
 
-/** Keep the admitted ZIP descriptor alive for extraction of this inventory. */
+/** Keep the admitted source and parsed format facts alive for extraction of this inventory. */
 export const scanCanonicalArtifactInventoryForExtractionInScope = async (
   path: string,
   options: ArtifactInventoryOptions,
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
 ): Promise<{
   readonly snapshot: ArtifactInventorySnapshot;
-  readonly zipSource: TransferredZipInventorySource | undefined;
-}> => scanCanonical(path, options, createReader, "transfer-zip");
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
+}> =>
+  scanCanonical(
+    path,
+    options,
+    createReader,
+    "transfer-source",
+    probeFacts,
+    selectedPath,
+  );
 
 const scanCanonical = async (
   path: string,
   options: ArtifactInventoryOptions,
   readerFactory: typeof createReader,
-  rootDisposition: "release" | "transfer-zip",
+  rootDisposition: "release" | "transfer-source",
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
 ): Promise<{
   readonly snapshot: ArtifactInventorySnapshot;
-  readonly zipSource: TransferredZipInventorySource | undefined;
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
   const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
@@ -87,11 +110,13 @@ const scanCanonical = async (
     format: rootFormat,
     digest: rootDigest,
     rootSource,
+    readerAdmission,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
     metadata,
-    options,
+    { ...options, selectedPath },
+    probeFacts,
   );
   let reader: ArtifactReader | undefined;
   let readerCreationFailure: { readonly cause: unknown } | undefined;
@@ -100,8 +125,9 @@ const scanCanonical = async (
       path,
       rootFormat,
       options.environment ?? {},
-      rootSource,
+      readerAdmission,
       options.asarHeaderAdmission,
+      selectedPath,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -201,6 +227,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
+            userMessage: cause.userMessage,
             ...(retained === undefined
               ? {}
               : {
@@ -220,18 +247,20 @@ const scanCanonical = async (
     options,
     rootSource,
     ownedReaders,
+    readerAdmission,
     outcome,
     rootDisposition:
-      rootDisposition === "transfer-zip" &&
+      rootDisposition === "transfer-source" &&
       outcome.kind === "completed" &&
       rootSource !== undefined &&
-      isZipPackageFormat(rootFormat)
+      (isZipPackageFormat(rootFormat) ||
+        (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
   });
   if (cleanup.failure !== undefined) throw cleanup.failure;
   if (outcome.kind === "failed") throw outcome.cause;
-  return { snapshot: outcome.snapshot, zipSource: cleanup.transferred };
+  return { snapshot: outcome.snapshot, transferredSource: cleanup.transferred };
 };
 
 type InventoryScanOutcome =
@@ -246,6 +275,7 @@ const cleanupInventoryOwners = async ({
   options,
   rootSource,
   ownedReaders,
+  readerAdmission,
   outcome,
   rootDisposition,
 }: {
@@ -253,11 +283,12 @@ const cleanupInventoryOwners = async ({
   readonly options: ArtifactInventoryOptions;
   readonly rootSource: RootInventorySource | undefined;
   readonly ownedReaders: readonly ArtifactReader[];
+  readonly readerAdmission: Parameters<typeof createReader>[3];
   readonly outcome: InventoryScanOutcome;
   readonly rootDisposition: "release" | "transfer";
 }): Promise<{
   readonly failure: ArtifactReaderFailure | undefined;
-  readonly transferred: TransferredZipInventorySource | undefined;
+  readonly transferred: TransferredArtifactInventorySource | undefined;
 }> => {
   let cleanupFailure: ArtifactReaderFailure | undefined;
   const readerOwners: ArtifactResourceOwner[] = [...ownedReaders]
@@ -292,11 +323,12 @@ const cleanupInventoryOwners = async ({
     rootDisposition === "transfer" &&
     cleanupFailure === undefined &&
     rootSource !== undefined &&
-    rootOwner !== undefined
+    rootOwner !== undefined &&
+    readerAdmission !== undefined
   )
     return {
       failure: undefined,
-      transferred: { source: rootSource, owner: rootOwner },
+      transferred: { owner: rootOwner, admission: readerAdmission },
     };
   if (rootOwner !== undefined) {
     const attempt = await options.resourceScope.release(rootOwner);

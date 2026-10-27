@@ -9,7 +9,7 @@ import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.
 import type { CliInstance } from "../../../src/cli/types.js";
 import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 

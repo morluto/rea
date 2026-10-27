@@ -1,6 +1,6 @@
 import {
   parseJavaScriptRouteDelivery,
-  javascriptRouteDeliveryOptions,
+  webBundleDeliveryOptions,
 } from "./javascriptRouteDelivery.js";
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -164,7 +164,7 @@ const registerBundleAnalysis = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      ...javascriptRouteDeliveryOptions,
+      ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
       fetchSourceMaps: z
         .boolean()

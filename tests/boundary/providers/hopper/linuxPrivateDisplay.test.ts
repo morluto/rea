@@ -1,7 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as ownership from "../../../../src/process/ProcessOwnership.js";
 
 import type {
   HopperStartupDiagnostic,
@@ -357,3 +361,94 @@ it("passes the private X authority cookie through xauth stdin", () => {
     mode: 0o600,
   });
 });
+
+const inertProbe = async (keepLeader = false) => {
+  const root = await mkdtemp(join(tmpdir(), "rea-private-display-lifecycle-"));
+  const marker = join(root, "descendant-survived");
+  const ready = join(root, "ready");
+  const helper = join(root, "probe.py");
+  const child = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'survived'), 800)`;
+  await writeFile(
+    helper,
+    [
+      "import subprocess, sys, time",
+      `subprocess.Popen([${JSON.stringify(process.execPath)}, '-e', ${JSON.stringify(child)}], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)`,
+      `open(${JSON.stringify(ready)}, 'w').write('ready')`,
+      "sys.stderr.write('authored probe diagnostic')",
+      "sys.stderr.flush()",
+      ...(keepLeader ? ["time.sleep(2)"] : []),
+    ].join("\n"),
+  );
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  return { helper, marker, ready };
+};
+
+it.skipIf(process.platform === "win32")(
+  "stops silent owned descendants before releasing a normally exited probe",
+  async () => {
+    const { helper, marker } = await inertProbe();
+    const result = await runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({
+      outcome: "exited",
+      exitCode: 0,
+      stderr: "authored probe diagnostic",
+      cleanup: { status: "released" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
+  "retains refused probe cleanup and retries its exact owner after %s",
+  async (outcome) => {
+    const { helper, ready } = await inertProbe(outcome === "cancelled");
+    const controller = new AbortController();
+    const original = ownership.cleanupOwnedProcessGroup;
+    const cleanup = vi
+      .spyOn(ownership, "cleanupOwnedProcessGroup")
+      .mockResolvedValue({
+        cleaned: false,
+        reason: "controlled display probe cleanup refusal",
+      });
+    let pending:
+      | Extract<
+          LinuxPrivateDisplayProbeProcessResult["cleanup"],
+          { status: "pending" }
+        >
+      | undefined;
+    onTestFinished(async () => {
+      cleanup.mockRestore();
+      await pending?.lease.release();
+    });
+    const operation = runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
+    if (outcome === "cancelled") {
+      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      controller.abort("caller stopped");
+    }
+    const result = await operation;
+    expect(result.outcome).toBe(outcome);
+    expect(result.stderr).toBe("authored probe diagnostic");
+    expect(result.cleanup.status).toBe("pending");
+    if (result.cleanup.status !== "pending")
+      throw new Error("Expected retained probe owner");
+    pending = result.cleanup;
+    const retainedRunId = cleanup.mock.calls[0]?.[0].runId;
+    await expect(pending.lease.release()).rejects.toThrow(
+      "controlled display probe cleanup refusal",
+    );
+    expect(
+      cleanup.mock.calls.every(([owner]) => owner.runId === retainedRunId),
+    ).toBe(true);
+    cleanup.mockImplementation(original);
+    await pending.lease.release();
+    expect(pending.lease.released).toBe(true);
+  },
+);

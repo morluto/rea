@@ -473,7 +473,7 @@ const parseFields = (block: string): ParsedFields => {
   for (const field of rows)
     if (field !== undefined)
       occurrences.set(field[0], (occurrences.get(field[0]) ?? 0) + 1);
-  const fields: Record<string, string | number | null> = {};
+  const fields = new Map<string, string | number | null>();
   const ordinals = new Map<string, number>();
   for (const field of rows) {
     if (field === undefined) continue;
@@ -482,9 +482,12 @@ const parseFields = (block: string): ParsedFields => {
     ordinals.set(key, ordinal);
     const label =
       (occurrences.get(key) ?? 0) > 1 ? `${key} #${String(ordinal)}` : key;
-    fields[label] = TEXT_FIELDS.test(key) ? value : (numeric(value) ?? value);
+    fields.set(
+      label,
+      TEXT_FIELDS.test(key) ? value : (numeric(value) ?? value),
+    );
   }
-  return { values: fields, rows };
+  return { values: Object.fromEntries(fields), rows };
 };
 
 /** Names and linker options are text even when they look numeric. */

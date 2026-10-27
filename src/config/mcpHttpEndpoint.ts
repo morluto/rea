@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  httpHostnameSchema,
+  type HttpHostname,
+} from "../domain/httpHostname.js";
 
 import {
   ConfigurationError,
@@ -27,11 +31,34 @@ export const MCP_HTTP_PORT_CONSTRAINT =
   "MCP_PORT must be a decimal integer between 0 and 65535.";
 export const MCP_HTTP_HOST_CONSTRAINT =
   "MCP_HOST must be a non-empty host name or IP address.";
+export const MCP_ALLOWED_HOSTS_CONSTRAINT =
+  "MCP_ALLOWED_HOSTS must list at least one host name or IP address, separated by commas, without URL components or ports.";
+export const MCP_ALLOWED_HOSTS_FLAG_CONSTRAINT =
+  "must list at least one host name or IP address, separated by commas, without URL components or ports.";
+
+/** Comma-separated operator-declared Host/Origin names for a non-loopback bind. */
+export const mcpAllowedHostsTextSchema = z
+  .string()
+  .transform((text, context) => {
+    const entries = text.split(",").map((entry) => entry.trim());
+    if (entries.some((entry) => entry.length === 0)) {
+      context.addIssue({
+        code: "custom",
+        message: MCP_ALLOWED_HOSTS_CONSTRAINT,
+      });
+      return z.NEVER;
+    }
+    return entries;
+  })
+  .pipe(z.array(httpHostnameSchema))
+  .transform((names) => [...new Set(names)]);
 
 /** Where the streamable HTTP listener binds. */
 export interface McpHttpEndpoint {
   readonly host: string;
   readonly port: number;
+  /** Operator-declared Host/Origin names; required before a non-loopback bind serves. */
+  readonly allowedHosts?: readonly HttpHostname[];
 }
 
 /** Resolve the endpoint: explicit values, then MCP_HOST/MCP_PORT, then loopback defaults. */
@@ -42,6 +69,7 @@ export const parseMcpHttpEndpoint = (
   const issues: ConfigurationSettingIssue[] = [];
   let host = overrides.host ?? DEFAULT_MCP_HTTP_HOST;
   let port = overrides.port ?? DEFAULT_MCP_HTTP_PORT;
+  let allowedHosts = overrides.allowedHosts;
   if (overrides.host === undefined && environment.MCP_HOST !== undefined) {
     const parsed = mcpHttpHostSchema.safeParse(environment.MCP_HOST);
     if (parsed.success) host = parsed.data;
@@ -60,6 +88,20 @@ export const parseMcpHttpEndpoint = (
         constraint: MCP_HTTP_PORT_CONSTRAINT,
       });
   }
+  if (
+    overrides.allowedHosts === undefined &&
+    environment.MCP_ALLOWED_HOSTS !== undefined
+  ) {
+    const parsed = mcpAllowedHostsTextSchema.safeParse(
+      environment.MCP_ALLOWED_HOSTS,
+    );
+    if (parsed.success) allowedHosts = parsed.data;
+    else
+      issues.push({
+        setting: "MCP_ALLOWED_HOSTS",
+        constraint: MCP_ALLOWED_HOSTS_CONSTRAINT,
+      });
+  }
   if (issues.length > 0)
     return err(
       new ConfigurationError(
@@ -67,5 +109,9 @@ export const parseMcpHttpEndpoint = (
         { settings: issues },
       ),
     );
-  return ok({ host, port });
+  return ok({
+    host,
+    port,
+    ...(allowedHosts === undefined ? {} : { allowedHosts }),
+  });
 };

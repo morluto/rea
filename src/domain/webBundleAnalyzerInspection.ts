@@ -347,7 +347,7 @@ const addWebMcpDeclaration = (
   const schemaProperty =
     camelSchema.status === "missing" ||
     (camelSchema.status === "explicit" &&
-      isNullishJavaScriptSyntax(camelSchema.property.value))
+      isNullishJavaScriptSyntax(camelSchema.value))
       ? staticObjectProperty(
           declaration,
           "input_schema",
@@ -361,7 +361,7 @@ const addWebMcpDeclaration = (
   if (schemaProperty.status === "missing") {
     schemaPropertyNamesCoverage = "not_present";
   } else if (schemaProperty.status === "explicit") {
-    const schema = schemaProperty.property.value;
+    const schema = schemaProperty.value;
     if (t.isObjectExpression(schema)) {
       const propertiesProperty = staticObjectProperty(
         schema,
@@ -371,7 +371,7 @@ const addWebMcpDeclaration = (
       if (propertiesProperty.status === "missing") {
         schemaPropertyNamesCoverage = "not_present";
       } else if (propertiesProperty.status === "explicit") {
-        const properties = propertiesProperty.property.value;
+        const properties = propertiesProperty.value;
         if (t.isObjectExpression(properties)) {
           const projection = staticObjectPropertyNames(
             properties,

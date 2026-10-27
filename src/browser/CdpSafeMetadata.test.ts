@@ -1,7 +1,22 @@
 import { MIMEType } from "node:util";
 import { describe, expect, it } from "vitest";
 
-import { safeResponseMetadata } from "./CdpSafeMetadata.js";
+import { safeResponseMetadata as projectResponseMetadata } from "./CdpSafeMetadata.js";
+import { readCdpResponseFacts } from "./CdpNetworkEventFacts.js";
+import type { UnknownRecord } from "./CdpCaptureValues.js";
+
+/** Admit each raw response fixture through the production field owner. */
+const safeResponseMetadata = (
+  requestId: string,
+  url: string,
+  response: UnknownRecord,
+  allowedOrigins: ReadonlySet<string>,
+) => {
+  const facts = readCdpResponseFacts(response);
+  if (facts === undefined)
+    throw new Error("Expected a response fixture record");
+  return projectResponseMetadata(requestId, url, facts, allowedOrigins);
+};
 
 const origin = "https://app.example.test";
 
@@ -535,4 +550,60 @@ describe("safe CDP response metadata referrer policy", () => {
     );
     expect(captured.response.content_length).toBe(expected);
   });
+});
+
+describe("Link context identity and display", () => {
+  it.each([
+    [
+      "https://user:secret@app.example.test/page",
+      "/page",
+      true,
+      `${origin}/page`,
+      "approved",
+    ],
+    [
+      "https://user:secret@app.example.test/page",
+      "https://user:secret@app.example.test/page",
+      true,
+      `${origin}/page`,
+      "approved",
+    ],
+    [
+      `${origin}/page`,
+      "https://other:secret@app.example.test/page",
+      false,
+      `${origin}/page`,
+      "approved",
+    ],
+    [`${origin}/page`, "http://[", false, "http://[", "unsupported"],
+    ["http://[", "/page", false, "/page", "unsupported"],
+    [
+      `${origin}/page`,
+      "https://elsewhere.test/page",
+      false,
+      "https://elsewhere.test/page",
+      "outside_policy",
+    ],
+  ] as const)(
+    "preserves resolved context identity for response %s and anchor %s",
+    (responseUrl, anchor, matches, displayUrl, scope) => {
+      const captured = safeResponseMetadata(
+        "context",
+        `${origin}/page`,
+        {
+          url: responseUrl,
+          headers: { Link: `</agent>; rel=mcp; anchor="${anchor}"` },
+        },
+        new Set([origin]),
+      );
+      expect(captured.response.links[0]).toMatchObject({
+        context_url: displayUrl,
+        context_scope: scope,
+      });
+      expect(
+        captured.agentHints.filter(({ mechanism }) => mechanism === "link_rel"),
+      ).toHaveLength(matches ? 1 : 0);
+      expect(JSON.stringify(captured)).not.toContain("secret");
+    },
+  );
 });

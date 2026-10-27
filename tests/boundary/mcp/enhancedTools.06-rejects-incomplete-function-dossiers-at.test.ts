@@ -1,7 +1,7 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { closeEnhancedToolResources, connect } from "./enhancedToolsHarness.js";

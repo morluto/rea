@@ -530,15 +530,16 @@ it("rejects a truncated binary plist source", () => {
 
 it("retains complete segmented XML keys in native plist fallback evidence", () => {
   const parsed = parsePlistXml(
-    "<plist><dict><key>user<![CDATA[ID]]></key><integer>42</integer><key>__pro<![CDATA[to__]]></key><string>omitted</string><key>Blob</key><data>AA==</data></dict></plist>",
+    "<plist><dict><key>user<![CDATA[ID]]></key><integer>42</integer><key>__pro<![CDATA[to__]]></key><string>retained</string><key>Blob</key><data>AA==</data></dict></plist>",
   );
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual({
     userID: 42,
+    ["__proto__"]: "retained",
     Blob: { $plist_type: "data", base64: "AA==" },
   });
-  expect(parsed.value.limitations).toContain(
-    "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
+  expect(parsed.value.limitations).not.toContainEqual(
+    expect.stringContaining("omitted"),
   );
 });
 
@@ -720,18 +721,24 @@ it("uses only surviving duplicate JSON entries for number types and limitations"
   ]);
 });
 
-it("counts numeric source facts before omitting prototype dictionary entries", () => {
+it("preserves numeric source facts inside prototype-named dictionary entries", () => {
   const attempt = readPlistJson(
     '{"__proto__":{"integer":9007199254740993,"zero":-0.0,"__proto__":7},"kept":42}',
   );
   expect(attempt.needsNumberTypes).toBe(true);
   const parsed = attempt.project();
   if (!parsed.ok) throw parsed.error;
-  expect(parsed.value.value).toEqual({ kept: 42 });
+  expect(parsed.value.value).toEqual({
+    ["__proto__"]: {
+      integer: 9007199254740992,
+      zero: { $plist_type: "real", value: "-0" },
+      ["__proto__"]: 7,
+    },
+    kept: 42,
+  });
   expect(parsed.value.limitations).toEqual([
     expect.stringContaining("1 negative-zero real value(s)"),
     expect.stringContaining("1 number(s)"),
-    "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
   ]);
 });
 
@@ -841,4 +848,32 @@ it("keeps CFPropertyList's non-finite real spellings in XML evidence", () => {
     '3 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
     expect.stringContaining("1 XML scalar value(s) could not be established"),
   ]);
+});
+
+it("retains nested own dictionary names consistently in native JSON, XML and binary projections", () => {
+  const value = Object.fromEntries([
+    [
+      "__proto__",
+      Object.fromEntries([
+        ["__proto__", "nested"],
+        ["constructor", "authored"],
+      ]),
+    ],
+    ["CFBundleExecutable", "Selected"],
+  ]);
+  const xml =
+    "<plist><dict><key>__proto__</key><dict><key>__proto__</key><string>nested</string><key>constructor</key><string>authored</string></dict><key>CFBundleExecutable</key><string>Selected</string></dict></plist>";
+  for (const parsed of [
+    readPlistJson(JSON.stringify(value)).project(),
+    parsePlistXml(xml),
+    parsePlistBinary(Buffer.from(buildBinary(value))),
+  ]) {
+    if (!parsed.ok) throw parsed.error;
+    expect(JSON.stringify(parsed.value.value)).toBe(JSON.stringify(value));
+    expect(jsonValueSchema.parse(parsed.value.value)).toEqual(value);
+    expect(parsed.value.bundle.executable).toBe("Selected");
+    expect(parsed.value.limitations).not.toContainEqual(
+      expect.stringContaining("omitted"),
+    );
+  }
 });

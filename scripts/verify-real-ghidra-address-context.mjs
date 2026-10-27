@@ -9,7 +9,10 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 if (process.argv.length !== 2 || process.platform !== "linux")
@@ -320,8 +323,7 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   return ["open_binary", "binary_session", "close_binary"].includes(name)
     ? requireMcpOperationResult(result, name)
-    : result.structuredContent;
+    : requireMcpOutput(result, name);
 }

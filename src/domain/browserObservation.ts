@@ -207,7 +207,7 @@ export const listBrowserTargetsInputSchema = z.strictObject({
 
 const inspectWebPageInputFacts = {
   ...browserInput,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
   observation_ms: z.int().min(0).default(500),
   include_accessibility_text: z.boolean().default(false),

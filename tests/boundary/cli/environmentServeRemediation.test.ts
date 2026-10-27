@@ -78,6 +78,26 @@ cliTest(
 );
 
 cliTest(
+  "reports the missing host allowlist instead of port advice for a non-loopback bind",
+  async ({ cli }) => {
+    const result = await serve(cli, await files(), "0.0.0.0", 0);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        diagnostics: {
+          listener_failure: { kind: "host_allowlist", reason: "missing" },
+        },
+      },
+      remediation: { action: expect.stringContaining("Set MCP_ALLOWED_HOSTS") },
+    });
+    expect(JSON.stringify(result.output.remediation)).not.toContain(
+      "Choose another --port",
+    );
+  },
+);
+
+cliTest(
   "retains port advice without closing the loopback listener it does not own",
   async ({ cli }) => {
     const input = await files();

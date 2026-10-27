@@ -1,4 +1,8 @@
-import { markPlistDictionary } from "../../domain/apple/plistUid.js";
+import {
+  readBinaryPlistLayout,
+  readBinaryPlistUnsigned64,
+  type BinaryPlistLayout,
+} from "./BinaryPlistLayout.js";
 import {
   createPlistNumberCollector,
   type PlistNumberLiterals,
@@ -33,15 +37,7 @@ const containsSortedOffset = (
   return false;
 };
 
-/** A bounded linked value path retained by the existing binary reference walk. */
-export interface BinaryPlistUidPath {
-  readonly parent: BinaryPlistUidPath | null;
-  readonly key: string | number;
-}
-
 export interface BinaryPlistScalarDecodePlan {
-  /** Present only when an archive reader requested serialized UID identity. */
-  readonly binaryUidPaths?: readonly (BinaryPlistUidPath | null)[];
   readonly reachableDateOffsets: readonly number[];
   readonly overlappingDateOffsets: readonly number[];
   readonly reachableWideIntegerOffsets: readonly number[];
@@ -172,21 +168,6 @@ export const binaryPlistCloneOffsetWidth = (
   );
 };
 
-/** Normalize unsupported binary-plist UID widths for the pinned parser. */
-export const decodeBinaryPlistUids = (
-  bytes: Buffer,
-  uidOffsets: readonly { offset: number; width: number }[],
-): Buffer => {
-  if (uidOffsets.length === 0) return bytes;
-  const replacements = new Map(
-    uidOffsets.map(({ offset, width }) => [
-      offset,
-      binaryPlistUidRecord(bytes, offset, width),
-    ]),
-  );
-  return cloneBinaryPlistObjects(bytes, replacements);
-};
-
 const APPLE_EPOCH_MILLISECONDS = 978_307_200_000;
 
 /** Whether Date's millisecond projection would lose finite, in-range source seconds. */
@@ -220,10 +201,7 @@ export const binaryPlistObjectEnd = (
     const width = 1 << (extendedMarker & 0x0f);
     if (width > 8 || cursor + 1 + width > objectEnd) return undefined;
     cursor += 1;
-    let extendedLength = 0n;
-    for (let index = 0; index < width; index += 1)
-      extendedLength =
-        (extendedLength << 8n) | BigInt(bytes[cursor + index] ?? 0);
+    const extendedLength = readBinaryPlistUnsigned64(bytes, cursor, width);
     if (extendedLength > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
     length = Number(extendedLength);
     cursor += width;
@@ -271,11 +249,17 @@ export const scanBinaryPlistScalars = (
   });
   if (bytes.length < 40 || !hasBinaryPlistSignature(bytes)) return result(true);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const trailer = bytes.length - 32;
-  const offsetWidth = bytes[trailer + 6] ?? 0;
+  const sourceLayoutResult = readBinaryPlistLayout(bytes);
+  if (!sourceLayoutResult.ok) return result(true);
+  const sourceLayout = sourceLayoutResult.value;
+  const {
+    trailerOffset: trailer,
+    offsetWidth,
+    referenceWidth,
+    objectCount: countRaw,
+    offsetTable: tableRaw,
+  } = sourceLayout;
   if (offsetWidth < 1) return result(true);
-  const countRaw = view.getBigUint64(trailer + 8);
-  const tableRaw = view.getBigUint64(trailer + 24);
   const safeMaximum = BigInt(Number.MAX_SAFE_INTEGER);
   if (countRaw === 0n || countRaw > safeMaximum || tableRaw > safeMaximum)
     return result(true);
@@ -284,23 +268,12 @@ export const scanBinaryPlistScalars = (
   const capacity = Math.floor((trailer - offsetTable) / offsetWidth);
   if (countRaw > BigInt(capacity)) return result(true);
   const count = Number(countRaw);
-  const referenceWidth = bytes[trailer + 7] ?? 0;
   if (referenceWidth < 1) return result(true);
-  const unsigned = (offset: number): number | undefined => {
-    if (offset < offsetTable || offset + offsetWidth > trailer)
-      return undefined;
-    let value = 0n;
-    for (let index = 0; index < offsetWidth; index += 1)
-      value = BigInt.asUintN(
-        64,
-        (value << 8n) | BigInt(bytes[offset + index] ?? 0),
-      );
-    return value > safeMaximum ? undefined : Number(value);
-  };
   const objectOffsets: number[] = [];
   let incomplete = false;
   for (let index = 0; index < count; index += 1) {
-    const offset = unsigned(offsetTable + index * offsetWidth);
+    const rawOffset = sourceLayout.objectOffset(index);
+    const offset = rawOffset > safeMaximum ? undefined : Number(rawOffset);
     if (offset === undefined || offset < 8 || offset >= offsetTable) {
       incomplete = true;
       continue;
@@ -391,49 +364,6 @@ export const scanBinaryPlistScalars = (
   return result(incomplete);
 };
 
-/** Restore UID identity from validated source locations, never from dictionary shape. */
-export const retainBinaryPlistUidIdentity = (
-  value: unknown,
-  plan: BinaryPlistScalarDecodePlan,
-): unknown => {
-  if (plan.binaryUidPaths === undefined) return value;
-  const pending: unknown[] = [value];
-  while (pending.length > 0) {
-    const item = pending.pop();
-    if (Array.isArray(item)) {
-      for (const child of item) pending.push(child);
-    } else if (
-      item !== null &&
-      typeof item === "object" &&
-      !(item instanceof Date) &&
-      !(item instanceof Uint8Array)
-    ) {
-      markPlistDictionary(item);
-      for (const child of Object.values(item)) pending.push(child);
-    }
-  }
-  for (let path of plan.binaryUidPaths) {
-    const keys: (string | number)[] = [];
-    while (path !== null) {
-      keys.push(path.key);
-      path = path.parent;
-    }
-    let item: unknown = value;
-    for (let index = keys.length - 1; index >= 0; index -= 1) {
-      if (item === null || typeof item !== "object") {
-        item = undefined;
-        break;
-      }
-      item = Object.getOwnPropertyDescriptor(item, keys[index]!)?.value;
-    }
-    if (item !== null && typeof item === "object") {
-      const uid = Object.getOwnPropertyDescriptor(item, "UID")?.value;
-      if (typeof uid === "number") markPlistDictionary(item, uid);
-    }
-  }
-  return value;
-};
-
 /** Preserve source scalars through plist@5's lossy Number and Date parser. */
 export const decodeBinaryPlistScalars = (
   bytes: Buffer,
@@ -472,8 +402,11 @@ export const decodeBinaryPlistScalars = (
       replacement.writeDoubleBE(Number(value), 1);
       replacements.set(offset, replacement);
     }
-  const trailerOffset = bytes.length - 32;
-  const sourceReferenceSize = bytes[trailerOffset + 7] ?? 0;
+  const sourceLayoutResult = readBinaryPlistLayout(bytes);
+  if (!sourceLayoutResult.ok)
+    throw new RangeError("binary plist trailer is truncated");
+  const sourceLayout = sourceLayoutResult.value;
+  const sourceReferenceSize = sourceLayout.referenceWidth;
   const normalizedReferenceSize =
     scalarPlan.normalizedReferenceSize ?? sourceReferenceSize;
   for (const container of scalarPlan.containersToNormalize ?? [])
@@ -482,8 +415,8 @@ export const decodeBinaryPlistScalars = (
       binaryPlistContainerRecord(bytes, container, normalizedReferenceSize),
     );
   const needsTableNormalization =
-    (scalarPlan.normalizedOffsetSize ?? bytes[trailerOffset + 6] ?? 0) !==
-      (bytes[trailerOffset + 6] ?? 0) ||
+    (scalarPlan.normalizedOffsetSize ?? sourceLayout.offsetWidth) !==
+      sourceLayout.offsetWidth ||
     normalizedReferenceSize !== sourceReferenceSize;
   if (
     reachableWideIntegers.length === 0 &&
@@ -497,8 +430,9 @@ export const decodeBinaryPlistScalars = (
       ? Buffer.from(bytes)
       : cloneBinaryPlistObjects(
           bytes,
+          sourceLayout,
           replacements,
-          scalarPlan.normalizedOffsetSize ?? bytes[trailerOffset + 6] ?? 0,
+          scalarPlan.normalizedOffsetSize ?? sourceLayout.offsetWidth,
           normalizedReferenceSize,
         );
   for (const { offset, value } of reachableWideIntegers) {
@@ -519,26 +453,16 @@ export const decodeBinaryPlistScalars = (
 
 const cloneBinaryPlistObjects = (
   bytes: Buffer,
+  sourceLayout: BinaryPlistLayout,
   replacements: ReadonlyMap<number, Buffer>,
   normalizedOffsetSize?: number,
   normalizedReferenceSize?: number,
 ): Buffer => {
-  const trailerOffset = bytes.length - 32;
-  const offsetSize = bytes[trailerOffset + 6] ?? 0;
-  const objectCount = Number(bytes.readBigUInt64BE(trailerOffset + 8));
-  const oldTableOffset = Number(bytes.readBigUInt64BE(trailerOffset + 24));
-  const readOffset = (offset: number): bigint => {
-    let value = 0n;
-    for (let index = 0; index < offsetSize; index += 1)
-      value = BigInt.asUintN(
-        64,
-        (value << 8n) | BigInt(bytes[offset + index] ?? 0),
-      );
-    return value;
-  };
-  const offsets = Array.from({ length: objectCount }, (_, index) =>
-    readOffset(oldTableOffset + index * offsetSize),
-  );
+  const trailerOffset = sourceLayout.trailerOffset;
+  const offsetSize = sourceLayout.offsetWidth;
+  const objectCount = Number(sourceLayout.objectCount);
+  const oldTableOffset = Number(sourceLayout.offsetTable);
+  const offsets = [...sourceLayout.objectOffsets()];
   const cloneEntries = [...replacements.entries()];
   const replacementLengths = cloneEntries.map(([, record]) => record.length);
   const newOffsetSize =

@@ -888,7 +888,7 @@ it("refuses a path whose templated representation exceeds projection capacity", 
   });
 });
 
-it("omits a __proto__ body key explicitly instead of publishing a prototype", () => {
+it("preserves every own body key while publishing only its observed type", () => {
   const projected = manifest(
     [],
     syntheticCapture([
@@ -903,12 +903,14 @@ it("omits a __proto__ body key explicitly instead of publishing a prototype", ()
   const shape = projected.tools[0]?.body_shape;
   expect(shape).toEqual({
     type: "object",
-    properties: { constructor: "string", name: "number" },
+    properties: {
+      ["__proto__"]: "object",
+      constructor: "string",
+      name: "number",
+    },
   });
   expect(Object.getPrototypeOf(shape?.properties)).toBe(Object.prototype);
-  expect(projected.limitations).toContain(
-    "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
-  );
+  expect(Object.hasOwn(shape!.properties, "__proto__")).toBe(true);
   expect(JSON.stringify(projected)).not.toContain("admin");
 });
 

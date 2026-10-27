@@ -536,11 +536,7 @@ function* readTypes(tables: MetadataTables): Generator<
       typeDefinitionTypeIndices * widths.type +
       widths.generic_container;
     if (tables.linkFacts !== undefined) {
-      const genericContainerIndex = readIndex(
-        bytes,
-        at + 8 + typeDefinitionTypeIndices * widths.type,
-        widths.generic_container,
-      );
+      const genericContainerIndex = readTypeGenericContainer(tables, index);
       if (
         genericContainerIndex < -1 ||
         genericContainerIndex >= genericContainerCount
@@ -550,10 +546,10 @@ function* readTypes(tables: MetadataTables): Generator<
           `type ${index} generic container ${genericContainerIndex} is outside the ${genericContainerCount} available rows`,
         );
       if (genericContainerIndex !== -1) {
-        const genericContainerAt =
-          section("genericContainers").offset +
-          genericContainerIndex * GENERIC_CONTAINER_RECORD_BYTES;
-        const argumentCount = bytes.readInt32LE(genericContainerAt + 4);
+        const argumentCount = readGenericContainer(
+          tables,
+          genericContainerIndex,
+        ).count;
         if (argumentCount < 0)
           throw new Il2cppMetadataFormatFailure(
             "index-out-of-range",
@@ -789,20 +785,36 @@ const methodContainerAt = ({
   (methodReturnParameterToken ? 4 : 0) +
   widths.parameter;
 
+/** Raw row interpretation; callers own index and layout admission. */
+const readTypeGenericContainer = (tables: MetadataTables, index: number) =>
+  readIndex(
+    tables.bytes,
+    tables.section("typeDefinitions").offset +
+      index * tables.recordBytes.typeDefinitions +
+      8 +
+      tables.typeDefinitionTypeIndices * tables.widths.type,
+    tables.widths.generic_container,
+  );
+
+/** ownerIndex, type_argc, is_method and genericParameterStart are int32. */
+const readGenericContainer = (tables: MetadataTables, index: number) => {
+  const at =
+    tables.section("genericContainers").offset +
+    index * GENERIC_CONTAINER_RECORD_BYTES;
+  return {
+    count: tables.bytes.readInt32LE(at + 4),
+    parameterStart: tables.bytes.readInt32LE(at + 12),
+  };
+};
+
 /** Type and method container indices and container records, read on demand. */
 const createGenericContainerReaders = (tables: MetadataTables) => {
-  const types = tables.section("typeDefinitions"),
-    typeCount = tables.counts.typeDefinitions,
-    typeBytes = tables.recordBytes.typeDefinitions;
-  // Both string indices and the type indices precede the container index.
-  const containerAt = 8 + tables.typeDefinitionTypeIndices * tables.widths.type;
+  const typeCount = tables.counts.typeDefinitions;
   const containers = tables.section("genericContainers");
-  // ownerIndex, type_argc, is_method and genericParameterStart, all int32.
-  const containerBytes = 16;
   const containerCount =
     tables.indexing === "counted"
       ? 0
-      : Math.floor(containers.size / containerBytes);
+      : Math.floor(containers.size / GENERIC_CONTAINER_RECORD_BYTES);
   const inRange = (index: number, count: number) =>
     Number.isInteger(index) && index >= 0 && index < count;
   const methods = tables.section("methods"),
@@ -821,19 +833,11 @@ const createGenericContainerReaders = (tables: MetadataTables) => {
     typeGenericContainer: (index: number): number | undefined =>
       tables.indexing === "counted" || !inRange(index, typeCount)
         ? undefined
-        : readIndex(
-            tables.bytes,
-            types.offset + index * typeBytes + containerAt,
-            tables.widths.generic_container,
-          ),
-    genericContainer: (index: number) => {
-      if (!inRange(index, containerCount)) return undefined;
-      const at = containers.offset + index * containerBytes;
-      return {
-        count: tables.bytes.readInt32LE(at + 4),
-        parameterStart: tables.bytes.readInt32LE(at + 12),
-      };
-    },
+        : readTypeGenericContainer(tables, index),
+    genericContainer: (index: number) =>
+      !inRange(index, containerCount)
+        ? undefined
+        : readGenericContainer(tables, index),
   };
 };
 

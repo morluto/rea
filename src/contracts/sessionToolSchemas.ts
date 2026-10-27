@@ -7,6 +7,7 @@ import { processTraceSpecificationSchema } from "../domain/process/processTraceS
 import { evidenceSchema } from "../domain/evidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
+import { residualUnknownSchema } from "../domain/residualUnknown.js";
 
 /** Complete retained Evidence, or selected discovery metadata without payloads. */
 export const getEvidenceBundleInputSchema = z.strictObject({
@@ -53,11 +54,9 @@ export const processComparisonInputSchema = z.strictObject({
 
 /** Residual-unknown list filters. */
 export const listUnknownsInputSchema = z.strictObject({
-  status: z
-    .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
-    .optional(),
-  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-  domain: z.string().trim().min(1).optional(),
+  status: residualUnknownSchema.shape.status.optional(),
+  severity: residualUnknownSchema.shape.severity.optional(),
+  domain: residualUnknownSchema.shape.domain.optional(),
   offset: z
     .int()
     .min(0)

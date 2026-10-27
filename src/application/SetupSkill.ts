@@ -1,7 +1,9 @@
 import { copyFile, lstat, mkdir, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { parseSkillManifestMetadata } from "../domain/skillManifest.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
@@ -204,7 +206,7 @@ export const skillDestinationSelection = (
   return {
     destinations: selection.directories.map(({ client, directory }) => ({
       client,
-      path: join(directory, PRODUCT_IDENTITY.skillName),
+      path: appendCallerPath(directory, PRODUCT_IDENTITY.skillName, platform),
     })),
     issues: selection.unresolved.map(({ client, path, detail }) => ({
       client,
@@ -259,7 +261,7 @@ export const existingSkillDestinations = async (
         continue;
       }
       if (pathIssues.length > 0) continue;
-      const manifest = join(destination.path, "SKILL.md");
+      const manifest = appendCallerPath(destination.path, "SKILL.md");
       const content = await readSkillFile(manifest, resources);
       if (isManagedSkillManifest(content)) existing.push(destination);
     } catch (cause: unknown) {
@@ -334,7 +336,9 @@ const skillDirectoryIssues = async (
       issues.push(root.error);
       continue;
     }
-    const references = await inspectSkillDirectory(join(path, "references"));
+    const references = await inspectSkillDirectory(
+      appendCallerPath(path, "references"),
+    );
     if (!references.ok) issues.push(references.error);
   }
   return issues;
@@ -397,7 +401,7 @@ const canonicalSkillFiles = async (
   return Promise.all(
     destinations.flatMap(({ path: root }) =>
       MANAGED_SKILL_FILES.map(async (relativePath) => {
-        const destination = join(root, relativePath);
+        const destination = appendCallerPath(root, relativePath);
         return {
           destination,
           content: await canonicalSkillContent(relativePath),
@@ -454,7 +458,7 @@ const inspectCanonicalSkill = async (
     let rootHasFiles = false;
     const rootIssues: SkillPathIssue[] = [];
     for (const relativePath of MANAGED_SKILL_FILES) {
-      const destination = join(root, relativePath);
+      const destination = appendCallerPath(root, relativePath);
       let original: SkillFileSnapshot | undefined;
       try {
         original = await readOptionalSkillState(destination, resources);
@@ -698,17 +702,15 @@ export const readInstalledSkillIdentity = async (
     ? inspection.value.manifest
     : inspection.error.manifest;
   const issues = inspection.ok ? [] : inspection.error.issues;
-  const toolCount =
-    content === undefined
-      ? undefined
-      : /^\s{2}tool_count:\s*(\d+)\s*$/mu.exec(content)?.[1];
+  const parsedMetadata =
+    content === undefined ? undefined : parseSkillManifestMetadata(content);
+  const metadata = parsedMetadata?.ok
+    ? parsedMetadata.value
+    : parsedMetadata?.error.metadata;
   return {
     canonical: inspection.ok && inspection.value.canonical,
-    version:
-      content === undefined
-        ? null
-        : (/^\s{2}version:\s*"([^"]+)"\s*$/mu.exec(content)?.[1] ?? null),
-    toolCount: toolCount === undefined ? null : Number.parseInt(toolCount, 10),
+    version: metadata?.version ?? null,
+    toolCount: metadata?.toolCount ?? null,
     ...(issues.length === 0 ? {} : { issues }),
   };
 };

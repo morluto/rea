@@ -37,26 +37,22 @@ export const machoViewRequestSchema = z.strictObject({
 });
 
 const { shape } = inspectMachoSchema;
-/**
- * Union members are tried in order and plain objects drop unknown keys, so a
- * segment or architecture row would otherwise match the entrypoint row and
- * lose every field but file_offset. Exact key sets keep each page's rows whole.
- */
+/** Preserve the existing exact page rows using the producer's fields and defaults. */
 const exactRows = <Shape extends z.ZodRawShape>(
   rows: z.ZodArray<z.ZodObject<Shape>>,
 ) => z.array(z.strictObject(rows.element.shape));
-export const machoViewItemSchema = z.union([
-  exactRows(shape.entrypoints.shape.items),
-  exactRows(shape.architectures.shape.items),
-  exactRows(shape.build_metadata.shape.items),
-  exactRows(shape.load_commands.shape.items),
-  exactRows(shape.dependencies.shape.items),
-  // Exports must precede imports, whose historical defaults also accept export keys.
-  exactRows(shape.exports.shape.items),
-  exactRows(shape.imports.shape.items),
-  exactRows(shape.segments.shape.items),
-  exactRows(shape.provenance),
-]);
+/** Each facet's exact rows, owned by the complete producer contract. */
+export const machoViewRows = {
+  entrypoints: exactRows(shape.entrypoints.shape.items),
+  architectures: exactRows(shape.architectures.shape.items),
+  build_metadata: exactRows(shape.build_metadata.shape.items),
+  load_commands: exactRows(shape.load_commands.shape.items),
+  dependencies: exactRows(shape.dependencies.shape.items),
+  imports: exactRows(shape.imports.shape.items),
+  exports: exactRows(shape.exports.shape.items),
+  segments: exactRows(shape.segments.shape.items),
+  provenance: exactRows(shape.provenance),
+};
 
 /** The producer's own coverage of the paged collection, not of this page. */
 export const machoViewContextSchema = z.strictObject({
@@ -219,11 +215,8 @@ export const projectMachoView = (
           limitations: [],
         }
       : report[view.facet];
-  const item = source.items.slice(view.offset, view.offset + view.limit);
-  return ok({
-    kind: "macho",
-    view,
-    item,
+  const common = {
+    kind: "macho" as const,
     ...shared,
     limitations: uniqueSorted([
       ...parent.limitations,
@@ -232,6 +225,37 @@ export const projectMachoView = (
     ]),
     source_total: source.total,
     source_exhaustive: source.exhaustive,
-    coverage: pageViewCoverage(view.offset, item.length, source.items.length),
-  });
+  };
+  const page = <Facet extends MachoCollection | "provenance", Row>(
+    facet: Facet,
+    rows: Row[],
+  ) => {
+    const item = rows.slice(view.offset, view.offset + view.limit);
+    return {
+      ...common,
+      view: { ...view, facet },
+      item,
+      coverage: pageViewCoverage(view.offset, item.length, rows.length),
+    };
+  };
+  switch (view.facet) {
+    case "entrypoints":
+      return ok(page("entrypoints", report.entrypoints.items));
+    case "architectures":
+      return ok(page("architectures", report.architectures.items));
+    case "build_metadata":
+      return ok(page("build_metadata", report.build_metadata.items));
+    case "load_commands":
+      return ok(page("load_commands", report.load_commands.items));
+    case "dependencies":
+      return ok(page("dependencies", report.dependencies.items));
+    case "imports":
+      return ok(page("imports", report.imports.items));
+    case "exports":
+      return ok(page("exports", report.exports.items));
+    case "segments":
+      return ok(page("segments", report.segments.items));
+    case "provenance":
+      return ok(page("provenance", report.provenance));
+  }
 };

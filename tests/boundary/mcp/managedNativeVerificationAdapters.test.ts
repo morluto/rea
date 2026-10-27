@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import {
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,

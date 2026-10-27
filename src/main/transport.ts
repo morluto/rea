@@ -170,7 +170,10 @@ export const startMcpTransport = async (
     if (!cancelled) {
       const startFailure =
         cause instanceof StreamableHttpListenError
-          ? MCP_HTTP_LISTEN_FAILED
+          ? cause.classification.ok &&
+            cause.classification.value.kind === "host_allowlist"
+            ? cause.remediationAction
+            : MCP_HTTP_LISTEN_FAILED
           : MCP_CONNECTION_START_FAILED;
       serverLogger.error(
         {

@@ -5,7 +5,7 @@ import {
   nativeMetadataLocationSchema,
   type ObjcSwiftMetadata,
 } from "./objcSwiftMetadata.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema } from "../jsonValue.js";
 
 /** Entity kinds shared by decoded Interface Builder archives and native code. */
 export const nativeInvestigationNodeKindSchema = z.enum([
@@ -44,7 +44,7 @@ export const nativeInvestigationNodeSchema = z.strictObject({
   kind: nativeInvestigationNodeKindSchema,
   name: z.string().min(1),
   location: nativeMetadataLocationSchema.nullable(),
-  attributes: z.record(z.string(), jsonValueSchema),
+  attributes: jsonObjectSchema,
   evidence: z.array(nativeMetadataEvidenceSchema),
 });
 

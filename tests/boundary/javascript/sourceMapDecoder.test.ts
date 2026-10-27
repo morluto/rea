@@ -2,6 +2,8 @@ import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { webSourceMapReportSchema } from "../../../src/domain/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import {
   SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
@@ -114,6 +116,122 @@ it("runs the real pinned codec with an independent heap and removes its private 
   if (path === undefined) throw new Error("runtime not acquired");
   await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each([
+  { cancel: false, denyCleanup: false },
+  { cancel: true, denyCleanup: false },
+  { cancel: false, denyCleanup: true },
+  { cancel: true, denyCleanup: true },
+])(
+  "retains completed real-codec matches through finalization (cancel=$cancel, denied=$denyCleanup)",
+  async ({ cancel, denyCleanup }) => {
+    const controller = new AbortController();
+    const reason = { phase: "source-map root finalization" };
+    let path: string | undefined;
+    let cleanupAttempts = 0;
+    const decoder = realDecoder({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return {
+          path: root.path,
+          close: async () => {
+            cleanupAttempts += 1;
+            if (cancel) controller.abort(reason);
+            if (denyCleanup && cleanupAttempts === 1)
+              throw new Error("controlled source-map cleanup denial");
+            await root.close();
+          },
+        };
+      },
+    });
+    try {
+      const response = await decoder.trace(input, {
+        signal: controller.signal,
+      });
+      expect(response.ok).toBe(!cancel && !denyCleanup);
+      const report = webSourceMapReportSchema.parse(
+        response.ok ? response.value : response.error.partialObservation,
+      );
+      expect(report).toMatchObject({
+        source_map_sha256: fixture.sourceMap.file.sha256,
+        url_context: input.url,
+        lookup: { requested: input.position },
+        matches: [{ state: "mapped", content: { text: "original" } }],
+      });
+      if (path === undefined) throw new Error("runtime not acquired");
+      if (!response.ok) {
+        expect(response.error).toMatchObject({
+          operation: "trace_web_source_location",
+        });
+        expect(projectAnalysisError(response.error)).toMatchObject({
+          details: { partial_observation: report },
+        });
+        if (cancel) {
+          const primary = response.error.cleanupPrimary ?? response.error;
+          expect(primary._tag).toBe("AnalysisCancelledError");
+          expect(primary.cause).toBe(reason);
+        }
+        expect(response.error.cleanupIncomplete).toBe(denyCleanup);
+        if (denyCleanup) {
+          expect(response.error.cleanupResources).toEqual([path]);
+          await expect(access(path)).resolves.toBeUndefined();
+          await decoder.close();
+          expect(cleanupAttempts).toBe(2);
+          expect(response.error.cleanupIncomplete).toBe(false);
+          expect(response.error.cleanupResources).toEqual([]);
+          expect(response.error.partialObservation).toEqual(report);
+        }
+      }
+      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await decoder.close();
+    }
+  },
+);
+
+it.each([false, true])(
+  "keeps the completed codec refusal primary over late cancellation (denied=%s)",
+  async (denyCleanup) => {
+    const controller = new AbortController();
+    const reason = new Error("cancel after codec refusal");
+    let cleanupAttempts = 0;
+    const decoder = realDecoder({
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        return {
+          path: root.path,
+          close: async () => {
+            cleanupAttempts += 1;
+            controller.abort(reason);
+            if (denyCleanup && cleanupAttempts === 1)
+              throw new Error("controlled refusal cleanup denial");
+            await root.close();
+          },
+        };
+      },
+    });
+    try {
+      const response = await decoder.trace(
+        { ...input, text: "{" },
+        { signal: controller.signal },
+      );
+      if (response.ok) throw new Error("Expected malformed-map refusal");
+      expect(controller.signal.reason).toBe(reason);
+      expect(response.error.cleanupPrimary ?? response.error).toBeInstanceOf(
+        AnalysisInputError,
+      );
+      expect(response.error.partialObservation).toBeUndefined();
+      expect(response.error.cleanupIncomplete).toBe(denyCleanup);
+      await decoder.close();
+      expect(response.error.cleanupIncomplete).toBe(false);
+      expect(cleanupAttempts).toBe(denyCleanup ? 2 : 1);
+    } finally {
+      await decoder.close();
+    }
+  },
+);
+
 it.each([
   {
     failure: "malformed JSON",
@@ -222,26 +340,6 @@ it("keeps indexed section overlap typed as a malformed source map", async () => 
     ]),
   );
 });
-it("reports cleanup failure with the actual owning operation", async () => {
-  const response = await realDecoder({
-    createRuntime: async () => {
-      const root = await PrivateRuntimeRoot.create();
-      return {
-        path: root.path,
-        close: async () => {
-          await root.close();
-          throw new Error("observed cleanup failure");
-        },
-      };
-    },
-  }).trace(input);
-  if (response.ok) throw new Error("expected cleanup failure");
-  expect(response.error).toMatchObject({
-    cleanupIncomplete: true,
-    operation: "trace_web_source_location",
-    diagnostics: { cleanup_failures: ["observed cleanup failure"] },
-  });
-});
 it("cancels a real owned process and removes the runtime request", async () => {
   const controller = new AbortController();
   let path: string | undefined;
@@ -311,6 +409,7 @@ it("rejects a malformed actual subprocess reply", async () => {
   }).trace(input);
   if (response.ok) throw new Error("expected malformed reply");
   expect(response.error._tag).toBe("AnalysisOutputError");
+  expect(response.error.partialObservation).toBeUndefined();
 });
 it("rejects a codec report from a runtime other than the launching one", async () => {
   const actual = await realDecoder().trace(input);
@@ -344,6 +443,7 @@ it("rejects a codec report from a runtime other than the launching one", async (
   });
   if (response.ok) throw new Error("expected runtime mismatch");
   expect(response.error._tag).toBe("AnalysisOutputError");
+  expect(response.error.partialObservation).toBeUndefined();
   if (actual.value.runtime.id !== "bun") return;
   // A Bun codec must report exactly the process limit its launcher enforced.
   const limit = await replay({

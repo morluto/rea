@@ -46,36 +46,38 @@ export const nativePcodeEffectSchema = z.strictObject({
 });
 
 /** Bounded data-flow observations; STORE is not necessarily a persistent/global write. */
+export const availableNativeValueFlowSchema = z.strictObject({
+  available: z.literal(true),
+  provenance: z.literal("ghidra-high-pcode"),
+  operations: z.array(nativePcodeOperationSchema),
+  def_use: z.array(nativePcodeDefUseSchema),
+  effects: z.array(nativePcodeEffectSchema),
+  parameters: z.array(
+    z.strictObject({
+      ordinal: z.int().nonnegative(),
+      name: z.string(),
+      data_type: z.string(),
+    }),
+  ),
+  parameter_uses: z.array(
+    z.strictObject({
+      ordinal: z.int().nonnegative(),
+      use: z.string(),
+      input_index: z.int().nonnegative(),
+    }),
+  ),
+  truncated: z.boolean(),
+  omitted_operations_lower_bound: z.int().nonnegative(),
+  known_omitted_inputs: z.int().nonnegative(),
+  known_omitted_edges: z.int().nonnegative(),
+  limitations: z.array(z.string().min(1)),
+});
+export const unavailableNativeValueFlowSchema = z.strictObject({
+  available: z.literal(false),
+  reason: z.string().min(1),
+  limitations: z.array(z.string().min(1)),
+});
 export const nativeValueFlowSchema = z.discriminatedUnion("available", [
-  z.strictObject({
-    available: z.literal(true),
-    provenance: z.literal("ghidra-high-pcode"),
-    operations: z.array(nativePcodeOperationSchema),
-    def_use: z.array(nativePcodeDefUseSchema),
-    effects: z.array(nativePcodeEffectSchema),
-    parameters: z.array(
-      z.strictObject({
-        ordinal: z.int().nonnegative(),
-        name: z.string(),
-        data_type: z.string(),
-      }),
-    ),
-    parameter_uses: z.array(
-      z.strictObject({
-        ordinal: z.int().nonnegative(),
-        use: z.string(),
-        input_index: z.int().nonnegative(),
-      }),
-    ),
-    truncated: z.boolean(),
-    omitted_operations_lower_bound: z.int().nonnegative(),
-    known_omitted_inputs: z.int().nonnegative(),
-    known_omitted_edges: z.int().nonnegative(),
-    limitations: z.array(z.string().min(1)),
-  }),
-  z.strictObject({
-    available: z.literal(false),
-    reason: z.string().min(1),
-    limitations: z.array(z.string().min(1)),
-  }),
+  availableNativeValueFlowSchema,
+  unavailableNativeValueFlowSchema,
 ]);

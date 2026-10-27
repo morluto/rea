@@ -1,3 +1,4 @@
+import { mediaTypeEssence } from "./recordedMediaType.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import { ok, type Result } from "../result.js";
@@ -14,7 +15,6 @@ import {
   GROUP_BYTES,
   RECORD_SCRATCH_BYTES,
   SEGMENT_BYTES,
-  mediaTypeEssence,
   readQueryParameterNames,
   readRecordedRequestLine,
   scanRouteTemplate,

@@ -375,7 +375,7 @@ it.each([false, true] as const)(
 
 vi.mock("../pyinstaller/CArchiveLayout.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  containsPyInstallerArchive: () =>
+  observePyInstallerCookie: () =>
     Promise.reject(new ArtifactReaderFailure("format", "detection failed")),
 }));
 

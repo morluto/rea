@@ -198,6 +198,11 @@ export class EvidenceLedger {
     );
   }
 
+  /** Borrow immutable source records without constructing or hashing a bundle. */
+  recordsForAnalysis(): readonly Evidence[] {
+    return [...this.#records.values()];
+  }
+
   /** Check whether one immutable Evidence ID is present in this ledger. */
   has(evidenceId: string): boolean {
     return this.#records.has(evidenceId);

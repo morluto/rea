@@ -6,11 +6,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { FULL_CATALOG_IDENTITY } from "../../dist/catalogIdentity.js";
-import { TOOL_CONTRACTS } from "../../dist/contracts/toolContracts.js";
-import {
-  requireMcpLifecycleResult,
-  sortVerifierNames,
-} from "./mcp-verifier-results.mjs";
+import { verifyCompleteToolCatalog } from "./verify-package-core.mjs";
 
 const execute = promisify(execFile);
 
@@ -71,37 +67,7 @@ export async function verifyInstalledCanaryPackage(
   });
   try {
     await client.connect(transport);
-    const tools = await client.listTools();
-    const toolNames = tools.tools.map(({ name }) => name);
-    const canonicalToolNames = new Set(TOOL_CONTRACTS.map(({ name }) => name));
-    const publishedToolNames = new Set(toolNames);
-    const unknown = toolNames.filter((name) => !canonicalToolNames.has(name));
-    const missing = [...canonicalToolNames].filter(
-      (name) => !publishedToolNames.has(name),
-    );
-    if (
-      toolNames.length === 0 ||
-      publishedToolNames.size !== toolNames.length ||
-      unknown.length ||
-      missing.length
-    )
-      throw new Error(
-        `Installed MCP exposed an invalid canonical tool catalog (${toolNames.length} tools, unknown: ${unknown.join(", ") || "none"}, missing: ${missing.join(", ") || "none"})`,
-      );
-    const status = requireMcpLifecycleResult(
-      await client.callTool({ name: "binary_session", arguments: {} }),
-      "binary_session",
-    );
-    const availability = sortVerifierNames(
-      status.tool_availability.map(({ name }) => name),
-    );
-    if (
-      JSON.stringify(availability) !==
-      JSON.stringify(sortVerifierNames(canonicalToolNames))
-    )
-      throw new Error(
-        "Installed binary_session omitted canonical tool availability",
-      );
+    const toolNames = await verifyCompleteToolCatalog(client);
     return {
       mcpTools: toolNames.length,
       canonicalMcpTools: FULL_CATALOG_IDENTITY.counts.mcp_tools,

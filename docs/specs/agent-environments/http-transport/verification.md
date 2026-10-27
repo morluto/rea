@@ -145,9 +145,9 @@ The concurrent-`initialize` case is exercised at the slot with in-memory
 `Request` objects, where both calls advance in lockstep; over TCP two
 connections are served in separate event-loop turns, so the race is reachable
 only in-process and the listener-level behaviour remains "the newest client
-owns the server, the other sees `400` or `404`". The non-loopback relaxation
-path is covered only through the pure allowlist helper and the loopback smoke
-runs; no wide bind was exercised. Sessions are served one at a time;
+owns the server, the other sees `400` or `404`". Those recorded runs predate the mandatory non-loopback allowlist and did not
+exercise a wide bind. The current requirement and later listener regression
+coverage are described in the [specification](spec.md). Sessions are served one at a time;
 concurrent clients are not supported. The two failures that reproduce on the
 clean clone are environmental (macOS with Node 22.23.1 and npm 12.0.2) and are
 left for their owners; the load-induced timeouts were classified by isolated

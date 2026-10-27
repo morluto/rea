@@ -1,3 +1,7 @@
+import {
+  readBinaryPlistLayout,
+  readBinaryPlistUnsigned64,
+} from "./BinaryPlistLayout.js";
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
@@ -5,7 +9,6 @@ import {
   binaryDateRequiresExactSeconds,
   binaryPlistObjectEnd,
   binaryPlistUidNormalizationWidth,
-  type BinaryPlistUidPath,
 } from "./PlistScalars.js";
 
 /** Preflight the representation created by the pinned plist decoder. */
@@ -40,7 +43,7 @@ export const preflightPropertyListDecode = (
           budget,
           fail,
         ),
-        binaryPrototypeKeyObserved: false,
+
         datePrecisionOverlapCount: 0,
         reachableDateOffsets: [],
         overlappingDateOffsets: [],
@@ -173,11 +176,25 @@ export interface BinaryPlistExpansionOptions {
   readonly bounds?: "strict" | "decoder";
 }
 
+export interface BinaryPlistContainer {
+  readonly object: number;
+  readonly kind: "array" | "dictionary";
+  readonly references: readonly number[];
+  readonly keys?: readonly string[];
+}
+
+/** Validated source references, separate from upstream scalar conversion. */
+export interface BinaryPlistValuePlan {
+  readonly topObject: number;
+  readonly scalars: readonly { object: number; uid: boolean }[];
+  readonly containers: readonly BinaryPlistContainer[];
+  readonly uidIdentity: boolean;
+}
+
 /** Preflight size and binary-key observations; XML keys are inspected by decode. */
 export interface PlistDecodePreflight {
-  readonly binaryUidPaths?: readonly (BinaryPlistUidPath | null)[];
+  readonly binaryValuePlan?: BinaryPlistValuePlan;
   readonly estimatedBytes: number;
-  readonly binaryPrototypeKeyObserved: boolean;
   /** Number of expanded references to precision-unknown overlapping dates. */
   readonly datePrecisionOverlapCount: number;
   /** Unique reachable date records in the selected value graph. */
@@ -203,8 +220,6 @@ export interface PlistDecodePreflight {
   /** Decoder-supported width selected for array and dictionary references. */
   readonly normalizedReferenceSize: number;
 }
-
-const PROTOTYPE_KEY = "__proto__";
 
 type BinaryObjectSpan = { readonly offset: number; readonly end: number };
 
@@ -236,8 +251,8 @@ const findOverlappingScalarOffsets = (
 };
 
 /**
- * Count every expanded binary-plist reference before calling plist.parseBinary,
- * which recurses on each reference and copies shared containers. Malformed
+ * Validate and budget every expanded source reference before scalar decoding
+ * and independent container materialization. Malformed
  * structure throws TypeError; resource and cycle failures use `fail`.
  */
 export const estimateBinaryPlistExpansion = (
@@ -254,24 +269,26 @@ export const estimateBinaryPlistExpansion = (
 ): PlistDecodePreflight => {
   if (bytes.length < 40)
     throw new TypeError("binary plist trailer is truncated");
-  const trailer = bytes.length - 32;
-  const offsetSize = bytes[trailer + 6] ?? 0;
-  const referenceSize = bytes[trailer + 7] ?? 0;
+  const sourceLayoutResult = readBinaryPlistLayout(bytes);
+  if (!sourceLayoutResult.ok)
+    throw new TypeError("binary plist trailer is truncated");
+  const sourceLayout = sourceLayoutResult.value;
+  const {
+    trailerOffset: trailer,
+    offsetWidth: offsetSize,
+    referenceWidth: referenceSize,
+  } = sourceLayout;
   if (offsetSize < 1 || referenceSize < 1)
     throw new TypeError("binary plist trailer integer sizes are invalid");
+  const safeDeclaration = (value: bigint): number =>
+    value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : -1;
   const readInteger = (offset: number, size: number): number => {
     if (offset < 0 || size < 1 || offset + size > bytes.length) return -1;
-    let value = 0n;
-    for (let index = 0; index < size; index += 1)
-      value = BigInt.asUintN(
-        64,
-        (value << 8n) | BigInt(bytes[offset + index] ?? 0),
-      );
-    return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : -1;
+    return safeDeclaration(readBinaryPlistUnsigned64(bytes, offset, size));
   };
-  const objectCount = readInteger(trailer + 8, 8);
-  const topObject = readInteger(trailer + 16, 8);
-  const offsetTable = readInteger(trailer + 24, 8);
+  const objectCount = safeDeclaration(sourceLayout.objectCount);
+  const topObject = safeDeclaration(sourceLayout.topObject);
+  const offsetTable = safeDeclaration(sourceLayout.offsetTable);
   const tableEnd = bounds === "strict" ? trailer : bytes.length;
   const objectsEnd = bounds === "strict" ? offsetTable : bytes.length;
   if (
@@ -298,15 +315,15 @@ export const estimateBinaryPlistExpansion = (
         );
   if (normalizedReferenceSize === undefined)
     throw new TypeError("binary plist object reference count is invalid");
-  // Reserve source metadata and reachable-offset indexes for scalar projection.
-  // Without projection, the traversal retains only structural validation state.
-  const objectBytes = numberProjection || uidProjection ? 320 : 16;
+  // Reserve source container/reference facts, scalar indexing, and the scalar
+  // array/table overhead; projection also retains numeric/UID source metadata.
+  const objectBytes = numberProjection || uidProjection ? 512 : 256;
   const expandedNodeBytes = numberProjection || uidProjection ? 224 : 96;
   // Scalar projection may require a same-sized parser-compatible input copy
-  // for wide integers and sub-millisecond dates. Reserve before allocation.
+  // for wide integers and sub-millisecond dates. The scalar array decoder keeps
+  // another input-sized copy; reserve both before allocation.
   let estimate =
-    bytes.length * (numberProjection ? 3 : 2) + objectCount * objectBytes;
-  let binaryPrototypeKeyObserved = false;
+    bytes.length * (numberProjection ? 4 : 3) + objectCount * objectBytes;
   if (estimate > maxBytes)
     throw fail("expansion", `binary plist object table exceeds ${budget}`);
 
@@ -316,22 +333,21 @@ export const estimateBinaryPlistExpansion = (
     depth: number;
     exit: boolean;
     dictionaryKey: boolean;
-    path?: BinaryPlistUidPath | null;
   }> = [
     {
       object: topObject,
       depth: 0,
       exit: false,
       dictionaryKey: false,
-      ...(uidProjection ? { path: null } : {}),
     },
   ];
-  const binaryUidPaths: (BinaryPlistUidPath | null)[] = [];
+  const scalarObjects = new Map<number, { object: number; uid: boolean }>();
+  const sourceContainers = new Map<number, BinaryPlistContainer>();
   const dictionaryKeys = new Map<number, string>();
   const readDictionaryKey = (object: number): string => {
     const prior = dictionaryKeys.get(object);
     if (prior !== undefined) return prior;
-    const offset = readInteger(offsetTable + object * offsetSize, offsetSize);
+    const offset = safeDeclaration(sourceLayout.objectOffset(object));
     if (offset < 8 || offset >= objectsEnd)
       throw new TypeError("binary plist object offset is invalid");
     const marker = bytes[offset] ?? 0;
@@ -393,15 +409,17 @@ export const estimateBinaryPlistExpansion = (
         "expansion",
         `binary plist reference expansion exceeds ${budget}`,
       );
-    const offset = readInteger(
-      offsetTable + entry.object * offsetSize,
-      offsetSize,
-    );
+    const offset = safeDeclaration(sourceLayout.objectOffset(entry.object));
     if (offset < 8 || offset >= objectsEnd)
       throw new TypeError("binary plist object offset is invalid");
     if (numberProjection) reachableObjectOffsets.add(offset);
     const marker = bytes[offset] ?? 0;
     const type = marker >> 4;
+    if (type !== 10 && type !== 13)
+      scalarObjects.set(entry.object, {
+        object: entry.object,
+        uid: type === 8,
+      });
     if (entry.dictionaryKey && type !== 5 && type !== 6)
       throw new TypeError("binary plist dictionary key is not a string");
     if (type === 3) {
@@ -424,7 +442,6 @@ export const estimateBinaryPlistExpansion = (
       const uidWidth = (marker & 0x0f) + 1;
       if (offset + 1 + uidWidth > objectsEnd)
         throw new TypeError("binary plist UID object is truncated");
-      if (entry.path !== undefined) binaryUidPaths.push(entry.path);
       const normalizedWidth = binaryPlistUidNormalizationWidth(bytes, offset);
       if (normalizedWidth !== undefined)
         uidWidthsToNormalize.set(offset, normalizedWidth);
@@ -462,26 +479,6 @@ export const estimateBinaryPlistExpansion = (
       const byteLength = type === 6 ? size * 2 : size;
       if (cursor + byteLength > objectsEnd)
         throw new TypeError("binary plist scalar object is truncated");
-      if (
-        !binaryPrototypeKeyObserved &&
-        entry.dictionaryKey &&
-        (type === 5 || type === 6) &&
-        size === PROTOTYPE_KEY.length
-      ) {
-        let matches = true;
-        for (let index = 0; index < PROTOTYPE_KEY.length; index += 1) {
-          const codeUnit =
-            type === 5
-              ? (bytes[cursor + index] ?? 0)
-              : ((bytes[cursor + index * 2] ?? 0) << 8) |
-                (bytes[cursor + index * 2 + 1] ?? 0);
-          if (codeUnit !== PROTOTYPE_KEY.charCodeAt(index)) {
-            matches = false;
-            break;
-          }
-        }
-        if (matches) binaryPrototypeKeyObserved = true;
-      }
       estimate += type === 4 ? size + 4 * Math.ceil(size / 3) : byteLength * 2;
       if (estimate > maxBytes)
         throw fail(
@@ -503,28 +500,24 @@ export const estimateBinaryPlistExpansion = (
         "expansion",
         `binary plist reference expansion exceeds ${budget}`,
       );
-    const parsedReferences: number[] | undefined =
-      referenceSize !== normalizedReferenceSize &&
-      !containersToNormalize.has(offset)
-        ? []
-        : undefined;
-    // A duplicate dictionary key exposes only its final value in plist@5.
-    // Keep provenance for that value while still validating every source ref.
-    const valueKeys = new Map<number, string>();
-    if (entry.path !== undefined && type === 13) {
-      const lastKeyIndexes = new Map<string, number>();
-      for (let index = 0; index < size; index += 1) {
-        const reference = readInteger(
-          cursor + index * referenceSize,
-          referenceSize,
-        );
-        if (reference < 0 || reference >= objectCount)
-          throw new TypeError("binary plist reference is invalid");
-        lastKeyIndexes.set(readDictionaryKey(reference), index);
-      }
-      for (const [key, index] of lastKeyIndexes)
-        if (key !== PROTOTYPE_KEY) valueKeys.set(size + index, key);
-    }
+    const references = Array.from({ length: childCount }, (_, index) => {
+      const reference = readInteger(
+        cursor + index * referenceSize,
+        referenceSize,
+      );
+      if (reference < 0 || reference >= objectCount)
+        throw new TypeError("binary plist reference is invalid");
+      return reference;
+    });
+    if (!sourceContainers.has(entry.object))
+      sourceContainers.set(entry.object, {
+        object: entry.object,
+        kind: type === 13 ? "dictionary" : "array",
+        references: type === 13 ? references.slice(size) : references,
+        ...(type === 13
+          ? { keys: references.slice(0, size).map(readDictionaryKey) }
+          : {}),
+      });
     active.add(entry.object);
     pending.push({
       object: entry.object,
@@ -533,33 +526,22 @@ export const estimateBinaryPlistExpansion = (
       dictionaryKey: false,
     });
     for (let index = childCount - 1; index >= 0; index -= 1) {
-      const reference = readInteger(
-        cursor + index * referenceSize,
-        referenceSize,
-      );
-      if (reference < 0 || reference >= objectCount)
-        throw new TypeError("binary plist reference is invalid");
-      if (parsedReferences !== undefined) parsedReferences[index] = reference;
+      const reference = references[index]!;
       pending.push({
         object: reference,
         depth: entry.depth + 1,
         exit: false,
         dictionaryKey: type === 13 && index < size,
-        ...(entry.path === undefined || (type === 13 && !valueKeys.has(index))
-          ? {}
-          : {
-              path: {
-                parent: entry.path,
-                key: type === 13 ? valueKeys.get(index)! : index,
-              },
-            }),
       });
     }
-    if (parsedReferences !== undefined)
+    if (
+      referenceSize !== normalizedReferenceSize &&
+      !containersToNormalize.has(offset)
+    )
       containersToNormalize.set(offset, {
         offset,
         headerLength: cursor - offset,
-        references: parsedReferences,
+        references,
       });
     pendingObjectCount += childCount;
   }
@@ -597,7 +579,7 @@ export const estimateBinaryPlistExpansion = (
     if (cloneLengths.length > 0 || normalizedOffsetSize !== offsetSize) {
       const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
       estimate +=
-        cloneBytes + objectCount * (normalizedOffsetSize - offsetSize);
+        2 * (cloneBytes + objectCount * (normalizedOffsetSize - offsetSize));
       if (estimate > maxBytes)
         throw fail(
           "expansion",
@@ -606,8 +588,12 @@ export const estimateBinaryPlistExpansion = (
     }
     return {
       estimatedBytes: estimate,
-      ...(uidProjection ? { binaryUidPaths } : {}),
-      binaryPrototypeKeyObserved,
+      binaryValuePlan: {
+        topObject,
+        scalars: [...scalarObjects.values()],
+        containers: [...sourceContainers.values()],
+        uidIdentity: uidProjection,
+      },
       datePrecisionOverlapCount: 0,
       reachableDateOffsets: [],
       overlappingDateOffsets: [],
@@ -664,7 +650,8 @@ export const estimateBinaryPlistExpansion = (
   const normalizedOffsetSize = normalizeOffsetWidth(cloneLengths);
   if (cloneLengths.length > 0 || normalizedOffsetSize !== offsetSize) {
     const cloneBytes = cloneLengths.reduce((sum, length) => sum + length, 0);
-    estimate += cloneBytes + objectCount * (normalizedOffsetSize - offsetSize);
+    estimate +=
+      2 * (cloneBytes + objectCount * (normalizedOffsetSize - offsetSize));
     if (estimate > maxBytes)
       throw fail(
         "expansion",
@@ -677,8 +664,12 @@ export const estimateBinaryPlistExpansion = (
   ).length;
   return {
     estimatedBytes: estimate,
-    ...(uidProjection ? { binaryUidPaths } : {}),
-    binaryPrototypeKeyObserved,
+    binaryValuePlan: {
+      topObject,
+      scalars: [...scalarObjects.values()],
+      containers: [...sourceContainers.values()],
+      uidIdentity: uidProjection,
+    },
     datePrecisionOverlapCount,
     reachableDateOffsets: [...reachableDateOffsets].sort(
       (left, right) => left - right,

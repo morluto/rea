@@ -2045,3 +2045,42 @@ it("keeps known capture omissions in compact route summaries and queryable gap f
   for (const row of gaps.value.items)
     expect(row).toMatchObject({ source_id: null, provenance: null });
 });
+
+it("retains captured Next script identity while deriving decoded route patterns", () => {
+  const url = `${origin}/base/_next/static/chunks/app/%28shop%29/blog/%5Bid%5D/page-abc.js`;
+  const captured = createWebPageInspection([
+    {
+      source: "router.push('/help');",
+      scriptKey: `scr_${"2".repeat(64)}`,
+      url,
+      origin,
+      cdpHash: "hash",
+    },
+  ]);
+  const result = analyzeWebBundleFixture(captured);
+  expect(result.route_inventory?.routes.map(({ path }) => path)).toEqual([
+    "/base/blog/:id",
+    "/base/help",
+  ]);
+  expect(result.route_inventory?.sources).toEqual([
+    expect.objectContaining({
+      url,
+      sha256: captured.scripts.items[0]?.source.included
+        ? captured.scripts.items[0].source.artifact.sha256
+        : null,
+    }),
+  ]);
+  expect(result.route_inventory?.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        origin: "source-url",
+        unprefixed_path: "/blog/:id",
+        inferred_base_path: "/base",
+      }),
+      expect.objectContaining({
+        origin: "source-syntax",
+        unprefixed_path: "/help",
+      }),
+    ]),
+  );
+});

@@ -38,6 +38,7 @@ import {
   spelledLike,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
+  ownMember,
   collectionMatch,
   decodedSegment,
   isObject,
@@ -97,7 +98,7 @@ export const pathValues = (
     .split("/");
   const values = new Map<string, string>();
   for (const param of tool.params) {
-    const value = args[names.get(param.name) ?? param.name];
+    const value = ownMember(args, names.get(param.name) ?? param.name);
     const segment = template[param.index] ?? "";
     if (typeof value === "string") values.set(segment.slice(1, -1), value);
   }
@@ -121,7 +122,7 @@ const callBody = ({
   plan,
 }: WriteRequest): Result<JsonObject | undefined, AnalysisError> => {
   const name = environmentToolArguments(tool).body;
-  const sent = name === undefined ? undefined : args[name];
+  const sent = name === undefined ? undefined : ownMember(args, name);
   if (sent === undefined) return ok(undefined);
   const envelope = plan.body?.envelope ?? "";
   const value = unenveloped(sent as JsonValue, plan.body?.envelope);
@@ -240,7 +241,7 @@ export const generator = (
     make: (attempt: number) => JsonValue,
   ): Result<JsonValue, string> => {
     const held = new Set(
-      ofType.map((entity) => scalarText(entity.fields[field])),
+      ofType.map((entity) => scalarText(ownMember(entity.fields, field))),
     );
     for (let attempt = 0; attempt < GENERATION_ATTEMPTS; attempt += 1) {
       const value = make(attempt);
@@ -254,7 +255,7 @@ export const generator = (
     target: GeneratedTarget,
     rule: GeneratedRule,
   ): Result<JsonValue, string> => {
-    const exemplar = target.observed[rule.field] ?? "";
+    const exemplar = ownMember(target.observed, rule.field) ?? "";
     const seed = (attempt: number) =>
       `${store.state.evidenceId}:${request.tool.name}:${rule.field}:${String(write.count)}:${String(attempt)}`;
     switch (rule.rule) {
@@ -268,7 +269,7 @@ export const generator = (
           );
         return rule.rule === "nested-clock"
           ? nestedClockValue(
-              (target.current ?? target.observed)[rule.field],
+              ownMember(target.current ?? target.observed, rule.field),
               rule,
               value,
             )
@@ -299,7 +300,7 @@ export const generator = (
       case "renewed":
         return ok(
           renewUuids(
-            target.current?.[rule.field] ?? null,
+            ownMember(target.current, rule.field) ?? null,
             rule.pointers,
             renewed,
           ),
@@ -384,7 +385,7 @@ const pathArguments = (
   const names = environmentToolArguments(tool).path;
   return new Map(
     tool.params.flatMap((param) => {
-      const value = args[names.get(param.name) ?? param.name];
+      const value = ownMember(args, names.get(param.name) ?? param.name);
       return typeof value === "string" ? [[param.index, value] as const] : [];
     }),
   );
@@ -497,7 +498,7 @@ const answerCreate = (
   if (!fields.ok) return err(refused(tool, fields.error));
   const field = unloadableMember(fields.value);
   if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
-  const id = scalarText(fields.value[idField]);
+  const id = scalarText(ownMember(fields.value, idField));
   if (
     id === undefined ||
     serving.store.entity(type, collection, id) !== undefined

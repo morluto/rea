@@ -1,4 +1,5 @@
 import {
+  ownMember,
   isObject,
   isQueryPost,
   listItems,
@@ -318,7 +319,7 @@ export const hasRepeatedQueryArgument = (
   args: Readonly<Record<string, unknown>>,
 ): boolean => {
   for (const argument of environmentToolArguments(tool).query.values()) {
-    const value = args[argument];
+    const value = ownMember(args, argument);
     if (Array.isArray(value) && value.length > 1) return true;
   }
   return false;

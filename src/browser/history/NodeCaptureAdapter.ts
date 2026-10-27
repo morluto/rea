@@ -1,11 +1,11 @@
 import { fileURLToPath } from "node:url";
 import type { HistoricalCaptureFormatAdapter } from "./HistoricalCaptureFormatAdapter.js";
 import {
-  CAPTURE_DECODER_SEMI_SPACE_MIB,
   DEFAULT_CAPTURE_DECODER_HEAP,
   resolveCaptureDecoderHeap,
   type CaptureDecoderHeap,
 } from "../../config/captureDecoderHeap.js";
+import { CAPTURE_DECODER_SEMI_SPACE_MIB } from "../../domain/analysisResourceLimits.js";
 import {
   NODE_CAPTURE_HEAP_ENFORCED,
   HAR_CAPTURE_PROVIDER_IDENTITY,

@@ -8,11 +8,9 @@ import { run, session } from "./kunaSessionFixture.js";
 
 const reading = vi.hoisted(() => ({
   asm: "",
-  c: "",
   held: false,
   gate: undefined as Promise<void> | undefined,
-  missing: 0,
-  onMissing: undefined as (() => void) | undefined,
+  onSpanClosed: undefined as (() => void) | undefined,
 }));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -20,44 +18,39 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
-      try {
-        const handle = await actual.open(...args);
-        if (String(args[0]) !== reading.asm || reading.held) return handle;
-        return new Proxy(handle, {
-          get(target, key) {
-            if (key === "read")
-              return async (...readArgs: unknown[]) => {
-                const result: unknown = await Reflect.apply(
-                  target.read,
-                  target,
-                  readArgs,
-                );
-                reading.held = true;
-                await reading.gate;
-                return result;
-              };
-            const value: unknown = Reflect.get(target, key, target);
-            return typeof value === "function" ? value.bind(target) : value;
-          },
-        });
-      } catch (cause: unknown) {
-        if (String(args[0]) === reading.c) {
-          reading.missing += 1;
-          if (reading.missing === 2) reading.onMissing?.();
-        }
-        throw cause;
-      }
+      const handle = await actual.open(...args);
+      if (String(args[0]) !== reading.asm || reading.held) return handle;
+      return new Proxy(handle, {
+        get(target, key) {
+          if (key === "close")
+            return async () => {
+              await target.close();
+              reading.onSpanClosed?.();
+            };
+          if (key === "read")
+            return async (...readArgs: unknown[]) => {
+              const result: unknown = await Reflect.apply(
+                target.read,
+                target,
+                readArgs,
+              );
+              reading.held = true;
+              await reading.gate;
+              return result;
+            };
+          const value: unknown = Reflect.get(target, key, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
     },
   };
 });
 
 afterEach(() => {
   reading.asm = "";
-  reading.c = "";
   reading.held = false;
   reading.gate = undefined;
-  reading.missing = 0;
-  reading.onMissing = undefined;
+  reading.onSpanClosed = undefined;
 });
 
 const barrier = () => {
@@ -73,7 +66,7 @@ test.skipIf(process.platform === "win32")(
   async () => {
     const assembly = barrier();
     const rebuild = barrier();
-    const missing = barrier();
+    const closed = barrier();
     let exports = 0;
     const { cacheRoot, open } = await session(
       "rea-kuna-reader-eviction-",
@@ -92,9 +85,8 @@ test.skipIf(process.platform === "win32")(
       const [key] = await readdir(join(cacheRoot, "projects"));
       const project = join(cacheRoot, "projects", key ?? "");
       reading.asm = join(project, "project", "program.asm");
-      reading.c = join(project, "project", "program.c");
       reading.gate = assembly.promise;
-      reading.onMissing = missing.release;
+      reading.onSpanClosed = closed.release;
       dossier = run(client, "analyze_function", { procedure: "main" });
       await expect.poll(() => reading.held).toBe(true);
       await rename(project, join(cacheRoot, "trash", "evicted-elsewhere"));
@@ -107,9 +99,9 @@ test.skipIf(process.platform === "win32")(
       });
       await expect.poll(() => exports).toBe(2);
       assembly.release();
-      // The fixed reader attempts the missing C before retrying the entire
-      // report. The old reader instead completes with a single-function source.
-      await Promise.race([dossier, missing.promise]);
+      // Release the rebuild after the evicted span relinquishes its descriptor.
+      // Detection may happen through descriptor state or the missing path.
+      await Promise.race([dossier, closed.promise]);
       rebuild.release();
       const result = await dossier;
       expect(result.rawResult).toMatchObject({

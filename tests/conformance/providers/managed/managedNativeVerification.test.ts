@@ -10,7 +10,7 @@ import {
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/ManagedNativeBoundaryInspector.js";
 
-import { verifyManagedNativeBoundariesEvidence } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
+import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import {
@@ -19,7 +19,7 @@ import {
 } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
-import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 
 import { verifyManagedNativeVerificationSource } from "../../../../src/domain/managed/managedNativeVerification.js";
 import { readManagedNativeVerificationSource } from "../../../../src/domain/managed/managedNativeVerificationSource.js";
@@ -492,7 +492,7 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
     basis: "module-mismatch",
     matched_native: { module_path: "/examples/libCaseProbe.so" },
   });
-  const workflow = verifyManagedNativeBoundariesEvidence({
+  const workflow = executeManagedNativeBoundaries({
     ...linuxInput,
     native_observations: [
       nativeFunctionEvidence("/examples/libCaseProbe.so", "elf"),
@@ -500,7 +500,7 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
   });
   expect(workflow.ok).toBe(true);
   if (!workflow.ok) throw workflow.error;
-  expect(workflow.value.normalized_result).toMatchObject({
+  expect(workflow.value.evidence.normalized_result).toMatchObject({
     summary: { contradicted: 1, verified: 0 },
     pinvoke_imports: [
       expect.objectContaining({
@@ -802,10 +802,10 @@ it("retains every observed native candidate", () => {
 });
 
 it("wraps verification in derived workflow Evidence", () => {
-  const evidence = verifyManagedNativeBoundariesEvidence(exampleInput());
+  const evidence = executeManagedNativeBoundaries(exampleInput());
 
   if (!evidence.ok) throw evidence.error;
-  expect(evidence.value).toMatchObject({
+  expect(evidence.value.evidence).toMatchObject({
     operation: "verify_managed_native_boundaries",
     provider: { id: "rea-dotnet-workflows" },
     confidence: "inferred",
@@ -814,7 +814,7 @@ it("wraps verification in derived workflow Evidence", () => {
       summary: { verified: 1 },
     },
   });
-  expect(evidence.value.evidence_links).toHaveLength(2);
+  expect(evidence.value.evidence.evidence_links).toHaveLength(2);
 });
 
 describe("managed/native verification result algebra", () => {

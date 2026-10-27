@@ -228,6 +228,16 @@ const managedMethodBodySchema = z.object({
   max_stack: z.int().min(0).nullable(),
   init_locals: z.boolean().nullable(),
   local_var_sig_token: managedMetadataTokenSchema.nullable(),
+  local_var_signature: z
+    .object({
+      raw_sha256: digestSchema,
+      has_context_dependent_types: z.boolean(),
+    })
+    .nullable()
+    .default(null)
+    .describe(
+      "Validated LocalVarSig blob facts; null when absent or unrecorded. Named types, modifiers and generic variables require metadata or declaring context; equal raw digests do not establish their cross-artifact type identity.",
+    ),
   il_size: z.int().min(0),
   il_sha256: digestSchema
     .nullable()

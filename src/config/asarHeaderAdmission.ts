@@ -2,10 +2,6 @@ import {
   DEFAULT_ASAR_MAX_HEADER_BYTES,
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
 } from "../domain/analysisResourceLimits.js";
-export {
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
-} from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";

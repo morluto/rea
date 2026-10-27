@@ -5,7 +5,7 @@ import {
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js";
 import {

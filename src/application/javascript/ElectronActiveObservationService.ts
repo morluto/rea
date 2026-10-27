@@ -60,6 +60,9 @@ const resolveInputPath = async (
   selected: string,
 ): Promise<Result<string, PathAdmissionFailure>> => {
   try {
+    // Darwin realpath can collapse file/.. even though native lookup rejects
+    // that traversal. Admit the selected path before canonicalizing it.
+    await stat(selected);
     return ok(await realpath(selected));
   } catch (cause: unknown) {
     return err(
@@ -186,9 +189,10 @@ export const captureElectronScenario = async (
     ? {
         ok: true,
         value: createElectronActiveEvidence(
-          canonical.value,
+          input,
           captured.value,
           provider.identity(),
+          canonical.value,
         ),
       }
     : captured;

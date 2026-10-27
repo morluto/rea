@@ -1,4 +1,11 @@
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createPackageWithOptions } from "@electron/asar";
@@ -41,6 +48,7 @@ import {
   createTestBinarySession,
 } from "../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { AnalysisCleanupLease } from "../../src/artifacts/AnalysisCleanupLease.js";
 
 const cleanupError = new ProviderCleanupError(
   "fixture",
@@ -726,4 +734,145 @@ describe("managed one-shot cleanup outcomes", () => {
       code: "cleanup_incomplete",
     });
   });
+});
+
+describe("managed one-shot cleanup retry ownership", () => {
+  it.each(["success", "timeout", "independent primary"] as const)(
+    "follows exact cleanup completion after a %s outcome",
+    async (mode) => {
+      const [path] = await createBinarySessionTargets();
+      const resource = join(dirname(path), "retained-descriptor");
+      const handle = await open(resource, "w+");
+      const cleanup = new ProviderCleanupError("fixture", [resource], {
+        reason: "controlled first close refusal",
+      });
+      let attempts = 0;
+      const lease = new AnalysisCleanupLease(async () => {
+        if (++attempts === 1) throw new Error("first close refused");
+        await handle.close();
+      }, [resource]);
+      lease.bindCleanupError(cleanup);
+      const primaryResource = join(dirname(path), "primary-descriptor");
+      const primaryHandle =
+        mode === "independent primary"
+          ? await open(primaryResource, "w+")
+          : undefined;
+      const primary =
+        mode === "success"
+          ? undefined
+          : new AnalysisTimeoutError("inspect_managed_members", 100, {
+              capturedOutput: {
+                stdout: "retained timeout observation",
+                stderr: "",
+                truncated: false,
+              },
+              ...(primaryHandle === undefined
+                ? {}
+                : {
+                    cleanup: {
+                      reason: "independent primary cleanup",
+                      resources: [primaryResource],
+                    },
+                  }),
+            });
+      const primaryLease =
+        primaryHandle === undefined
+          ? undefined
+          : new AnalysisCleanupLease(
+              () => primaryHandle.close(),
+              [primaryResource],
+            );
+      if (primary !== undefined) primaryLease?.bindCleanupError(primary);
+      const session = createTestBinarySession(() => ({
+        execute: async (operation) =>
+          operation === "health"
+            ? observed(null)
+            : primary === undefined
+              ? observed({ retained: true })
+              : err(primary),
+        close: async () => {
+          try {
+            await lease.release();
+            return ok(null);
+          } catch {
+            return err(cleanup);
+          }
+        },
+      }));
+      try {
+        const result = await runManagedProviderExecution(
+          { createManagedBinarySession: () => session },
+          path,
+          "inspect_managed_members",
+        );
+        if (result.ok) throw new Error("Expected retained cleanup failure");
+        expect(projectAnalysisError(result.error).code).toBe(
+          "cleanup_incomplete",
+        );
+        expect(handle.fd).toBeGreaterThanOrEqual(0);
+        expect(await session.close()).toMatchObject({ ok: true });
+        expect(handle.fd).toBe(-1);
+        expect(cleanup.cleanupIncomplete).toBe(false);
+        if (primaryLease !== undefined) {
+          expect(result.error.cleanupIncomplete).toBe(true);
+          expect(result.error.cleanupResources).toEqual([primaryResource]);
+          expect(primaryHandle?.fd).toBeGreaterThanOrEqual(0);
+          await primaryLease.release();
+        }
+        expect(result.error.cleanupIncomplete).toBe(false);
+        const projected = projectAnalysisError(result.error);
+        if (primary === undefined)
+          expect(projected).toMatchObject({
+            details: {
+              diagnostics: {
+                partial_observation: { result: { retained: true } },
+              },
+            },
+          });
+        else
+          expect(projected).toMatchObject({
+            code: "provider_timeout",
+            details: {
+              captured_output: { stdout: "retained timeout observation" },
+            },
+          });
+      } finally {
+        await session.close();
+        await lease.release();
+        await primaryLease?.release();
+        await handle.close();
+        await primaryHandle?.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps rejected cleanup without a live completion owner unknown (primary failure: %s)",
+    async (primaryFailure) => {
+      const [path] = await createBinarySessionTargets();
+      const unowned = new AnalysisInputError("close_binary");
+      const { dependencies } = factories({
+        ...(primaryFailure
+          ? {
+              executionError: new AnalysisTimeoutError(
+                "inspect_managed_members",
+                100,
+              ),
+            }
+          : {}),
+        cleanupError: unowned,
+      });
+      const result = await runManagedProviderExecution(
+        dependencies,
+        path,
+        "inspect_managed_members",
+      );
+      if (result.ok) throw new Error("Expected cleanup rejection");
+      expect(unowned.cleanupIncomplete).toBe(false);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(projectAnalysisError(result.error).code).toBe(
+        "cleanup_incomplete",
+      );
+    },
+  );
 });

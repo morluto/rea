@@ -1,9 +1,16 @@
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { FULL_CATALOG_IDENTITY } from "../dist/catalogIdentity.js";
 
 import { parseTarListing } from "./lib/verify-package-listing.mjs";
 import { verifyPackedBridge } from "./verify-packed-bridge.mjs";
+
+const { parseSkillManifestMetadata } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 /** Create a tarball and assert production packaging constraints. */
 export async function verifyPackagePack({ root, workspace, commands }) {
@@ -55,11 +62,11 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       "package/skills/reverse-engineer-anything/SKILL.md",
     ])
   ).stdout;
+  const skillMetadata = parseSkillManifestMetadata(skill);
   if (
-    !skill.includes(
-      `  tool_count: ${String(FULL_CATALOG_IDENTITY.counts.mcp_tools)}\n`,
-    ) ||
-    skill.includes("  catalog_digest:")
+    !skillMetadata.ok ||
+    skillMetadata.value.toolCount !== FULL_CATALOG_IDENTITY.counts.mcp_tools ||
+    skillMetadata.value.hasCatalogDigest
   )
     throw new Error(
       "packaged skill metadata did not match the catalog shipped in the package",

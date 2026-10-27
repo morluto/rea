@@ -68,6 +68,27 @@ it.each([32, 64] as const)(
   },
 );
 
+it.each([32, 64] as const)(
+  "retains PE%d declared image base and alignments in native image facts",
+  (bits) => {
+    const { bytes } = createGoBinaryFixture({ format: "pe", bits });
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    const imageBase = bits === 64 ? 0xfedcba9876540000n : 0x87650000n;
+    if (bits === 64) bytes.writeBigUInt64LE(imageBase, optional + 24);
+    else bytes.writeUInt32LE(Number(imageBase), optional + 28);
+    // These remain declarations; alignment policy belongs to image consumers.
+    bytes.writeUInt32LE(0, optional + 32);
+    bytes.writeUInt32LE(0xffffffff, optional + 36);
+    const container = readPeImage(bytes);
+    expect(container.image_base).toBe(imageBase);
+    expect(container.pe_header_mapping.address).toBe(imageBase);
+    expect(container.mappings[0]?.address).toBe(imageBase + 0x400n);
+    expect(container.pe_section_alignment).toBe(0);
+    expect(container.pe_file_alignment).toBe(0xffffffff);
+    expect(container.sections[0]?.file_alignment).toBe(0xffffffff);
+  },
+);
+
 it("keeps Go fallback candidates when a PE section has no printable name", () => {
   const fixture = createGoBinaryFixture({ format: "pe", bits: 64 });
   const expected = readGoBinaryImage(fixture.bytes).build_info;

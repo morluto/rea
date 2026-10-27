@@ -1,6 +1,8 @@
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { electronActiveObservationInputSchema } from "../../../src/domain/javascript/electronActiveObservation.js";
 import { ok as resultOk, err } from "../../../src/domain/result.js";
-import { rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -25,6 +27,7 @@ import {
 } from "../../fixtures/fakeCdpBrowser.js";
 import { writeElectronBoundaryFixture } from "../../fixtures/electronBoundaryApplication.js";
 import { createElectronActiveObservationFixtureResult } from "../../../src/domain/javascript/electronActiveObservation.fixture.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
 import { toolAvailabilityInventory } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
@@ -344,6 +347,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
       targets: [{ target_id: "electron-page" }],
     },
   });
+  await expectPaddedElectronTargetRejected(client, browser);
   const inspected = await client.callTool({
     name: "inspect_electron_page",
     arguments: {
@@ -417,7 +421,8 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   });
 }, 20_000);
 
-it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
+/** Create the selected-path aliases and retained IPC-gap capture for the public workflow. */
+const activeElectronScenarioFixture = async () => {
   const root = await createTestTempDirectory("rea-electron-active-mcp-");
   temporary.push(root);
   const applicationPath = join(root, "main.js");
@@ -434,7 +439,6 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     "rea-electron-working-directory-",
   );
   temporary.push(workingDirectory);
-  const capturedInputs: unknown[] = [];
   const activeResult =
     createElectronActiveObservationFixtureResult(applicationPath);
   const capturedEvent = activeResult.timeline.events[0];
@@ -457,6 +461,13 @@ it("runs active Electron scenarios with selected paths and inferred working dire
   activeResult.retention.estimated_retained_bytes = 1_536;
   activeResult.retention.observed_runtime = 2;
   activeResult.coverage.observed_event_families.push("ipc-observation-gap");
+  return { root, applicationPath, aliasedRoot, workingDirectory, activeResult };
+};
+
+it("runs active Electron scenarios with selected paths and inferred working directory", async () => {
+  const { root, applicationPath, aliasedRoot, workingDirectory, activeResult } =
+    await activeElectronScenarioFixture();
+  const capturedInputs: unknown[] = [];
   const provider: ElectronActiveObservationPort = {
     identity: () => ({
       id: "test-electron-active",
@@ -537,6 +548,24 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     application_path: applicationPath,
     application_root: workingDirectory,
   });
+  const capturedEvidence = parseEvidence(captured.structuredContent);
+  expect(capturedEvidence.parameters).toMatchObject({
+    executable_path: process.execPath,
+    application_path: join(aliasedRoot, "main.js"),
+    application_root: workingDirectory,
+  });
+  expect(capturedEvidence.normalized_result).toMatchObject({
+    application: { application_path: applicationPath },
+  });
+  const { scenario_sha256, resolved_paths, ...selectedScenario } =
+    capturedEvidence.parameters;
+  expect(resolved_paths).toMatchObject({
+    application_path: applicationPath,
+    application_root: workingDirectory,
+  });
+  expect(scenario_sha256).toBe(
+    digestCanonicalValue(selectedScenario, "Electron scenario"),
+  );
   const inferredRoot = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {
@@ -550,6 +579,18 @@ it("runs active Electron scenarios with selected paths and inferred working dire
     application_path: applicationPath,
     application_root: root,
   });
+  const inferredEvidence = parseEvidence(inferredRoot.structuredContent);
+  expect(inferredEvidence.parameters).not.toHaveProperty("application_root");
+  expect(inferredEvidence.parameters.scenario_sha256).toBe(
+    digestCanonicalValue(
+      electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: applicationPath,
+        actions: [],
+      }),
+      "Electron scenario",
+    ),
+  );
   expect(JSON.stringify(captured.structuredContent)).toContain("submit-secret");
   expect(JSON.stringify(captured.structuredContent)).toContain("super-secret");
   expect(captured.structuredContent).toMatchObject({
@@ -658,9 +699,80 @@ const evidenceFor = (value: unknown) => {
   return parseEvidence(value);
 };
 
-it("reports every unresolved Electron path without starting a provider", async () => {
-  const root = await createTestTempDirectory("rea-electron-invalid-paths-");
-  const capture = vi.fn();
+it.skipIf(process.platform === "win32")(
+  "admits the selected application source before canonicalizing its path through MCP",
+  async () => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-application-source-admission-"),
+    );
+    await mkdir(join(root, "app"));
+    await mkdir(join(root, "selected/app"), { recursive: true });
+    await mkdir(join(root, "selected/child"));
+    await writeFile(join(root, "file"), "not a directory");
+    await writeFile(join(root, "app/package.json"), '{"name":"sibling"}');
+    await writeFile(
+      join(root, "selected/app/package.json"),
+      '{"name":"selected"}',
+    );
+    await symlink("selected/child", join(root, "link"));
+    const session = createTestBinarySession(() => {
+      throw new Error(
+        "Static application analysis must not start a deep provider",
+      );
+    });
+    const server = createServer({ kind: "session", session });
+    const client = new Client({
+      name: "application-source-admission",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(client, server, session);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const initial = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: join(root, "app") },
+    });
+    expect(initial.isError, JSON.stringify(initial)).not.toBe(true);
+    const initialEvidence = parseEvidence(initial.structuredContent);
+    const refused = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: `${root}/file/../app` },
+    });
+    expect(refused.isError).toBe(true);
+    expect(parseMcpToolError(refused)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: { issues: [{ path: ["input_path"] }] },
+      },
+    });
+    const selected = `${root}/link/../app`;
+    const admitted = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: selected },
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    const evidence = parseEvidence(admitted.structuredContent);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(evidence.parameters.input_path).toBe(selected);
+    expect(evidence.subject?.local_path).toBe(join(root, "selected/app"));
+    expect(result.input_path).toBe(join(root, "selected/app"));
+    expect(result.root_artifact_sha256).not.toBe(
+      javascriptApplicationAnalysisResultSchema.parse(
+        initialEvidence.normalized_result,
+      ).root_artifact_sha256,
+    );
+    expect(initialEvidence.subject?.local_path).toBe(join(root, "app"));
+    await client.ping();
+  },
+);
+
+const activePathAdmissionClient = async (
+  capture: ElectronActiveObservationPort["capture"],
+): Promise<Client> => {
   const session = createTestBinarySession(() => {
     throw new Error("must not start");
   });
@@ -679,6 +791,13 @@ it("reports every unresolved Electron path without starting a provider", async (
   resources.push(client, server, session);
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  return client;
+};
+
+it("reports every unresolved Electron path without starting a provider", async () => {
+  const root = await createTestTempDirectory("rea-electron-invalid-paths-");
+  const capture = vi.fn();
+  const client = await activePathAdmissionClient(capture);
   const fields = ["executable_path", "application_path", "application_root"];
   const result = await client.callTool({
     name: "capture_electron_scenario",
@@ -703,3 +822,87 @@ it("reports every unresolved Electron path without starting a provider", async (
   expect(capture).not.toHaveBeenCalled();
   await client.ping();
 });
+
+it.skipIf(process.platform === "win32")(
+  "refuses obstructed Electron selections and admits native symlink traversal through MCP",
+  async () => {
+    const root = await realpath(
+      await createTestTempDirectory("rea-electron-obstructed-paths-"),
+    );
+    await mkdir(join(root, "application/child"), { recursive: true });
+    await writeFile(join(root, "file"), "not a directory");
+    await writeFile(join(root, "electron"), "#!/bin/sh\n", { mode: 0o755 });
+    await writeFile(join(root, "main.js"), "module.exports = {};\n");
+    await writeFile(
+      join(root, "application/main.js"),
+      "module.exports = {};\n",
+    );
+    await symlink("application/child", join(root, "link"));
+    const capture = vi.fn<ElectronActiveObservationPort["capture"]>(
+      async (input) =>
+        resultOk(
+          createElectronActiveObservationFixtureResult(input.application_path),
+        ),
+    );
+    const client = await activePathAdmissionClient(capture);
+    const selected = {
+      executable_path: join(root, "electron"),
+      application_path: join(root, "main.js"),
+      application_root: join(root, "application"),
+    };
+    for (const field of [
+      "executable_path",
+      "application_path",
+      "application_root",
+    ] as const) {
+      const refused = await client.callTool({
+        name: "capture_electron_scenario",
+        arguments: {
+          ...selected,
+          [field]: `${root}/file/../${basename(selected[field])}`,
+        },
+      });
+      expect(refused.isError).toBe(true);
+      expect(parseMcpToolError(refused)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: { issues: [{ path: [field] }] },
+        },
+      });
+      expect(capture).not.toHaveBeenCalled();
+    }
+    const admitted = await client.callTool({
+      name: "capture_electron_scenario",
+      arguments: {
+        ...selected,
+        application_path: `${root}/link/../main.js`,
+        application_root: `${root}/link/..`,
+      },
+    });
+    expect(admitted.isError, JSON.stringify(admitted)).not.toBe(true);
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture.mock.calls[0]?.[0]).toMatchObject({
+      application_path: join(root, "application/main.js"),
+      application_root: join(root, "application"),
+    });
+  },
+);
+
+const expectPaddedElectronTargetRejected = async (
+  client: Client,
+  browser: FakeCdpBrowser,
+): Promise<void> => {
+  const commandsBeforeRejectedInspection = browser.commands.length;
+  const rejectedInspection = await client.callTool({
+    name: "inspect_electron_page",
+    arguments: {
+      cdp_endpoint: browser.endpoint,
+      target_id: " electron-page ",
+      observation_ms: 0,
+    },
+  });
+  expect(parseMcpToolError(rejectedInspection)).toMatchObject({
+    error: { details: { reason: "target_not_found" } },
+  });
+  expect(browser.commands).toHaveLength(commandsBeforeRejectedInspection);
+};

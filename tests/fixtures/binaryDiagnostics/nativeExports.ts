@@ -108,6 +108,29 @@ export const peExportImage = (options: {
   return bytes;
 };
 
+/** Compact PE whose name-table aliases all select one shared 4096-byte name. */
+export const peRepeatedExportNamesImage = (
+  targetRva: number,
+  count = 4100,
+): Buffer => {
+  const names = 0x500;
+  const ordinals = names + count * 4;
+  const text = ordinals + count * 2;
+  const bytes = Buffer.alloc(text + 4097);
+  peExportImage({ functions: [{ rva: targetRva }] }).copy(bytes);
+  const section = 152 + 240;
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 8);
+  bytes.writeUInt32LE(bytes.length - SECTION_OFFSET, section + 16);
+  const rva = (offset: number): number => offset - SECTION_OFFSET + SECTION_RVA;
+  bytes.writeUInt32LE(count, SECTION_OFFSET + 24);
+  bytes.writeUInt32LE(rva(names), SECTION_OFFSET + 32);
+  bytes.writeUInt32LE(rva(ordinals), SECTION_OFFSET + 36);
+  for (let index = 0; index < count; index++)
+    bytes.writeUInt32LE(rva(text), names + index * 4);
+  bytes.fill(0x6e, text, text + 4096);
+  return bytes;
+};
+
 /** One `.dynsym` entry; `version` is its raw `.gnu.version` half-word. */
 export interface ElfFixtureSymbol {
   readonly name: string;

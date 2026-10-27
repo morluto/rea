@@ -1,3 +1,4 @@
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import { isNativeObservationOperation } from "../../domain/native/nativeObservation.js";
 import { setImmediate } from "node:timers/promises";
 import { dispatchQueuedInterrupts } from "../../process/queuedInterrupts.js";
@@ -60,22 +61,19 @@ export const inspectAnalysisView = async (
   lookup?: EvidenceLookup,
   options: AnalysisViewReadOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const parsed = inspectAnalysisViewInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        parsed.error.issues,
-        rawInput,
-        { cause: parsed.error },
-      ),
-    );
+  const parsed = parseAnalysisInput(
+    INSPECT_ANALYSIS_VIEW_OPERATION,
+    rawInput,
+    inspectAnalysisViewInputSchema,
+    options.signal,
+  );
+  if (!parsed.ok) return parsed;
   if (options.evidenceBundlePath !== undefined)
-    return inspectBundleView(parsed.data, options.evidenceBundlePath, options);
-  const source = parsed.data.source;
+    return inspectBundleView(parsed.value, options.evidenceBundlePath, options);
+  const source = parsed.value.source;
   if (source.kind === "evidence-file")
-    return inspectFileView({ ...parsed.data, source }, lookup, options);
-  return inspectAnalysisViewValidated({ ...parsed.data, source }, lookup);
+    return inspectFileView({ ...parsed.value, source }, lookup, options);
+  return inspectAnalysisViewValidated({ ...parsed.value, source }, lookup);
 };
 
 /**
@@ -403,6 +401,7 @@ const createAnalysisViewEvidence = (
           ? "inferred"
           : "derived",
       authority: parent.authority,
+      environment: parent.environment,
       limitations: result.limitations,
       ...((nativeFunctionView !== undefined || nativeObservationView) &&
       parent.relationship_coverage !== null

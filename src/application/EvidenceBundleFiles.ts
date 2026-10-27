@@ -114,7 +114,13 @@ export const authenticateEvidenceBundleValue = (
       }),
     );
   }
-  const bundle = parsed.value;
+  return validateBundlePayloads(parsed.value);
+};
+
+/** Validate typed payloads without restricting historical workflow or provider identities. */
+const validateBundlePayloads = (
+  bundle: EvidenceBundle,
+): Result<EvidenceBundle, EvidenceIntegrityError> => {
   for (const record of bundle.records) {
     if (record.predicate_type !== "rea.process-capture") continue;
     const parsedCapture = safeParseProcessCapture(record.normalized_result);
@@ -158,8 +164,10 @@ export const writeEvidenceBundle = async (
       }),
     );
   }
+  const validated = validateBundlePayloads(checked.value);
+  if (!validated.ok) return validated;
   return writeTextParts(
-    bufferedJsonParts(canonicalJsonParts(checked.value)),
+    bufferedJsonParts(canonicalJsonParts(validated.value)),
     path,
     overwrite,
     resources,

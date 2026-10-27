@@ -1,4 +1,4 @@
-import { readArtifactInspectionSources } from "../domain/artifactInspection.js";
+import { analysisEvidenceSources } from "../application/AnalysisEvidenceSources.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisView.js";
 import { z } from "incur";
 import {
@@ -9,6 +9,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
@@ -48,6 +49,8 @@ interface CliEvidenceDelivery {
   readonly evidenceOutput: string | undefined;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
+  /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
+  readonly sensitiveValues?: readonly string[];
 }
 
 export const cliEvidenceDeliveryInputError = (
@@ -128,6 +131,8 @@ export const deliverCliAnalysisEvidence = async (
     detail,
     evidenceOutput,
   } = input;
+  const redactFailure = (error: AnalysisError) =>
+    redactExplicitFailure(error, input.sensitiveValues ?? []);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined)
     return finishAnalysisCommand(
@@ -136,6 +141,8 @@ export const deliverCliAnalysisEvidence = async (
       providerId,
       operation,
       signal,
+      undefined,
+      { redactFailure },
     );
   const complete = await finishAnalysisCommand(
     run,
@@ -143,6 +150,8 @@ export const deliverCliAnalysisEvidence = async (
     providerId,
     operation,
     signal,
+    undefined,
+    { redactFailure },
   );
   return publishCliAnalysisEvidence(complete, {
     providerId,
@@ -150,6 +159,9 @@ export const deliverCliAnalysisEvidence = async (
     signal,
     detail,
     evidenceOutput,
+    ...(input.sensitiveValues === undefined
+      ? {}
+      : { sensitiveValues: input.sensitiveValues }),
     ...(input.view === undefined ? {} : { view: input.view }),
     ...(input.sourceEvidence === undefined
       ? {}
@@ -163,12 +175,16 @@ export const publishCliAnalysisEvidence = async (
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
   const { operation, signal, detail, evidenceOutput } = input;
+  const projectFailure = (error: AnalysisError) =>
+    projectAnalysisError(
+      redactExplicitFailure(error, input.sensitiveValues ?? []),
+    );
   if (!isEvidence(value)) return value;
   const complete = parseEvidence(value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
     inputError.retainPartialObservation(complete);
-    return projectAnalysisError(inputError);
+    return projectFailure(inputError);
   }
   if (evidenceOutput === undefined) return complete;
   // Project before publication so a view failure cannot commit an
@@ -181,31 +197,21 @@ export const publishCliAnalysisEvidence = async (
         })
       : ok(complete);
   if (!delivered.ok)
-    return projectAnalysisError(
-      delivered.error.retainPartialObservation(complete),
-    );
+    return projectFailure(delivered.error.retainPartialObservation(complete));
   // This projection answers the same direct invocation as its parent. Later
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
     detail === "summary" && complete.caller_input_path !== undefined
       ? withEvidenceCallerInputPath(delivered.value, complete.caller_input_path)
       : delivered.value;
-  const inspectionSources =
-    complete.operation === "inspect_artifact"
-      ? readArtifactInspectionSources(complete.normalized_result)
-      : ok([]);
-  if (!inspectionSources.ok)
-    return projectAnalysisError(
-      inspectionSources.error.retainPartialObservation(complete),
-    );
+  const inspectionSources = analysisEvidenceSources(complete);
+  if (!inspectionSources.ok) return projectFailure(inspectionSources.error);
   const published = await publishEvidenceDelivery({
     bundle: createEvidenceBundle([
       ...new Map(
-        [
-          ...(input.sourceEvidence ?? []),
-          ...inspectionSources.value,
-          complete,
-        ].map((record) => [record.evidence_id, record]),
+        [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+          (record) => [record.evidence_id, record],
+        ),
       ).values(),
     ]),
     complete,
@@ -214,12 +220,18 @@ export const publishCliAnalysisEvidence = async (
     operation,
     signal,
   });
-  if (!published.ok) return projectAnalysisError(published.error);
+  if (!published.ok) return projectFailure(published.error);
   return detail === "summary"
     ? {
         summary: published.value.delivered,
         evidence_bundle: {
-          path: published.value.evidenceBundle.path,
+          ...(input.sensitiveValues?.some(
+            (literal) =>
+              literal !== "" &&
+              published.value.evidenceBundle.path.includes(literal),
+          )
+            ? {}
+            : { path: published.value.evidenceBundle.path }),
           bytes: published.value.evidenceBundle.bytes,
         },
       }

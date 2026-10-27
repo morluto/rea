@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import canonicalize from "canonicalize";
 import { z } from "zod";
+import { jsonRecordSchema } from "../jsonRecord.js";
 
 const positiveBudget = z.int().safe().positive();
 /** Read the explicitly committed output budget without applying scenario defaults. */
@@ -59,29 +60,10 @@ const childProcessString = z
     /^[^\x00]*$/u,
     "Values passed to operating-system APIs cannot contain NUL",
   );
-const environmentRecordSchema = z.record(
-  ptyEnvironmentName,
+const processEnvironmentSchema = jsonRecordSchema(
   childProcessString,
+  ptyEnvironmentName,
 );
-// z.record intentionally skips this key, so validate its presence before parsing.
-const processEnvironmentSchema = z
-  .unknown()
-  .superRefine((value, context) => {
-    if (
-      value !== null &&
-      typeof value === "object" &&
-      Object.hasOwn(value, unsupportedPtyEnvironmentName)
-    )
-      context.addIssue({
-        code: "custom",
-        path: [unsupportedPtyEnvironmentName],
-        message:
-          "The installed PTY backend cannot preserve the __proto__ environment name; pass it through /usr/bin/env instead.",
-      });
-  })
-  .pipe(environmentRecordSchema);
-processEnvironmentSchema._zod.toJSONSchema = () =>
-  z.toJSONSchema(environmentRecordSchema, { io: "input" });
 
 const fitsProcessTerminalCellBudget = (
   columns: number,

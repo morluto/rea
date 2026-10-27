@@ -92,15 +92,13 @@ const baseLimitations = (): Limitations => [
 ];
 
 const headerFacts = (
-  bytes: Buffer,
-  image: BinaryContainer,
+  image: Extract<BinaryContainer, { format: "elf" }>,
 ): Pick<Report, "format" | "byte_order" | "machine" | "type" | "type_name"> => {
-  const little = image.byte_order === "little";
-  const type = little ? bytes.readUInt16LE(16) : bytes.readUInt16BE(16);
+  const { type } = image.elf;
   return {
     format: image.bits === 64 ? "elf64" : "elf32",
     byte_order: image.byte_order,
-    machine: image.format === "elf" ? image.elf.machine : null,
+    machine: image.elf.machine,
     type,
     type_name: elfObjectTypeName(type),
   };
@@ -514,7 +512,7 @@ export const parseKernelModule = (
   if (compression !== null)
     return unsupportedCompression(artifact, compression);
   const image = readElfImage(bytes);
-  const facts = headerFacts(bytes, image);
+  const facts = headerFacts(image);
   if (facts.type !== 1) return notApplicable(artifact, facts);
   const sections = image.sections.filter(
     (section): section is ElfSection => section.format === "elf",

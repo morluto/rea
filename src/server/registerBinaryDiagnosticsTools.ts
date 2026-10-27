@@ -35,7 +35,7 @@ export const registerBinaryDiagnosticsTools = (
     withAdmittedAnalysis,
   );
   const contract = toolContract("inspect_binary_layout");
-  const delivery = retainedSummaryDelivery(new Set([contract.name]), {
+  const delivery = retainedSummaryDelivery(contract.name, {
     recordEvidence,
     evidenceById,
   });
@@ -68,17 +68,13 @@ export const registerBinaryDiagnosticsTools = (
             logger,
             contract.name,
             async () => {
-              const ready = delivery.preflight(contract.name, parameters);
+              const ready = delivery.preflight(parameters);
               if (!ready.ok) return ready;
               const inspected = await service.inspect(request, {
                 signal: context.mcpReq.signal,
               });
               return inspected.ok
-                ? delivery.projectEvidence(
-                    contract.name,
-                    parameters,
-                    inspected.value,
-                  )
+                ? delivery.projectEvidence(parameters, inspected.value)
                 : inspected;
             },
           );

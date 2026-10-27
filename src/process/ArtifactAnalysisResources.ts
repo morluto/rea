@@ -9,6 +9,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -176,6 +177,9 @@ export class ArtifactAnalysisResources {
   ): AnalysisError {
     const { path, maximumBytes, allowanceName, observedOutput } = input;
     if (cause instanceof AnalysisError) return cause;
+    const observation = completedStableArtifactObservation(cause, path);
+    if (cause instanceof ArtifactReaderFailure && observation !== undefined)
+      cause.retainPartialObservation(observation);
     if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
       return this.cleanupFailure(
         cause,
@@ -189,6 +193,9 @@ export class ArtifactAnalysisResources {
         ...(observedOutput === undefined
           ? {}
           : { capturedOutput: observedOutput }),
+        ...(cause.partialObservation === undefined
+          ? {}
+          : { partialObservation: cause.partialObservation }),
       });
     const reason = cause instanceof Error ? cause.message : String(cause);
     if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
@@ -467,6 +474,8 @@ export class ArtifactAnalysisResources {
         partialObservation: cause.partialObservation,
       });
     }
+    if (cause.partialObservation !== undefined)
+      (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
       ? failure
       : analysisErrorWithCleanupFailure(

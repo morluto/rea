@@ -7,7 +7,7 @@ import { z } from "zod";
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
-  PROMPT_CONTRACTS,
+  promptsForToolFamilies,
   renderGuidedPrompt,
   type PromptContract,
 } from "../contracts/promptContracts.js";
@@ -40,7 +40,9 @@ export const registerGuidedPrompts = (
     },
   });
   const prompts = new Map<string, RegisteredPrompt>();
-  for (const contract of PROMPT_CONTRACTS)
+  // Only workflows whose complete tool set is advertised: a partially
+  // available workflow would name disabled calls in its rendered steps.
+  for (const contract of promptsForToolFamilies(server.advertisedToolFamilies))
     prompts.set(contract.name, registerPrompt(server, contract, completion));
   return {
     update(contract) {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
@@ -192,6 +192,37 @@ it("keeps malformed source failing with its parser diagnostic", async () => {
     expect.objectContaining({ severity: "error" }),
   );
 });
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "retains location-free lint I/O errors without inventing a source location",
+  async () => {
+    const root = await fixture();
+    const source = join(root, "src/unreadable.js");
+    await writeFile(source, "debugger;\n");
+    await chmod(source, 0);
+    try {
+      const result = invoke(root, "lint", source);
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("1 files, 1 errors, 0 warnings");
+      expect(result.stdout).toContain("Full diagnostics:");
+      const report = JSON.parse(
+        await readFile(join(root, ".cache/static-checks/oxlint.json"), "utf8"),
+      );
+      expect(report.diagnostics).toEqual([
+        {
+          message: expect.stringContaining("Permission denied"),
+          severity: "error",
+          labels: [],
+        },
+      ]);
+      expect(report.diagnostics[0].message).toContain(source);
+      expect(result.stderr).toBe(`lint: ${report.diagnostics[0].message}\n`);
+    } finally {
+      await chmod(source, 0o600);
+    }
+  },
+);
 
 it("preserves the duplication threshold and complete clone locations", async () => {
   const root = await fixture();

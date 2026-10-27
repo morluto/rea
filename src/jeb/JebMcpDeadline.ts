@@ -7,7 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { MAX_PROVIDER_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 
 /** Which JEB MCP phase consumed `REA_JEB_MCP_TIMEOUT_MS`. */

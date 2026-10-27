@@ -835,28 +835,9 @@ const resolveGlobalAliasFact = (
   return openGlobalFact(name);
 };
 
-/**
- * Proven Electron export path segments for call and construction roots, keyed by
- * root offset. Only proven Electron origins are present; callers must not
- * infer an Electron export from an absent entry or familiar local name.
- */
-export const classifyParsedJavaScriptElectronBindings = (
-  file: ParsedJavaScriptSource,
-): ReadonlyMap<number, readonly string[]> =>
-  completeSemanticSteps(classifyParsedJavaScriptElectronBindingsSteps(file));
-
-/** Resolve Electron aliases while yielding during lexical and AST scans. */
-export function* classifyParsedJavaScriptElectronBindingsSteps(
-  file: ParsedJavaScriptSource,
-): Generator<void, ReadonlyMap<number, readonly string[]>> {
-  const state = createState(file.program);
-  yield* collectDefinitionsSteps(file.program, state);
-  return (yield* indexJavaScriptElectronIdentitySteps(file.program, state))
-    .bindings;
-}
-
 /** Shared lexical identity and visible-write proof for direct and wrapped calls. */
 export interface JavaScriptElectronIdentity {
+  /** Proven export paths keyed by call/construction root offset; absence is unknown. */
   readonly bindings: ReadonlyMap<number, readonly string[]>;
   readonly intactExport: (path: readonly (string | null)[]) => boolean;
   readonly exportPath: (root: t.Node) => readonly string[] | undefined;

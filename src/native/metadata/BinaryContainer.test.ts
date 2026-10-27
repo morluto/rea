@@ -1,3 +1,4 @@
+import { readBinaryContainer } from "./readBinaryContainer.js";
 import { expect, it } from "vitest";
 import {
   BinaryFormatFailure,
@@ -172,3 +173,41 @@ it.each([false, true])(
     );
   },
 );
+
+it.each([
+  { magic: 0xfeedface, bits: 32, headerSize: 28 },
+  { magic: 0xfeedfacf, bits: 64, headerSize: 32 },
+  { magic: 0xcefaedfe, bits: 32, headerSize: 28 },
+  { magic: 0xcffaedfe, bits: 64, headerSize: 32 },
+])(
+  "retains thin-header truncation after recognizing magic $magic",
+  ({ magic, bits, headerSize }) => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32BE(magic);
+    expect(() => readBinaryContainer(bytes)).toThrow(
+      new BinaryFormatFailure(
+        "malformed",
+        `truncated Mach-O header: a ${bits}-bit header needs ${headerSize} bytes; the file has 4`,
+      ),
+    );
+  },
+);
+
+it("keeps a JVM-sized FAT count unconfirmed while rejecting malformed zero-count FAT", () => {
+  const bytes = Buffer.alloc(8);
+  bytes.writeUInt32BE(0xcafebabe);
+  bytes.writeUInt32BE(0x0000003d, 4); // JVM major version 61; no FAT table follows.
+  expect(() => readBinaryContainer(bytes)).toThrow(
+    new BinaryFormatFailure(
+      "unsupported",
+      "Only ELF, PE, and thin Mach-O native images are supported",
+    ),
+  );
+  bytes.writeUInt32BE(0, 4);
+  expect(() => readBinaryContainer(bytes)).toThrow(
+    new BinaryFormatFailure(
+      "malformed",
+      "FAT header declares no architectures",
+    ),
+  );
+});

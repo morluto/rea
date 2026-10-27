@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { jsonValueType, parseJsonObject } from "../jsonShape.js";
 import { ok, type Result } from "../result.js";
@@ -11,7 +10,12 @@ import {
   type WebNetworkCaptureRecord,
 } from "../webNetworkCapture.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
-import { recordedResponseBodyIsEmpty } from "./recordedResponseBody.js";
+import {
+  recordedResponseBodyIsEmpty,
+  readRecordedResponseDeclaration,
+} from "./recordedResponseBody.js";
+import { readRecordedRequestBody } from "./recordedExchangeBody.js";
+import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
 import type { UnsignedAnalysisView } from "./analysisView.js";
 import type { ScenarioResponseBodyRetention } from "./scenarioCaptureRecords.js";
 import { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
@@ -41,7 +45,6 @@ import {
   GROUP_BYTES,
   RECORD_SCRATCH_BYTES,
   SEGMENT_BYTES,
-  mediaTypeEssence,
   readQueryParameterNames,
   readRecordedRequestLine,
   routePartCount,
@@ -97,24 +100,15 @@ interface GroupState extends ToolGroup {
   bodiless: boolean;
 }
 
-const responseTextSchema = z.object({
-  response: z.object({
-    status: z.unknown().optional(),
-    content: z
-      .object({ text: z.unknown().optional(), size: z.unknown().optional() })
-      .nullable()
-      .optional(),
-  }),
-});
-/** Whether a record's response had no body: a 204 or 205, an empty text, or a recorded size of zero; a missing text alone may be a body not kept. */
-const emptyResponse = (record: WebNetworkCaptureRecord): boolean => {
-  const parsed = responseTextSchema.safeParse(record.reported);
-  if (!parsed.success) return false;
-  const { status, content } = parsed.data.response;
+/** Manifest eligibility also accepts declared bodyless statuses and a recorded zero size when no text was retained. */
+const manifestResponseIsEmpty = (record: WebNetworkCaptureRecord): boolean => {
+  const response = readRecordedResponseDeclaration(record.reported);
+  if (response === undefined) return false;
+  const { status, content } = response;
   return (
     status === 204 ||
     status === 205 ||
-    recordedResponseBodyIsEmpty(record) ||
+    recordedResponseBodyIsEmpty(record, response) ||
     ((content?.text === undefined || content.text === null) &&
       content?.size === 0)
   );
@@ -123,18 +117,6 @@ const emptyResponse = (record: WebNetworkCaptureRecord): boolean => {
 const answeredEmpty = (group: GroupState): boolean =>
   group.bodiless &&
   [...group.statuses].some((status) => status >= 200 && status < 300);
-const postDataSchema = z.object({
-  request: z.object({
-    postData: z
-      .object({
-        mimeType: z.unknown().optional(),
-        text: z.unknown().optional(),
-      })
-      .nullable()
-      .optional(),
-  }),
-});
-const JSON_LIKE_TEXT = new Set(["text/plain", "text/markdown"]);
 const ASSET_ESSENCES = new Set([
   "text/html",
   "application/xhtml+xml",
@@ -169,17 +151,6 @@ const UNKNOWNS: Manifest["unknowns"] = [
       "Recorded exchanges are independent observations; the manifest states no ordering, side effects or state transitions between tools.",
   },
 ];
-
-/** `application/json` or `application/*+json`; a `+json` suffix on another type is not JSON here. */
-const isJson = (essence: string | null): boolean =>
-  essence === "application/json" ||
-  (essence !== null &&
-    essence.startsWith("application/") &&
-    essence.endsWith("+json"));
-
-/** JSON, `+json`, `text/plain` or `text/markdown`: the content types a replay parses as JSON. */
-export const isJsonLike = (essence: string | null): boolean =>
-  isJson(essence) || (essence !== null && JSON_LIKE_TEXT.has(essence));
 
 const isApiPath = (path: string): boolean =>
   path.startsWith("/api/") || path.startsWith("/apis/");
@@ -231,7 +202,6 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   #scenarioTransactions = 0;
   #scenarioWithoutBody = 0;
   #scenarioRedactedBodies = 0;
-  #unrepresentableBodyKey = false;
 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
@@ -261,9 +231,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         this.scratch,
       );
       if (line === null) return this.overBudget();
+      const releaseGrouping = this.temporaryCheckpoint();
       if (line.kind === "excluded") {
         this.#unrepresented += 1;
-        return ok(undefined);
+        releaseGrouping();
+        return this.onRecordedRequestLine(record, line);
       }
       // Coverage uses the same admitted request line as grouping, including origin and raw path.
       if (scenarioResponseBody !== undefined) {
@@ -301,28 +273,39 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ? this.#bodyShape(record.reported)
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
-      return this.#append(
+      const grouped = this.#append(
         record.ordinal,
         line,
         route,
         queryNames,
         { key, group },
-        { shape: bodyShape.value, empty: emptyResponse(record) },
+        { shape: bodyShape.value, empty: manifestResponseIsEmpty(record) },
       );
+      if (!grouped.ok) return grouped;
+      // Keep the parsed line's admission while releasing grouping-only scratch.
+      releaseGrouping();
+      return this.onRecordedRequestLine(record, line);
     } finally {
       this.releaseTemporary();
     }
   }
 
+  /** Consume the owner's parsed request line after successful grouping, including exclusions. */
+  protected onRecordedRequestLine(
+    _record: WebNetworkCaptureRecord,
+    _line: RecordedRequestLine,
+  ): Result<void, AnalysisError> {
+    return ok(undefined);
+  }
+
   /** Read the top-level key types of the group's first recorded JSON-typed request body; nested values are never walked. */
   #bodyShape(reported: unknown): Result<BodyShape | null, AnalysisError> {
-    const parsed = postDataSchema.safeParse(reported);
-    const body = parsed.success ? parsed.data.request.postData : undefined;
+    const request = readRecordedRequestBody(reported);
+    const body = request.kind === "request" ? request.postData : undefined;
     if (
-      body === undefined ||
-      body === null ||
-      typeof body.text !== "string" ||
-      typeof body.mimeType !== "string"
+      body?.kind !== "object" ||
+      body.text === undefined ||
+      body.mimeType === undefined
     )
       return ok(null);
     // The media type is scanned and lowercased before it is known to be JSON; charge it first.
@@ -335,11 +318,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     const root = parseJsonObject(body.text);
     if (root === null) return ok(null);
     const entries: [string, JsonTypeName][] = [];
-    for (const [name, value] of Object.entries(root)) {
-      // JSON parsers and schema clones drop a __proto__ own property; omit it explicitly.
-      if (name === "__proto__") this.#unrepresentableBodyKey = true;
-      else entries.push([name, jsonValueType(value)]);
-    }
+    for (const [name, value] of Object.entries(root))
+      entries.push([name, jsonValueType(value)]);
     return ok({ type: "object", properties: Object.fromEntries(entries) });
   }
 
@@ -545,11 +525,6 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       tools.some((tool) => tool.body_shape !== null)
         ? [
             "Body shapes list top-level JSON key types from one recorded request each; they do not establish required fields or a complete schema.",
-          ]
-        : []),
-      ...(this.#unrepresentableBodyKey
-        ? [
-            "A top-level __proto__ key in a recorded JSON body is omitted from body_shape; it cannot be an own property of the published object.",
           ]
         : []),
       ...this.#segmentLimitLimitations(toolGroups),

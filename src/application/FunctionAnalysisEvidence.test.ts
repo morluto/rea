@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { createAnalysisExecution } from "./AnalysisProvider.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { parseEvidence } from "../domain/evidence.js";
+import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -62,6 +62,16 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       path: "/observed/provider.elf",
       sha256: "b".repeat(64),
     };
+    const source = createEvidence(
+      undefined,
+      provider,
+      {
+        operation: "health",
+        parameters: { facet: "historical-report" },
+        result: { original: "unknown" },
+      },
+      { immutable: true },
+    );
     for (const aborted of [false, true]) {
       const controller = new AbortController();
       const execution = createAnalysisExecution(dossier, provider, {
@@ -73,6 +83,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         rawResult: { provider_text: "preserved" },
         limitations: ["Synthetic provider observation"],
         locations: [{ kind: "address", address: "0x401000" }],
+        sourceEvidence: [source],
       });
       const result = await executeFunctionAnalysisEvidence(
         {
@@ -85,6 +96,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         target,
         { signal: controller.signal },
       );
+      expect(result.sourceEvidence).toEqual([source]);
       if (aborted) {
         if (result.ok) throw new Error("Expected late cancellation");
         expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
@@ -100,6 +112,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       expect(evidence.provider).toEqual(provider);
       expect(evidence.analysis_profile).toEqual(analysisProfile);
       expect(evidence.relationship_coverage).toEqual(relationshipCoverage);
+      expect(evidence.evidence_links).toEqual([source.evidence_id]);
       expect(evidence.limitations).toContain("Synthetic provider observation");
       expect(evidence.locations).toContainEqual({
         kind: "address",

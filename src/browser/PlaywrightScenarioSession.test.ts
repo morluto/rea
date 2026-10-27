@@ -1642,3 +1642,66 @@ it.each(["absent", "undefined", "inherited", "empty"] as const)(
     }
   },
 );
+
+it("keeps declared secrets out of final cleanup and retry failure diagnostics", async () => {
+  const { page, cleanup } = fixture();
+  Object.assign(page, { waitForTimeout: vi.fn(async () => undefined) });
+  const input = browserScenarioSchema.parse({
+    ...connectedScenario("allow"),
+    secrets: [
+      {
+        secret_id: "credential",
+        environment_variable: "REA_SCENARIO_TEST_SECRET",
+      },
+    ],
+    capture: { after_each_step: ["url"], at_end: [], events: [] },
+  });
+  const secret = "declared-cleanup-private-value";
+  vi.spyOn(cleanup, "cleanupResources", "get").mockImplementation(() =>
+    cleanup.browserClosed ? [] : [`browser_transport:${secret}`],
+  );
+  const originalClose = cleanup.close.getMockImplementation()!;
+  let blocked = true;
+  cleanup.close.mockImplementation(async (...args) => {
+    if (blocked) throw new Error(`Close failed after ${secret}`);
+    return originalClose(...args);
+  });
+  const provider = new PlaywrightBrowserScenarioProvider((scenario, options) =>
+    PlaywrightScenarioSession.open(
+      scenario,
+      { REA_SCENARIO_TEST_SECRET: secret },
+      options,
+    ),
+  );
+  try {
+    const result = await provider.captureScenario(input, {});
+    if (result.ok) throw new Error("Expected final cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "browser-scenario-observation",
+      capture: {
+        browser: { cleanup: "incomplete" },
+        steps: [{ action: "goto_start" }, { action: "wait_for_timeout" }],
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      secret,
+    );
+    let retried: unknown;
+    try {
+      await provider.close();
+    } catch (error) {
+      retried = error;
+    }
+    if (!(retried instanceof ProviderCleanupError))
+      throw new Error("Expected retained cleanup failure");
+    expect(JSON.stringify(projectAnalysisError(retried))).not.toContain(secret);
+    blocked = false;
+    await provider.close();
+    expect(cleanup.browserClosed).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    blocked = false;
+    await provider.close();
+  }
+});

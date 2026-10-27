@@ -20,8 +20,8 @@ it.each([129, 3000])(
       parameters: { path: "Deep.plist" },
       platform: "linux",
     }).catch((cause: unknown) => cause);
-    // Recursive decoding exhausts the call stack before the projection limit
-    // can report it, so the limit diagnostic must come from the preflight.
+    // The format owner must reject source depth before recursive decoding
+    // exhausts the call stack.
     expect(rejected).toMatchObject({
       reason: "limit",
       message: `Cannot decode selected Foundation keyed archive: ${plistNestingLimitMessage()}`,

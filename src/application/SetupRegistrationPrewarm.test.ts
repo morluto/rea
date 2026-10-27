@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -8,6 +11,12 @@ import {
   type RegistrationRunnerLaunch,
   type RegistrationRunnerLauncher,
 } from "./SetupRegistrationPrewarm.js";
+
+const scope = () => {
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  return resources;
+};
 
 const specifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
 
@@ -70,6 +79,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["/opt/rea/rea", "mcp"],
       {},
+      scope(),
       launcher,
     );
     expect(result).toEqual({ status: "skipped", reason: "direct_launcher" });
@@ -92,6 +102,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       { REA_PREWARM_PROBE: "1" },
+      scope(),
       launcher,
     );
     expect(result).toEqual({ status: "warmed" });
@@ -102,6 +113,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
+      scope(),
       async () => launch({ exitCode: 1, stderr: "spawn EPERM\n" }),
     );
     expect(result.status).toBe("failed");
@@ -116,6 +128,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
+      scope(),
       async () => launch({ exitCode: null, timedOut: true }),
     );
     expect(result.status).toBe("failed");
@@ -127,6 +140,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
+      scope(),
       async () => launch({ exitCode: null, spawnError: "spawn npx ENOENT" }),
     );
     expect(result.status).toBe("failed");
@@ -138,6 +152,7 @@ describe("materializeRegistrationRunnerCache", () => {
     const result = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
+      scope(),
       async () => launch({ exitCode: null, interruptedSignal: "SIGINT" }),
     );
     expect(result.status).toBe("failed");
@@ -170,6 +185,7 @@ describe("launchRegistrationRunnerCommand", () => {
         cwd: process.cwd(),
         timeoutMs: 5000,
         platform: process.platform,
+        resources: scope(),
       },
     );
     expect(result.exitCode).toBe(1);
@@ -180,6 +196,7 @@ describe("launchRegistrationRunnerCommand", () => {
     const prewarm = await materializeRegistrationRunnerCache(
       ["npx", "-y", specifier, "mcp"],
       {},
+      scope(),
       async () => result,
     );
     expect(prewarm.status).toBe("failed");
@@ -198,6 +215,7 @@ describe("launchRegistrationRunnerCommand", () => {
         cwd: process.cwd(),
         timeoutMs: 30_000,
         platform: process.platform,
+        resources: scope(),
       },
     );
     expect(result.exitCode).toBe(0);
@@ -215,9 +233,125 @@ describe("launchRegistrationRunnerCommand", () => {
         cwd: process.cwd(),
         timeoutMs: 300,
         platform: process.platform,
+        resources: scope(),
       },
     );
     expect(result.timedOut).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
+});
+
+it.runIf(process.platform !== "win32")(
+  "settles the prewarm deadline after a detached descendant inherits the exited runner's pipes",
+  async () => {
+    const result = await launchRegistrationRunnerCommand(
+      process.execPath,
+      [
+        "-e",
+        `
+    const { spawn } = require('node:child_process');
+    const child = spawn(process.execPath, ['-e', 'process.stdout.write("descendant:" + process.pid); setTimeout(() => process.stdout.write("natural-descendant-exit"), 60_000)'], {
+      detached: true, stdio: ['ignore', 'inherit', 'inherit']
+    });
+    child.unref();
+  `,
+      ],
+      {
+        env: process.env,
+        cwd: process.cwd(),
+        // Ownership admission and two Node starts must finish before the
+        // deadline tests held output pipes rather than startup cancellation.
+        timeoutMs: 5000,
+        platform: process.platform,
+        resources: scope(),
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.timedOut).toBe(true);
+    expect(result.stdout).toContain("descendant:");
+    expect(result.cleanupFailure).toBeUndefined();
+    expect(result.stdout).not.toContain("natural-descendant-exit");
+  },
+  15_000,
+);
+
+it.each([false, true])(
+  "retains the exact runner cleanup for scope close and retry (interrupt=%s)",
+  async (interrupt) => {
+    const resources = new ArtifactResourceScope();
+    let allowCleanup = false;
+    let attempts = 0;
+    onTestFinished(async () => {
+      allowCleanup = true;
+      await resources.close();
+    });
+    const result = await launchRegistrationRunnerCommand(
+      process.execPath,
+      ["--version"],
+      {
+        env: process.env,
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        platform: process.platform,
+        resources,
+        launcher: async (options) => {
+          const launched = await spawnOwnedProviderProcess(options);
+          return {
+            ...launched,
+            cleanup: async () => {
+              attempts++;
+              if (interrupt && attempts === 1) process.emit("SIGINT");
+              return allowCleanup
+                ? cleanupOwnedProcessGroup(launched.ownership)
+                : {
+                    cleaned: false as const,
+                    reason: "controlled runner cleanup refusal",
+                  };
+            },
+          };
+        },
+      },
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.cleanupFailure).toContain(
+      "controlled runner cleanup refusal",
+    );
+    expect(result.interruptedSignal).toBe(interrupt ? "SIGINT" : undefined);
+    expect(resources.hasPending).toBe(true);
+    const prewarm = await materializeRegistrationRunnerCache(
+      ["npx", "-y", specifier, "mcp"],
+      {},
+      resources,
+      async () => result,
+    );
+    expect(prewarm).toMatchObject({ status: "failed" });
+    await expect(resources.close()).rejects.toThrow();
+    expect(attempts).toBe(2);
+    allowCleanup = true;
+    await resources.close();
+    expect(attempts).toBe(3);
+    expect(resources.hasPending).toBe(false);
+  },
+);
+
+it("captures the selected environment at admission and accepts reconfiguration on the next prewarm", async () => {
+  const env = { ...process.env, REA_PREWARM_SELECTED_VALUE: "first" };
+  const resources = scope();
+  const invoke = () =>
+    launchRegistrationRunnerCommand(
+      process.execPath,
+      ["-e", "process.stdout.write(process.env.REA_PREWARM_SELECTED_VALUE)"],
+      {
+        env,
+        cwd: process.cwd(),
+        timeoutMs: 5000,
+        platform: process.platform,
+        resources,
+      },
+    );
+  const first = invoke();
+  env.REA_PREWARM_SELECTED_VALUE = "second";
+  expect((await first).stdout).toBe("first");
+  expect((await invoke()).stdout).toBe("second");
+  expect(resources.hasPending).toBe(false);
 });

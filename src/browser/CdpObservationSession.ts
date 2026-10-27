@@ -30,8 +30,19 @@ import {
   observeMainFrameUrl,
   classifyCdpFrameUrl,
 } from "./CdpCaptureDocuments.js";
-import { cdpFrameIdentity } from "./CdpCaptureEventHelpers.js";
+import {
+  selectCdpFrameIdentity,
+  cdpFrameRecordFacts,
+  cdpFrameEventFacts,
+} from "./CdpFrameIdentity.js";
 import { cdpTargetEventMatches } from "./CdpTargetEvents.js";
+
+import {
+  readCdpRequestWillBeSent,
+  readCdpLoadingFailed,
+  readCdpLoadingFinished,
+  type CdpRequestWillBeSentFacts,
+} from "./CdpNetworkEventFacts.js";
 
 interface ObservationContext {
   readonly connection: CdpConnection;
@@ -50,6 +61,8 @@ interface TimelineEntryOptions {
   readonly type: TimelineEvent["type"];
   readonly params: UnknownRecord;
   readonly timestamp?: number | null;
+  readonly frameId?: string | null;
+  readonly loaderId?: string | null;
   readonly rawUrl?: string | null;
   readonly destinationScope?: TimelineEvent["destination_scope"];
   readonly requestId?: string | null;
@@ -245,15 +258,17 @@ class TimelineCapture {
       case "Page.navigatedWithinDocument":
         this.#sameDocument(event, params, contextOnly);
         break;
-      case "Network.requestWillBeSent":
-        this.#requestStarted(params);
-        this.#redirect(params, bufferedBeforeArm);
+      case "Network.requestWillBeSent": {
+        const facts = readCdpRequestWillBeSent(params);
+        this.#requestStarted(facts);
+        this.#redirect(facts, bufferedBeforeArm);
         break;
+      }
       case "Network.loadingFailed":
-        this.#loadingFailed(params, bufferedBeforeArm);
+        this.#loadingFailed(readCdpLoadingFailed(params), bufferedBeforeArm);
         break;
       case "Network.loadingFinished":
-        this.#forgetRequest(cdpStringValue(params.requestId));
+        this.#forgetRequest(readCdpLoadingFinished(params).requestId);
         break;
       case "Page.lifecycleEvent":
         this.#lifecycle(params);
@@ -385,7 +400,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -411,7 +429,10 @@ class TimelineCapture {
     contextOnly: boolean,
   ): void {
     const frame = recordValue(params.frame);
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main" && !identity.isRootReplacement) return;
@@ -454,7 +475,10 @@ class TimelineCapture {
     params: UnknownRecord,
     contextOnly: boolean,
   ): void {
-    const identity = cdpFrameIdentity(event, this.mainFrameId);
+    const identity = selectCdpFrameIdentity(
+      cdpFrameEventFacts(event),
+      this.mainFrameId,
+    );
     if (identity.identityIssue !== null || identity.parentIssue !== null)
       this.completeness.exclude("timeline", "invalid_protocol_value");
     if (identity.selection !== "main") return;
@@ -474,27 +498,32 @@ class TimelineCapture {
     this.finalUrl = destination.url;
   }
 
-  #redirect(params: UnknownRecord, bufferedBeforeArm: boolean): void {
-    const resourceType = cdpStringValue(params.type);
+  #redirect(
+    facts: CdpRequestWillBeSentFacts,
+    bufferedBeforeArm: boolean,
+  ): void {
+    const resourceType = facts.resourceType;
     if (resourceType !== undefined && resourceType !== "Document") return;
     if (
-      cdpStringValue(params.frameId) !== this.mainFrameId ||
-      recordValue(params.redirectResponse) === undefined
+      facts.frameId !== this.mainFrameId ||
+      facts.redirect.kind !== "response"
     )
       return;
-    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
+    const eventTime = this.#networkEventTime(
+      facts.timestamp,
+      bufferedBeforeArm,
+    );
     if (!eventTime.keep) return;
-    const request = recordValue(params.request);
-    const rawUrl = cdpStringValue(request?.url);
+    const rawUrl = facts.request?.url;
     const destination = scopedUrl(rawUrl, this.allowedOrigins);
     this.#add({
       type: "redirect",
-      params,
-      ...(eventTime.timestamp === undefined
-        ? {}
-        : { timestamp: eventTime.timestamp }),
+      params: facts.source ?? {},
+      frameId: facts.frameId ?? null,
+      loaderId: facts.loaderId ?? null,
+      timestamp: eventTime.timestamp,
       rawUrl: rawUrl ?? null,
-      requestId: cdpStringValue(params.requestId) ?? null,
+      requestId: facts.requestId,
       detail: null,
     });
     if (!this.#hasObservedUrl(rawUrl)) return;
@@ -524,24 +553,18 @@ class TimelineCapture {
   }
 
   /** Request ingress owns frame/type attribution; loadingFailed has no frameId. */
-  #requestStarted(params: UnknownRecord): void {
-    const id = cdpStringValue(params.requestId);
-    const frameId = cdpStringValue(params.frameId);
-    if (id === undefined) {
-      if (
-        frameId === this.mainFrameId &&
-        cdpStringValue(params.type) === "Document"
-      )
+  #requestStarted(facts: CdpRequestWillBeSentFacts): void {
+    const id = facts.requestId;
+    const frameId = facts.frameId;
+    if (id === null) {
+      if (frameId === this.mainFrameId && facts.resourceType === "Document")
         this.completeness.exclude("timeline", "invalid_protocol_value");
       return;
     }
     this.#forgetRequest(id);
-    if (
-      frameId !== this.mainFrameId ||
-      cdpStringValue(params.type) !== "Document"
-    )
+    if (frameId !== this.mainFrameId || facts.resourceType !== "Document")
       return;
-    const loaderId = cdpStringValue(params.loaderId);
+    const loaderId = facts.loaderId;
     const bytes =
       Buffer.byteLength(id) +
       Buffer.byteLength(frameId) +
@@ -564,8 +587,8 @@ class TimelineCapture {
     this.#documentRequestBytes += bytes;
   }
 
-  #forgetRequest(id: string | undefined) {
-    if (id === undefined) return undefined;
+  #forgetRequest(id: string | null) {
+    if (id === null) return undefined;
     const request = this.#documentRequests.get(id);
     if (request !== undefined) {
       this.#documentRequests.delete(id);
@@ -582,37 +605,38 @@ class TimelineCapture {
       throw this.#requestOwnershipFailure;
   }
 
-  #loadingFailed(params: UnknownRecord, bufferedBeforeArm: boolean): void {
-    const requestId = cdpStringValue(params.requestId);
+  #loadingFailed(
+    facts: ReturnType<typeof readCdpLoadingFailed>,
+    bufferedBeforeArm: boolean,
+  ): void {
+    const requestId = facts.requestId;
     const request = this.#forgetRequest(requestId);
     if (request === undefined) return;
-    const eventTime = this.#networkEventTime(params, bufferedBeforeArm);
+    const eventTime = this.#networkEventTime(
+      facts.timestamp,
+      bufferedBeforeArm,
+    );
     if (!eventTime.keep) return;
     this.#add({
       type: "load_failed",
-      params: {
-        ...params,
-        frameId: request.frameId,
-        loaderId: request.loaderId,
-      },
-      ...(eventTime.timestamp === undefined
-        ? {}
-        : { timestamp: eventTime.timestamp }),
+      params: facts.source ?? {},
+      frameId: request.frameId,
+      loaderId: request.loaderId ?? null,
+      timestamp: eventTime.timestamp,
       rawUrl: null,
       requestId: requestId ?? null,
-      detail: safeNetworkError(params.errorText),
+      detail: safeNetworkError(facts.errorText),
     });
   }
 
   #networkEventTime(
-    params: UnknownRecord,
+    timestamp: number | undefined,
     bufferedBeforeArm: boolean,
   ): {
     readonly keep: boolean;
-    readonly timestamp?: number | null;
+    readonly timestamp: number | null;
   } {
-    if (!bufferedBeforeArm) return { keep: true };
-    const timestamp = numberValue(params.timestamp);
+    if (!bufferedBeforeArm) return { keep: true, timestamp: timestamp ?? null };
     if (timestamp === undefined || timestamp < 0) {
       this.completeness.exclude("timeline", "invalid_protocol_value");
       this.#hasUnknownEventTime = true;
@@ -654,9 +678,10 @@ class TimelineCapture {
     } = options;
     const destination =
       rawUrl == null ? null : scopedUrl(rawUrl, this.allowedOrigins);
-    const observedTimestamp = numberValue(params.timestamp);
     const timestamp =
-      options.timestamp === undefined ? observedTimestamp : options.timestamp;
+      options.timestamp === undefined
+        ? numberValue(params.timestamp)
+        : options.timestamp;
     if (
       timestamp === undefined ||
       timestamp === null ||
@@ -675,8 +700,14 @@ class TimelineCapture {
         timestamp === undefined || (timestamp !== null && timestamp < 0)
           ? null
           : timestamp,
-      frame_id: boundedId(params.frameId),
-      loader_id: boundedId(params.loaderId),
+      frame_id:
+        options.frameId === undefined
+          ? boundedId(params.frameId)
+          : options.frameId,
+      loader_id:
+        options.loaderId === undefined
+          ? boundedId(params.loaderId)
+          : options.loaderId,
       request_id: requestId ?? null,
       url: destination?.scope === "approved" ? destination.url : null,
       destination_scope: options.destinationScope ?? destination?.scope ?? null,
@@ -770,9 +801,9 @@ const captureFinalUrl = async (
 };
 
 const frameId = (result: unknown): string | undefined =>
-  cdpStringValue(
-    recordValue(recordValue(recordValue(result)?.frameTree)?.frame)?.id,
-  );
+  cdpFrameRecordFacts(
+    recordValue(recordValue(recordValue(result)?.frameTree)?.frame),
+  ).frameId ?? undefined;
 
 const hasNoComparableProducerTimestamp = (method: string): boolean =>
   method === "Page.frameRequestedNavigation" ||

@@ -17,7 +17,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { managedViewIdentityUnknowns } from "./managedArtifactView.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 
 const member = managedMemberInspectionSchema.shape;
 
@@ -146,32 +146,10 @@ const collectionPage = (
   }
 };
 
-// A sealed parent result cannot change, so its validated report stays exact for
-// every later page. The weak reference lets memory pressure reclaim the copy;
-// unsealed input is validated on each call.
-const validatedReports = new WeakMap<
-  object,
-  WeakRef<ManagedMemberInspection>
->();
-
-/** Validate the parent once per sealed result instead of once per page. */
-const parseMemberReport = (
-  parent: AnalysisViewParent,
-): Result<ManagedMemberInspection, AnalysisError> => {
-  const { normalizedResult } = parent;
-  const sealed =
-    parent.sealedResult === true &&
-    typeof normalizedResult === "object" &&
-    normalizedResult !== null;
-  const cached = sealed
-    ? validatedReports.get(normalizedResult)?.deref()
-    : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(managedMemberInspectionSchema, parent);
-  if (parsed.ok && sealed)
-    validatedReports.set(normalizedResult, new WeakRef(parsed.value));
-  return parsed;
-};
+/** The shared owner proves immutable source identity before retaining normalized facts. */
+const parseMemberReport = createAnalysisViewResultReader(
+  managedMemberInspectionSchema,
+);
 
 /** Everything but the member collections, which are replaced by their counts. */
 const summarizeMembers = (

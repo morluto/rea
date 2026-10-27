@@ -169,12 +169,12 @@ export class ClientConfigurationPublication {
     return outcome.value;
   }
 
-  async assertCurrent(readback?: string): Promise<void> {
+  async assertCurrent(readback: string): Promise<void> {
     const owned = await this.owner.handle.stat();
     const named = await lstat(this.path);
     if (
       owned.ino === 0 ||
-      (readback !== undefined && readback !== this.contents) ||
+      readback !== this.contents ||
       named.isSymbolicLink() ||
       !sameRegularFileState(owned, named)
     )

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import type { analysisStringSchema } from "../domain/hopperValues.js";
+import type { analysisStringSchema } from "../domain/native/nativeString.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";

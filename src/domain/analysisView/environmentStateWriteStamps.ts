@@ -1,6 +1,8 @@
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
+  ownMember,
+  setOwnMember,
   IDENTITY_NAMES,
   isObject,
   same,
@@ -81,7 +83,8 @@ export const envelopeOf = (
 ): { readonly member: string; readonly object: JsonObject } | undefined => {
   if (!isObject(body)) return undefined;
   const members = Object.keys(body);
-  const wrapped = members.length === 1 ? body[members[0]!] : undefined;
+  const wrapped =
+    members.length === 1 ? ownMember(body, members[0]!) : undefined;
   return Array.isArray(wrapped) && wrapped.length === 1 && isObject(wrapped[0]!)
     ? { member: members[0]!, object: wrapped[0] }
     : undefined;
@@ -154,7 +157,7 @@ const sharedBesides = (
   others: readonly JsonObject[],
 ): boolean => {
   const held = others.flatMap((other) => {
-    const value = other[field];
+    const value = ownMember(other, field);
     return value !== undefined && isObject(value) ? [value] : [];
   });
   return (
@@ -163,9 +166,9 @@ const sharedBesides = (
       [...new Set([...Object.keys(other), ...Object.keys(object)])].every(
         (key) =>
           members.includes(key)
-            ? readClock(other[key]) !== undefined &&
-              !same(other[key], object[key])
-            : same(other[key], object[key]),
+            ? readClock(ownMember(other, key)) !== undefined &&
+              !same(ownMember(other, key), ownMember(object, key))
+            : same(ownMember(other, key), ownMember(object, key)),
       ),
     )
   );
@@ -179,7 +182,9 @@ const nestedRule = (
   others: readonly JsonObject[],
 ): FieldRule | undefined => {
   const formats = new Set(
-    members.map((key) => JSON.stringify(readClock(object[key])?.format)),
+    members.map((key) =>
+      JSON.stringify(readClock(ownMember(object, key))?.format),
+    ),
   );
   return members.length > 0 &&
     formats.size === 1 &&
@@ -188,7 +193,7 @@ const nestedRule = (
         field,
         rule: "nested-clock",
         members: [...members],
-        format: readClock(object[members[0]!])!.format,
+        format: readClock(ownMember(object, members[0]!))!.format,
       }
     : undefined;
 };
@@ -207,7 +212,7 @@ export const nestedClockRule = (
     return undefined;
   const changed = [
     ...new Set([...Object.keys(before), ...Object.keys(after)]),
-  ].filter((key) => !same(before[key], after[key]));
+  ].filter((key) => !same(ownMember(before, key), ownMember(after, key)));
   return changed.every(
     (key) =>
       Object.hasOwn(after, key) && isClockNear(after[key]!, evidence.startMs),
@@ -232,7 +237,7 @@ export const createdNestedClock = (
   );
   // A clock read before the request, past a whole second's truncation, belongs to an entity made earlier.
   const stamped = members.every((key) => {
-    const ms = readClock(value[key])!.ms;
+    const ms = readClock(ownMember(value, key))!.ms;
     return ms >= startMs - TRUNCATION_MS && ms <= startMs + NESTED_WINDOW_MS;
   });
   return stamped ? nestedRule(field, value, members, evidence.type) : undefined;
@@ -257,13 +262,14 @@ export const createdToken = (
   entity: JsonObject,
   type: readonly JsonObject[],
 ): "independent" | "linked" | undefined => {
-  const value = entity[field];
+  const value = ownMember(entity, field);
   if (
     !isOpaqueToken(value) ||
     type.length === 0 ||
     !type.every(
       (member) =>
-        member[field] !== value && isOpaqueToken(member[field], value),
+        ownMember(member, field) !== value &&
+        isOpaqueToken(ownMember(member, field), value),
     )
   )
     return undefined;
@@ -294,8 +300,8 @@ export const freshToken = (
   evidence: ChangeEvidence,
   field: string,
 ): boolean => {
-  const before = evidence.before[field];
-  const after = evidence.after[field];
+  const before = ownMember(evidence.before, field);
+  const after = ownMember(evidence.after, field);
   return (
     isOpaqueToken(after, before) &&
     isOpaqueToken(before) &&
@@ -337,7 +343,7 @@ export const stampRule = (
   evidence: ChangeEvidence,
   field: string,
 ): FieldRule | undefined => {
-  const after = evidence.after[field];
+  const after = ownMember(evidence.after, field);
   const creator = creatorOf(field);
   if (typeof after !== "string" || after.length === 0 || creator === undefined)
     return undefined;
@@ -395,7 +401,7 @@ export const derivedRule = (
   evidence: ChangeEvidence,
   field: string,
 ): FieldRule | undefined => {
-  const after = evidence.after[field];
+  const after = ownMember(evidence.after, field);
   if (after === undefined || readClock(after) !== undefined) return undefined;
   const { body } = evidence.call;
   const unstored = Object.keys(body).filter(
@@ -403,7 +409,8 @@ export const derivedRule = (
       !Object.hasOwn(evidence.after, member) &&
       !Object.hasOwn(evidence.before, member),
   );
-  const text = unstored.length === 1 ? textOf(body[unstored[0]!]) : undefined;
+  const text =
+    unstored.length === 1 ? textOf(ownMember(body, unstored[0]!)) : undefined;
   const shown = typeof after === "string" ? after : JSON.stringify(after);
   return text !== undefined &&
     text.length >= DERIVED_TEXT_MIN &&
@@ -412,7 +419,7 @@ export const derivedRule = (
         field,
         rule: "derived",
         value: after,
-        from: evidence.before[field] ?? null,
+        from: ownMember(evidence.before, field) ?? null,
         member: unstored[0]!,
       }
     : undefined;
@@ -428,14 +435,14 @@ export const stampProblem = (
     if (
       rule.rule === "derived" &&
       Object.hasOwn(sent, rule.member) &&
-      !same(before[rule.field] ?? null, rule.from)
+      !same(ownMember(before, rule.field) ?? null, rule.from)
     )
       return `Member ${rule.member} is accepted only on an entity whose ${rule.field} is as the recorded call found it, since the application derives ${rule.field} from it.`;
     if (rule.rule === "held-clock" && !Object.hasOwn(sent, rule.field))
       return `Member ${rule.field} must be sent with the value the entity holds, as the recorded call did.`;
     if (
       rule.rule === "held-clock" &&
-      !same(sent[rule.field], before[rule.field])
+      !same(ownMember(sent, rule.field), ownMember(before, rule.field))
     )
       return `Member ${rule.field} must repeat the value the entity holds, as the recorded call did.`;
   }
@@ -448,7 +455,7 @@ const nestedIdentities = (entity: JsonObject): Map<string, Set<string>> => {
   for (const [field, nested] of Object.entries(entity)) {
     if (!isObject(nested)) continue;
     const texts = IDENTITY_NAMES.flatMap((name) => {
-      const text = scalarText(nested[name]);
+      const text = scalarText(ownMember(nested, name));
       return text === undefined ? [] : [text];
     });
     if (texts.length === 0) continue;
@@ -480,7 +487,10 @@ const stateOf = (
     Object.keys(entity).some(
       (field) =>
         field !== member &&
-        others.every((other) => unset(other[field]) !== unset(entity[field])),
+        others.every(
+          (other) =>
+            unset(ownMember(other, field)) !== unset(ownMember(entity, field)),
+        ),
     )
   );
 };
@@ -527,11 +537,11 @@ export const restampedFields = (
   const fields = { ...shown };
   for (const rule of nested) {
     const read = storedRestamp(
-      shown[rule.field],
-      later?.object[rule.field],
+      ownMember(shown, rule.field),
+      ownMember(later?.object, rule.field),
       rule.members,
     );
-    if (read !== undefined) fields[rule.field] = read;
+    if (read !== undefined) setOwnMember(fields, rule.field, read);
   }
   return fields;
 };
@@ -546,10 +556,13 @@ export const storedRestamp = (
   if (!isObject(own) || !isObject(read)) return undefined;
   for (const key of new Set([...Object.keys(own), ...Object.keys(read)])) {
     if (!members.includes(key)) {
-      if (!same(own[key], read[key])) return undefined;
+      if (!same(ownMember(own, key), ownMember(read, key))) return undefined;
       continue;
     }
-    const [written, stored] = [readClock(own[key]), readClock(read[key])];
+    const [written, stored] = [
+      readClock(ownMember(own, key)),
+      readClock(ownMember(read, key)),
+    ];
     if (
       written === undefined ||
       stored === undefined ||

@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, onTestFinished, test } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -177,6 +177,86 @@ const scenario = (origin = "https://app.example.test") => ({
     },
   ],
 });
+
+test.each(["full", "compact"] as const)(
+  "advertises portable browser action patterns (%s)",
+  async (profile) => {
+    const provider = new FakeBrowserScenarioProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Schema discovery must not start a deep provider");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      {
+        browserScenarioCapture: provider,
+        environment: { REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const client = new Client({
+      name: "browser-action-patterns",
+      version: "1",
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    onTestFinished(async () => {
+      await Promise.all([client.close(), server.close(), session.close()]);
+    });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const tool = (await client.listTools()).tools.find(
+      ({ name }) => name === "capture_browser_scenario",
+    );
+    if (tool === undefined) throw new Error("Missing browser scenario tool");
+    const properties = z
+      .record(z.string(), z.unknown())
+      .parse(tool.inputSchema.properties);
+    const pending = [{ value: properties.actions, where: "actions" }];
+    const patterns: Array<{ where: string; pattern: string }> = [];
+    while (pending.length > 0) {
+      const selected = pending.pop();
+      if (
+        selected === undefined ||
+        selected.value === null ||
+        typeof selected.value !== "object"
+      )
+        continue;
+      for (const [key, value] of Object.entries(selected.value)) {
+        const where = `${selected.where}/${key}`;
+        if (key === "pattern" && typeof value === "string")
+          patterns.push({ where, pattern: value });
+        pending.push({ value, where });
+      }
+    }
+    if (profile === "full") {
+      expect(
+        patterns.some(({ where }) => where.endsWith("/path/pattern")),
+      ).toBe(true);
+      expect(
+        patterns.some(
+          ({ where }) =>
+            where.includes("/headers/") && where.endsWith("/name/pattern"),
+        ),
+      ).toBe(true);
+    }
+    const failures = patterns.flatMap(({ where, pattern }) =>
+      ["", "u", "v"].flatMap((flags) => {
+        try {
+          new RegExp(pattern, flags);
+          return [];
+        } catch (cause: unknown) {
+          return [`${where} /${pattern}/${flags}: ${String(cause)}`];
+        }
+      }),
+    );
+    expect(failures).toEqual([]);
+    expect(
+      patterns.filter(({ pattern }) =>
+        /\(\?<?[=!]|\\[1-9]|\\k</u.test(pattern),
+      ),
+    ).toEqual([]);
+    expect(provider.scenarios).toEqual([]);
+  },
+);
 
 describe("browser scenario MCP tool", () => {
   const resources: Array<{ close(): Promise<unknown> }> = [];

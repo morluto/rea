@@ -4,7 +4,6 @@ import {
   sourceToBundleComparisonResultSchema,
   type SourceToBundleComparisonResult,
 } from "../javascript/sourceToBundleComparisonSchemas.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import type {
@@ -13,7 +12,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -94,29 +93,9 @@ export const sourceToBundleViewContextSchema =
       unmapped_current_node_count: z.number().int().nonnegative(),
     });
 
-const checked = new WeakMap<object, SourceToBundleComparisonResult>();
-const checkedReport = (
-  parent: AnalysisViewParent,
-): Result<SourceToBundleComparisonResult, AnalysisError> => {
-  const source = parent.normalizedResult;
-  const reusable =
-    typeof source === "object" &&
-    source !== null &&
-    parent.sealedResult === true &&
-    isImmutableJsonSnapshot(source);
-  const cached = reusable ? checked.get(source) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(
-    sourceToBundleComparisonResultSchema,
-    parent,
-  );
-  if (!parsed.ok) return parsed;
-  const report = reusable
-    ? (source as SourceToBundleComparisonResult)
-    : parsed.value;
-  if (reusable) checked.set(source, report);
-  return ok(report);
-};
+const checkedReport = createAnalysisViewResultReader(
+  sourceToBundleComparisonResultSchema,
+);
 const selected = (values: readonly string[] | undefined) =>
   values === undefined ? undefined : new Set(values);
 const columns = (

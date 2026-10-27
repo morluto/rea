@@ -22,7 +22,7 @@ export const registerByteEntropyTool = (
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined,
 ): void => {
   const contract = toolContract("inspect_byte_entropy");
-  const delivery = retainedSummaryDelivery(new Set([contract.name]), {
+  const delivery = retainedSummaryDelivery(contract.name, {
     recordEvidence,
     evidenceById,
   });
@@ -41,17 +41,13 @@ export const registerByteEntropyTool = (
             contract.name,
             async () => {
               const parameters = { detail };
-              const ready = delivery.preflight(contract.name, parameters);
+              const ready = delivery.preflight(parameters);
               if (!ready.ok) return ready;
               const inspected = await entropyService.inspect(request, {
                 signal: context.mcpReq.signal,
               });
               return inspected.ok
-                ? delivery.projectEvidence(
-                    contract.name,
-                    parameters,
-                    inspected.value,
-                  )
+                ? delivery.projectEvidence(parameters, inspected.value)
                 : inspected;
             },
           );

@@ -1,6 +1,6 @@
 import type { z } from "zod";
 
-import type { analysisStringSchema } from "../../src/domain/hopperValues.js";
+import type { analysisStringSchema } from "../../src/domain/native/nativeString.js";
 
 type VerifierCall = (
   name: string,

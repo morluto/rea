@@ -629,6 +629,40 @@ it.each(["symlink", "regular", "valid-readback"] as const)(
   },
 );
 
+it("uninstall retains concurrent edits to the published inode and reports failure", async () => {
+  const root = await createTestTempDirectory("rea-uninstall-inode-edit-");
+  const path = join(root, "client.json");
+  const fs =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const original =
+    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}},"keep":"original"}\n';
+  const edited = '{"keep":"concurrent edit"}\n';
+  await fs.writeFile(path, original);
+  state.failReadback = false;
+  state.afterPublication = async (publishedPath) => {
+    state.afterPublication = undefined;
+    const before = await fs.stat(publishedPath);
+    await fs.writeFile(publishedPath, edited);
+    expect((await fs.stat(publishedPath)).ino).toBe(before.ino);
+  };
+  const host = systemUninstallHost(root);
+  try {
+    const result = await host.removeClient({
+      name: "cursor",
+      configPath: path,
+      format: "json",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.detail).not.toContain("The original was restored");
+    expect(await fs.readFile(path, "utf8")).toBe(edited);
+    expect(await fs.readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+  } finally {
+    await host.close?.();
+  }
+});
+
 it("uninstall retains both readback and publication owners until cleanup retry", async () => {
   const root = await createTestTempDirectory("rea-uninstall-two-close-owners-");
   const path = join(root, "client.json");
@@ -1394,7 +1428,9 @@ it("publication keeps its selected canonical parent when a directory symlink is 
     "{}",
     original,
   );
-  await publication.verify(() => publication.assertCurrent());
+  await publication.verify(async () =>
+    publication.assertCurrent(await fs.readFile(publication.path, "utf8")),
+  );
   expect(await fs.readFile(join(selected, "client.json"), "utf8")).toBe("{}");
   expect(await fs.readFile(join(foreign, "client.json"), "utf8")).toBe(
     unrelated,

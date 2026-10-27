@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -11,7 +14,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosComFixture } from "../tests/conformance/ghidra/dos-com-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -339,16 +342,11 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 240000 },
   );
-  assert.notEqual(value.isError, true, JSON.stringify(value));
-  const projected = requireMcpOperationResult(value, name);
-  if (name === "open_binary" || name === "close_binary") return projected;
-  const evidence = parseEvidence(value.structuredContent);
+  if (["open_binary", "close_binary"].includes(name))
+    return requireMcpLifecycleResult(value, name);
+  const evidence = parseEvidence(requireMcpOutput(value, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.deepEqual(
-    evidence.normalized_result,
-    value.structuredContent.normalized_result,
-  );
-  return projected;
+  return evidence.normalized_result;
 }
 async function cli(command, address, options = []) {
   const { stdout } = await promisify(execFile)(

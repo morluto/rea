@@ -82,10 +82,9 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
     ({ xml }) => {
       expect(() => parseXmlPropertyList(xml)).not.toThrow();
       expect(
-        preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
-      ).toMatchObject({
-        binaryPrototypeKeyObserved: false,
-      });
+        preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024)
+          .estimatedBytes,
+      ).toBeGreaterThan(0);
     },
   );
 
@@ -158,8 +157,9 @@ describe("inert XML declaration examples in Interface Builder archives", () => {
     const xml = archive("Build").replace("<plist", `${declaration}<plist`);
     expect(() => parseXmlPropertyList(xml)).not.toThrow();
     expect(
-      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024),
-    ).toMatchObject({ binaryPrototypeKeyObserved: false });
+      preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024)
+        .estimatedBytes,
+    ).toBeGreaterThan(0);
   });
 });
 

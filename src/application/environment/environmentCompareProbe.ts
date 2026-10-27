@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
+
+import { readRecordedRequestBody } from "../../domain/analysisView/recordedExchangeBody.js";
+import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
 import {
   primaryOrigin,
   type OriginStats,
 } from "../../domain/analysisView/environmentManifestOrigin.js";
 import {
-  mediaTypeEssence,
   readRecordedRequestLine,
   type RecordedRequestLine,
   type RequestLineExclusion,
@@ -14,8 +18,7 @@ import { parseExactJson } from "../../domain/exactJsonNumber.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
   compareOffsetDateTimeInstants,
-  offsetDateTimeInstantFromEpochMilliseconds,
-  readRecordedDateTime,
+  readRecordedStart,
   type OffsetDateTimeInstant,
 } from "../../domain/offsetDateTime.js";
 import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
@@ -44,12 +47,6 @@ export interface ProbeStep {
 const BODYLESS_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 
 const startedSchema = z.object({ startedDateTime: z.string() });
-const postDataSchema = z.object({
-  request: z.object({
-    postData: z.object({ mimeType: z.string(), text: z.string() }),
-  }),
-});
-
 const methodSchema = z.object({ request: z.object({ method: z.string() }) });
 
 const startedInstant = (
@@ -57,21 +54,7 @@ const startedInstant = (
 ): OffsetDateTimeInstant | undefined => {
   const started = startedSchema.safeParse(record.reported);
   if (!started.success) return undefined;
-  const reading = readRecordedDateTime(started.data.startedDateTime);
-  if (reading !== undefined) {
-    const { spelling } = reading;
-    const offsetTimestamp =
-      spelling.separator === "T" &&
-      (spelling.zone === "Z" || spelling.zone.includes(":"));
-    const clockTimestamp =
-      spelling.secondsPresent && spelling.fractionDigits <= 9;
-    if (offsetTimestamp || clockTimestamp) return reading.instant;
-  }
-  // Preserve native-Date admission for legacy spellings, at its original precision.
-  const ms = Date.parse(started.data.startedDateTime);
-  return Number.isFinite(ms)
-    ? offsetDateTimeInstantFromEpochMilliseconds(ms)
-    : undefined;
+  return readRecordedStart(started.data.startedDateTime)?.instant;
 };
 
 /** Whether a probe makes calls that carry a request body: a POST, PUT or PATCH. */
@@ -90,9 +73,11 @@ export const sendsBodies = (
 export const requestBody = (
   record: WebNetworkCaptureRecord,
 ): JsonValue | undefined => {
-  const parsed = postDataSchema.safeParse(record.reported);
-  if (!parsed.success) return undefined;
-  const { mimeType, text } = parsed.data.request.postData;
+  const facts = readRecordedRequestBody(record.reported);
+  if (facts.kind !== "request" || facts.postData.kind !== "object")
+    return undefined;
+  const { mimeType, text } = facts.postData;
+  if (mimeType === undefined || text === undefined) return undefined;
   return isJsonLike(mediaTypeEssence(mimeType))
     ? (parseExactJson(text) ?? text)
     : text;

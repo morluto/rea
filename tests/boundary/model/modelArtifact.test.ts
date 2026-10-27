@@ -15,6 +15,7 @@ import {
 import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -1062,6 +1063,48 @@ it.each(malformed)(
     });
   },
 );
+
+it("retains GGUF declarations and metadata when storage overlap is refused", async () => {
+  const seed = ggufFixture();
+  const fixture = ggufFixture({
+    metadata: [{ key: "general.name", type: 8, value: seed.text("Overlap") }],
+    tensors: [
+      { name: "a", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+      { name: "b", type: 0, shape: [1n], offset: 0n, bytes: 4 },
+    ],
+  });
+  const { provider, path } = await providerAt(fixture.bytes);
+  const result = await provider.inspect({ path, hash: "header" });
+  if (result.ok) throw new Error("Overlapping tensors admitted");
+  expect(result.error).toMatchObject({
+    _tag: "BinaryTargetError",
+    constraint: "file_format_rejected",
+  });
+  const evidence = parseEvidence(result.error.partialObservation);
+  expect(evidence.subject).toBeNull();
+  expect(evidence.normalized_result).toMatchObject({
+    artifact: {
+      header_sha256: null,
+      sha256: null,
+      file_identity: "unverified",
+    },
+    coverage: { header: "partial", metadata: "complete", tensors: "partial" },
+    metadata: [{ key: "general.name", value: "Overlap" }],
+    tensors: [],
+    tensor_declarations: [
+      {
+        name: "a",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+      {
+        name: "b",
+        file_offset: fixture.dataOffset,
+        storage_validation: "not-established",
+      },
+    ],
+  });
+});
 
 it("accepts null safetensors metadata and ignores tensor extension fields", async () => {
   const fixture = safetensorsFixture(

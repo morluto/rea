@@ -1,19 +1,16 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { BeamPort } from "./BeamPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectErlangBeamInputSchema,
   erlangBeamSchema,
   type ErlangBeam,
 } from "../../domain/erlang/beam.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_erlang_beam";
 
@@ -22,37 +19,31 @@ export class BeamService {
   constructor(readonly provider: BeamPort) {}
 
   close(): Promise<void> {
-    return this.provider.close?.() ?? Promise.resolve();
+    return this.provider.close();
   }
 
   async inspect(
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    const input = inspectErlangBeamInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const result = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectErlangBeamInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = erlangBeamSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
+      report.data.artifact.path !== input.value.path ||
       !validReport(
         report.data,
-        input.data.max_chunks,
-        input.data.max_atoms,
-        input.data.max_file_bytes,
+        input.value.max_chunks,
+        input.value.max_atoms,
+        input.value.max_file_bytes,
       )
     )
       return err(
@@ -72,7 +63,7 @@ export class BeamService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

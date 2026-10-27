@@ -1,3 +1,8 @@
+import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
+import { readElfNoteHeader } from "../../domain/native/elfNoteLayout.js";
+import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
+import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   RECORDED_LINUX_CORE_PROFILES,
@@ -49,25 +54,26 @@ const segmentMatches = (
   raw: Buffer,
   kinds: ReadonlyMap<number, string>,
 ): boolean => {
-  const type = raw.readUInt32LE(0);
+  const parsed = readElfProgramHeader(raw, 64, true);
+  if (!parsed.ok) return false;
+  const program = parsed.value;
+  const { type } = program;
   return (
     type === segment.type_id &&
     matchesKind(type, segment.type, kinds) &&
-    BigInt(segment.flags) === BigInt(raw.readUInt32LE(4)) &&
+    BigInt(segment.flags) === BigInt(program.flags) &&
     segment.file_backing ===
-      (type === 0 || raw.readBigUInt64LE(32) === 0n ? "none" : "file") &&
+      (type === 0 || program.fileSize === 0n ? "none" : "file") &&
     (
       [
-        [segment.offset, 8],
-        [segment.virtual_address, 16],
-        [segment.physical_address, 24],
-        [segment.file_size, 32],
-        [segment.memory_size, 40],
-        [segment.alignment, 48],
+        [segment.offset, program.offset],
+        [segment.virtual_address, program.virtualAddress],
+        [segment.physical_address, program.physicalAddress],
+        [segment.file_size, program.fileSize],
+        [segment.memory_size, program.memorySize],
+        [segment.alignment, program.alignment],
       ] as const
-    ).every(
-      ([field, relative]) => BigInt(field) === raw.readBigUInt64LE(relative),
-    )
+    ).every(([field, value]) => BigInt(field) === value)
   );
 };
 
@@ -91,24 +97,33 @@ export function validateRecordedCrashStructure(
   const header = bytesAt(0n, 64);
   const expectedMachine =
     RECORDED_LINUX_CORE_PROFILES[report.architecture].machine;
+  const parsedHeader = readElfHeaderFacts(header);
+  if (!parsedHeader.ok) return fail();
+  const facts = parsedHeader.value;
   if (
-    !header
-      .subarray(0, 6)
-      .equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1])) ||
-    header[6] !== 1 ||
-    header.readUInt32LE(20) !== 1 ||
-    ![0, 3].includes(header[7] ?? -1) ||
-    header[8] !== 0 ||
-    header.readUInt16LE(16) !== 4 ||
-    header.readUInt16LE(18) !== expectedMachine
+    facts.elfClass !== 64 ||
+    facts.byteOrder !== "little" ||
+    facts.version !== 1 ||
+    ![0, 3].includes(facts.osAbi) ||
+    facts.abiVersion !== 0 ||
+    facts.type !== 4 ||
+    facts.machine !== expectedMachine
   )
     fail();
-  const table = header.readBigUInt64LE(32);
-  const entryBytes = header.readUInt16LE(54);
-  let count = header.readUInt16LE(56);
+  const rawTables = readElfRawTableDeclarations(header, {
+    elfClass: 64,
+    byteOrder: "little",
+  });
+  if (!rawTables.ok) return fail();
+  const { programs, sections } = rawTables.value;
+  const table = programs.offset;
+  const entryBytes = programs.width;
+  let count = programs.count;
   if (count === 0xffff) {
-    if (header.readUInt16LE(58) < 64) return fail();
-    count = bytesAt(header.readBigUInt64LE(40), 64).readUInt32LE(44);
+    if (sections.width < 64) return fail();
+    const zero = readElfSectionHeader(bytesAt(sections.offset, 64), 64, true);
+    if (!zero.ok) return fail();
+    count = zero.value.info;
   }
   if (count !== report.segments.length || (count > 0 && entryBytes < 56))
     fail();
@@ -125,10 +140,13 @@ export function validateRecordedCrashStructure(
   }
   for (const note of report.notes) {
     const raw = bytesAt(BigInt(note.location.offset), 12);
+    const parsedNote = readElfNoteHeader(raw, true);
+    if (!parsedNote.ok) return fail();
+    const { namesz, descsz, type } = parsedNote.value;
     if (
-      BigInt(note.owner_location.bytes) !== BigInt(raw.readUInt32LE(0)) ||
-      BigInt(note.descriptor_location.bytes) !== BigInt(raw.readUInt32LE(4)) ||
-      raw.readUInt32LE(8) !== note.type_id
+      BigInt(note.owner_location.bytes) !== BigInt(namesz) ||
+      BigInt(note.descriptor_location.bytes) !== BigInt(descsz) ||
+      type !== note.type_id
     )
       fail();
   }

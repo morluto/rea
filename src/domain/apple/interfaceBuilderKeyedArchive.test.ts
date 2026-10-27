@@ -4,9 +4,40 @@ import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
 } from "./interfaceBuilderGraph.js";
-import { parseInterfaceBuilderRecords } from "./interfaceBuilderKeyedArchive.js";
+import {
+  parseInterfaceBuilderRecords,
+  record,
+} from "./interfaceBuilderKeyedArchive.js";
+import { markPlistDictionary, plistUidValue } from "./plistUid.js";
 
 const uid = (value: number) => ({ CF$UID: value });
+
+it("borrows decoded dictionary identity and keeps authored prototype-named fields", () => {
+  const decoded = JSON.parse('{"CF$UID":2,"__proto__":{"kept":true}}');
+  markPlistDictionary(decoded);
+  expect(record(decoded)).toBe(decoded);
+  expect(plistUidValue(record(decoded))).toBeUndefined();
+  expect(Object.hasOwn(record(decoded), "__proto__")).toBe(true);
+  expect(record(new Date(0))).toEqual({});
+  expect(record(new Uint8Array([1]))).toEqual({});
+});
+
+it("preserves ibtool object IDs and attributes that match inherited member names", () => {
+  const object = JSON.parse(
+    '{"class":"NSView","__proto__":{"kept":true},"constructor":"authored"}',
+  );
+  const result = parseInterfaceBuilderRecords({
+    "com.apple.ibtool.document.objects": Object.fromEntries([
+      ["__proto__", object],
+    ]),
+    "com.apple.ibtool.document.connections": {},
+  });
+  expect(result.objects[0]).toMatchObject({
+    id: "__proto__",
+    attributes: { ["__proto__"]: { kept: true }, constructor: "authored" },
+  });
+  expect(Object.hasOwn(result.objects[0]!.attributes, "__proto__")).toBe(true);
+});
 
 const archive = (
   fields: Record<string, unknown> = {},
@@ -33,6 +64,20 @@ const archive = (
     { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
   ] as unknown[],
   $top: top,
+});
+
+it("preserves keyed object fields while resolving references and removing only $class", () => {
+  const attributes = JSON.parse(
+    '{"__proto__":{"kept":true},"constructor":"authored"}',
+  );
+  const result = parseInterfaceBuilderRecords(archive(attributes));
+  const first = result.objects.find(({ id }) => id === "1");
+  expect(first?.attributes).toMatchObject({
+    ["__proto__"]: { kept: true },
+    constructor: "authored",
+  });
+  expect(Object.hasOwn(first!.attributes, "__proto__")).toBe(true);
+  expect(Object.hasOwn(first!.attributes, "$class")).toBe(false);
 });
 
 it.each([

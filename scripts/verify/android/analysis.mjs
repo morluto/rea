@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "../../lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
@@ -147,17 +148,14 @@ try {
       { name: task.name, arguments: task.input },
       { timeout: 150_000 },
     );
-    assert.notEqual(response.isError, true, JSON.stringify(response));
-    const structured = response.structuredContent;
-    assert.ok(structured !== undefined);
-    const evidence = parseEvidence(structured);
+    assert.notEqual(response.structuredContent, undefined);
+    const evidence = parseEvidence(requireMcpOutput(response, task.name));
     assert.deepEqual(
       evidence.normalized_result,
       cliResults.get(task.name).normalized_result,
     );
     // Raw observations retain different workspace paths and load durations.
     // Validate each evidence ID independently; compare portable results/intent.
-    assert.equal(structured.evidence_id, evidence.evidence_id);
     assert.deepEqual(evidence.parameters, cliResults.get(task.name).parameters);
     assert.deepEqual(evidence.provider, cliResults.get(task.name).provider);
     assert.deepEqual(
@@ -169,7 +167,6 @@ try {
       cliResults.get(task.name).limitations,
     );
     assert.equal(evidence.confidence, cliResults.get(task.name).confidence);
-    assert.deepEqual(structured.normalized_result, evidence.normalized_result);
     console.log(`PASS MCP/CLI parity ${task.name}`);
   }
   const overloadedInput = {
@@ -210,9 +207,10 @@ try {
     { name: "trace_android_references", arguments: overloadedInput },
     { timeout: 150_000 },
   );
-  assert.notEqual(overloadedMcp.isError, true, JSON.stringify(overloadedMcp));
+  assert.notEqual(overloadedMcp.structuredContent, undefined);
   assert.deepEqual(
-    parseEvidence(overloadedMcp.structuredContent).normalized_result,
+    parseEvidence(requireMcpOutput(overloadedMcp, "trace_android_references"))
+      .normalized_result,
     overloadedEvidence.normalized_result,
   );
   console.log("PASS real overloaded method references through CLI/MCP");

@@ -84,6 +84,7 @@ if (process.argv[2] === "mcp") {
     for (const file of [
       "scripts/verify-release-artifact.mjs",
       "scripts/lib/release-package-canary.mjs",
+      "scripts/lib/verify-package-core.mjs",
       "scripts/lib/mcp-verifier-results.mjs",
       "scripts/lib/verifier-run.mjs",
     ]) {

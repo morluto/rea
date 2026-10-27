@@ -20,6 +20,7 @@ import {
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -267,11 +268,18 @@ export const spawnOwnedProviderProcess = async (
     options.signal?.throwIfAborted();
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
-  const environment = {
-    ...hostEnvironment,
-    ...options.env,
-    REA_PROCESS_RUN_ID: options.runId,
-  };
+  const selectedEnvironment = mergeEnvironmentOverrides(
+    hostEnvironment,
+    options.env ?? {},
+    platform,
+  );
+  // Ownership is the final layer, including when a caller used another casing.
+  // Resolve undefined overrides before the launchers omit unset variables.
+  const environment = mergeEnvironmentOverrides(
+    selectedEnvironment,
+    { REA_PROCESS_RUN_ID: options.runId },
+    platform,
+  );
   if (platform === "win32" && process.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,

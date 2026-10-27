@@ -5,11 +5,7 @@ import {
   type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
-import {
-  parseMzHeaderEvidence,
-  type DosMzHeader,
-  type MzWindowsHeaderSignatureEvidence,
-} from "../domain/dosMz.js";
+import type { DosMzHeader, MzHeaderEvidence } from "../domain/dosMz.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { validateDosComLength } from "../domain/dosCom.js";
@@ -58,10 +54,8 @@ export type GhidraDosImage = {
 /** Prepare initialized bytes and relocation facts without copying overlays. */
 export const prepareGhidraDosLoadImage = (
   bytes: Buffer,
-  fileBytes: number,
-  signatureAtOffset?: MzWindowsHeaderSignatureEvidence,
+  evidence: MzHeaderEvidence,
 ): Result<GhidraDosImage, string> => {
-  const evidence = parseMzHeaderEvidence(bytes, fileBytes, signatureAtOffset);
   if (evidence.windowsHeader.state === "candidate")
     return err("MZ Windows new-header candidate is unresolved");
   if (evidence.windowsHeader.state === "header-needed")
@@ -78,24 +72,32 @@ export const prepareGhidraDosLoadImage = (
   const loadSegment = 0x1000;
   const modified = Buffer.from(bytes.subarray(0, header.imageBytes));
   const applied = [];
-  for (let index = 0; index < header.relocationCount; index += 1) {
-    const table = header.relocationTableOffset + index * 4;
-    const offset = bytes.readUInt16LE(table);
-    const segment = bytes.readUInt16LE(table + 2);
-    const fileOffset = header.headerBytes + segment * 16 + offset;
+  for (const {
+    segment,
+    offset,
+    moduleOffset,
+    fileOffset,
+  } of header.relocations) {
     const original = modified
       .subarray(fileOffset, fileOffset + 2)
       .toString("hex");
     const relocated =
       (modified.readUInt16LE(fileOffset) + loadSegment) & 0xffff;
     modified.writeUInt16LE(relocated, fileOffset);
-    applied.push({ segment, offset, fileOffset, original, relocated });
+    applied.push({
+      segment,
+      offset,
+      moduleOffset,
+      fileOffset,
+      original,
+      relocated,
+    });
   }
   // Application records describe their own fixup; the bridge reads memory
   // once all fixups have completed, including later overlapping writes.
   const expectedRelocations = applied.map(
-    ({ segment, offset, fileOffset, original, relocated }) => ({
-      address: address(loadSegment * 16 + segment * 16 + offset),
+    ({ segment, offset, moduleOffset, fileOffset, original, relocated }) => ({
+      address: address(loadSegment * 16 + moduleOffset),
       segment: (loadSegment + segment) & 0xffff,
       offset,
       status: "APPLIED",

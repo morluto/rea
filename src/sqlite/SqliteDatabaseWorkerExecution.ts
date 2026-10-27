@@ -1,3 +1,4 @@
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   bindArtifactFileCleanup,
   artifactFileCancellationCause,
@@ -7,7 +8,12 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCapturedOutput,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -19,7 +25,10 @@ import {
   sqliteDatabaseSchema,
   type InspectSqliteDatabaseInput,
 } from "../domain/sqlite/sqliteDatabase.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+} from "../artifacts/readStableArtifact.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
@@ -72,6 +81,12 @@ const replySchema = z.union([
 export type SqliteWorkerLauncher = NonNullable<
   Parameters<typeof runOwnedCommand>[2]
 >["launcher"];
+
+/** Validated worker facts and the exact reply descriptor's finalization outcome. */
+interface SqliteWorkerInspection {
+  readonly inspection: z.output<typeof inspectionSchema>;
+  readonly finalization: AnalysisError | undefined;
+}
 
 // Each input rejection names the caller argument that requires correction.
 const rejectedArgument = {
@@ -195,7 +210,7 @@ export const executeSqliteDatabaseWorker = async (request: {
     owner: ProviderProcessSupervisor,
     result: Extract<ProviderProcessStopResult, { status: "incomplete" }>,
   ) => void;
-}): Promise<z.output<typeof inspectionSchema>> => {
+}): Promise<SqliteWorkerInspection> => {
   const requestPath = join(request.root, "request.json");
   const replyPath = join(request.root, "reply.json");
   await writeFile(
@@ -237,42 +252,104 @@ export const executeSqliteDatabaseWorker = async (request: {
   const capturedOutput = capturedSqliteOutput(execution);
   request.captured(capturedOutput);
   let reply: z.output<typeof replySchema>;
+  let finalization: AnalysisError | undefined;
   try {
-    const file = await readStableArtifact(
-      replyPath,
-      SQLITE_DATABASE_LIMITS.outputBytes,
-      request.signal,
-      undefined,
-      request.resourceScope,
-    );
-    reply = replySchema.parse(JSON.parse(file.bytes.toString("utf8")));
-  } catch (cause: unknown) {
-    const options = {
-      cause,
-      capturedOutput,
-      ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-        ? { cleanup: cause.cleanup }
-        : {}),
-    };
-    if (
-      cause instanceof ArtifactReaderFailure &&
-      cause.reason === "cancelled"
-    ) {
-      const error = new AnalysisCancelledError(operation, {
-        ...options,
-        cause: artifactFileCancellationCause(cause),
-      });
-      bindArtifactFileCleanup(cause, error);
-      throw error;
+    let file;
+    try {
+      file = await readStableArtifact(
+        replyPath,
+        SQLITE_DATABASE_LIMITS.outputBytes,
+        request.signal,
+        undefined,
+        request.resourceScope,
+      );
+    } catch (cause: unknown) {
+      const completed = completedStableArtifact(cause);
+      if (!(cause instanceof ArtifactReaderFailure) || completed === undefined)
+        throw cause;
+      finalization = sqliteReplyCompletionFailure(cause, capturedOutput);
+      file = completed;
     }
-    const error = new AnalysisOutputError(
-      operation,
-      `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
-      options,
+    const decoded = safeParseUtf8Json(file.bytes);
+    if (!decoded.ok) throw decoded.cause;
+    reply = replySchema.parse(decoded.value);
+  } catch (cause: unknown) {
+    throw sqliteReplyFinalizationFailure(
+      sqliteReplyReadFailure(cause, capturedOutput),
+      finalization,
     );
-    bindArtifactFileCleanup(cause, error);
-    throw error;
   }
-  if (!reply.ok) throw rejectedReply(reply, request.input.path, capturedOutput);
-  return reply.inspection;
+  if (!reply.ok)
+    throw sqliteReplyFinalizationFailure(
+      rejectedReply(reply, request.input.path, capturedOutput),
+      finalization,
+    );
+  return { inspection: reply.inspection, finalization };
 };
+
+const sqliteReplyReadFailure = (
+  cause: unknown,
+  capturedOutput: AnalysisCapturedOutput,
+): AnalysisError => {
+  const options = {
+    cause,
+    capturedOutput,
+    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+      ? { cleanup: cause.cleanup }
+      : {}),
+  };
+  const error =
+    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
+      ? new AnalysisCancelledError(operation, {
+          ...options,
+          cause: artifactFileCancellationCause(cause),
+        })
+      : new AnalysisOutputError(
+          operation,
+          `Owned SQLite worker reply is missing or malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          options,
+        );
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Stable bytes remain usable when only their descriptor's final close failed. */
+const sqliteReplyCompletionFailure = (
+  cause: ArtifactReaderFailure,
+  capturedOutput: AnalysisCapturedOutput,
+): AnalysisError => {
+  if (cause.cleanup === undefined)
+    return sqliteReplyReadFailure(cause, capturedOutput);
+  const cleanup = new ProviderCleanupError(
+    "sqlite",
+    cause.cleanup.resources,
+    { phase: "reply_descriptor_close", reason: cause.cleanup.reason },
+    { operation, cause, capturedOutput },
+  );
+  bindArtifactFileCleanup(cause, cleanup);
+  if (cause.reason !== "cancelled") return cleanup;
+  const cancellation = new AnalysisCancelledError(operation, {
+    cause: artifactFileCancellationCause(cause),
+    capturedOutput,
+  });
+  return analysisErrorWithCleanupFailure(
+    cancellation,
+    cleanup,
+    operation,
+  ).bindCleanupDependencies([cancellation, cleanup]);
+};
+
+/** A malformed reply or producer refusal stays primary over its later close. */
+export const sqliteReplyFinalizationFailure = (
+  primary: AnalysisError,
+  finalization: AnalysisError | undefined,
+): AnalysisError =>
+  finalization === undefined
+    ? primary
+    : finalization.cleanupIncomplete
+      ? analysisErrorWithCleanupFailure(
+          primary,
+          finalization,
+          operation,
+        ).bindCleanupDependencies([primary, finalization])
+      : primary.retainSecondaryFailure(finalization);

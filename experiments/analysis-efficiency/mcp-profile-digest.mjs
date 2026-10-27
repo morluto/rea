@@ -7,10 +7,11 @@ const { createCatalogIdentity } = await import(
 );
 const imported = performance.now();
 const cpu = process.cpuUsage();
-const identity = createCatalogIdentity(
-  input === "compact" ? { budgetBytes: 13 * 1024 } : undefined,
-  output,
-);
+const identity = createCatalogIdentity({
+  compactPresentation:
+    input === "compact" ? { budgetBytes: 13 * 1024 } : undefined,
+  outputSchemaProfile: output,
+});
 const digests = identity.digests;
 const end = performance.now();
 console.log(

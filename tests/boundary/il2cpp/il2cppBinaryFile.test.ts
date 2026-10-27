@@ -1840,3 +1840,20 @@ it.each([0n, FIXTURE_BINARY_BASE + 0x980n, FIXTURE_BINARY_BASE + 0x9b0n])(
     expect(bytes.readBigUInt64LE(0x900)).toBe(raw);
   },
 );
+
+it.each([183, 62])(
+  "ignores R_NONE target and addend before relocation application (machine %s)",
+  (machine) => {
+    const image = createIl2cppBinaryFixture();
+    const bytes = createElfFixture(image, {
+      machine,
+      unresolvedRelocations: [{ offset: 0x7fffffff, kind: 0 }],
+    });
+    const dynamic = Number(bytes.readBigUInt64LE(128));
+    const relocationBytes = Number(bytes.readBigUInt64LE(dynamic + 24));
+    const last = 0x1000 + relocationBytes - 24;
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, last);
+    bytes.writeBigInt64LE(-0x8000000000000000n, last + 16);
+    expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
+  },
+);

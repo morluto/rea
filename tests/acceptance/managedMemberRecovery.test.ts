@@ -1,3 +1,4 @@
+import { artifactMcpCall } from "../../scripts/lib/artifact-e2e.mjs";
 import { createHash } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -63,7 +64,7 @@ cliTest(
       });
       expect(output.exitCode, output.stderr).toBe(0);
       const cliEvidence = parseEvidence(output.json);
-      const response = await client.callTool({
+      const response = await artifactMcpCall(client, {
         name: "inspect_managed_members",
         arguments: { path },
       });
@@ -96,7 +97,7 @@ cliTest(
         ],
       });
       expect(selectedCli.exitCode, selectedCli.stderr).toBe(0);
-      const selected = await client.callTool({
+      const selected = await artifactMcpCall(client, {
         name: "inspect_managed_members",
         arguments: { path, type_names: [empty!.full_name] },
       });
@@ -109,7 +110,7 @@ cliTest(
         coverage: { state: "complete", issues: [] },
       });
 
-      const summaryReply = await client.callTool({
+      const summaryReply = await artifactMcpCall(client, {
         name: "inspect_managed_members",
         arguments: { path, detail: "summary" },
       });
@@ -128,7 +129,7 @@ cliTest(
       });
       await unlink(path);
       for (const collection of ["types", "methods"] as const) {
-        const reply = await client.callTool({
+        const reply = await artifactMcpCall(client, {
           name: "inspect_analysis_view",
           arguments: {
             source: {
@@ -149,7 +150,7 @@ cliTest(
           collection === "types" ? report.types : [],
         );
       }
-      const unknown = await client.callTool({
+      const unknown = await artifactMcpCall(client, {
         name: "inspect_analysis_view",
         arguments: {
           source: {

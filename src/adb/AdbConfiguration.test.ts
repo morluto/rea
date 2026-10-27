@@ -11,6 +11,7 @@ describe("resolveAdbBinary", () => {
     expect(resolveAdbBinary({ [ADB_BINARY_ENV]: "/opt/tools/adb" })).toEqual({
       binary: "/opt/tools/adb",
       pathSource: "environment",
+      environment: { [ADB_BINARY_ENV]: "/opt/tools/adb" },
     });
   });
 
@@ -18,10 +19,12 @@ describe("resolveAdbBinary", () => {
     expect(resolveAdbBinary({})).toEqual({
       binary: "adb",
       pathSource: "path",
+      environment: {},
     });
     expect(resolveAdbBinary({ [ADB_BINARY_ENV]: "  " })).toEqual({
       binary: "adb",
       pathSource: "path",
+      environment: { [ADB_BINARY_ENV]: "  " },
     });
   });
 

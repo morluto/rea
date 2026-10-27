@@ -381,6 +381,9 @@ it
     "wrong-version",
     "wrong-decoded-carrier",
     "broken-reply",
+    "invalid-utf8",
+    "literal-replacement",
+    "bom-reply",
     "out-of-range-body",
   ])(
   "binds source carrier/worker representation and releases owned files: %s",
@@ -405,45 +408,64 @@ it
         );
         const hex = scenario === "wrong-decoded-carrier" ? "00" : "60006000f3";
         const bytes = Buffer.from(hex, "hex");
-        await writeFile(
-          request.reply_path,
-          scenario === "broken-reply"
-            ? "broken"
-            : JSON.stringify(
-                ["format", "unsupported", "output-limit"].includes(scenario)
-                  ? {
-                      ok: false,
-                      reason: scenario,
-                      message:
-                        scenario === "output-limit"
-                          ? "Complete interface evidence exceeds the 16 MiB reply budget."
-                          : "Malformed hex carrier.",
-                    }
-                  : {
-                      ok: true,
-                      version: scenario === "wrong-version" ? "0.0.0" : "0.9.3",
-                      bytecode: {
-                        sha256: createHash("sha256")
-                          .update(bytes)
-                          .digest("hex"),
-                        bytes: bytes.length,
-                        hex,
+        const encodedReplies: Partial<Record<string, string | Buffer>> = {
+          "invalid-utf8": Buffer.concat([
+            Buffer.from('{"ok":false,"reason":"format","message":"'),
+            Buffer.from([0xff]),
+            Buffer.from('"}'),
+          ]),
+          "literal-replacement": JSON.stringify({
+            ok: false,
+            reason: "format",
+            message: "valid �",
+          }),
+          "bom-reply": '\uFEFF{"ok":false,"reason":"format","message":"valid"}',
+        };
+        const encodedReply = encodedReplies[scenario];
+        if (encodedReply !== undefined)
+          await writeFile(request.reply_path, encodedReply);
+        else {
+          await writeFile(
+            request.reply_path,
+            scenario === "broken-reply"
+              ? "broken"
+              : JSON.stringify(
+                  ["format", "unsupported", "output-limit"].includes(scenario)
+                    ? {
+                        ok: false,
+                        reason: scenario,
+                        message:
+                          scenario === "output-limit"
+                            ? "Complete interface evidence exceeds the 16 MiB reply budget."
+                            : "Malformed hex carrier.",
+                      }
+                    : {
+                        ok: true,
+                        version:
+                          scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                        bytecode: {
+                          sha256: createHash("sha256")
+                            .update(bytes)
+                            .digest("hex"),
+                          bytes: bytes.length,
+                          hex,
+                        },
+                        raw: {
+                          functions:
+                            scenario === "out-of-range-body"
+                              ? [
+                                  {
+                                    selector: "aabbccdd",
+                                    bytecodeOffset: 5,
+                                    dispatch: "abi",
+                                  },
+                                ]
+                              : [],
+                        },
                       },
-                      raw: {
-                        functions:
-                          scenario === "out-of-range-body"
-                            ? [
-                                {
-                                  selector: "aabbccdd",
-                                  bytecodeOffset: 5,
-                                  dispatch: "abi",
-                                },
-                              ]
-                            : [],
-                      },
-                    },
-              ),
-        );
+                ),
+          );
+        }
         return spawnOwnedProviderProcess({
           ...spawn,
           command: process.execPath,
@@ -452,6 +474,11 @@ it
       },
     );
     const result = await provider.inspect({ path, encoding: "hex" });
+    if (scenario === "literal-replacement")
+      expect(result).toMatchObject({
+        ok: false,
+        error: { issues: [{ message: "valid �" }] },
+      });
     if (scenario === "success") {
       if (!result.ok) throw result.error;
       expect(result.value.result).toMatchObject({
@@ -465,7 +492,7 @@ it
         ok: false,
         error: {
           _tag:
-            scenario === "format"
+            scenario === "format" || scenario === "literal-replacement"
               ? "AnalysisInputError"
               : scenario === "unsupported"
                 ? "AnalysisUnsupportedTargetError"

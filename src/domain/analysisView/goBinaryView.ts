@@ -7,9 +7,7 @@ import {
   goBuildInfoSchema,
   goModuleMetadataSchema,
   goModuleSchema,
-  type GoBinary,
 } from "../go/goBinary.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   AnalysisViewParent,
@@ -22,7 +20,7 @@ import {
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const indexSchema = z.number().int().nonnegative();
@@ -104,27 +102,7 @@ export const goBinarySummarySchema = z.strictObject({
     .nullable(),
 });
 
-// Reuse only authenticated immutable report facts, for their Evidence lifetime.
-// Inline mutable reports are validated each time; this never caches live files.
-const checkedReports = new WeakMap<object, GoBinary>();
-const parseReport = (
-  parent: AnalysisViewParent,
-): Result<GoBinary, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const existing = reusable ? checkedReports.get(key) : undefined;
-  if (existing !== undefined) return ok(existing);
-  const parsed = parseAnalysisViewResult(goBinarySchema, parent);
-  if (!parsed.ok) return parsed;
-  // No schema transforms/coercions: keep the validated owner's frozen value.
-  const report = reusable ? (key as GoBinary) : parsed.value;
-  if (reusable) checkedReports.set(key, report);
-  return ok(report);
-};
+const parseReport = createAnalysisViewResultReader(goBinarySchema);
 
 /** Query the existing metadata owner's facts; never reopen or reinterpret a file. */
 export const projectGoBinaryView = (

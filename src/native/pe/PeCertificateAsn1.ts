@@ -25,8 +25,6 @@ const OID_NAMES: Readonly<Record<string, string>> = {
   "2.16.840.1.101.3.4.2.3": "sha512",
 };
 
-export type Asn1Node = Asn1BerNode;
-
 export class PeCertificateAsn1Failure extends Error {
   constructor(message: string) {
     super(message);
@@ -46,7 +44,7 @@ const required = <T>(value: T | undefined, message: string): T =>
 export const ASN1_NODE_BUDGET = 16_384;
 
 /** Decode one bounded ASN.1 TLV, including indefinite constructed BER values. */
-export const readAsn1 = (bytes: Buffer): Asn1Node => {
+export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
   try {
     return new Asn1BerReader(bytes, ASN1_NODE_BUDGET).read();
   } catch (cause: unknown) {
@@ -55,7 +53,7 @@ export const readAsn1 = (bytes: Buffer): Asn1Node => {
   }
 };
 
-const requireDefiniteEncoding = (node: Asn1Node, label: string): void => {
+const requireDefiniteEncoding = (node: Asn1BerNode, label: string): void => {
   if (node.lengthForm === "indefinite")
     fail(`${label} must use definite DER length encoding.`);
   for (const child of node.children) requireDefiniteEncoding(child, label);
@@ -165,7 +163,7 @@ const decodeUtf8 = (bytes: Buffer, budget: DecodedNameBudget): string => {
 };
 
 const decodeDirectoryString = (
-  node: Asn1Node,
+  node: Asn1BerNode,
   budget: DecodedNameBudget,
 ): string => {
   switch (node.tag) {
@@ -211,18 +209,21 @@ const requireBitStringContent = (content: Buffer, label: string): void => {
     return fail(`${label} BIT STRING is truncated or has invalid unused bits.`);
 };
 
-const requireBitString = (node: Asn1Node | undefined, label: string): void => {
+const requireBitString = (
+  node: Asn1BerNode | undefined,
+  label: string,
+): void => {
   if (node === undefined || node.tag !== 0x03)
     return fail(`${label} is not a BIT STRING.`);
   requireBitStringContent(node.content, label);
 };
 
-const sequence = (node: Asn1Node, label: string): readonly Asn1Node[] => {
+const sequence = (node: Asn1BerNode, label: string): readonly Asn1BerNode[] => {
   if (node.tag !== 0x30) return fail(`Expected SEQUENCE for ${label}.`);
   return node.children;
 };
 
-const algorithmOid = (node: Asn1Node): string => {
+const algorithmOid = (node: Asn1BerNode): string => {
   const children = sequence(node, "AlgorithmIdentifier");
   const oid = children[0];
   if (oid === undefined || oid.tag !== 0x06)
@@ -237,7 +238,7 @@ interface Attribute {
 }
 
 const decodeName = (
-  node: Asn1Node,
+  node: Asn1BerNode,
   budget: DecodedNameBudget,
 ): {
   readonly text: string;
@@ -273,7 +274,7 @@ const decodeName = (
   return { text, attributes };
 };
 
-const validityTime = (node: Asn1Node, budget: DecodedNameBudget): string => {
+const validityTime = (node: Asn1BerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
   // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
@@ -292,7 +293,7 @@ export interface ParsedCertificate {
   readonly signature_algorithm_oid: string;
 }
 
-const requireSubjectPublicKeyInfo = (node: Asn1Node): void => {
+const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
   const children = sequence(node, "SubjectPublicKeyInfo");
   const algorithm = children[0];
   const key = children[1];
@@ -307,7 +308,7 @@ const requireSubjectPublicKeyInfo = (node: Asn1Node): void => {
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
 // and ordered. Anything else is not a TBSCertificate field.
 const finishTbsCertificate = (
-  children: readonly Asn1Node[],
+  children: readonly Asn1BerNode[],
   start: number,
 ): void => {
   let cursor = start;
@@ -344,7 +345,7 @@ const finishTbsCertificate = (
 
 /** Decode one X.509 Certificate SEQUENCE at a known file-relative DER node. */
 export const parseCertificate = (
-  node: Asn1Node,
+  node: Asn1BerNode,
   names: DecodedNameBudget = {
     remaining: MAX_DECODED_NAME_BYTES,
     teletexStringCompatibilityUsed: false,
@@ -432,7 +433,7 @@ export interface ParsedSigner {
 }
 
 const signerIdentifier = (
-  sid: Asn1Node,
+  sid: Asn1BerNode,
   names: DecodedNameBudget,
 ): {
   readonly issuer: ReturnType<typeof decodeName> | null;
@@ -471,7 +472,7 @@ const signerIdentifier = (
 };
 
 const parseSigner = (
-  node: Asn1Node,
+  node: Asn1BerNode,
   names: DecodedNameBudget,
 ): ParsedSigner => {
   const children = sequence(node, "SignerInfo");
@@ -523,7 +524,7 @@ export interface ParsedSignedData {
 }
 
 const parseSignedData = (
-  node: Asn1Node,
+  node: Asn1BerNode,
   names: DecodedNameBudget,
 ): ParsedSignedData => {
   const children = sequence(node, "SignedData");
@@ -569,7 +570,7 @@ const parseSignedData = (
 };
 
 /** Decode ContentInfo wrapping SignedData; other content types remain unsupported. */
-export const parsePkcs7SignedData = (root: Asn1Node): ParsedSignedData => {
+export const parsePkcs7SignedData = (root: Asn1BerNode): ParsedSignedData => {
   const children = sequence(root, "ContentInfo");
   const type = children[0];
   const content = children[1];

@@ -31,7 +31,62 @@ import {
   readManagedSnapshot,
 } from "../../../../src/dotnet/ManagedSnapshot.js";
 import * as boundedFileBytes from "../../../../src/process/BoundedFileBytes.js";
+import { primaryAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { buildManagedMemberCapacityFixture } from "../../../fixtures/managedMemberCapacity.js";
+
+it("preserves a selected comparison source digest contradiction through failed close and retry", async () => {
+  const root = await createTestTempDirectory(
+    "rea-managed-comparison-identity-close-",
+  );
+  const leftPath = join(root, "left.dll");
+  const rightPath = join(root, "right.dll");
+  const bytes = buildManagedPeFixture();
+  await Promise.all([writeFile(leftPath, bytes), writeFile(rightPath, bytes)]);
+  const resources = new ArtifactResourceScope();
+  let blocked = false;
+  const nativeClose = OwnedFileHandle.prototype.close;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(async function (this: OwnedFileHandle) {
+      if (blocked) throw new Error("comparison descriptor close denied");
+      await nativeClose.call(this);
+    });
+  try {
+    const result = await compareManagedMemberPaths(
+      { leftPath, rightPath },
+      {
+        readSnapshot: async (path, operation, options) => {
+          const changed = Buffer.from(bytes);
+          changed[changed.length - 1] =
+            changed.readUInt8(changed.length - 1) ^ 1;
+          await writeFile(path, changed);
+          blocked = true;
+          return readManagedSnapshot(path, operation, options);
+        },
+      },
+      resources,
+    );
+    if (result.ok)
+      throw new Error("Expected changed selected comparison source");
+    expect(primaryAnalysisError(result.error)._tag).toBe(
+      "AnalysisArtifactChangedError",
+    );
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: leftPath,
+      bytes: bytes.length,
+    });
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await expect(resources.close()).rejects.toBeDefined();
+    blocked = false;
+    await resources.close();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    blocked = false;
+    await resources.close();
+    close.mockRestore();
+  }
+});
 
 it("keeps missing members unknown when the opposite inspection retains only types", async () => {
   const directory = await createTestTempDirectory(

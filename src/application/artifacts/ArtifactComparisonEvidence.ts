@@ -1,4 +1,7 @@
-import type { EvidenceLookup } from "../EvidenceInputResolver.js";
+import {
+  resolveEvidenceInput,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { inspectAnalysisViewValidated } from "../analysisView/AnalysisViewService.js";
@@ -7,10 +10,18 @@ import {
   EvidenceIntegrityError,
   EvidenceReferenceError,
 } from "../../domain/evidenceErrors.js";
-import type { Evidence } from "../../domain/evidence.js";
+import {
+  rebindEvidenceToTargetPath,
+  type Evidence,
+} from "../../domain/evidence.js";
+import { readEvidence } from "../../domain/evidenceValidation.js";
+import { artifactInventorySummaryProjectionIds } from "../../domain/analysisView/artifactInventorySummaryProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
-/** Resolve only an artifact summary's exact retained owner before comparison. */
+/**
+ * Resolve an already-authenticated artifact summary's exact retained owner.
+ * The caller must authenticate the supplied Evidence before invoking this helper.
+ */
 export const resolveArtifactComparisonEvidence = (
   evidence: Evidence,
   evidenceById: EvidenceLookup | undefined,
@@ -43,19 +54,53 @@ export const resolveArtifactComparisonEvidence = (
         null,
       ),
     );
+  const selected = resolveEvidenceInput(
+    { kind: "retained-evidence", evidence_id: parentId },
+    () => parent,
+  );
+  if (!selected.ok) return selected;
+  const authenticated = readEvidence(selected.value);
+  if (!authenticated.ok) return authenticated;
+  const owner = authenticated.value;
+  const subject = evidence.subject;
+  if (
+    subject === null ||
+    owner.subject === null ||
+    subject.digest.sha256 !== owner.subject.digest.sha256 ||
+    subject.format !== owner.subject.format ||
+    subject.architecture !== owner.subject.architecture
+  )
+    return mismatch();
+  // The ledger preserves its original display path; summary delivery may use a
+  // later caller-selected alias for this same authenticated owner identity.
+  const presentation = rebindEvidenceToTargetPath(owner, {
+    path: summary.data.artifact.path,
+    sha256: subject.digest.sha256,
+    format: subject.format,
+    ...(subject.architecture === null
+      ? {}
+      : { architecture: subject.architecture }),
+  });
   const reprojected = inspectAnalysisViewValidated(
     {
       source: { kind: "retained-evidence", evidence_id: parentId },
       view: { kind: "summary" },
     },
-    (evidenceId) => (evidenceId === parentId ? parent : undefined),
+    (evidenceId) => (evidenceId === parentId ? presentation : undefined),
   );
   if (!reprojected.ok) return reprojected;
-  if (reprojected.value.evidence_id !== evidence.evidence_id)
-    return err(
-      new EvidenceIntegrityError(
-        "Artifact summary does not match its retained parent inventory.",
-      ),
-    );
-  return ok(parent);
+  if (
+    !artifactInventorySummaryProjectionIds(reprojected.value).includes(
+      evidence.evidence_id,
+    )
+  )
+    return mismatch();
+  return ok(owner);
 };
+
+const mismatch = (): Result<never, EvidenceIntegrityError> =>
+  err(
+    new EvidenceIntegrityError(
+      "Artifact summary does not match its retained parent inventory.",
+    ),
+  );

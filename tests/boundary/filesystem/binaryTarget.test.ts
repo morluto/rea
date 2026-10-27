@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   open,
+  type FileHandle,
   chmod,
   mkdir,
   readFile,
@@ -12,7 +13,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { buildBinary } from "plist";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import {
@@ -1417,4 +1418,63 @@ describe("binary target I/O: PE CodeView header ranges", () => {
       }
     },
   );
+});
+
+it("does not read a relocation table offset when DOS declares zero records", async () => {
+  const directory = await createTestTempDirectory("rea-empty-dos-relocations-");
+  const path = join(directory, "legacy.exe");
+  const bytes = dosMz(8192);
+  bytes.writeUInt16LE(257, 8);
+  bytes.writeUInt16LE(4104, 24);
+  bytes.writeUInt32LE(0, 60);
+  await writeFile(path, bytes);
+  const probe = await open(path, "r");
+  const prototype = Object.getPrototypeOf(probe) as FileHandle;
+  await probe.close();
+  const reads = vi.spyOn(prototype, "read");
+  try {
+    expect(await parseBinaryTarget(path)).toMatchObject({
+      ok: true,
+      value: { format: "dos-mz", architecture: "x86" },
+    });
+    const lengths = reads.mock.calls.map(
+      (args) => (args as readonly unknown[])[2],
+    );
+    expect(lengths).toContain(4096);
+    expect(lengths).not.toContain(4104);
+  } finally {
+    reads.mockRestore();
+  }
+});
+
+it("recognizes Windows metadata independently of invalid DOS load declarations", async () => {
+  const directory = await createTestTempDirectory("rea-invalid-dos-valid-pe-");
+  const path = join(directory, "windows.exe");
+  const bytes = pe(0x8664, 8192);
+  bytes.writeUInt16LE(0, 4);
+  bytes.writeUInt16LE(1010, 6);
+  bytes.writeUInt16LE(257, 8);
+  bytes.writeUInt16LE(64, 24);
+  await writeFile(path, bytes);
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: true,
+    value: { format: "pe", architecture: "x86_64" },
+  });
+});
+
+it("refuses a declared DOS relocation header that is not present in the file", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-truncated-dos-relocations-",
+  );
+  const path = join(directory, "legacy.exe");
+  const bytes = dosMz(8192);
+  bytes.writeUInt16LE(1010, 6);
+  bytes.writeUInt16LE(257, 8);
+  bytes.writeUInt16LE(64, 24);
+  bytes.writeUInt32LE(0, 60);
+  await writeFile(path, bytes.subarray(0, 4096));
+  expect(await parseBinaryTarget(path)).toMatchObject({
+    ok: false,
+    error: { reason: "truncated DOS MZ load module" },
+  });
 });

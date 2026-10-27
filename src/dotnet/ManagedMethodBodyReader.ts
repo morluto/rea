@@ -1,3 +1,4 @@
+import type { ManagedMethodImplementationFlags } from "./ManagedMethodDefinitionRows.js";
 import {
   admitManagedProjection,
   type ManagedDecodeBudget,
@@ -20,7 +21,7 @@ import {
   sha256Bytes,
 } from "./ManagedMetadataHeaps.js";
 import {
-  validateLocalSignature,
+  readLocalSignatureFacts,
   isParsedTokenInstruction,
 } from "./ManagedMemberInspectorCore.js";
 import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
@@ -84,10 +85,7 @@ const readMethodBodyHeader = (
 };
 
 export interface MethodBodyContext {
-  readonly implementation: {
-    readonly implFlags: number;
-    readonly flags: number;
-  };
+  readonly implementation: ManagedMethodImplementationFlags;
   readonly budget: ManagedDecodeBudget;
   readonly metadataLayout: ManagedMetadataLayout;
   readonly methodToken: string;
@@ -122,8 +120,9 @@ export const methodBody = (
       issues,
     };
   const native =
-    (context.implementation.implFlags & 7) !== 0 ||
-    (context.implementation.flags & 0x2000) !== 0;
+    context.implementation.codeType !== "il" ||
+    context.implementation.managedKind !== "managed" ||
+    context.implementation.pinvokeFlag;
   if (native) {
     const issue =
       "CIL decoding is unavailable for native, runtime, unmanaged, or P/Invoke implementations";
@@ -136,8 +135,10 @@ export const methodBody = (
     };
   }
   try {
-    const offset = pe.rvaToOffset(rva, 1, "method.body");
-    const methodExtent = pe.rvaAvailableBytes(rva, "method.body");
+    const { offset, available: methodExtent } = pe.rvaFileRange(
+      rva,
+      "method.body",
+    );
     const header = readMethodBodyHeader(bytes, offset);
     if (
       header.size > methodExtent ||
@@ -196,6 +197,7 @@ export const methodBody = (
             decoded.instructionStarts,
           )
         : null;
+    let localVarSignature: ManagedMethodBody["local_var_signature"] = null;
     let localSigIssue: string | null = null;
     let localSigFailure: "malformed" | "partial" | null = null;
     const localSignature =
@@ -227,7 +229,7 @@ export const methodBody = (
             cursor.readIndex(context.metadataLayout.blobIndexSize),
             context.metadataLayout.blob?.size ?? 0,
           );
-          const signatureIssue = validateLocalSignature(
+          const signatureFacts = readLocalSignatureFacts(
             context.metadataLayout,
             blob,
             {
@@ -236,7 +238,9 @@ export const methodBody = (
             },
             context.budget,
           );
-          if (signatureIssue !== null) {
+          if (signatureFacts.ok) localVarSignature = signatureFacts.value;
+          else {
+            const signatureIssue = signatureFacts.error;
             localSigIssue = signatureIssue.detail;
             localSigFailure =
               signatureIssue.code === "unsupported-signature"
@@ -268,6 +272,7 @@ export const methodBody = (
       max_stack: header.maxStack,
       init_locals: (header.flags & 0x10) !== 0,
       local_var_sig_token: localSignature?.token ?? null,
+      local_var_signature: localVarSignature,
       il_size: header.ilSize,
       il_sha256: sha256Bytes(il),
       normalized_il_sha256:
@@ -351,6 +356,7 @@ const emptyMethodBody = (
   max_stack: null,
   init_locals: null,
   local_var_sig_token: null,
+  local_var_signature: null,
   il_size: 0,
   il_sha256: null,
   normalized_il_sha256: null,

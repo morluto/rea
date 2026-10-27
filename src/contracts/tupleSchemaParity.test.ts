@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
-import { swiftStringLiteralSchema } from "../domain/hopperValues.js";
+import { swiftStringLiteralSchema } from "../domain/native/swiftStringLiteral.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { kernelModuleSchema } from "../domain/native/kernelModule.js";
 import { pinvokeVerificationSchema } from "../domain/managed/managedNativeVerificationSchemas.js";

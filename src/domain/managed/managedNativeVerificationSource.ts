@@ -7,7 +7,7 @@ import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
 import { err, ok, type Result } from "../result.js";
-import { functionDossierSchema } from "../hopperValues.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import { inspectMachoSchema } from "../native/nativeInspection.js";
 import {
   managedNativeBoundaryInspectionSchema,

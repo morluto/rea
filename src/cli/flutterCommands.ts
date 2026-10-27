@@ -1,3 +1,4 @@
+import { evidenceSchema } from "../domain/evidence.js";
 import { z } from "incur";
 import { FlutterBuildAnalysisService } from "../application/flutter/FlutterBuildAnalysisService.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
@@ -80,6 +81,13 @@ export const registerFlutterCommands = (
               "flutter",
               spec.operation,
               signal,
+              undefined,
+              {
+                recoverCompletedObservation: (observation) => {
+                  const parsed = evidenceSchema.safeParse(observation);
+                  return parsed.success ? parsed.data : undefined;
+                },
+              },
             ),
           ),
         ),

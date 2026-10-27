@@ -18,7 +18,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -160,22 +160,16 @@ type CheckedGpu = {
 };
 // Evidence owns this immutable snapshot. Collection eviction releases the indexes as well.
 const checkedGpu = new WeakMap<object, CheckedGpu>();
+const readReport = createAnalysisViewResultReader(gpuCodeObjectsSchema);
 const readGpuFacts = (
   parent: AnalysisViewParent,
 ): Result<CheckedGpu, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    key !== null &&
-    typeof key === "object" &&
-    isImmutableJsonSnapshot(key);
-  let checked = reusable ? checkedGpu.get(key) : undefined;
+  const parsed = readReport(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  let checked = reusable ? checkedGpu.get(report) : undefined;
   if (checked === undefined) {
-    const parsed = parseAnalysisViewResult(gpuCodeObjectsSchema, parent);
-    if (!parsed.ok) return parsed;
-    const report = reusable
-      ? (key as z.infer<typeof gpuCodeObjectsSchema>)
-      : parsed.value;
     const { objects, kernels, ptx_artifacts, ...context } = report;
     const targets = new Set(
       objects.flatMap((row) => (row.target === null ? [] : [row.target])),
@@ -197,7 +191,7 @@ const readGpuFacts = (
           .map((target) => target.slice(0, 256)),
       },
     };
-    if (reusable) checkedGpu.set(key, checked);
+    if (reusable) checkedGpu.set(report, checked);
   }
   if (
     parent.subject != null &&

@@ -8,7 +8,7 @@ import type {
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseRelatedAddresses } from "../domain/hopperValues.js";
+import { parseRelatedAddresses } from "../domain/native/nativeObservation.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { EnhancedResult } from "./EnhancedToolTypes.js";

@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -150,7 +151,12 @@ const found = (query: string, fn: typeof function_) => ({
 describe("IDA containment capabilities", () => {
   it("declares document identity in both profiles and address resolution only in headless", () => {
     const declared = (mode: "attached" | "headless", native = false) =>
-      idaCapabilities(mode, false, native)
+      idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES[
+          native ? "native" : mode === "attached" ? "legacy" : "modern"
+        ],
+        false,
+      )
         .map(({ operation }) => operation)
         .filter(
           (operation) =>
@@ -159,7 +165,7 @@ describe("IDA containment capabilities", () => {
         );
 
     expect(
-      idaCapabilities("headless", false)
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false)
         .filter(
           ({ operation }) =>
             operation === "resolve_containing_procedure" ||
@@ -175,7 +181,9 @@ describe("IDA containment capabilities", () => {
     expect(declared("attached")).toEqual(["list_documents"]);
     expect(declared("attached", true)).toEqual(["list_documents"]);
     expect(
-      idaCapabilities("attached", false).map(({ operation }) => operation),
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).map(
+        ({ operation }) => operation,
+      ),
       "attached profiles declare the bound document but not address resolution",
     ).toContain("list_documents");
   });

@@ -27,8 +27,10 @@ export interface AdbProcessEntry {
   readonly name: string;
 }
 
+// Toybox emits one separator before the unpadded final NAME column.
+// Remaining whitespace belongs to argv[0], not the table layout.
 const PROCESS_LINE =
-  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/u;
+  /^(\S+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+) (.+)$/u;
 
 const safeInteger = (text: string): number | null => {
   const value = Number(text);
@@ -46,22 +48,21 @@ export const parseProcessListOutput = (
   const processes: AdbProcessEntry[] = [];
   const unparsed = collectUnparsedLines();
   let columns: string | null = null;
-  for (const rawLine of stdout.split(/\r?\n/u)) {
-    const line = rawLine.trimEnd();
-    if (line === "") continue;
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (line.trim() === "") continue;
     if (/^USER\s+PID\s+PPID\b/u.test(line)) {
       columns = line.trim();
       continue;
     }
     const match = PROCESS_LINE.exec(line);
     if (match === null) {
-      unparsed.add(rawLine);
+      unparsed.add(line);
       continue;
     }
     const pid = safeInteger(match[2]!);
     const ppid = safeInteger(match[3]!);
     const rss = safeInteger(match[5]!);
-    if (pid === null || ppid === null || rss === null) unparsed.add(rawLine);
+    if (pid === null || ppid === null || rss === null) unparsed.add(line);
     if (pid === null) continue;
     processes.push({
       user: match[1]!,
@@ -69,7 +70,7 @@ export const parseProcessListOutput = (
       ppid,
       rss,
       state: match[8]!,
-      name: match[9]!.trim(),
+      name: match[9]!,
     });
   }
   return { columns, processes, unparsedLines: unparsed.facts() };

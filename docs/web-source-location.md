@@ -121,6 +121,11 @@ preceding browser mappings when a nested section starts with a gap or has no
 child leaves. Raw map text, original source identities and the dedicated decoder
 profile are preserved.
 
+Browser `original_module_edges` carry a `declaration_index` joining each edge to
+its `original_sources` declaration, including repeated source URLs across indexed
+sections. Imports are deduplicated within each declaration. Older observations
+may omit the index; their edge declaration identity remains unknown.
+
 Browser collection accepts up to 64 MiB of map responses per inspection and
 preflights indexed sections, sources, names, generated rows and mapping segments
 against a 262144-record decode budget before upstream flattening. Indexed maps

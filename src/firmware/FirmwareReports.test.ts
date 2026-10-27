@@ -1218,3 +1218,137 @@ describe("selected firmware byte coverage", () => {
     },
   );
 });
+
+const reportsAtProblemOwner = (
+  owner: "task" | "chunk" | "multi-file",
+  problems: readonly Record<string, unknown>[],
+) => {
+  if (owner === "task") return problems;
+  const common = {
+    id: "problem-owner",
+    handler_name: "fixture-handler",
+    extraction_reports: problems,
+  };
+  return [
+    owner === "chunk"
+      ? {
+          ...common,
+          __typename__: "ChunkReport",
+          start_offset: 0,
+          end_offset: 20,
+          size: 20,
+          is_encrypted: false,
+        }
+      : {
+          ...common,
+          __typename__: "MultiFileReport",
+          name: "parts",
+          paths: [],
+        },
+  ];
+};
+
+it.each(["task", "chunk", "multi-file"] as const)(
+  "keeps dependency declaration admission and aggregation at its %s owner",
+  (owner) => {
+    for (const valid of [true, false]) {
+      const problems = valid
+        ? [
+            {
+              __typename__: "ExtractorDependencyNotFoundReport",
+              severity: "ERROR",
+              dependencies: ["z-tool", "a-tool", "z-tool"],
+              producer_detail: "named source declaration",
+            },
+            {
+              __typename__: "ExtractorDependencyNotFoundReport",
+              severity: "ERROR",
+              dependencies: ["", ""],
+              producer_detail: "unnamed source declaration",
+            },
+          ]
+        : [
+            {
+              __typename__: "ExtractorDependencyNotFoundReport",
+              severity: "ERROR",
+              dependencies: ["alleged-tool", 42],
+              producer_detail: "malformed source declaration",
+            },
+          ];
+      const observations = reportsAtProblemOwner(owner, problems);
+      const record = root();
+      const normalized = normalizeUnblobReport(
+        [
+          {
+            ...record,
+            reports: [
+              ...record.reports.filter(
+                (item) => item.__typename__ !== "UnknownChunkReport",
+              ),
+              ...observations,
+            ],
+          },
+        ],
+        context,
+      );
+      const dependencyRows = valid
+        ? [
+            { input_path: "$input", dependencies: ["a-tool", "z-tool"] },
+            { input_path: "$input", dependencies: [] },
+          ]
+        : [];
+      expect(normalized.missing_dependencies).toEqual(
+        owner === "task" ? dependencyRows : [],
+      );
+      expect(normalized.chunk_missing_dependencies).toEqual(
+        owner === "chunk"
+          ? dependencyRows.map((row) => ({
+              ...row,
+              provider_id: "problem-owner",
+            }))
+          : [],
+      );
+      if (owner === "chunk")
+        expect(normalized.chunks[0]?.extraction_failure_kinds).toEqual([
+          valid ? "missing-extractor-dependency" : "extractor-failure",
+        ]);
+      expect(normalized.failed_extraction_stages).toEqual(
+        owner === "multi-file"
+          ? (valid ? dependencyRows : [{ dependencies: [] }]).map(
+              ({ dependencies }) => ({
+                input_path: "$input",
+                provider_id: "problem-owner",
+                handler: "fixture-handler",
+                dependencies,
+                kind: valid
+                  ? "missing-extractor-dependency"
+                  : "extractor-failure",
+              }),
+            )
+          : owner === "task" && !valid
+            ? [
+                {
+                  input_path: "$input",
+                  provider_id: null,
+                  handler: null,
+                  dependencies: [],
+                  kind: "extractor-failure",
+                },
+              ]
+            : [],
+      );
+      const diagnosticRows = owner === "multi-file" ? observations : problems;
+      expect(normalized.diagnostics).toEqual(
+        diagnosticRows.map((report, index) => ({
+          input_path: "$input",
+          ...(owner === "task" ? {} : { stage: "fixture-handler" }),
+          ...(valid && owner !== "task" && index === 0
+            ? { missing_dependencies: ["z-tool", "a-tool"] }
+            : {}),
+          report,
+        })),
+      );
+      expect(normalized.coverage).toBe("partial");
+    }
+  },
+);

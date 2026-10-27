@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "../../../src/ida/IdaConfiguration.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,9 +71,10 @@ describe.each(["attached", "headless"] as const)(
         } finally {
           await client.close();
         }
-        const descriptor = idaCapabilities(mode, true).find(
-          (capability) => capability.operation === operation,
-        );
+        const descriptor = idaCapabilities(
+          IDA_COMPATIBILITY_PROFILES[mode === "attached" ? "legacy" : "modern"],
+          true,
+        ).find((capability) => capability.operation === operation);
         expect(descriptor?.effects.mayShowUi).toBe(
           producer.calls.some(({ name }) => GUI_NAVIGATING_TOOLS.has(name)),
         );

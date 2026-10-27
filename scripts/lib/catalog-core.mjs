@@ -38,10 +38,7 @@ const SOURCE_PATHS = {
   cliCommandNames: "dist/cliCommandNames.js",
   cli: "dist/cli.js",
   toolContracts: "dist/contracts/toolContracts.js",
-  officialContracts: "dist/contracts/officialToolContracts.js",
-  enhancedContracts: "dist/contracts/enhancedToolContracts.js",
-  sessionContracts: "dist/contracts/sessionToolContracts.js",
-  analysisSettingsContracts: "dist/contracts/analysisSettingsContracts.js",
+  toolFamilies: "dist/contracts/toolFamilies.js",
   binaryDiagnosticsContracts:
     "dist/contracts/native/binaryDiagnosticsToolContracts.js",
   cutterContracts: "dist/contracts/cutterToolContracts.js",
@@ -117,7 +114,6 @@ const SOURCE_PATHS = {
   applicationContracts: "dist/contracts/applicationToolContracts.js",
   analysisViewContracts: "dist/contracts/analysisViewToolContracts.js",
   webScriptContracts: "dist/contracts/webScriptToolContracts.js",
-  environmentContracts: "dist/contracts/environmentToolContracts.js",
   javascriptRecoveryContracts:
     "dist/contracts/javascript/javascriptRecoveryToolContracts.js",
   javascriptRecoveryProvider: "dist/javascript/recovery/WakaruRelease.js",

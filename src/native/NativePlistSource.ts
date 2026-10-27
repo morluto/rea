@@ -1,4 +1,5 @@
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -356,17 +357,19 @@ export const plistSourceFormat = async (
   if (/\bJSON\b/iu.test(description)) return ok("json");
   if (!/\btext\b/iu.test(description)) return ok("unknown");
   return readPlistFile(input, async (file) => {
-    const head = Buffer.alloc(PLIST_MARKUP_PROBE_BYTES);
-    const { bytesRead } = await file.read(head, 0, head.length, 0);
+    const head = await readFileHandleRange(
+      file,
+      0,
+      PLIST_MARKUP_PROBE_BYTES,
+      () => assertArtifactReadActive(input.signal),
+    );
     const encoding =
       head[0] === 0xff && head[1] === 0xfe
         ? "utf-16le"
         : head[0] === 0xfe && head[1] === 0xff
           ? "utf-16be"
           : "utf-8";
-    const text = new TextDecoder(encoding)
-      .decode(head.subarray(0, bytesRead))
-      .trimStart();
+    const text = new TextDecoder(encoding).decode(head).trimStart();
     return /^<(?:[!?]|(?:plist|dict|array|string|integer|real|data|date|true|false)[\s/>])/u.test(
       text,
     )

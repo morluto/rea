@@ -26,6 +26,10 @@ can be passed directly to `compare_functions`, and `inspect_artifact` Evidence
 to `compare_artifacts`. Use `get_evidence_bundle` when the task needs broader
 retained session history or an explicit bundle for transfer.
 
+`compare_artifacts` can also resolve an artifact summary to its exact retained
+parent in the session. Supported historical summaries keep their original
+Evidence identity and omissions; a missing or mismatched parent is rejected.
+
 `analyze_function` does not deliver its complete record by default. Without
 `detail`, it retains the complete dossier in the session and returns
 `inspect_analysis_view` summary Evidence whose
@@ -817,7 +821,12 @@ the bound address is local; names are added only after classifying the actual IP
 On such a bind, requests whose `Host` header is outside the SDK loopback allowlist plus
 the configured name and the bound address are refused with `403`, and a browser
 `Origin` outside that allowlist is refused the same way (a missing `Origin`
-passes); a non-loopback bind relaxes both checks and logs the relaxation. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only an `initialize` object can replace an open session. A sessionless array containing initialize, including a one-element array, is refused with HTTP `400` before session creation or handover. Scoped
+passes). A non-loopback bind requires `MCP_ALLOWED_HOSTS`, or
+`--allowed-hosts` for `rea mcp --http`, listing every client host name or IP
+address. Configuration validates and canonicalizes complete tokens once;
+URLs, ports and empty entries are refused. Both Host and Origin checks remain
+active on that declared list. The announced URL uses the bound hostname if
+admitted, otherwise the first declared hostname, with the actual bound port. A reply sent before a request body was read (a refused `Host` or `Origin`, an unknown route, the startup `503`) closes the connection after the reply, so an unread upload cannot keep a socket open. Request targets are taken verbatim as origin-form paths (`//host/path` is a path, not another origin); an absolute-form target, a target containing a raw fragment delimiter (`#`), or one whose path URL parsing would rewrite (dot segments such as `/public/../mcp`), is refused with `400`, and a method Fetch does not support with `405`. Percent-encoded `%23` remains valid query data. Only an `initialize` object can replace an open session. A sessionless array containing initialize, including a one-element array, is refused with HTTP `400` before session creation or handover. Scoped
 IPv6 literals (`fe80::1%eth0`) are refused before binding, because no URL can
 name them. Listener errors reach the runtime's connection-loss handler only
 after a successful bind; a bind failure prints the listen-failure message alone. Request bodies are bounded by the SDK's
@@ -1000,6 +1009,12 @@ A successful MCP initialize handshake establishes the REA connection.
 that Ghidra has finished importing the target. The first Ghidra-backed query,
 such as `binary_overview`, starts the engine and waits for import, default
 auto-analysis, bridge connection, and health readiness before returning analysis.
+With `REA_GHIDRA_PROJECT_PATH`, shared CLI/MCP configuration instead selects an
+[existing project copy](installation.md#reuse-an-existing-ghidra-project), whose
+content fingerprint is committed into the profile. Import, auto-analysis and
+repair scripts are skipped; original analysis completeness/settings stay unknown,
+and bridge database edits are unavailable. The same startup/client deadlines
+still cover copy verification, engine launch and the authenticated handshake.
 
 These deadlines have different owners:
 
@@ -1195,7 +1210,18 @@ attachment. Native checksum verification failures still refuse traversal;
 Occurrences use normalized logical paths for identity and lookup. Optional
 `source_path` retains the original path within the owning reader when Unicode
 NFC or reader admission changes its spelling; it is source evidence, not an
-output destination. POSIX letter-colon names such as `a:b` remain valid logical
+output destination. New ASAR file occurrences explicitly record the boolean
+`unpacked`: `true` identifies a companion file and `false` identifies a packed
+entry. This field describes archive storage, independently of whether the bytes
+were available or passed integrity verification. Older occurrences may omit it;
+omission remains unknown and must not be defaulted to `false`. Consumers that
+previously accepted only literal `true` must also accept `false`, while retaining
+support for omitted historical values.
+`compare_artifacts` reports a metadata change when both storage values are
+known and differ. If only one value is known, storage comparison is unknown;
+when both are omitted, storage is not compared.
+
+POSIX letter-colon names such as `a:b` remain valid logical
 names; Windows extraction refuses names its filesystem cannot materialize.
 
 Extraction materializes regular files exposed by the active archive reader.
@@ -1358,6 +1384,77 @@ check full-profile local-path rules. Compact MCP workflow tests verify canonical
 rejection of invalid inputs before provider work, independent of how much detail
 the selected advertisement retains.
 
+### Tool family advertising scope
+
+Agents pay context for every advertised tool schema, and clients that send
+catalog payloads with each request (see the Claude Code measurements above)
+can spend more context on tool definitions than on the investigation. Setting
+the server's `REA_MCP_TOOL_FAMILIES` environment variable to a comma-separated
+subset of the catalog's tool-family ids (the `tools.families` entries in the
+product catalog) restricts the registration to those families. A selection
+outside the published family ids fails server startup with the complete id
+list; the setting is read at startup, so restart the server to apply changes.
+
+Out-of-scope tools stay registered but disabled: `tools/list` omits their
+names and schemas entirely, and a direct call fails with the SDK's
+`Tool ... disabled` invalid-params error rather than disappearing silently.
+`binary_session.tool_availability` and the provider `capabilities` sets on the
+same report, including `analysis_provider_candidates`, list only operations
+whose tools the registration advertises; an operation omitted from those
+projections because of the scope is not callable through this registration,
+and `tools/list` remains the canonical catalog. Availability is derived from
+the complete provider facts before those sets are narrowed, so hiding a direct
+tool does not report an advertised composed tool as unavailable. Guided
+prompts follow the scope too: a workflow is advertised only when every tool in
+its suggested steps belongs to a selected family, so a partially available
+workflow is omitted from `prompts/list` instead of rendering a disabled call;
+`prompts/get` reports it as not found. A scope can omit all guided prompts;
+doctor treats a server without the prompts capability as an empty inventory.
+Recovery instructions recommend runtime settings tools only when `application`
+is advertised; otherwise they explain launch settings and how to widen the scope.
+The server identity digest and
+`rea mcp doctor` tool and prompt inventory derive from the
+same selected scope, so a scoped server reports itself healthy; a scope
+without the `session` family cannot serve `binary_session`, and doctor says
+so explicitly instead of reporting a mismatch. Canonical server-side
+validation and Evidence semantics are unchanged for
+the tools that remain advertised. The default (unset) advertises the complete
+catalog exactly as before. Saved registrations with an invalid selection
+report `invalid` in status instead of starting a server that fails.
+
+`rea setup --client <id> --tool-families <ids>` writes the same selection
+into the `env` object of that client's `rea` entry, so the scope travels with
+the registration; rerunning setup with a different selection refreshes it.
+
+#### Choosing families for common workflows
+
+Every investigation that opens a local binary still needs the `session`
+family: it owns `open_binary`, `binary_session`, the evidence-bundle and
+comparison tools, and the unknown ledger, so include it whenever the workflow
+touches a binary. The `tools.families` entries in the product catalog list
+each family's current inventory; the groupings below describe what a scope
+covers, not a frozen tool count.
+
+Include `application` when a workflow pages retained summaries through
+`inspect_analysis_view` or changes analysis settings. `session` owns Evidence
+bundle import/export; it does not include those view and settings tools.
+
+| Workflow                                          | Scope                                                     | Coverage                                                                                                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Firmware extraction and analysis                  | `firmware,session,direct`                                 | extract firmware regions, open the extracted image, inspect it with the proxied disassembly tools                                                            |
+| Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
+| Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
+| Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
+| Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
+| Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
+
+Scopes are additive and start narrow: begin with the families the workflow
+names, then add one when a call fails with the SDK's `Tool ... disabled`
+error. The error names the disabled tool; `tools.families` in the product
+catalog maps it back to the family that would re-enable it, and the server
+restarts with the wider scope through the same setup flag.
+
 ### Output schemas
 
 Self-contained output schemas advertise a content-bound `$id`, including their
@@ -1367,21 +1464,37 @@ identity. Explicit schema IDs and relative external reference bases are
 preserved. This keeps every tool and validation rule in discovery and does not
 change the SDK's catalog invalidation or availability checks.
 
-The server identity's tool-schema digest includes both the canonical output
-contracts and the selected output-schema profile. `full` and `off` therefore
-have distinct identities even though `off` keeps the same canonical output
-validation on the server.
+The server identity's tool-schema digest includes the selected output-schema
+profile and the advertised form that profile produces. `full`, `compact`, and
+`off` therefore have distinct identities. The `compact` digest covers the
+bounded schemas clients receive; `off` keeps the canonical output contracts in
+the digest while advertising nothing.
 
 Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=off` setting omits `outputSchema`
-from the advertised catalog for hosts with a small frame limit (the measured
-pi-web-ui failure and catalog breakdown are in [#2512](https://github.com/morluto/rea/issues/2512)).
-The default `full` profile is unchanged. With `off`, REA validates successful
-structured results against the same named canonical tool contract before
-delivery; it still returns complete `structuredContent` and text results.
-Only client-side schema discovery and validation are omitted, so hosts using
-this profile should rely on REA's validation and retain their usual response
-size limits.
+tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` setting bounds every
+advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
+(the measured pi-web-ui failure and catalog breakdown are in
+[#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
+is unchanged. Both settings keep the same named canonical tool contract for
+server-side result validation, and both still return complete
+`structuredContent` and text results.
+
+`compact` keeps the complete validation structure when it fits the budget.
+Otherwise it advertises the root property shape, first-level reference-resolved
+types, first-level guidance, and the root's `required`/`additionalProperties`
+constraints, with nested validation detail elided. Local references are inlined
+within the budget, so the advertised form is self-contained and omits the
+canonical contract's content-bound `$id`. The projection only widens: a valid
+canonical result still satisfies the advertised schema, but a client validating
+against it can accept a result the canonical contract rejects. REA still
+validates every result before delivery. On catalogs large enough that full
+input schemas alone approach the frame limit, keep the input profile at its
+`compact` default as well; with full input schemas the advertisement is
+dominated by the input side.
+
+Only client-side schema discovery and validation are reduced or omitted, so
+hosts using these profiles should rely on REA's validation and retain their
+usual response size limits.
 
 ### Function comparison limitations
 

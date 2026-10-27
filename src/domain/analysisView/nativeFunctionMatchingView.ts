@@ -1,14 +1,13 @@
 import { z } from "zod";
 import {
   nativeFunctionMatchingSchema,
-  nativeFunctionMatchingContextSchema,
   nativeFunctionMatchSchema,
   nativeFunctionMatchMemberSchema,
   nativeMatchStateSchema,
   type NativeFunctionMatching,
 } from "../native/functionMatching.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import {
   boundedViewMessages,
@@ -80,8 +79,6 @@ export const nativeFunctionMatchingViewItemsSchema = z.union([
     }),
   ),
 ]);
-export const nativeFunctionMatchingViewContextSchema =
-  nativeFunctionMatchingContextSchema;
 interface FunctionRow {
   readonly member: NativeFunctionMatching["matches"][number]["left"][number];
   readonly match_id: string;
@@ -94,25 +91,19 @@ interface Checked {
   recent?: { readonly key: string; readonly rows: readonly number[] };
 }
 const checked = new WeakMap<object, Checked>();
+const readReport = createAnalysisViewResultReader(nativeFunctionMatchingSchema);
 
 type Request = z.output<typeof nativeFunctionMatchingViewRequestSchema>;
 const checkedReport = (
   parent: AnalysisViewParent,
 ): Result<Checked, AnalysisError> => {
-  const source = parent.normalizedResult;
-  const reusable =
-    typeof source === "object" &&
-    source !== null &&
-    parent.sealedResult === true &&
-    isImmutableJsonSnapshot(source);
-  const cached = reusable ? checked.get(source) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(nativeFunctionMatchingSchema, parent);
+  const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
-  const entry: Checked = {
-    report: reusable ? (source as NativeFunctionMatching) : parsed.value,
-  };
-  if (reusable) checked.set(source, entry);
+  const report = parsed.value;
+  const cached = checked.get(report);
+  if (cached !== undefined) return ok(cached);
+  const entry: Checked = { report };
+  if (isImmutableJsonSnapshot(report)) checked.set(report, entry);
   return ok(entry);
 };
 const functionRows = (entry: Checked): readonly FunctionRow[] => {

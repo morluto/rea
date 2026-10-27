@@ -1,5 +1,6 @@
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { dirname, join } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
+import { dirname } from "node:path";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
@@ -81,10 +82,10 @@ export const ghidraJavaLaunch = async (options: {
       ? options.platform === "win32"
         ? "java.exe"
         : "java"
-      : join(
+      : appendCallerPath(
           selectedJavaHome,
-          "bin",
-          options.platform === "win32" ? "java.exe" : "java",
+          `bin/${options.platform === "win32" ? "java.exe" : "java"}`,
+          options.platform,
         );
   const isolatedProperties = [
     `-Duser.home=${options.homeRoot}`,
@@ -100,7 +101,7 @@ export const ghidraJavaLaunch = async (options: {
       ? ["-Xlog:disable", "-Xlog:all=warning:stderr"]
       : []),
     "-cp",
-    join(supportRoot, "LaunchSupport.jar"),
+    appendCallerPath(supportRoot, "LaunchSupport.jar", options.platform),
     "LaunchSupport",
     installRoot,
   ];
@@ -193,7 +194,11 @@ export const ghidraJavaLaunch = async (options: {
       ...isolatedProperties,
       "-showversion",
       "-cp",
-      join(installRoot, "Ghidra", "Framework", "Utility", "lib", "Utility.jar"),
+      appendCallerPath(
+        installRoot,
+        "Ghidra/Framework/Utility/lib/Utility.jar",
+        options.platform,
+      ),
       "ghidra.Ghidra",
       "ghidra.app.util.headless.AnalyzeHeadless",
       ...options.arguments,

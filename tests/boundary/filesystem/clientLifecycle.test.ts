@@ -950,7 +950,7 @@ describe("Grok Build scalar and nested values", () => {
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(
       configPath,
-      'mcp_servers = { rea.command = "rea", rea.args = ["mcp"], rea.startup_timeout_sec = 10 }\n',
+      'mcp_servers = { rea.command = "old-rea", rea.args = ["mcp"], rea.startup_timeout_sec = 10 }\n',
     );
     expect(
       await configureClientConfiguration(
@@ -963,7 +963,7 @@ describe("Grok Build scalar and nested values", () => {
     expect(configured).not.toMatch(/^\[mcp_servers\.rea\]$/mu);
     expect(parseToml(configured)).toMatchObject({
       mcp_servers: {
-        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
+        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 10 },
       },
     });
   });

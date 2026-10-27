@@ -1,3 +1,4 @@
+import { assertArtifactCommandPath } from "../../process/ArtifactCommandPath.js";
 import { join } from "node:path";
 import {
   createAnalysisExecution,
@@ -61,7 +62,8 @@ const executeWakaruRecovery = async (context: RecoveryWorkspace) => {
   } = context;
   const staging = join(root, "modules");
   const commandContext = {
-    ...engine,
+    command: engine.command.invocationPath,
+    limiter: engine.limiter.invocationPath,
     cwd: root,
     deadline: context.deadline,
     environment: environment,
@@ -69,7 +71,25 @@ const executeWakaruRecovery = async (context: RecoveryWorkspace) => {
     ...(launcher === undefined ? {} : { launcher: launcher }),
     resources,
   };
-  const version = await runWakaruCommand({
+  const run = async (execution: Parameters<typeof runWakaruCommand>[0]) => {
+    for (const selected of [engine.command, engine.limiter])
+      await assertArtifactCommandPath(selected, OPERATION, {
+        signal: options?.signal,
+      });
+    const output = await runWakaruCommand(execution);
+    for (const selected of [engine.command, engine.limiter])
+      await assertArtifactCommandPath(selected, OPERATION, {
+        capturedOutput: {
+          stdout: output.stdout,
+          stderr: output.stderr,
+          exit_code: output.exit_code,
+          signal: output.signal,
+          truncated: false,
+        },
+      });
+    return output;
+  };
+  const version = await run({
     ...commandContext,
     arguments: ["--version"],
   });
@@ -87,7 +107,7 @@ const executeWakaruRecovery = async (context: RecoveryWorkspace) => {
       { userMessage: `${mismatch}.` },
     );
   }
-  const run = await runWakaruCommand({
+  const execution = await run({
     ...commandContext,
     staging,
     arguments: [
@@ -118,14 +138,14 @@ const executeWakaruRecovery = async (context: RecoveryWorkspace) => {
       ),
     );
   const parsed = await parseWakaruReports({
-    execution: run,
+    execution,
     provenancePath: join(staging, "provenance.json"),
     snapshots,
     files,
     ...(options?.signal === undefined ? {} : { signal: options.signal }),
     resources,
   });
-  return { version, admitted, run, parsed };
+  return { version, admitted, run: execution, parsed };
 };
 
 /** Publish validated recovery and retain exact source and engine bindings. */
@@ -170,7 +190,7 @@ export const prepareWakaruExecution = async (context: RecoveryWorkspace) => {
       );
   }
   const currentEngine = await fingerprintRecoveryFile(
-    engine.command,
+    engine.command.resolvedPath,
     RECOVERY_LIMITS.outputBytes,
     options?.signal,
     resources,
@@ -178,7 +198,7 @@ export const prepareWakaruExecution = async (context: RecoveryWorkspace) => {
   if (currentEngine.sha256 !== engine.sha256)
     throw new AnalysisArtifactChangedError(
       OPERATION,
-      engine.command,
+      engine.command.invocationPath,
       "Configured engine bytes changed during recovery",
       {
         diagnostics: {

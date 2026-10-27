@@ -1,3 +1,4 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
@@ -295,7 +296,8 @@ export class JadxProvider implements AndroidAnalysisPort {
 
   /** Report actual local prerequisites without starting JADX or opening a target. */
   inspectAvailability(signal?: AbortSignal) {
-    const pending = inspectJadxAvailability(this.environment, {
+    const environment = snapshotEnvironment(this.environment);
+    const pending = inspectJadxAvailability(environment, {
       operationTimeoutMs:
         this.settings?.().overrides["jadx.operation_timeout_ms"],
       resourceOwner: this.#prerequisiteOwner,
@@ -442,10 +444,11 @@ export class JadxProvider implements AndroidAnalysisPort {
     request: AndroidRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    const environment = snapshotEnvironment(this.environment);
     // Resolve the accepted operation's override before acquiring any resource.
     // An unusable launch value is refused without starting the engine.
     const timeoutMs = resolveJadxOperationTimeout(
-      this.environment,
+      environment,
       request.operation,
       this.settings?.().overrides["jadx.operation_timeout_ms"],
     );
@@ -471,7 +474,7 @@ export class JadxProvider implements AndroidAnalysisPort {
           `Target ${target.path} is ${target.format}; provide one standalone APK.`,
         );
       const configuration = await resolveJadxConfigurationInputs(
-        this.environment,
+        environment,
         request.operation,
         signal,
       );
@@ -513,11 +516,11 @@ export class JadxProvider implements AndroidAnalysisPort {
         java: configuration.java,
         arguments: configuration.jvmArguments,
         options: [
-          this.environment.JAVA_TOOL_OPTIONS,
-          this.environment._JAVA_OPTIONS,
-          this.environment.JDK_JAVA_OPTIONS,
-          this.environment.PATH,
-          this.environment.JAVA_HOME,
+          environment.JAVA_TOOL_OPTIONS,
+          environment._JAVA_OPTIONS,
+          environment.JDK_JAVA_OPTIONS,
+          environment.PATH,
+          environment.JAVA_HOME,
         ],
       });
       if (this.#retained !== undefined && this.#retained.key !== key) {
@@ -528,7 +531,7 @@ export class JadxProvider implements AndroidAnalysisPort {
       if (retained === undefined) {
         await validateJadxConfiguration(
           configuration,
-          this.environment,
+          environment,
           request.operation,
           {
             resourceOwner: this.#prerequisiteOwner,
@@ -579,6 +582,9 @@ export class JadxProvider implements AndroidAnalysisPort {
         session = new JadxSession(
           {
             command: configuration.java,
+            // Java PATH shims may execute an interpreter or replace themselves.
+            // Match the prerequisite probe's run-token ownership policy.
+            expectedCommand: null,
             arguments: [
               ...configuration.jvmArguments,
               "--class-path",
@@ -586,7 +592,7 @@ export class JadxProvider implements AndroidAnalysisPort {
               bridge,
             ],
             cwd: root.path,
-            hostEnvironment: this.environment,
+            hostEnvironment: environment,
             signal: workspaceSignal,
           },
           this.launcher,

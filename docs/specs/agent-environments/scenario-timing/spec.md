@@ -27,9 +27,9 @@ scenario capture learns the clock a HAR does.
   Evidence that carries them.
 - Scenario records take `startedDateTime` from the transaction's single
   finished or failed event's `started_at`, else from `observed_at`, and `time`
-  from its `elapsed_ms` (0 without one), and say so in a limitation; a capture
-  whose requests are all timed gets the recorded-start-time timeline and a
-  write clock.
+  from its `elapsed_ms`, omitted without a unique reported duration, and say so
+  in a limitation. An explicit zero remains zero. Complete starts establish the
+  recorded-start-time timeline; a write clock also requires known completions.
 - Scenario comparisons ignore both fields, as a committed built-in rule
   (`ignore_network_request_timing`).
 - The added metadata is charged to the event budgets as other metadata is.

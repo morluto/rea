@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { withArtifactFileHandle } from "../artifacts/ArtifactFileOperation.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
@@ -82,14 +83,11 @@ export const readLinuxResourceLimits = async (
     resourceScope,
     undefined,
     async (handle) => {
-      const buffer = Buffer.alloc(16 * 1024);
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-      if (bytesRead === buffer.length)
+      const reportBudget = 16 * 1024;
+      const buffer = await readFileHandleRange(handle, 0, reportBudget);
+      if (buffer.length === reportBudget)
         throw new Error("Inherited Linux limits exceed the report budget.");
-      return clampLinuxResourceLimits(
-        configured,
-        buffer.subarray(0, bytesRead).toString("utf8"),
-      );
+      return clampLinuxResourceLimits(configured, buffer.toString("utf8"));
     },
   );
 };

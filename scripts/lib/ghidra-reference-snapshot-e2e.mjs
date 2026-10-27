@@ -1,4 +1,5 @@
 import {
+  requireMcpEvidenceBundle,
   requireMcpToolError,
   requireMcpLifecycleResult,
   requireMcpEvidenceResult,
@@ -26,12 +27,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
   client,
   { target, procedure, omittedEdge, entrypoint, env },
 ) {
-  const bundle = requireMcpLifecycleResult(
+  const bundle = requireMcpEvidenceBundle(
     await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},
     }),
-    "get_evidence_bundle",
   );
   const observed = bundle.records.find(
     (record) =>

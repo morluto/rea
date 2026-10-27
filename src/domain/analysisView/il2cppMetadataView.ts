@@ -24,7 +24,7 @@ import {
   il2cppMetadataTypeSchema,
 } from "../il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type {
   AnalysisViewParent,
   AnalysisViewRequest,
@@ -283,26 +283,21 @@ interface CheckedReport {
   readonly counts: z.infer<typeof countsSchema>;
 }
 
-// Authenticated, frozen parents own these facts. Cache validation/counts for
-// their lifetime without a second report copy or a live filesystem cache.
+const readMetadataReport = createAnalysisViewResultReader(
+  il2cppMetadataParentSchema,
+);
+// The validated immutable report owns its derived counts for its lifetime.
 const checkedReports = new WeakMap<object, CheckedReport>();
 
 const parseMetadataReport = (
   parent: AnalysisViewParent,
 ): Result<CheckedReport, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checkedReports.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(il2cppMetadataParentSchema, parent);
+  const parsed = readMetadataReport(parent);
   if (!parsed.ok) return parsed;
-  // This schema has no coercions/transforms; the authenticated owner value is
-  // equivalent to the validated clone and remains immutable across pages.
-  const report = reusable ? (key as Report) : parsed.value;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checkedReports.get(report) : undefined;
+  if (cached !== undefined) return ok(cached);
   const checked = {
     report,
     counts: {
@@ -355,7 +350,7 @@ const parseMetadataReport = (
         report.binary?.generic_methods?.issues.length ?? null,
     },
   };
-  if (reusable) checkedReports.set(key, checked);
+  if (reusable) checkedReports.set(report, checked);
   return ok(checked);
 };
 

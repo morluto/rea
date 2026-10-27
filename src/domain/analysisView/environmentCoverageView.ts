@@ -46,6 +46,8 @@ export const WITHHELD_WRITE_HINTS = {
     "No later read showed the effect. Read the entity and its list after the write.",
   "incomplete-entities":
     "The write is confirmed, but the views that show its entity cannot render it in full. Read the written entity through every view that lists it.",
+  "unknown-clock":
+    "The write's learned rules generate timestamps, but the capture establishes no global served clock start. Record usable start times and completed durations for every request.",
 } as const satisfies Record<WriteReason, string>;
 
 const writeReasons = Object.keys(WITHHELD_WRITE_HINTS) as [

@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 import {
+  isJsonLike,
+  mediaTypeEssence,
+} from "../../domain/analysisView/recordedMediaType.js";
+
+import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
@@ -9,9 +14,7 @@ import {
   readRecordedResponseBody,
   type RecordedResponseBody,
 } from "../../domain/analysisView/recordedResponseBody.js";
-import { isJsonLike } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import {
-  mediaTypeEssence,
   readRecordedRequestLine,
   type RecordedRequestLine,
 } from "../../domain/analysisView/webNetworkRouteTemplates.js";

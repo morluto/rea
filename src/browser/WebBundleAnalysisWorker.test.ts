@@ -78,6 +78,14 @@ type TestMode =
       readonly oomMarker?: string;
       readonly stderrMarker?: string;
     }
+  | {
+      readonly kind: "result";
+      readonly encoding:
+        | "invalid-utf8"
+        | "replacement"
+        | "bom"
+        | "malformed-json";
+    }
   | { readonly kind: "delayed-ready" }
   | { readonly kind: "exit-before-ready" }
   | {
@@ -166,6 +174,33 @@ const protocolWorkerProgram = (
   });
 `;
 
+const resultWorkerProgram = (encoding: string): string => `
+  import { readFile, writeFile } from "node:fs/promises";
+  import { createHash } from "node:crypto";
+  import { createInterface } from "node:readline";
+  import { getHeapStatistics } from "node:v8";
+  const { analyzeCapturedWebScript } = await import(${JSON.stringify(new URL("../domain/webBundleAnalyzer.ts", import.meta.url).href)});
+  const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+  send({ kind: "ready", heap_limit_bytes: getHeapStatistics().heap_size_limit });
+  createInterface({ input: process.stdin, crlfDelay: Infinity }).once("line", async (line) => {
+    const request = JSON.parse(line);
+    const script = JSON.parse(await readFile(request.id + ".source", "utf8"));
+    const facts = analyzeCapturedWebScript(script);
+    let bytes = Buffer.from(JSON.stringify(facts));
+    const encoding = ${JSON.stringify(encoding)};
+    if (encoding === "invalid-utf8") {
+      const index = bytes.indexOf(Buffer.from("result-marker"));
+      if (index < 0) throw new Error("Expected endpoint marker in schema-valid facts");
+      bytes[index] = 0xff;
+    } else if (encoding === "bom") bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]);
+    else if (encoding === "malformed-json") bytes = bytes.subarray(0, bytes.length - 1);
+    await writeFile(request.id + ".result", bytes);
+    send({ kind: "complete", id: request.id, result: {
+      bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"),
+    } });
+  });
+`;
+
 const delayedReadyProgram = `
   import { createInterface } from "node:readline";
   import { getHeapStatistics } from "node:v8";
@@ -203,7 +238,9 @@ const launcherFor = (
           ? delayedReadyProgram
           : mode.kind === "exit-before-ready"
             ? exitBeforeReadyProgram
-            : protocolWorkerProgram(mode.failure);
+            : mode.kind === "result"
+              ? resultWorkerProgram(mode.encoding)
+              : protocolWorkerProgram(mode.failure);
     const spawned = await spawnOwnedProviderProcess({
       ...request,
       arguments: [
@@ -926,3 +963,75 @@ it.each([
     }
   },
 );
+
+it.each(["invalid-utf8", "bom", "malformed-json"] as const)(
+  "rejects %s worker result bytes with a matching descriptor",
+  async (encoding) => {
+    let root: string | undefined;
+    const worker = new WebBundleAnalysisWorker(
+      WEB_BUNDLE_WORKER_LIMITS.heapMb,
+      launcherFor(
+        { kind: "result", encoding },
+        {
+          onSpawn: (spawned) => {
+            root = spawned.root;
+          },
+        },
+      ),
+    );
+    try {
+      const result = await worker.analyze(
+        makeScript("fetch('/result-marker');"),
+        10_000,
+      );
+      const error = failureOf(result);
+      expect(error).toBeInstanceOf(AnalysisOutputError);
+      expect(error.cause).toBeInstanceOf(
+        encoding === "invalid-utf8" ? TypeError : SyntaxError,
+      );
+      expect(error.cleanupIncomplete).toBe(false);
+    } finally {
+      await worker.close();
+    }
+    expect(root).toBeDefined();
+    await expect(access(root!)).rejects.toMatchObject({
+      code: "ENOENT",
+      path: root,
+    });
+  },
+);
+
+it("preserves literal replacement characters in valid UTF-8 worker facts", async () => {
+  let root: string | undefined;
+  const worker = new WebBundleAnalysisWorker(
+    WEB_BUNDLE_WORKER_LIMITS.heapMb,
+    launcherFor(
+      { kind: "result", encoding: "replacement" },
+      {
+        onSpawn: (spawned) => {
+          root = spawned.root;
+        },
+      },
+    ),
+  );
+  try {
+    const result = await worker.analyze(
+      makeScript("fetch('/literal-�');"),
+      10_000,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.error.error.message);
+    if (result.value.status !== "analyzed")
+      throw new Error("Expected analyzed worker facts");
+    expect(result.value.observations.endpoints).toContainEqual(
+      expect.objectContaining({ value: "/literal-�" }),
+    );
+  } finally {
+    await worker.close();
+  }
+  expect(root).toBeDefined();
+  await expect(access(root!)).rejects.toMatchObject({
+    code: "ENOENT",
+    path: root,
+  });
+});

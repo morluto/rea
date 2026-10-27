@@ -441,8 +441,7 @@ const registrationAligned = ({
   if (identity === "foreign") return "stale";
   if (
     client.name === "grok_build" &&
-    registration.startup_timeout_sec !==
-      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
+    registration.startup_timeout_sec === undefined
   )
     return "stale";
   if (

@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "vitest";
@@ -228,5 +228,57 @@ setTimeout(() => process.exit(92), 12000);
         expect(observed.get(processGroupId)).toEqual({ state: "empty" });
       }
     }
+  },
+);
+
+cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
+  "doctor discovers Ghidra through an empty PATH component without executing its launchers",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-ghidra-cwd-doctor-");
+    const install = join(root, "installation");
+    const marker = join(root, "launcher-execution");
+    await mkdir(join(install, "Ghidra"), { recursive: true });
+    await mkdir(join(install, "support"), { recursive: true });
+    await writeFile(
+      join(install, "Ghidra/application.properties"),
+      "application.version=12.1.4\napplication.java.min=21\n",
+    );
+    await writeFile(marker, "unexecuted");
+    const launcher = `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "executed");\n`;
+    for (const name of ["ghidraRun", "support/analyzeHeadless"])
+      await writeFile(join(install, name), launcher, { mode: 0o700 });
+    await symlink(join(install, "ghidraRun"), join(root, "ghidra"));
+
+    const result = await cli.run({
+      arguments: ["doctor", "--provider", "ghidra", "--json"],
+      cwd: root,
+      environment: {
+        PATH: "",
+        JAVA_HOME: join(root, "missing-jdk"),
+        REA_LOG_LEVEL: "silent",
+      },
+    });
+    // The fixture deliberately has no JDK or native decompiler. Discovery must
+    // retain the selected installation while reporting those later failures.
+    expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
+    expect(result.json).toMatchObject({
+      providerInspections: expect.arrayContaining([
+        expect.objectContaining({
+          id: "ghidra",
+          configured: true,
+          checks: expect.arrayContaining([
+            expect.objectContaining({
+              name: "configuration",
+              ok: true,
+              code: null,
+              detail: install,
+            }),
+            expect.objectContaining({ name: "installation", ok: true }),
+            expect.objectContaining({ name: "headless", ok: true }),
+          ]),
+        }),
+      ]),
+    });
+    expect(await readFile(marker, "utf8")).toBe("unexecuted");
   },
 );

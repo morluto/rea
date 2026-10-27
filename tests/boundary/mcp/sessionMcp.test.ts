@@ -3,7 +3,7 @@ import { readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -23,6 +23,11 @@ import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDevi
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { ApktoolProvider } from "../../../src/apktool/ApktoolProvider.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  systemProcessOwnershipHost,
+} from "../../../src/process/ProcessOwnershipObservation.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { MAX_JSON_DEPTH } from "../../../src/domain/jsonValue.js";
@@ -47,6 +52,7 @@ const SNAPSHOT_PROFILE = createAnalysisProfile(
 const resources: Array<{ close(): Promise<unknown> }> = [];
 let directory: string | undefined;
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
@@ -215,6 +221,75 @@ describe("public provider availability", () => {
       ),
     ).toMatchObject({ available: false, reason: "provider_unavailable" });
   });
+});
+
+describe("owned-process prerequisite during status discovery", () => {
+  it.skipIf(process.platform === "win32")(
+    "keeps every other provider's status when the Apktool probe cannot prepare an owned child",
+    async () => {
+      directory = await createTestTempDirectory("rea-mcp-ps-prerequisite-");
+      const launcher = join(directory, "apktool");
+      await writeFile(launcher, "#!/bin/sh\nprintf '2.9.3\\n'\n", {
+        mode: 0o755,
+      });
+      const apktoolAnalysis = new ApktoolProvider({
+        environment: { REA_APKTOOL_COMMAND: launcher },
+      });
+      vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+        async () => {
+          throw new LinuxOwnedProcessPrerequisiteError(
+            new Error("spawn ps ENOENT"),
+          );
+        },
+      );
+      const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+        inspectAvailability: async () => ({
+          status: "available",
+          code: null,
+          reason: null,
+          diagnostics: { version: "1.0.41" },
+        }),
+        close: async () => {},
+        execute: async () => ok(null),
+      };
+      const closed: string[] = [];
+      const session = createTestBinarySession(provider(closed));
+      const server = createServer(
+        { kind: "session", session },
+        { adbDeviceAnalysis, apktoolAnalysis, logger: silentLogger },
+      );
+      const mcp = new Client({ name: "ps-prerequisite", version: "1.0.0" });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      resources.push(mcp, server, apktoolAnalysis);
+      await server.connect(serverTransport);
+      await mcp.connect(clientTransport);
+
+      const reply = await mcp.callTool({
+        name: "binary_session",
+        arguments: {},
+      });
+      expect(reply.isError ?? false).toBe(false);
+      const status = structured(reply);
+      const availability = toolAvailabilitySummaryInventory.parse(
+        (status.result as { tool_availability: unknown }).tool_availability,
+      );
+      const apktool = availability.groups.find(({ names }) =>
+        names.includes("inspect_apktool_client"),
+      );
+      expect(apktool).toMatchObject({
+        available: false,
+        reason: "provider_unavailable",
+      });
+      expect(apktool?.remediation).toContain("procps-compatible ps");
+      expect(apktool?.remediation).toContain("spawn ps ENOENT");
+      expect(
+        availability.groups.find(({ names }) =>
+          names.includes("inspect_adb_client"),
+        ),
+      ).toMatchObject({ available: true, reason: "available" });
+    },
+  );
 });
 
 describe("target-free MCP fixture host isolation", () => {

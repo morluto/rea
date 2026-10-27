@@ -379,6 +379,23 @@ const parsePackage = (
   if (document.packageFields === null)
     return invalidPackage(file, "package.json root is not an object.");
   const value = document.packageFields;
+  const rendererDeclarations: NonNullable<
+    JavaScriptPackageObservation["renderer_declarations"]
+  > = {};
+  let rendererEntrypoint: JavaScriptPackageObservation["renderer_entrypoint"] =
+    null;
+  for (const field of ["renderer", "browser", "module"] as const) {
+    if (!Object.hasOwn(value, field)) continue;
+    const declaration = value[field];
+    rendererDeclarations[field] =
+      typeof declaration === "string" ? declaration : { status: "non-string" };
+    if (
+      rendererEntrypoint === null &&
+      typeof declaration === "string" &&
+      declaration !== ""
+    )
+      rendererEntrypoint = { field, path: declaration };
+  }
   return {
     path: file.path,
     sha256: file.sha256,
@@ -393,10 +410,8 @@ const parsePackage = (
           ? "declared"
           : "invalid",
     main_entrypoint: typeof value.main === "string" ? value.main : "",
-    renderer:
-      optionalString(value.renderer) ??
-      optionalString(value.browser) ??
-      optionalString(value.module),
+    renderer_declarations: rendererDeclarations,
+    renderer_entrypoint: rendererEntrypoint,
     limitation: null,
   };
 };
@@ -421,7 +436,8 @@ const unavailablePackage = (
   main: null,
   main_status: "unavailable",
   main_entrypoint: null,
-  renderer: null,
+  renderer_declarations: null,
+  renderer_entrypoint: null,
   limitation,
 });
 
@@ -435,9 +451,10 @@ const parseHtmlScripts = (
   const { scripts, inlineScripts, inlineScriptCount, baseHref } =
     htmlArtifactReferences(text);
   return {
-    scripts: scripts.map(({ scriptPath, location }) => ({
+    scripts: scripts.map(({ scriptPath, scriptType, location }) => ({
       html_path: path,
       script_path: scriptPath,
+      script_type: scriptType,
       base_href: baseHref,
       location,
     })),

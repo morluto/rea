@@ -81,19 +81,36 @@ shape, with the application's own locators, paths and headers:
       "expected_status": [200]
     },
     {
+      "step_id": "new-folder-1",
+      "action": "click",
+      "timeout_ms": 15000,
+      "locator": { "kind": "role", "role": "button", "name": "New folder" }
+    },
+    {
+      "step_id": "folder-title-1",
+      "action": "fill",
+      "timeout_ms": 15000,
+      "locator": { "kind": "css", "selector": "input[name=title]" },
+      "value": { "source": "literal", "value": "Scratch folder 1" }
+    },
+    {
       "step_id": "create-folder-1",
+      "action": "click",
+      "timeout_ms": 15000,
+      "locator": { "kind": "role", "role": "button", "name": "Create" },
+      "save_response": {
+        "method": "POST",
+        "path": "/api/folders",
+        "save": [{ "name": "folder_1", "json_pointer": "/id" }]
+      }
+    },
+    {
+      "step_id": "read-folder-1",
       "action": "request",
       "timeout_ms": 15000,
-      "method": "POST",
-      "path": "/api/folders",
-      "json": { "title": "Scratch folder 1" },
-      "headers": [
-        {
-          "name": "X-CSRFToken",
-          "value": { "source": "cookie", "name": "csrftoken" }
-        }
-      ],
-      "expected_status": [200, 201]
+      "method": "GET",
+      "path": "/api/folders/{saved:folder_1}",
+      "expected_status": [200]
     }
   ]
 }
@@ -109,13 +126,19 @@ client with it. Match `wait_for` locators to exactly one element.
 2. Read with `request` steps: each collection the environment needs, twice
    before any write, so fields that change on their own show up; one item of
    each.
-3. Use `request` steps only when the API lets the caller choose each scratch
-   object's ID or a prior read already established it. Request paths are fixed
-   strings; no action substitutes a value from an earlier response. For
-   server-assigned IDs, create through the UI and open the new object's detail
-   view to record its read, edit and delete through UI actions. If that journey
-   cannot be scripted, leave the write unserved and report the limitation;
-   never guess an ID or create objects with no supported cleanup path.
+3. Write the way the application's UI does: fill its forms and click its
+   buttons, so each request carries the fields the UI sends, including ones
+   the server would otherwise derive. Give the click or key press that submits
+   a create `save_response` to keep the new object's ID, then `goto` its page
+   (`/items/{saved:item_1}`) or read it with a `request` step. Never guess an
+   ID, and never create a probe object to learn the next one. Write with
+   `request` steps instead only when the UI cannot reach the operation (an
+   API-only resource, or a UI that does not call the JSON API), or when coverage
+   withholds the UI-shaped write as `unexplained-change` or `contradicted`;
+   that counts as one of the two re-recordings. A `request` step write that
+   coverage withholds that way usually lacks fields the UI sends: record it
+   through the UI instead. If a journey cannot be scripted, leave the write
+   unserved and report the limitation.
    Record two numbered scratch objects per write type,
    with varied free text. After each write, and before the next one, read the
    object back by id and then its list: create 1, read 1, list, create 2,
@@ -129,13 +152,34 @@ About `request` steps:
 
 - `path` is on the start URL's origin; the page must be on that origin.
 - Header values are literals, declared secrets, a cookie the browser holds
-  (`{source: "cookie", name}`), or a local storage entry
-  (`{source: "local_storage", key, json_pointer}`), with an optional
-  `prefix` such as `"Bearer "`. Copy the headers the application's own
-  requests send (a CSRF header, a bearer token). Values read from the page
-  are redacted from records made after they are read, not from the login
-  response that returned them, and values shorter than 8 characters are not
-  redacted at all.
+  (`{source: "cookie", name}`), a local storage entry
+  (`{source: "local_storage", key, json_pointer}`), a saved value
+  (`{source: "saved", name}`), or Basic credentials
+  (`{source: "basic_credentials", parts: [username, password]}`, sent as the
+  base64 of `username:password` and redacted), with an optional `prefix` such as
+  `"Bearer "` or `"Basic "`. Each credential part is a literal, secret, saved
+  value, cookie or local storage entry, so a header the frontend builds from a
+  login token (the username and the token) can be copied too; the password is
+  a secret or saved value, never a literal. Copy the
+  headers the application's own requests send (a CSRF header such as
+  `X-CSRFToken` from the `csrftoken` cookie, a bearer token). Values read from the page are redacted from records made after they
+  are read, not from the login response that returned them, and values
+  shorter than 8 characters are not redacted at all.
+- `save: [{name, json_pointer, secret}]` keeps a string or number from the
+  step's JSON response, such as the created object's `/id`, for later steps;
+  `secret: true` redacts it, as for a token the API returns, so mark every
+  saved token, key or session value secret. This also protects the selected
+  source response before its body or headers are retained. Compressed or
+  unknown-size UI responses cannot supply saved values. On a `click` or `press`,
+  `save_response: {method, path, save}` keeps values from the response to the
+  new request observed while the step waits (`{*}` in `path` matches one segment).
+  Matching does not prove UI causality: choose a path distinct from polling;
+  multiple observed matches fail as ambiguous. The step
+  fails unless a 2xx JSON response arrives before its `timeout_ms`. Later
+  steps send a saved value as `{saved:name}` in a request `path` (and its
+  query) or a `goto` URL; in the `json` body, where a string that is only
+  `{saved:name}` keeps the saved JSON type; or as `{source: "saved", name}` in
+  a header or credential part.
 - Reading a page value makes later bodies costlier to keep: after a CSRF
   token, bodies over about 47 KiB are kept as `unavailable`. When the API
   returns larger responses, raise `capture.limits`
@@ -184,8 +228,10 @@ withheld with its hint:
 | `contradicted`        | Stop: a later read disagrees with the modelled effect.                                        |
 | `body-unusable`       | Stop: the body is not a JSON object.                                                          |
 
-Use new scratch names on each attempt; the first attempt's objects may still
-exist.
+Use new scratch names on each attempt, and delete what an earlier attempt
+created before recording again (through the UI, or a `request` step with the
+id that capture shows): the environment starts from what the recording first
+reads, so a leftover object becomes seeded data that write tasks then find.
 New browser scenario captures include request times, so a fully timed capture
 can learn a write clock and serve updates that stamp modification times. Older
 captures or ones missing a request start keep record order and learn no clock.

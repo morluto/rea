@@ -177,9 +177,24 @@ const isUnopenableFileTypeError = (cause: unknown): boolean =>
   typeof cause.errno === "number" &&
   UNOPENABLE_FILE_TYPE_ERRNOS.has(cause.errno);
 
+/** Stable content identity; access times are deliberately excluded. */
+export type RegularFileState = Pick<
+  Stats,
+  "dev" | "ino" | "size" | "mode" | "mtimeMs" | "ctimeMs"
+>;
+
+export const regularFileState = (stats: Stats): RegularFileState => ({
+  dev: stats.dev,
+  ino: stats.ino,
+  size: stats.size,
+  mode: stats.mode,
+  mtimeMs: stats.mtimeMs,
+  ctimeMs: stats.ctimeMs,
+});
+
 /** Compare one regular file's identity and mutable metadata across a read. */
 export const sameRegularFileState = (
-  expected: Stats | BigIntStats,
+  expected: RegularFileState | BigIntStats,
   observed: Stats | BigIntStats,
 ): boolean =>
   observed.isFile() &&

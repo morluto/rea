@@ -1,3 +1,4 @@
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import type { HopperInstallFailureReason } from "./SetupInstallFailure.js";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -7,7 +8,10 @@ import { join, posix } from "node:path";
 import { execFileBoundedOutput } from "../process/ExecFileBoundedOutput.js";
 import { execFileOutput } from "../process/ExecFileOutput.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { downloadHopperPackage } from "./HopperDownload.js";
+import {
+  downloadHopperPackage,
+  type HopperDownload,
+} from "./HopperDownload.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -116,12 +120,6 @@ export const supportsReaHost = (
   distribution: LinuxDistribution | undefined,
 ): boolean => distribution?.packageFamily !== undefined;
 
-/** Download response kept independent of Node's global fetch implementation. */
-export interface LinuxHopperDownload {
-  readonly ok: boolean;
-  readonly bytes: Uint8Array;
-}
-
 /** One failed package-manager command, with the output that explains it. */
 export interface LinuxPackageInstallFailure {
   /** The executed executable and arguments, joined for display. */
@@ -159,7 +157,7 @@ export interface LinuxHopperInstallHost {
   download(
     url: string,
     options: { readonly signal?: AbortSignal },
-  ): Promise<LinuxHopperDownload>;
+  ): Promise<HopperDownload>;
   createTemporaryDirectory(): Promise<string>;
   writeArchive(path: string, bytes: Uint8Array): Promise<void>;
   installPackage(
@@ -401,7 +399,19 @@ export const installLinuxHopper = async (
       const release = selected.value;
       stage = "download";
       const archiveDownload = await host.download(release.filename, options);
-      if (!archiveDownload.ok) return { status: "failed", reason: "download" };
+      if (!archiveDownload.ok)
+        return {
+          status: "failed",
+          reason: "download",
+          ...(archiveDownload.httpStatus === undefined
+            ? {}
+            : {
+                operationFailure: {
+                  operation: "download",
+                  detail: `Package download returned HTTP ${archiveDownload.httpStatus}.`,
+                },
+              }),
+        };
       stage = "archive_write";
       temporary = await host.createTemporaryDirectory();
       // Linux package paths stay POSIX even when this host is exercised from
@@ -516,7 +526,7 @@ export const installLinuxHopper = async (
 
 /** Canonical launcher path for a legacy user-local Linux Hopper installation. */
 export const linuxHopperLauncherPath = (home: string): string =>
-  posix.join(home, ".local/share/rea/hopper/bin/Hopper");
+  appendCallerPath(home, ".local/share/rea/hopper/bin/Hopper", "linux");
 
 /** REA's managed Linux install path, preferred when no explicit launcher is set. */
 export const REA_MANAGED_LINUX_HOPPER_LAUNCHER = "/opt/hopper/bin/Hopper";

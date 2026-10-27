@@ -1,5 +1,6 @@
 import { javascriptSourceRangeSchema } from "../javascript/javascriptSourceCoordinates.js";
 import { z } from "zod";
+import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { digestSchema } from "../digests.js";
 import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { err, ok, type Result } from "../result.js";
@@ -122,7 +123,10 @@ export const javaScriptRoutesSummaryDeliveryShape = {
 };
 export const webRoutesSummaryDeliveryShape = {
   detail: z.literal("summary"),
-  view: javaScriptRoutesViewRequestSchema,
+  view: z.union([
+    javaScriptRoutesViewRequestSchema,
+    webBundleViewRequestSchema,
+  ]),
 };
 export const javaScriptRoutesDeliverySchema = z.discriminatedUnion("detail", [
   z.strictObject(javaScriptRoutesCompleteDeliveryShape),
@@ -187,8 +191,6 @@ export const javaScriptRoutesViewSummarySchema = z.strictObject({
     unknown: z.int().nonnegative(),
   }),
 });
-export const javaScriptRoutesSourceReferenceSchema =
-  javaScriptRouteInventorySourceSchema;
 
 type Request = z.output<typeof javaScriptRoutesViewRequestSchema>;
 type Gap = z.infer<typeof javaScriptRouteGapSchema>;

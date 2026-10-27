@@ -979,7 +979,7 @@ describe("Ghidra installation version admission", () => {
     },
     {
       name: "different Ghidra line",
-      readText: () => "application.version=12.2.0\napplication.java.min=21\n",
+      readText: () => "application.version=13.0.0\napplication.java.min=21\n",
       probeJava: () => javaProbeOk<GhidraJavaObservation>(JAVA),
       failed: "version",
       code: "unsupported_version",
@@ -1024,7 +1024,7 @@ describe("Ghidra installation version admission", () => {
     );
     expect(result.status).toBe("unavailable");
     if (result.status !== "unavailable") return;
-    expect(result.rejection.reason).toContain("12.1.x");
+    expect(result.rejection.reason).toContain("12.x (>=12.1)");
     expect(result.rejection.reason).toContain(SUPPORTED_GHIDRA_VERSION);
     expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
       status: "failed",
@@ -1055,6 +1055,41 @@ describe("Ghidra installation version admission", () => {
       ),
     ).toMatchObject({ status: "available", javaVersion: "17.0.20.1" });
   });
+
+  it.each([21, 25])(
+    "admits Ghidra 12.2 independently of its declared Java 25 minimum (JDK %s)",
+    async (major) => {
+      const result = await inspectGhidraInstallation(
+        {
+          resourceOwner: inspectionResources.owner,
+          environment: {},
+          installDir: INSTALL,
+          platform: "linux",
+          architecture: "x64",
+        },
+        host({
+          readText: () => "application.version=12.2\napplication.java.min=25\n",
+          probeJava: () =>
+            javaProbeOk<GhidraJavaObservation>({
+              ...JAVA,
+              major,
+              version: `${String(major)}.0.5`,
+              home: `/usr/lib/jvm/jdk-${String(major)}`,
+            }),
+        }),
+      );
+      expect(result.providerVersion).toBe("12.2");
+      expect(
+        result.checks.find(({ name }) => name === "version"),
+      ).toMatchObject({
+        status: "passed",
+      });
+      expect(result.checks.find(({ name }) => name === "java")).toMatchObject({
+        status: major === 25 ? "passed" : "failed",
+      });
+      expect(result.status).toBe(major === 25 ? "available" : "unavailable");
+    },
+  );
 });
 
 describe("Ghidra configuration paths", () => {

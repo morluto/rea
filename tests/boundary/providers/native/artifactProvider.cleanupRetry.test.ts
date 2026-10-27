@@ -5,6 +5,7 @@ import { createPackage } from "@electron/asar";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactReaderFailure } from "../../../../src/artifacts/ArtifactReader.js";
 import { AsarArtifactReader } from "../../../../src/artifacts/AsarArtifactReader.js";
 import { SafeOutputTree } from "../../../../src/artifacts/SafeOutputTree.js";
@@ -29,19 +30,16 @@ const createArchive = async () => {
   return { root, archive };
 };
 
-const createClient = (path: string) =>
-  new ArtifactProvider(process.env).createClient({
-    path,
-    sourcePath: path,
-    sha256: "0".repeat(64),
-    kind: "archive",
-    format: "asar",
-  });
+const createClient = async (path: string) => {
+  const target = await parseBinaryTarget(path);
+  if (!target.ok) throw target.error;
+  return new ArtifactProvider(process.env).createClient(target.value);
+};
 
 it("retains a failed reader close, blocks new work, and retries the same reader", async () => {
   const { root, archive } = await createArchive();
   const output = join(root, "output");
-  const client = createClient(archive);
+  const client = await createClient(archive);
   const originalClose = AsarArtifactReader.prototype.close;
   const closeOwners: AsarArtifactReader[] = [];
   let readerCloseBlocked = true;
@@ -109,7 +107,7 @@ it("retains a failed reader close, blocks new work, and retries the same reader"
 it("retains a failed rollback owner and preserves the materialization failure", async () => {
   const { root, archive } = await createArchive();
   const output = join(root, "output");
-  const client = createClient(archive);
+  const client = await createClient(archive);
   const originalWrite = SafeOutputTree.prototype.write;
   const originalRollback = SafeOutputTree.prototype.rollback;
   const rollbackOwners: SafeOutputTree[] = [];
@@ -173,7 +171,7 @@ it("retains a tree whose setup failed after root identity was captured", async (
   const { root, archive } = await createArchive();
   const output = join(root, "output");
   const blocker = join(output, "unowned.txt");
-  const client = createClient(archive);
+  const client = await createClient(archive);
   const prototypeHandle = await open(join(root, "prototype-handle"), "w");
   const handlePrototype = Object.getPrototypeOf(prototypeHandle) as Pick<
     typeof prototypeHandle,
@@ -213,7 +211,7 @@ it("retains a tree whose setup failed after root identity was captured", async (
 it("waits for admitted extraction before close and rejects later work", async () => {
   const { root, archive } = await createArchive();
   const output = join(root, "output");
-  const client = createClient(archive);
+  const client = await createClient(archive);
   const originalWrite = SafeOutputTree.prototype.write;
   const started = deferred();
   const finish = deferred();
@@ -247,7 +245,13 @@ it("waits for admitted extraction before close and rejects later work", async ()
   const extraction = client.execute("extract_artifact", {
     output_root: output,
   });
-  await started.promise;
+  await Promise.race([
+    started.promise,
+    extraction.then((result) => {
+      if (!result.ok) throw result.error;
+      throw new Error("Extraction completed before reaching its write stage");
+    }),
+  ]);
   const closing = client.close().then((result) => {
     closeFinished = true;
     return result;

@@ -9,3 +9,14 @@ export const addressCoordinate = (
   if (!/^0x[0-9a-f]+$/u.test(offset)) return null;
   return { space, offset: BigInt(offset) };
 };
+
+/** Return a bounded byte distance between canonical addresses in one space. */
+export const addressDistance = (start: string, end: string): number | null => {
+  const left = addressCoordinate(start);
+  const right = addressCoordinate(end);
+  if (left === null || right === null || left.space !== right.space)
+    return null;
+  const distance = right.offset - left.offset;
+  if (distance < 0n || distance > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(distance);
+};

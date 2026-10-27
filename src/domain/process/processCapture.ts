@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "../offsetDateTime.js";
 import { jsonValueSchema } from "../jsonValue.js";
 
 import { normalizationSchema } from "./processScenario.js";
@@ -455,8 +456,8 @@ const processCaptureShapeSchema = z.strictObject({
     platform: z.string().min(1),
     architecture: z.string().min(1),
     pty_backend: z.literal("node-pty"),
-    started_at: z.iso.datetime(),
-    completed_at: z.iso.datetime(),
+    started_at: utcDateTimeSchema,
+    completed_at: utcDateTimeSchema,
     scenario: z.record(z.string(), jsonValueSchema),
     comparison_contract: z.record(z.string(), jsonValueSchema),
     full_scenario_sha256: z.string().regex(/^[a-f0-9]{64}$/u),

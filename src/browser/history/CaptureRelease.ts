@@ -1,7 +1,7 @@
 import {
   CAPTURE_DECODER_SEMI_SPACE_MIB,
   DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
-} from "../../config/captureDecoderHeap.js";
+} from "../../domain/analysisResourceLimits.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 

@@ -3,6 +3,7 @@ import type {
   BinaryArchitecture,
   BinaryTarget,
 } from "../../domain/binaryTargetTypes.js";
+import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../contracts/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
 import {
@@ -151,6 +152,8 @@ const sameSessionTarget = (
   current.path === target.path &&
   // Native admission is bound to the requested path, not just its realpath.
   (current.sourcePath ?? current.path) === (target.sourcePath ?? target.path) &&
+  // Artifact name hints and companions depend on the selected spelling.
+  artifactTargetSelectedPath(current) === artifactTargetSelectedPath(target) &&
   snapshotMatchesTarget(snapshotTarget(current), target);
 
 interface ValidateSnapshotInput {

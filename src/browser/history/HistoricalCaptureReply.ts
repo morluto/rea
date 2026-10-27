@@ -1,11 +1,18 @@
 import { z } from "zod";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { artifactFileCancellationCause } from "../../artifacts/ArtifactFileOperation.js";
 import {
   completedStableArtifact,
   readStableArtifact,
 } from "../../artifacts/readStableArtifact.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { withCaptureReaderCleanup } from "./CaptureFailures.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
   webNetworkCapturePayloadSchema,
@@ -57,13 +64,14 @@ export const readHistoricalCaptureReply = async (
       finalization = cause;
       file = completed;
     }
+    const decoded = safeParseUtf8Json(file.bytes);
+    if (!decoded.ok) throw decoded.cause;
     return {
-      value: replySchema.parse(JSON.parse(file.bytes.toString("utf8"))),
+      value: replySchema.parse(decoded.value),
       bytes: file.bytes.length,
       finalization,
     };
   } catch (cause: unknown) {
-    if (finalization !== undefined) throw finalization;
     if (cause instanceof ArtifactReaderFailure) throw cause;
     if (
       signal?.aborted === true &&
@@ -74,11 +82,21 @@ export const readHistoricalCaptureReply = async (
           cause.code === "ABORT_ERR"))
     )
       throw cause;
-    throw new AnalysisOutputError(
+    const error = new AnalysisOutputError(
       "inspect_web_network_capture",
       `Owned capture decoder reply failed for ${capturePath}: ${replyFailureReason(cause)}`,
       { cause },
     );
+    if (finalization?.reason === "cancelled") {
+      const cancellation = new AnalysisCancelledError(
+        "inspect_web_network_capture",
+        { cause: artifactFileCancellationCause(finalization) },
+      );
+      error.retainSecondaryFailure(cancellation, {
+        reply_finalization_error: projectAnalysisError(cancellation),
+      });
+    }
+    throw withCaptureReaderCleanup(error, finalization);
   }
 };
 
@@ -87,6 +105,12 @@ const replyFailureReason = (cause: unknown): string => {
   if (cause instanceof z.ZodError)
     return `Reply violates its schema at ${cause.issues[0]?.path.map(String).join(".") ?? "root"}.`;
   if (cause instanceof SyntaxError) return "Reply is malformed JSON.";
+  if (
+    cause instanceof Error &&
+    "code" in cause &&
+    cause.code === "ERR_ENCODING_INVALID_ENCODED_DATA"
+  )
+    return "Reply is not valid UTF-8.";
   if (cause instanceof Error && "code" in cause)
     return `Reply file could not be read (${String(cause.code)}).`;
   return "Reply could not be validated.";

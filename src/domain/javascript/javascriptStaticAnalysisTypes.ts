@@ -116,6 +116,8 @@ export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
   readonly path: string;
   readonly resolution_context: JavaScriptStaticPathContext;
+  /** Inferred from intact source-directory intrinsics; not a runtime/bundler guarantee. */
+  readonly path_base?: "source-directory";
   readonly mechanism: string;
   readonly module_key: string | null;
   /** Recovered factory runtime; absent in older or unbundled findings. */

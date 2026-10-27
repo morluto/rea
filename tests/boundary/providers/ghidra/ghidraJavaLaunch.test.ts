@@ -1,12 +1,33 @@
 import { ok as javaProbeOk } from "../../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../../src/ghidra/GhidraJavaProbe.js";
-import { mkdir, stat, writeFile, readFile, readdir } from "node:fs/promises";
+import {
+  mkdir,
+  stat,
+  writeFile,
+  readFile,
+  readdir,
+  realpath,
+  symlink,
+} from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import { ArtifactFileCleanupFailure } from "../../../../src/artifacts/ArtifactFileOperation.js";
-import { GhidraLaunchSupportError } from "../../../../src/ghidra/GhidraJavaLaunch.js";
+import {
+  GhidraLaunchSupportError,
+  ghidraJavaLaunch,
+} from "../../../../src/ghidra/GhidraJavaLaunch.js";
+import {
+  inspectGhidraInstallation,
+  ghidraJavaEnvironment,
+} from "../../../../src/ghidra/GhidraInstallation.js";
+import {
+  SUPPORTED_GHIDRA_VERSION,
+  SUPPORTED_GHIDRA_JAVA_MAJOR,
+} from "../../../../src/ghidra/GhidraReleasePolicy.js";
+import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisCancelledError } from "../../../../src/domain/analysisErrorCore.js";
 
@@ -34,6 +55,110 @@ import { silentLogger } from "../../../../src/logger.js";
 
 const warning =
   "[0.004s][warning][os,container] Cgroup limits may be inaccurate: /tmp/password-fixture?token=public-value";
+
+it.skipIf(process.platform === "win32")(
+  "keeps the same symlink parent selection from installation inspection through Java launch",
+  async () => {
+    const root = await createTestTempDirectory("rea-ghidra-selected-parent-");
+    const intended = join(root, "selected");
+    for (const directory of [
+      "child",
+      "bin",
+      "support",
+      "Ghidra/Framework/Utility/lib",
+      `Ghidra/Features/Decompiler/os/${process.platform === "darwin" ? "mac_x86_64" : "linux_x86_64"}`,
+    ])
+      await mkdir(join(intended, directory), { recursive: true });
+    await symlink(join(intended, "child"), join(root, "alias"));
+    const selected = `${root}/alias/..`;
+    await writeFile(
+      join(intended, "Ghidra/application.properties"),
+      `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${SUPPORTED_GHIDRA_JAVA_MAJOR}\n`,
+    );
+    for (const file of [
+      "support/analyzeHeadless",
+      "support/LaunchSupport.jar",
+      "Ghidra/Framework/Utility/lib/Utility.jar",
+      `Ghidra/Features/Decompiler/os/${process.platform === "darwin" ? "mac_x86_64" : "linux_x86_64"}/decompile`,
+    ])
+      await writeFile(join(intended, file), "selected", { mode: 0o700 });
+    await writeFile(
+      join(intended, "bin/java"),
+      `#!/bin/sh
+previous=""
+for argument do
+  if [ "$previous" = "-cp" ]; then
+    [ "$(/bin/cat "$argument")" = "selected" ] || exit 92
+  fi
+  previous="$argument"
+done
+if [ "$previous" = "-envvars" ]; then
+  printf 'GHIDRA_MAXMEM=1G\\n'
+else
+  printf '%s\\n' '-Dfile.encoding=UTF8'
+fi
+`,
+      { mode: 0o700 },
+    );
+    const resources = createInspectionResources();
+    onTestFinished(() => resources.close());
+    const observedJava: string[] = [];
+    const inspected = await inspectGhidraInstallation(
+      {
+        installDir: selected,
+        javaHome: selected,
+        environment: {},
+        platform: process.platform,
+        architecture: "x64",
+        resourceOwner: resources.owner,
+      },
+      {
+        readText: (path) => readFile(path, "utf8"),
+        executable: (path) => existsSync(path) && statSync(path).isFile(),
+        probeJava: async (command) => {
+          observedJava.push(await realpath(command));
+          return javaProbeOk({
+            version: `${SUPPORTED_GHIDRA_JAVA_MAJOR}.0.1`,
+            major: SUPPORTED_GHIDRA_JAVA_MAJOR,
+            home: await realpath(intended),
+            bits: 64,
+            runtime: "jdk",
+            osArch: "amd64",
+            osName: process.platform === "darwin" ? "Mac OS X" : "Linux",
+          });
+        },
+      },
+    );
+    expect(inspected.status).toBe("available");
+    expect(observedJava).toEqual([await realpath(join(intended, "bin/java"))]);
+    if (inspected.status !== "available")
+      throw new Error("Expected selected installation");
+    expect(inspected.installDir).toBe(selected);
+    expect(inspected.javaHome).toBe(selected);
+    const environment = ghidraJavaEnvironment(
+      inspected.javaHome,
+      {},
+      process.platform,
+    );
+    expect(environment.PATH?.split(":")[0]).toBe(`${selected}/bin`);
+    const launched = await ghidraJavaLaunch({
+      platform: process.platform,
+      analyzeHeadlessPath: inspected.analyzeHeadlessPath,
+      javaHome: inspected.javaHome,
+      homeRoot: root,
+      tempRoot: root,
+      arguments: [],
+      environment,
+      onStderr: () => {},
+    });
+    expect(await realpath(launched.command)).toBe(
+      await realpath(join(intended, "bin/java")),
+    );
+    expect(launched.arguments).toContain(
+      `${selected}/Ghidra/Framework/Utility/lib/Utility.jar`,
+    );
+  },
+);
 
 const fixture = async (
   mode: string,

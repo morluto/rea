@@ -85,11 +85,12 @@ export const readConfigurationFile = async (
   }
 };
 
-/** Read every applicable user file; malformed lower-priority files also stop setup. */
+/** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
+  writeOverrides?: Readonly<Record<string, string>>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -104,7 +105,7 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
-        {},
+        path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
       );
@@ -115,7 +116,7 @@ export const readClientConfigurationFiles = async (
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
-    {},
+    writeOverrides,
     "effective",
     platform,
   );

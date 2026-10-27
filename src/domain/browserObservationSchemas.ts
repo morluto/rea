@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
@@ -266,8 +267,8 @@ export const webPageInspectionSchema = z.object({
   browser: browserVersionSchema,
   target: browserTargetSchema,
   capture_window: z.object({
-    started_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    started_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     observation_ms: z.int().min(0),
   }),
   completeness: browserCompletenessSchema,
@@ -293,12 +294,12 @@ export const webPageInspectionSchema = z.object({
   network: z.object({
     requests: z.array(browserNetworkRequestSchema),
     websocket_connections: z.array(browserWebSocketConnectionSchema),
-    coverage_started_at: z.iso.datetime(),
+    coverage_started_at: utcDateTimeSchema,
     prior_activity_available: z.literal(false),
   }),
   console: z.object({
     events: z.array(browserConsoleEventSchema),
-    coverage_started_at: z.iso.datetime(),
+    coverage_started_at: utcDateTimeSchema,
     prior_activity_available: z.literal(false),
   }),
   workers: z.array(browserWorkerSchema),

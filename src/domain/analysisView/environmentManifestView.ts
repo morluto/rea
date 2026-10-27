@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { AnalysisUnsupportedTargetError } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
@@ -72,7 +73,7 @@ const toolSchema = z.strictObject({
   body_shape: z
     .strictObject({
       type: z.literal("object"),
-      properties: z.record(z.string(), jsonTypeNameSchema),
+      properties: jsonRecordSchema(jsonTypeNameSchema),
     })
     .nullable(),
   statuses: z.array(z.number()),

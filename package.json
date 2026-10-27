@@ -129,7 +129,6 @@
     "check:ci:fast:tasks": "node scripts/run-turbo.mjs run typecheck lint:built format:check",
     "check:ci:deep": "node scripts/run-exclusive.mjs artifacts npm run check:ci:deep:tasks && npm run verify:architecture-guards && npm run verify:test-discovery && npm run test:python && npm run knip:production && npm run lint:typed",
     "check:ci:deep:tasks": "node scripts/run-turbo.mjs run knip metadata:check jscpd scan:todos",
-    "check:ci:tasks": "node scripts/run-turbo.mjs run typecheck lint:built format:check knip metadata:check jscpd scan:todos",
     "ci:static-context": "node scripts/ci/static-task-context.mjs",
     "build:cached": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run artifacts:skills",
     "build:termux": "node scripts/run-exclusive.mjs artifacts npm run build:termux:run",
@@ -368,7 +367,7 @@
     "openpgp": "6.3.2",
     "parse5": "8.0.1",
     "pino": "10.4.0",
-    "playwright-core": "1.58.2",
+    "playwright-core": "1.64.1",
     "plist": "5.0.0",
     "saxes": "6.0.0",
     "semver": "7.8.5",
@@ -379,7 +378,7 @@
     "write-file-atomic": "7.0.0",
     "ws": "8.21.0",
     "yaml": "2.9.0",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "overrides": {
     "typed-rest-client": {

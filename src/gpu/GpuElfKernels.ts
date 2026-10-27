@@ -6,6 +6,7 @@ import {
 } from "./AmdGpuTarget.js";
 import type { GpuPayloadTarget } from "./GpuObject.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { elfNoteLayout } from "../domain/native/elfNoteLayout.js";
 import {
   CudaMetadataBudget,
   readCudaInfo,
@@ -22,7 +23,8 @@ import {
   type NativeSection,
   type NativeSectionDirectory,
 } from "../native/metadata/NativeSectionDirectory.js";
-import { readElfString, readElfSymbol } from "../native/metadata/ElfSymbol.js";
+import { readElfString } from "../native/metadata/ElfStringTable.js";
+import { readElfSymbol } from "../domain/elfSymbol.js";
 import {
   gpuCount,
   readGpuNativeDirectory,
@@ -276,11 +278,17 @@ const cudaKernels = async (
     let extendedIndices: Buffer | null = null;
     for (let offset = 0; offset < bytes.length; offset += width) {
       index.budget.visit();
-      const symbol = readElfSymbol(
+      const parsedSymbol = readElfSymbol(
         bytes.subarray(offset, offset + width),
         directory.bits,
         directory.little,
       );
+      if (!parsedSymbol.ok)
+        throw new BinaryFormatFailure(
+          parsedSymbol.error.kind,
+          parsedSymbol.error.message,
+        );
+      const symbol = parsedSymbol.value;
       // STO_CUDA_ENTRY distinguishes launchable kernels from ordinary device functions.
       if (symbol.type !== 2 || (symbol.other & 0x10) === 0) continue;
       let sectionIndex = symbol.section_index;
@@ -433,9 +441,11 @@ export const readAmdElfMetadata = async (
         const namesize = r.u32(p),
           size = r.u32(p + 4),
           type = r.u32(p + 8);
+        // AMDGPU metadata uses four-byte note padding regardless of section alignment.
+        const layout = elfNoteLayout(namesize, size, 4);
         const nameOffset = p + 12,
-          desc = nameOffset + Math.ceil(namesize / 4) * 4,
-          end = desc + Math.ceil(size / 4) * 4;
+          desc = p + layout.descriptor,
+          end = p + layout.next;
         r.range(nameOffset, namesize, "ELF note vendor");
         r.range(desc, size, "ELF note descriptor");
         if (end > bytes.length)

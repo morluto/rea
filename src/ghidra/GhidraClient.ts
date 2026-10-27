@@ -39,7 +39,7 @@ import {
   type ProviderProcessSnapshot,
   ProviderProcessSupervisor,
 } from "../process/ProviderProcess.js";
-import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../config/providerStartupTimeout.js";
+import { DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS } from "../domain/analysisResourceLimits.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST } from "../config/bridgeMaxRequestBytes.js";
 import type {
   GhidraClientOptions,
@@ -1091,7 +1091,9 @@ export class GhidraClient {
     const parsed = parseGhidraSessionInfo(value, {
       runId,
       expectedReadOnly:
+        this.#options.existingProject === true ||
         this.#options.transport === "authenticated-loopback-tcp",
+      expectedExistingProject: this.#options.existingProject === true,
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,

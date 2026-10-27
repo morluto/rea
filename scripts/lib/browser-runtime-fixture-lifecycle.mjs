@@ -8,11 +8,15 @@ import { spawnOwnedProviderProcess } from "../../dist/process/ProviderProcess.js
 import { createSystemProcessOwnershipHost } from "../../dist/process/ProcessOwnershipObservation.js";
 import { liveProcesses } from "../../dist/process/ProcessOwnershipProcessTree.js";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
-import {
-  BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
-  waitForBrowserDevtoolsPort,
-} from "../../dist/browser/BrowserProcessStartup.js";
+import { importVerifierSource } from "./verifier-source-loader.mjs";
+
 import { requireOrdinaryWindowsVerifierCaller } from "./windows-ordinary-user-verifier.mjs";
+
+const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS, waitForBrowserDevtoolsPort } =
+  await importVerifierSource(
+    new URL("./browser-process-startup.mts", import.meta.url).href,
+    import.meta.url,
+  );
 
 /** Launch the synthetic fixture browser and await CDP in its own verified process group. */
 export async function startRuntimeFixtureBrowser(executable, origin) {

@@ -425,7 +425,9 @@ const artifactStateErrorDetails = (
         : {
             published: true,
             bytes: error.published.bytes,
-            published_path: error.published.path,
+            ...(error.published.path === undefined
+              ? {}
+              : { published_path: error.published.path }),
           }),
     };
   return undefined;
@@ -448,6 +450,7 @@ const providerErrorDetails = (
       candidate_ids: [...error.candidateIds],
       rejections: error.rejections.map((rejection) => ({
         provider_id: rejection.providerId,
+        origin: rejection.origin,
         code: rejection.code,
         reason: rejection.reason,
         diagnostics: rejection.diagnostics,

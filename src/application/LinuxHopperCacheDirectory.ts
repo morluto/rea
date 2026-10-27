@@ -1,4 +1,5 @@
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
@@ -18,14 +19,13 @@ export const linuxHopperReleaseCacheDirectory = (
         ),
       );
     return ok(
-      join(
+      appendCallerPath(
         supplied ??
-          join(
+          appendCallerPath(
             selectedHome ?? homeDirectoryFromEnvironment(environment, "linux"),
             ".cache",
           ),
-        "rea",
-        "hopper-releases",
+        "rea/hopper-releases",
       ),
     );
   } catch (cause: unknown) {

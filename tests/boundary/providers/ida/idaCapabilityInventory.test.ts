@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "../../../../src/ida/IdaConfiguration.js";
 import { expect, it } from "vitest";
 import { buildCapabilityInventory } from "../../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../../src/application/binary/BinarySessionStatus.js";
@@ -18,7 +19,10 @@ it.each([false, true])(
       open: true,
       kind: "executable",
       capabilities: providerCapabilitySets(
-        idaCapabilities(showUi ? "attached" : "headless", false),
+        idaCapabilities(
+          IDA_COMPATIBILITY_PROFILES[showUi ? "legacy" : "modern"],
+          false,
+        ),
       ),
     };
     const entries = buildCapabilityInventory(input, enabledPolicy);

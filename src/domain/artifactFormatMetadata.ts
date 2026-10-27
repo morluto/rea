@@ -122,6 +122,11 @@ export const nodeSeaEntryMetadataSchema = z.strictObject({
   index: uint32,
 });
 
+/** Runtime member identity, independent of blob layout and directory order. */
+export const nodeSeaEntryDeclaration = (
+  metadata: z.infer<typeof nodeSeaEntryMetadataSchema>,
+) => ({ role: metadata.role, source_path: metadata.source_path });
+
 /** Declaration identity that is stable across archive layout changes. */
 export const pyInstallerEntryDeclaration = (
   metadata: PyInstallerEntryMetadata,

@@ -1,11 +1,13 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { electronActiveObservationInputSchema } from "../../domain/javascript/electronActiveObservation.js";
-import { err } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
+import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
+import { createElectronActiveObservationFixtureResult } from "../../domain/javascript/electronActiveObservation.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import type { ElectronActiveObservationPort } from "./ElectronActiveObservationPort.js";
 import { captureElectronScenario } from "./ElectronActiveObservationService.js";
@@ -188,3 +190,46 @@ it("admits readable selections and hands canonical paths to the provider", async
     application_root: readable,
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "records selected scenario paths and omission while executing canonical paths",
+  async () => {
+    const { root, readable } = await fixture();
+    const alias = join(root, "selected-application");
+    await symlink(readable, alias);
+    const input = electronActiveObservationInputSchema.parse({
+      executable_path: process.execPath,
+      application_path: join(alias, "main.js"),
+    });
+    const canonicalApplication = await realpath(input.application_path);
+    const capture = vi.fn<ElectronActiveObservationPort["capture"]>(() =>
+      Promise.resolve(
+        ok(createElectronActiveObservationFixtureResult(canonicalApplication)),
+      ),
+    );
+    const result = await captureElectronScenario(
+      { identity: () => ({ id: "test", name: "test", version: "1" }), capture },
+      input,
+    );
+    expect(capture.mock.calls[0]?.[0]).toMatchObject({
+      executable_path: await realpath(process.execPath),
+      application_path: canonicalApplication,
+      application_root: await realpath(readable),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw result.error;
+    expect(result.value.parameters).toEqual({
+      ...input,
+      scenario_sha256: digestCanonicalValue(input, "Electron scenario"),
+      resolved_paths: {
+        executable_path: await realpath(process.execPath),
+        application_path: canonicalApplication,
+        application_root: await realpath(readable),
+      },
+    });
+    expect(result.value.parameters).not.toHaveProperty("application_root");
+    expect(result.value.normalized_result).toMatchObject({
+      application: { application_path: canonicalApplication },
+    });
+  },
+);

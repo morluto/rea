@@ -16,7 +16,7 @@ import {
   type ArtifactReader,
 } from "../ArtifactReader.js";
 import { streamChunkToBuffer } from "../StreamBytes.js";
-import { hashReadable } from "../ArtifactHash.js";
+import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -400,17 +400,13 @@ const verifyEntryBytes = async (
   expected: Pick<ExpectedFile, "path" | "sha256" | "bytes">,
   signal?: AbortSignal,
 ): Promise<void> => {
-  try {
-    const digest = await hashReadable(stream, signal);
-    if (digest.sha256 !== expected.sha256 || digest.bytes !== expected.bytes)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact entry changed after inventory: ${expected.path}`,
-      );
-  } catch (cause: unknown) {
-    abortIfNeeded(signal);
-    throw cause;
-  }
+  const digest = await hashReadableToCompletion(stream, signal);
+  if (digest.sha256 !== expected.sha256 || digest.bytes !== expected.bytes)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact entry changed after inventory: ${expected.path}`,
+    );
+  abortIfNeeded(signal);
 };
 
 const expectedInventory = (

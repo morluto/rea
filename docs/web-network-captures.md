@@ -625,7 +625,8 @@ refused for them, as the manifest is not.
 
 Each `GET` tool whose template ends in a parameter is an item tool, and its
 type's `collection_template` is the template without that parameter; any other
-`GET` tool is a list tool of its own template. Empty segments are ignored, so a
+`GET` tool is a list tool of its own template. Interior empty segments remain
+meaningful: `/api/books` and `/api//books` name distinct collections. A single
 trailing slash names the same collection. An item tool proves its type's
 `id_field` when every initial response carries the requested path value in the
 same field of one entity object (`id_basis: "path-parameter"`). The object is
@@ -696,8 +697,9 @@ more than one query) and `rendered-oversize` (a document value whose JSON
 renders to more than 256 KiB). A document holds the value of its one `path`, so for such
 a template it says nothing about the template's other paths. A body is usable
 when its content type is
-JSON-like, it is UTF-8 text of at most 256 KiB, every number survives native
-conversion exactly, and no member is named `__proto__`.
+JSON-like, it is UTF-8 text of at most 256 KiB, and every number survives native
+conversion exactly. JSON member names, including `__proto__`, remain ordinary
+own data members through extraction and serving.
 
 A list view also learns, from its checked lines that do not list the whole
 collection, what each query parameter does, and names the result in `query`.
@@ -769,17 +771,39 @@ sorted stays sorted, unless a call stored its strings out of order as sent),
 and a field neither rules holds one value. Members either call sent are accepted, only those every call sent are
 required, and an echoed member a call left out takes the value that call stored
 (`body.defaults`). A clock rule widens to `trimmed` only when no held entity or
-earlier call showed that clock at a fixed width. A later create that disagrees
-leaves the plan as it was. A create whose observed reference differs from the
+earlier call showed that clock at a fixed width, and a slug to spelling `&` as
+the word (`ampersand: "and"`) only when no call the plan accepted nor entity the
+type held dropped one. A later
+create that disagrees leaves the plan as it was. A field the first create left
+unexplained, such as an address whose two parts were the same text, takes the
+`composed` rule a later create learns for it when that rule spells the first
+create's value too, and the first create's body contract is learned again with
+it. A `composed` string or `template` a later create's answer shows otherwise
+or leaves out is `unexplained-change`. A create whose observed reference
+differs from the
 entity the plan rebuilds, whether or not it sent the reference member, is
 `unexplained-change`. So is a create that left out an echoed member yet shows a
 value different from the learned default.
 A `composed` string is literal text and parts read from the fields other rules
 write: a field's value, its slug, or a clock's calendar digits
 (`YYYYMMDDhhmmss`, `YYYYMMDD`, `YYYY-MM-DD` or `YYYY/MM/DD`, in the clock's
-zone). A create composes a string only when at least one other entity of the
-type spells it with the same parts and none spells it otherwise, and never when
-one text could come from two sources serving could tell apart. A clock format
+zone). A slug drops `&` unless the application spells it as the word, as Go's
+gosimple/slug and JavaScript's slugify do (`ampersand: "and"`, on a `slug` rule
+or part). When a create slugs no `&`, the entities the type holds show which,
+and no `slug` rule is learned when they spell it both ways; a create whose slug
+spells `&` otherwise than they do, or alongside one whose
+slug neither spelling gives, has no `slug` rule; such a held slug also keeps a
+later create from widening the spelling. An update learns the spelling the same way: a later update whose slug spells
+`&` as the word refines a rule an earlier update learned from a name without
+`&`, unless an accepted call or a held entity dropped it, and every earlier
+update must still replay. An update whose slug spells no `&` takes the spelling the
+entity's earlier value and the type's other entities show, as a create does,
+and learns no slug rule when they spell it both ways. A create composes a string only when at least one other entity of the
+type spells it with the same parts and none spells it otherwise. Where one text
+could come from two sources serving could tell apart, such as an id that equals
+the title's slug, the entities the type holds must leave exactly one reading. A
+`composed` string that reads a field besides the generated value a `template`
+would rebuild it around replaces the template. A clock format
 is `trimmed` when the field's values differ only in how many fraction digits
 they show and none ends a fraction in a zero, as Go spells nanoseconds: its
 `fraction` is the most it shows, and serving drops trailing zeros and the point
@@ -831,10 +855,11 @@ checked only on the members they sent; a mismatch no write explains marks the re
 `side-effect`. A plan is `served` when a read confirmed it and none
 contradicted it; otherwise its `reason` is the first of its build reason
 (`no-call`, `body-unusable`, `no-observation`, `unexplained-change`),
-`contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows, counting for an update the fields its rules write, so it could answer only for entities the environment created).
+`contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows, counting for an update the fields its rules write, so it could answer only for entities the environment created). An otherwise served plan whose learned rules generate clock values is withheld with `unknown-clock` when no global clock start is established; its learned rules and confirming reads remain retained.
 `checked_record_ordinals` lists the confirming reads, `insert` places created
 entities (sorted by a field the collection's recorded order shows, else last),
-and `write_clock` is the end of the last timed record, to the next second.
+and `write_clock` is the end of the last timed record, to the next second, when
+all request completions are known; otherwise it is null.
 
 Values in the state are recorded data, so the view refuses the same parents as
 the manifest, including those inspected with `sensitive_values`, and a

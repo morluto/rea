@@ -22,6 +22,7 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
+  RetainedResourceScope,
 } from "../application/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
@@ -30,6 +31,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { Result } from "../domain/result.js";
 import {
   readIdaConfiguration,
+  idaCompatibilityProfile,
+  IDA_COMPATIBILITY_PROFILES,
   type IdaConfiguration,
   idaConfigurationError,
 } from "./IdaConfiguration.js";
@@ -50,7 +53,6 @@ import {
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
 
 /** Bring-your-own IDA MCP candidate; discovery performs no provider startup. */
@@ -86,9 +88,21 @@ export class IdaProvider implements AnalysisProviderCandidate {
   }
   capabilities(): readonly CapabilityDescriptor[] {
     const profiles = [
-      ...idaCapabilities("attached", false, false, this.#regexLimitation()),
-      ...idaCapabilities("attached", true, true, this.#regexLimitation()),
-      ...idaCapabilities("headless", true, false, this.#regexLimitation()),
+      ...idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES.legacy,
+        false,
+        this.#regexLimitation(),
+      ),
+      ...idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES.native,
+        true,
+        this.#regexLimitation(),
+      ),
+      ...idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES.modern,
+        true,
+        this.#regexLimitation(),
+      ),
     ];
     const byOperation = new Map<string, (typeof profiles)[number][]>();
     for (const capability of profiles) {
@@ -171,9 +185,8 @@ export class IdaProvider implements AnalysisProviderCandidate {
     const config = await this.#configuration(options);
     const capabilities = config.ok
       ? idaCapabilities(
-          config.value.mode,
+          idaCompatibilityProfile(config.value),
           "command" in config.value,
-          config.value.protocol === "native",
           this.#regexLimitation(),
         )
       : this.capabilities();
@@ -350,12 +363,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
       engine_version: null,
       upstream_distribution_version: null,
       mode: config.value.mode,
-      compatibility_profile:
-        config.value.protocol === "native"
-          ? "native-ida-mcp"
-          : config.value.mode === "attached"
-            ? "legacy-1.4"
-            : "database-supervisor",
+      compatibility_profile: idaCompatibilityProfile(config.value).identity,
       database_revision: null,
       cache_policy: "live",
       registration_digest: idaRegistrationDigest(config.value),

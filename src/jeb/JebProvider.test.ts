@@ -193,7 +193,7 @@ describe("JebProvider observations and failures", () => {
     expect(result.error.message).toContain("ECONNREFUSED");
   });
 
-  it("preserves engine refusal reasons as unsupported targets", async () => {
+  it("preserves engine refusal reasons without inferring unsupported target formats", async () => {
     const provider = providerWith(
       scriptedConnection({
         get_client_information: {
@@ -214,7 +214,9 @@ describe("JebProvider observations and failures", () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error.message).toContain("does not reference an existing");
+    expect(projectAnalysisError(result.error).message).toContain(
+      "does not reference an existing",
+    );
   });
 
   it("derives partial coverage only from a full engine page", async () => {
@@ -544,10 +546,16 @@ it("project-open refusal retains the selected engine-host artifact path", async 
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Refused artifact accepted");
   expect(projectAnalysisError(result.error)).toMatchObject({
-    code: "unsupported_target",
+    code: "execution_failure",
+    message: "The input file could not be processed",
     details: {
-      path: "/targets/Example.apk",
-      reason: "The input file could not be processed",
+      diagnostics: {
+        input: { path: "/targets/Example.apk" },
+        upstream_response: {
+          success: false,
+          message: "The input file could not be processed",
+        },
+      },
     },
   });
   await provider.close();
@@ -640,3 +648,190 @@ it.each([
     await control.close();
   },
 );
+
+// The published JEB 5.47 catalog leaves codes open and describes recovery as
+// upstream advice, not permission for REA to invoke another engine operation.
+describe("JEB refusal input and response preservation", () => {
+  const requests = [
+    {
+      operation: "inspect_jeb_client",
+      input: {},
+      tool: "get_client_information",
+    },
+    {
+      operation: "open_jeb_project",
+      input: { path: "/targets/input.apk" },
+      tool: "open_project",
+    },
+    {
+      operation: "list_jeb_units",
+      input: { count: 10, index: 0 },
+      tool: "list_units",
+    },
+    {
+      operation: "decompile_jeb_item",
+      input: {
+        item_address: "LExample;->x()V",
+        item_kind: "method",
+        unit_path: "0/1",
+      },
+      tool: "decompile_code_item",
+    },
+  ] as const;
+
+  it.each(requests)(
+    "retains unknown refusal facts for $operation",
+    async ({ tool, ...request }) => {
+      const payload = {
+        success: false,
+        message: "Engine state needs attention",
+        error: {
+          code: "future_vendor_code",
+          recovery_required_before_retry: false,
+          recovery_tool: "open_project",
+          vendor_detail: { phase: "analysis" },
+        },
+        vendor_trace: ["first", "second"],
+      };
+      const connection = scriptedConnection({ [tool]: payload });
+      const provider = providerWith(connection);
+      const result = await provider.execute(request);
+      if (result.ok) throw new Error("Engine refusal accepted");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "execution_failure",
+        message: payload.message,
+        details: {
+          diagnostics: { input: request.input, upstream_response: payload },
+        },
+      });
+      expect(connection.calls).toHaveLength(1);
+      await provider.close();
+    },
+  );
+
+  it("omits undefined optional inputs when retaining JSON diagnostics", async () => {
+    const provider = providerWith(
+      scriptedConnection({
+        list_units: { success: false, message: "Refused" },
+      }),
+    );
+    const result = await provider.execute({
+      operation: "list_jeb_units",
+      input: {
+        count: 10,
+        index: 0,
+        filter: undefined,
+        parent_unit_path: undefined,
+      },
+    });
+    if (result.ok) throw new Error("Engine refusal accepted");
+    expect(result.error.diagnostics?.input).toEqual({ count: 10, index: 0 });
+    expect(result.error.diagnostics?.input).not.toHaveProperty("filter");
+    await provider.close();
+  });
+});
+
+describe("JEB refusal recovery and presentation", () => {
+  it.each([undefined, false, true])(
+    "preserves recovery flag %s without invoking recovery",
+    async (flag) => {
+      const payload = {
+        success: false,
+        error: {
+          code: "not_documented",
+          recovery_tool: "run_script",
+          ...(flag === undefined
+            ? {}
+            : { recovery_required_before_retry: flag }),
+        },
+      };
+      const connection = scriptedConnection({
+        get_client_information: payload,
+      });
+      const provider = providerWith(connection);
+      const result = await provider.execute({
+        operation: "inspect_jeb_client",
+        input: {},
+      });
+      if (result.ok) throw new Error("Engine refusal accepted");
+      expect(result.error.diagnostics?.upstream_response).toEqual(payload);
+      expect(connection.calls).toEqual([["get_client_information", {}]]);
+      await provider.close();
+    },
+  );
+
+  it.each([
+    {
+      payload: {
+        success: false,
+        message: "outer reason",
+        error: { message: "", code: "code" },
+      },
+      expected: "outer reason",
+    },
+    {
+      payload: {
+        success: false,
+        message: " ",
+        error: { message: "", code: "code" },
+      },
+      expected: "code",
+    },
+    { payload: { success: false }, expected: "The engine refused the request" },
+  ])(
+    "selects a nonempty refusal message: $expected",
+    async ({ payload, expected }) => {
+      const provider = providerWith(
+        scriptedConnection({ get_client_information: payload }),
+      );
+      const result = await provider.execute({
+        operation: "inspect_jeb_client",
+        input: {},
+      });
+      if (result.ok) throw new Error("Engine refusal accepted");
+      expect(projectAnalysisError(result.error).message).toBe(expected);
+      expect(result.error.diagnostics?.upstream_response).toEqual(payload);
+      await provider.close();
+    },
+  );
+
+  it("availability retains a reachable engine's refusal rather than prescribing connection setup", async () => {
+    const payload = {
+      success: false,
+      message: "Client initialization pending",
+      error: {
+        code: "future_code",
+        recovery_required_before_retry: true,
+        recovery_tool: "get_client_information",
+      },
+    };
+    const provider = providerWith(
+      scriptedConnection({ get_client_information: payload }),
+    );
+    expect(await provider.inspectAvailability()).toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      reason: payload.message,
+      diagnostics: { upstream_response: payload, input: {} },
+    });
+    await provider.close();
+  });
+
+  it.each([
+    { success: false, error: { recovery_required_before_retry: "false" } },
+    { message: "missing success" },
+    { success: "false" },
+  ])("retains malformed envelopes as protocol failures", async (payload) => {
+    const provider = providerWith(
+      scriptedConnection({ get_client_information: payload }),
+    );
+    const result = await provider.execute({
+      operation: "inspect_jeb_client",
+      input: {},
+    });
+    if (result.ok) throw new Error("Malformed envelope accepted");
+    expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+    expect(result.error.diagnostics?.upstream_response).toEqual(payload);
+    await provider.close();
+  });
+});

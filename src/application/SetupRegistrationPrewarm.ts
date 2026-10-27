@@ -1,8 +1,19 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { randomUUID } from "node:crypto";
+import {
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import { ownedCommandResources } from "../process/OwnedCommand.js";
 import { tmpdir } from "node:os";
 import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
 
-import { cleanupWindowsProcessTree } from "../process/ProcessOwnership.js";
 import { inspectClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 
 /**
@@ -13,7 +24,11 @@ import { inspectClientRegistrationCommand } from "./ClientRegistrationIdentity.j
 export type SetupRegistrationPrewarm =
   | { readonly status: "skipped"; readonly reason: "direct_launcher" }
   | { readonly status: "warmed" }
-  | { readonly status: "failed"; readonly reason: string };
+  | {
+      readonly status: "failed";
+      readonly reason: string;
+      readonly interruptedSignal?: string;
+    };
 
 /** One cold package install at setup time; client startup deadlines stay untouched. */
 const PREWARM_TIMEOUT_MS = 180_000;
@@ -28,6 +43,7 @@ export interface RegistrationRunnerLaunch {
   readonly stderr: string;
   readonly timedOut: boolean;
   readonly spawnError?: string;
+  readonly cleanupFailure?: string;
   /** Terminal interrupt that was forwarded to the runner tree, if any. */
   readonly interruptedSignal?: string;
 }
@@ -43,6 +59,8 @@ export type RegistrationRunnerLauncher = (
     readonly cwd: string;
     readonly timeoutMs: number;
     readonly platform: NodeJS.Platform;
+    readonly resources: ArtifactResourceScope;
+    readonly launcher?: typeof spawnOwnedProviderProcess;
   },
 ) => Promise<RegistrationRunnerLaunch>;
 
@@ -68,6 +86,7 @@ export const registrationPrewarmCommand = (
 export const materializeRegistrationRunnerCache = async (
   command: readonly string[],
   environment: Readonly<NodeJS.ProcessEnv>,
+  resources: ArtifactResourceScope,
   launchCommand: RegistrationRunnerLauncher = launchRegistrationRunnerCommand,
 ): Promise<SetupRegistrationPrewarm> => {
   const prewarm = registrationPrewarmCommand(command);
@@ -78,117 +97,154 @@ export const materializeRegistrationRunnerCache = async (
     cwd: tmpdir(),
     timeoutMs: PREWARM_TIMEOUT_MS,
     platform: process.platform,
+    resources,
   });
   return launch.timedOut ||
     launch.spawnError !== undefined ||
+    launch.cleanupFailure !== undefined ||
     launch.interruptedSignal !== undefined ||
     launch.exitCode !== 0
-    ? { status: "failed", reason: prewarmFailureReason(launch) }
+    ? {
+        status: "failed",
+        reason: prewarmFailureReason(launch),
+        ...(launch.interruptedSignal === undefined
+          ? {}
+          : { interruptedSignal: launch.interruptedSignal }),
+      }
     : { status: "warmed" };
 };
 
-/**
- * Stop the whole runner tree: killing only the direct child leaves npm, which
- * inherited the output pipes, holding them open past the deadline.
- */
-const stopRunnerTree = (
-  child: ChildProcess,
-  platform: NodeJS.Platform,
-): Promise<void> => {
-  const pid = child.pid;
-  if (pid === undefined) return Promise.resolve();
-  if (platform === "win32")
-    return cleanupWindowsProcessTree(pid).then(() => undefined);
-  return new Promise((resolve) => {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // The process group may already be gone.
-    }
-    resolve();
-  });
-};
-
+/** Own the launcher and token-marked descendants until cleanup is verified. */
 export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
   command,
   arguments_,
   options,
-) =>
-  new Promise((resolve) => {
-    const child = spawn(command, [...arguments_], {
-      env: options.env,
-      cwd: options.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
-      // POSIX runs the runner in its own group so one signal stops the tree;
-      // an interrupt must therefore be forwarded below, because the detached
-      // group no longer receives the terminal's signal.
-      ...(options.platform === "win32" ? {} : { detached: true }),
-    });
+) => {
+  const environment = snapshotEnvironment(options.env, options.platform);
+  return options.resources.run(async () => {
     const stdout = new BoundedOutputExcerpt(PREWARM_CAPTURE_LIMIT);
     const stderr = new BoundedOutputExcerpt(PREWARM_CAPTURE_LIMIT);
-    child.stdout?.on("data", (chunk: Buffer) => stdout.append(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => stderr.append(chunk));
+    const controller = new AbortController();
     let timedOut = false;
     let spawnError: string | undefined;
-    let interruptedSignal: string | undefined;
+    let cleanupFailure: string | undefined;
+    let interruptedSignal: NodeJS.Signals | undefined;
+    let supervisor: ProviderProcessSupervisor | undefined;
+    let resource: ArtifactResourceOwner | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
-      void stopRunnerTree(child, options.platform).finally(() => {
-        child.kill("SIGKILL");
-      });
+      controller.abort();
     }, options.timeoutMs);
-    const detachSignalForwarding = () => {
-      for (const [signal, handler] of signalHandlers)
-        process.removeListener(signal, handler);
-    };
     const signalHandlers = new Map<NodeJS.Signals, () => void>(
       FORWARD_SIGNALS.map((signal) => [
         signal,
         () => {
           if (interruptedSignal !== undefined) return;
           interruptedSignal = signal;
-          clearTimeout(timer);
-          void stopRunnerTree(child, options.platform).finally(() => {
-            child.kill("SIGKILL");
-            detachSignalForwarding();
-            // Restore default termination for the interrupt that arrived.
-            process.kill(process.pid, signal);
-          });
+          controller.abort();
         },
       ]),
     );
     for (const [signal, handler] of signalHandlers) process.on(signal, handler);
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      spawnError = error.message;
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      detachSignalForwarding();
-      resolve({
-        exitCode: code ?? signal,
-        signal: signal ?? null,
-        stdout: stdout.text,
-        stderr: stderr.text,
-        timedOut,
-        ...(spawnError === undefined ? {} : { spawnError }),
-        ...(interruptedSignal === undefined ? {} : { interruptedSignal }),
+    try {
+      const launched = await (options.launcher ?? spawnOwnedProviderProcess)({
+        command,
+        arguments: arguments_,
+        cwd: options.cwd,
+        hostEnvironment: environment,
+        platform: options.platform,
+        runId: `rea-registration-prewarm-${randomUUID()}`,
+        expectedCommand: null,
+        sweepTokenOwnedProcesses: true,
+        signal: controller.signal,
       });
-    });
+      supervisor = new ProviderProcessSupervisor(
+        {
+          ...launched,
+          ownsProcessLifetime: true,
+          cleanup:
+            launched.cleanup ??
+            (() => cleanupOwnedProcessGroup(launched.ownership)),
+        },
+        {
+          captureStdout: false,
+          maxDiagnosticBytes: 0,
+          onDiagnostic: (event) => {
+            if (event.type === "error") spawnError = event.message;
+          },
+        },
+      );
+      const owner = supervisor;
+      const lease = new AnalysisCleanupLease(async () => {
+        const stopped = await owner.stop();
+        if (stopped.status === "incomplete" || stopped.status === "not-owned")
+          throw new Error(
+            stopped.status === "incomplete"
+              ? stopped.reason
+              : "Registration runner ownership was not confirmed.",
+          );
+      }, ownedCommandResources(launched.ownership));
+      resource = { kind: "lease", resource: command, lease };
+      options.resources.retain(resource);
+      launched.process.stdout?.on("data", (chunk: Buffer) =>
+        stdout.append(chunk),
+      );
+      launched.process.stderr?.on("data", (chunk: Buffer) =>
+        stderr.append(chunk),
+      );
+      await supervisor.waitForOutputClose(undefined, controller.signal);
+    } catch (cause: unknown) {
+      if (!controller.signal.aborted)
+        spawnError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      clearTimeout(timer);
+      try {
+        if (resource !== undefined) {
+          const released = await options.resources.release(resource);
+          if (released.kind === "failed") throw released.cause;
+        }
+      } catch (cause: unknown) {
+        cleanupFailure = cause instanceof Error ? cause.message : String(cause);
+      }
+      for (const [signal, handler] of signalHandlers)
+        process.removeListener(signal, handler);
+      // Restore default termination only after stopping the owned runner tree.
+      if (interruptedSignal !== undefined && cleanupFailure === undefined)
+        process.kill(process.pid, interruptedSignal);
+    }
+    const exit = supervisor?.observedExit();
+    return {
+      exitCode: exit?.code ?? exit?.signal ?? null,
+      signal: exit?.signal ?? null,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      timedOut,
+      ...(spawnError === undefined ? {} : { spawnError }),
+      ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
+      ...(interruptedSignal === undefined ? {} : { interruptedSignal }),
+    };
   });
+};
 
 /** Terminal interrupts that must also stop a detached package-runner tree. */
 const FORWARD_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
 
 const prewarmFailureReason = (launch: RegistrationRunnerLaunch): string => {
   const outcome =
-    launch.spawnError !== undefined
-      ? "spawn failed"
-      : launch.interruptedSignal !== undefined
-        ? `the package runner was stopped by ${launch.interruptedSignal}`
-        : launch.timedOut
-          ? `the package runner timed out after the bounded prewarm window`
-          : `exit ${launch.exitCode === null ? "unknown" : String(launch.exitCode)}`;
-  const normalized = (launch.spawnError ?? launch.stderr)
+    launch.cleanupFailure !== undefined
+      ? "runner cleanup remains incomplete"
+      : launch.spawnError !== undefined
+        ? "spawn failed"
+        : launch.interruptedSignal !== undefined
+          ? `the package runner was stopped by ${launch.interruptedSignal}`
+          : launch.timedOut
+            ? `the package runner timed out after the bounded prewarm window`
+            : `exit ${launch.exitCode === null ? "unknown" : String(launch.exitCode)}`;
+  const normalized = (
+    launch.cleanupFailure ??
+    launch.spawnError ??
+    launch.stderr
+  )
     .replace(/\u001b(?:\[[0-9;?]*[ -/]*[@-~]|\([0-9A-Za-z]|[@-Z\\^_])/gu, "")
     .replace(/[\u0000-\u001f\u007f]+/gu, " ")
     .replace(/\s+/gu, " ")

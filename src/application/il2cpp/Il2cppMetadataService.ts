@@ -1,3 +1,4 @@
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
@@ -25,7 +26,6 @@ import {
   type Il2cppMetadata,
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
@@ -44,7 +44,7 @@ export class Il2cppMetadataService {
   async close(): Promise<void> {
     let failure: AnalysisError | undefined;
     for (const close of [
-      () => this.provider.close?.(),
+      () => this.provider.close(),
       () => this.seeds?.close(),
     ]) {
       try {
@@ -99,20 +99,16 @@ export class Il2cppMetadataService {
     retention: AnalysisViewRetention,
     output?: Il2cppSeedOutput,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectIl2cppMetadataInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectIl2cppMetadataInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
     if (
-      input.data.binary_architecture !== undefined &&
-      input.data.binary_path === undefined
+      input.value.binary_architecture !== undefined &&
+      input.value.binary_path === undefined
     )
       return err(
         new AnalysisInputError(OPERATION, undefined, [
@@ -124,8 +120,8 @@ export class Il2cppMetadataService {
         ]),
       );
     if (
-      input.data.generic_instances === true &&
-      input.data.binary_path === undefined
+      input.value.generic_instances === true &&
+      input.value.binary_path === undefined
     )
       return err(
         new AnalysisInputError(OPERATION, undefined, [
@@ -137,7 +133,7 @@ export class Il2cppMetadataService {
         ]),
       );
     if (output !== undefined) {
-      if (input.data.binary_path === undefined)
+      if (input.value.binary_path === undefined)
         return err(
           new AnalysisInputError(OPERATION, undefined, [
             {
@@ -158,7 +154,7 @@ export class Il2cppMetadataService {
       const ready = await this.seeds.check(output, options);
       if (!ready.ok) return ready;
     }
-    const { detail, ...providerInput } = input.data;
+    const { detail, ...providerInput } = input.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(OPERATION, retention);
       if (!ready.ok) return ready;

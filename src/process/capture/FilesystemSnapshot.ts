@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { lstat, open, opendir, readlink, realpath } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { FileHandle } from "node:fs/promises";
+import { appendCallerPath } from "../../filesystem/callerPath.js";
 import type { ProcessScenario } from "../../domain/process/processScenario.js";
 import type { FilesystemCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type { Stats } from "node:fs";
@@ -606,7 +607,13 @@ export const snapshotRoots = async (
             signal?.throwIfAborted();
             const child = await ownedDirectory.read();
             if (child === null) break;
-            if (await omitObserverPath(root, rootAlias, join(path, child.name)))
+            if (
+              await omitObserverPath(
+                root,
+                rootAlias,
+                appendCallerPath(path, child.name),
+              )
+            )
               continue;
             if (
               children.length >= remainingEntries ||
@@ -657,7 +664,14 @@ export const snapshotRoots = async (
       const child = children.pop();
       if (child === undefined) break;
       pendingNames -= 1;
-      if (!(await visit(root, rootAlias, join(path, child), depth + 1)))
+      if (
+        !(await visit(
+          root,
+          rootAlias,
+          appendCallerPath(path, child),
+          depth + 1,
+        ))
+      )
         complete = false;
     }
     return complete;

@@ -1,3 +1,7 @@
+import {
+  UpdateCommandRunner,
+  UPDATE_COMMAND_OUTPUT_BYTES,
+} from "../../src/application/UpdateCommandRunner.js";
 import { mkdir, readFile, rm, writeFile, access } from "node:fs/promises";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,11 +15,7 @@ import {
   existingMaintenanceScope,
   planIntegrationMaintenance,
 } from "../../src/application/UpdateMaintenance.js";
-import {
-  runUpdateCommand,
-  UPDATE_COMMAND_OUTPUT_BYTES,
-  systemUpdateHost,
-} from "../../src/application/UpdateRuntime.js";
+import { systemUpdateHost } from "../../src/application/UpdateRuntime.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
@@ -528,7 +528,7 @@ describe("updated executable maintenance planning", () => {
       home,
       entryPoint,
       process.env,
-      (command) => runUpdateCommand(command, process.env),
+      (command) => updateCommands.runProbe(command, process.env),
     );
     expect(result).toMatchObject({
       status: "planned",
@@ -586,7 +586,7 @@ describe("update subprocess boundaries", () => {
   });
   it("captures output through stream closure and keeps arguments literal", async () => {
     const literal = 'space and $(echo bad); & | "quotes"';
-    const result = await runUpdateCommand(
+    const result = await updateCommands.runProbe(
       [
         process.execPath,
         "-e",
@@ -600,7 +600,7 @@ describe("update subprocess boundaries", () => {
 
   it("reports actual stderr and launch failures", async () => {
     await expect(
-      runUpdateCommand(
+      updateCommands.runProbe(
         [
           process.execPath,
           "-e",
@@ -609,7 +609,7 @@ describe("update subprocess boundaries", () => {
         process.env,
       ),
     ).resolves.toEqual(err("EACCES /test/install"));
-    const missing = await runUpdateCommand(
+    const missing = await updateCommands.runProbe(
       [join(home, "missing-executable")],
       process.env,
     );
@@ -813,4 +813,12 @@ describe("Bun global installation update", () => {
       ]);
     },
   );
+});
+
+let updateCommands: UpdateCommandRunner;
+beforeEach(() => {
+  updateCommands = new UpdateCommandRunner();
+});
+afterEach(async () => {
+  await updateCommands.close();
 });

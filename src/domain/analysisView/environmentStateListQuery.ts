@@ -3,6 +3,7 @@ import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js
 import { literalSubstringPredicate } from "../analysisSearch.js";
 import { directionOf, orderRole } from "./environmentStateOrderParameters.js";
 import {
+  ownMember,
   isObject,
   recordedItemCount,
   formatItemCount,
@@ -81,7 +82,8 @@ const textOf = (value: JsonValue | undefined): string | undefined =>
 /** Whether a field holds a value: equal as text, or in an array directly or as an object's id, slug or name. */
 const holds = (field: JsonValue | undefined, value: string): boolean => {
   const names = (item: JsonValue | undefined) =>
-    isObject(item) && IDENTIFYING.some((key) => textOf(item[key]) === value);
+    isObject(item) &&
+    IDENTIFYING.some((key) => textOf(ownMember(item, key)) === value);
   return Array.isArray(field)
     ? field.some((item) => textOf(item) === value || names(item))
     : textOf(field) === value || names(field);
@@ -95,7 +97,7 @@ const contains = (
   const matches = literalSubstringPredicate(term, false);
   return (entity) =>
     fields.some((field) => {
-      const value = entity.fields[field];
+      const value = ownMember(entity.fields, field);
       return typeof value === "string" && matches(value);
     });
 };
@@ -181,7 +183,7 @@ const readCall = (
     if (PAGING_ROLES.has(parameter.role)) taken.add(parameter.role);
     if (parameter.role === "filter")
       call.selections.push((entity) =>
-        holds(entity.fields[parameter.field], value),
+        holds(ownMember(entity.fields, parameter.field), value),
       );
     else if (parameter.role === "search") {
       if (!plainSearch(value)) return undefined;
@@ -234,8 +236,8 @@ const sorted = (
       (left, right) =>
         sign *
           ascending(
-            left.entity.fields[key.field],
-            right.entity.fields[key.field],
+            ownMember(left.entity.fields, key.field),
+            ownMember(right.entity.fields, key.field),
           ) || left.index - right.index,
     )
     .map(({ entity }) => entity);
@@ -245,7 +247,10 @@ const sorted = (
   ) =>
     left !== undefined &&
     right !== undefined &&
-    ascending(left.fields[key.field], right.fields[key.field]) === 0;
+    ascending(
+      ownMember(left.fields, key.field),
+      ownMember(right.fields, key.field),
+    ) === 0;
   return {
     entities: ordered,
     positional: ordered.filter(
@@ -331,7 +336,9 @@ const filterFields = (
   items.length === 0
     ? []
     : Object.keys(items[0]!)
-        .filter((field) => items.every((item) => holds(item[field], value)))
+        .filter((field) =>
+          items.every((item) => holds(ownMember(item, field), value)),
+        )
         .sort(
           (left, right) =>
             Number(normalized(right) === normalized(name)) -
@@ -428,7 +435,9 @@ const withoutIdleFilters = (
     Object.entries(chosen).map(([name, role]) => {
       const value = line.values.get(name)!;
       return role.role === "filter" &&
-        line.entities.every((entity) => holds(entity.fields[role.field], value))
+        line.entities.every((entity) =>
+          holds(ownMember(entity.fields, role.field), value),
+        )
         ? [name, { role: "inert", values: [value] }]
         : [name, role];
     }),
@@ -547,7 +556,9 @@ const trustedRoles = (
       if (role.role !== "filter" || namedLike(role.field, name)) return true;
       const values = new Set(
         explained
-          .filter((entry) => entry.parameters[name]?.role === "filter")
+          .filter(
+            (entry) => ownMember(entry.parameters, name)?.role === "filter",
+          )
           .map((entry) => entry.line.values.get(name)),
       );
       return values.size >= 2;

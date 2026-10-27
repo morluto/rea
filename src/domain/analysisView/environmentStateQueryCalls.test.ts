@@ -1,3 +1,5 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -7,6 +9,7 @@ import {
 } from "./environmentStateQueryCalls.js";
 import type {
   StateRecordFacts,
+  StateTimeline,
   StateToolFacts,
 } from "./environmentStateRules.js";
 
@@ -20,7 +23,7 @@ interface Call {
   readonly tool: string;
   readonly template?: string;
   readonly start?: number;
-  readonly end?: number;
+  readonly end?: number | null;
 }
 
 /** How the read-only pass parses response bodies and charges what it keeps of them, when a test watches either. */
@@ -30,15 +33,26 @@ interface Bodies {
 }
 
 /** The read-only tools of a timeline of calls, ordinals in order; a call spans its index unless it gives its times. */
-const readOnlyOf = (calls: readonly Call[], bodies: Bodies = {}): string[] => {
+const readOnlyOf = (
+  calls: readonly Call[],
+  bodies: Bodies = {},
+  timeline: StateTimeline = "recorded-start-time",
+): string[] => {
   const records: StateRecordFacts[] = calls.map((call, index) => ({
     ordinal: index,
     method: call.method,
     path: call.path,
     query: call.query,
     status: call.status === undefined ? 200 : call.status,
-    start: call.start ?? index,
-    end: call.end ?? index,
+    timing: {
+      start: {
+        instant: parseOffsetDateTimeInstant(
+          new Date(call.start ?? index).toISOString(),
+        ),
+        ms: call.start ?? index,
+      },
+      endMs: call.end === null ? undefined : (call.end ?? index),
+    },
   }));
   const tools = new Map<string, StateToolFacts>();
   calls.forEach((call, index) => {
@@ -53,11 +67,16 @@ const readOnlyOf = (calls: readonly Call[], bodies: Bodies = {}): string[] => {
   const withBody: QueryCallIo["withBody"] =
     bodies.withBody ?? ((ordinal, use) => use(calls[ordinal]?.response));
   return [
-    ...readOnlyTools([...tools.values()], records, {
-      withBody,
-      request: (ordinal) => calls[ordinal]?.request,
-      retain: bodies.retain ?? (() => undefined),
-    }),
+    ...readOnlyTools(
+      [...tools.values()],
+      records,
+      {
+        withBody,
+        request: (ordinal) => calls[ordinal]?.request,
+        retain: bodies.retain ?? (() => undefined),
+      },
+      new StateRecordChronology(records, timeline),
+    ),
   ].sort();
 };
 
@@ -316,6 +335,31 @@ describe("POSTs that read state but stay writes", () => {
 });
 
 describe("the reads either side of a POST", () => {
+  it("requires known read completion without discarding independent known intervals", () => {
+    const known: Call = {
+      method: "GET",
+      path: "/api/members",
+      tool: "get_members",
+      response: JOBS,
+      start: 0,
+      end: 5,
+    };
+    const unknown = { ...known, start: 6, end: null };
+    const post: Call = {
+      method: "POST",
+      path: "/api/members",
+      tool: "post_members",
+      response: JOBS,
+      start: 10,
+      end: 11,
+    };
+    expect(readOnlyOf([unknown, post])).toEqual([]);
+    expect(readOnlyOf([known, unknown, post])).toEqual(["post_members"]);
+    expect(readOnlyOf([unknown, post], {}, "record-order")).toEqual([
+      "post_members",
+    ]);
+  });
+
   it("compares a POST only with reads that finished before it began or began after it ended", () => {
     const note = (title: string): Call => ({
       method: "GET",
@@ -454,8 +498,15 @@ describe("read-only decisions over many calls", () => {
           path: read ? "/api/members" : "/api/members/ids",
           query: undefined,
           status: 200,
-          start: index,
-          end: index,
+          timing: {
+            start: {
+              instant: parseOffsetDateTimeInstant(
+                new Date(index).toISOString(),
+              ),
+              ms: index,
+            },
+            endMs: index,
+          },
         };
         const method = read ? "GET" : "POST";
         return Object.defineProperty(record, "method", {
@@ -487,11 +538,16 @@ describe("read-only decisions over many calls", () => {
     ];
     visits = 0;
     expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use([]),
-        request: () => undefined,
-        retain: () => undefined,
-      }),
+      ...readOnlyTools(
+        tools,
+        records,
+        {
+          withBody: (_ordinal, use) => use([]),
+          request: () => undefined,
+          retain: () => undefined,
+        },
+        new StateRecordChronology(records, "recorded-start-time"),
+      ),
     ]).toEqual(["post_ids"]);
     expect(visits).toBeLessThan(50 * records.length);
   });
@@ -510,8 +566,15 @@ describe("read-only decisions over a long run of calls", () => {
           path: "/v1/jobs/statuses",
           query: undefined,
           status: 200,
-          start: index,
-          end: index,
+          timing: {
+            start: {
+              instant: parseOffsetDateTimeInstant(
+                new Date(index).toISOString(),
+              ),
+              ms: index,
+            },
+            endMs: index,
+          },
         };
         const method = read ? "GET" : "POST";
         return Object.defineProperty(record, "method", {
@@ -543,11 +606,16 @@ describe("read-only decisions over a long run of calls", () => {
     ];
     visits = 0;
     expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use(JOBS),
-        request: () => ({ jobs: ["night-watch"] }),
-        retain: () => undefined,
-      }),
+      ...readOnlyTools(
+        tools,
+        records,
+        {
+          withBody: (_ordinal, use) => use(JOBS),
+          request: () => ({ jobs: ["night-watch"] }),
+          retain: () => undefined,
+        },
+        new StateRecordChronology(records, "recorded-start-time"),
+      ),
     ]).toEqual(["post_statuses"]);
     expect(visits).toBeLessThan(50 * records.length);
   });
@@ -566,8 +634,15 @@ describe("read-only decisions over many lines", () => {
           method: read ? "GET" : "POST",
           path: read ? "/api/members" : "/api/members/ids",
           status: 200,
-          start: index,
-          end: index,
+          timing: {
+            start: {
+              instant: parseOffsetDateTimeInstant(
+                new Date(index).toISOString(),
+              ),
+              ms: index,
+            },
+            endMs: index,
+          },
         };
         const query = read ? `?page=${String(index)}` : undefined;
         return Object.defineProperty(record, "query", {
@@ -596,11 +671,16 @@ describe("read-only decisions over many lines", () => {
       },
     ];
     expect([
-      ...readOnlyTools(tools, records, {
-        withBody: (_ordinal, use) => use([]),
-        request: () => undefined,
-        retain: () => undefined,
-      }),
+      ...readOnlyTools(
+        tools,
+        records,
+        {
+          withBody: (_ordinal, use) => use([]),
+          request: () => undefined,
+          retain: () => undefined,
+        },
+        new StateRecordChronology(records, "recorded-start-time"),
+      ),
     ]).toEqual(["post_ids"]);
     expect(reads).toBeLessThan(20 * records.length);
   });

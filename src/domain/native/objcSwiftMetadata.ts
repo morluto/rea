@@ -316,15 +316,28 @@ export const nativeMetadataCoverageSchema = z.strictObject({
 export const objcClassImportIdentitySchema = machoImportBindingSchema.omit({
   requested_address: true,
 });
-export const objcClassImportBindingCoverageSchema = z.strictObject({
-  facet: z.literal("objc_class_import_bindings"),
-  status: z.enum(["complete", "partial", "unsupported", "not_requested"]),
-  reason: z.string().nullable(),
-  examined: z.number().int().nonnegative(),
-  decoded: z.number().int().nonnegative(),
-});
+export const objcClassImportBindingCoverageSchema =
+  nativeMetadataCoverageSchema.extend({
+    facet: z.literal("objc_class_import_bindings"),
+    examined: z.number().int().nonnegative(),
+    decoded: z.number().int().nonnegative(),
+  });
 export type ObjcClassImportBindingCoverage = z.infer<
   typeof objcClassImportBindingCoverageSchema
+>;
+
+/** Discovery retains unknown or inapplicable import identity separately from scan coverage. */
+export const objcClassDiscoveryCoverageSchema = nativeMetadataCoverageSchema
+  .pick({ status: true, reason: true })
+  .extend({
+    status: z.enum([
+      ...nativeMetadataCoverageSchema.shape.status.options,
+      "unknown",
+      "not_applicable",
+    ]),
+  });
+export type ObjcClassDiscoveryCoverage = z.infer<
+  typeof objcClassDiscoveryCoverageSchema
 >;
 
 /** Nominal Swift type kinds recorded by `__swift5_types` descriptors. */

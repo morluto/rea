@@ -70,7 +70,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       undefined,
-      false,
+      // `main.ts` only defers the exact full advertisement catalog.
+      "full",
       catalog.identity,
     );
     for (const tool of catalog.tools) {

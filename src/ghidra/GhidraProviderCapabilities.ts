@@ -50,6 +50,18 @@ export const windowsP0Limitations = Object.freeze([
   "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
 
+/** Existing databases have their own unknown analysis history; reopening does not complete it. */
+export const ghidraHealthLimitations = (
+  existingProject = false,
+): readonly string[] =>
+  existingProject
+    ? [
+        "This session opens a caller-selected existing Ghidra project through a private copy, without import, auto-analysis or repair scripts. Original analysis completeness and settings are unknown.",
+        "The original project is never opened by Ghidra or modified. The private copy is read-only to bridge operations and deleted on close; original executable bytes are never written.",
+        "The analysis profile records the selected project content fingerprint and program name. The imported program SHA-256 must match the admitted target; the project may contain caller annotations or earlier edits, which are not fresh REA discoveries.",
+      ]
+    : healthLimitations;
+
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
 
@@ -57,9 +69,12 @@ const searchLimitation =
   "Regex mode uses Java Pattern semantics. Matcher or compiler stack exhaustion returns a resource constraint without closing the session; literal mode avoids regex recursion and returns complete matching values.";
 
 /** Limitation text for one admitted operation, including the common base. */
-export const limitationsFor = (operation: string): readonly string[] => {
+export const limitationsFor = (
+  operation: string,
+  existingProject = false,
+): readonly string[] => {
   const common = [
-    ...healthLimitations,
+    ...ghidraHealthLimitations(existingProject),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
@@ -216,6 +231,39 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
   }),
 );
 
+/** The selected database mode is not part of Windows P0 authority. */
+export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
+  "An existing Ghidra project cannot be opened on the Windows launch path.";
+
+/** Read-only project mode retains precise unavailable mutation capabilities. */
+export const existingProjectCapabilities = (
+  platform: NodeJS.Platform,
+): readonly CapabilityDescriptor[] =>
+  CAPABILITIES.map((capability): CapabilityDescriptor => {
+    const limitations = limitationsFor(
+      capability.operation === "binary_overview"
+        ? "read_binary_inventory_summary"
+        : capability.operation,
+      true,
+    );
+    if (platform === "win32")
+      return {
+        ...capability,
+        limitations,
+        available: false,
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        availabilityCode: "unsupported_host",
+      };
+    if (capability.effects.mutatesArtifact)
+      return {
+        ...capability,
+        limitations,
+        available: false,
+        reason: "Existing Ghidra project sessions are read-only.",
+        availabilityCode: "open_options_invalid",
+      };
+    return { ...capability, limitations };
+  });
 /** Capabilities advertised for the experimental Windows x64 P0 boundary. */
 export const windowsP0Capabilities = (
   readiness: WindowsNativeReadiness = inspectWindowsNativeReadiness("win32"),

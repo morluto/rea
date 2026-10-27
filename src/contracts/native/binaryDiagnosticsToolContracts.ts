@@ -12,7 +12,6 @@ import {
   peLoadConfigSchema,
 } from "../../domain/native/peLoadConfig.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { publicInputStrictObject } from "../../domain/publicInput.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -65,13 +64,9 @@ export const inspectBinaryLayoutRequestSchema =
 export const inspectNativeExportsRequestSchema =
   inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
 
-/**
- * Public `inspect_byte_entropy` input. The shared constructor runs before
- * `detail` is added so the advertised input stays closed.
- */
-export const inspectByteEntropyRequestSchema = publicInputStrictObject(
-  inspectByteEntropyInputSchema.shape,
-).extend({ detail: analysisDetailSchema });
+/** Public byte-entropy input retains the producer schema's closed-object policy. */
+export const inspectByteEntropyRequestSchema =
+  inspectByteEntropyInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [

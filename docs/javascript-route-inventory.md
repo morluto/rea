@@ -25,17 +25,49 @@ Keep the original analysis inputs in that call. For the CLI, pass the same
 selection as `--view '<JSON>' --detail summary --evidence_output routes.json`.
 The complete Evidence bundle is written without overwriting existing files.
 Unselected delivery retains the existing complete result. A web-bundle summary
-requires an explicit route view; application summaries also support the existing
+requires an explicit route or web-bundle view; application summaries also support the existing
 general summary when `view` is omitted.
 
 Use the returned `normalized_result.parent_evidence_id` with
 `inspect_analysis_view` on the same connection. The CLI's exported bundle can be
 reopened with `inspect-evidence-bundle`; its `records` contain the complete
-Evidence. To use `inspect_analysis_view`'s `evidence-file` source, extract the
-selected parent record into a separate local Evidence JSON file (that source
-accepts one Evidence record, not a bundle). Views do not reopen source files or
+Evidence. `inspect_analysis_view`'s `evidence-file` source accepts either one
+Evidence record or an exported bundle with the selected `evidence_id`.
+Views do not reopen source files or
 reconnect to a browser. Historical Evidence without `route_inventory` is
 unmeasured, rather than an empty route set.
+
+## Page captured endpoint observations and inferences
+
+For `analyze_web_bundle`, select `detail: "summary"` and
+`view: {kind: "web-bundle", collection: "endpoints", limit: 32}`. The CLI
+accepts the same JSON through `--view`, with `--detail summary` and
+`--evidence_output bundle.json`. Query the returned parent with
+`inspect_analysis_view` to read `endpoints`, `inferences`, or `summary` without
+recapturing the page or repeating JavaScript analysis.
+
+Both row collections accept exact `indices`, `values`, `script_keys`, `fields`,
+`offset`, and `limit`; endpoints also accept `mechanisms`, and inferences accept
+`kinds`. Filters combine with AND, and an explicit empty selector matches no
+rows. Every row retains its `source_index` in the original collection, including
+when other fields are omitted. This identity is scoped to the parent Evidence
+and collection. Original ordering and separate occurrences of duplicate values
+are preserved; request endpoint `location` or inference `basis` for source details.
+
+Follow `coverage.next_offset` until `coverage.exhausted`; those fields describe
+the selected rows, independently of producer `completeness`. Each response also
+preserves structured `source_unknowns`, including `affected_script_keys`, so a
+filtered or value-only page cannot hide a source gap. The summary's
+`limitation_count` counts distinct parent and report limitations before display
+bounding. An `endpoint_candidate` remains an inference, with its original
+confidence and basis, and does not prove a backend endpoint or reachability.
+
+Pages obey the shared 1 MiB projection budget; MCP transport applies its own
+wire-size guard. A byte-limited page returns a continuation; an indivisible
+oversized record or metadata returns a typed resource error. Select fewer
+fields or retrieve the complete retained parent through `get_evidence_bundle`,
+`export_evidence_bundle`, or the CLI's exported bundle. Full Evidence is never
+silently truncated.
 
 Collections are `summary`, `routes`, `occurrences`, `sources`, and `unknowns`.
 All row collections support exact batch `where.ids`, field selection, `offset`,

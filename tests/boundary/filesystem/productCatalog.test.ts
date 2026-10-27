@@ -128,9 +128,7 @@ describe("canonical CLI catalog", () => {
   it("uses the same primary command names as the actual Incur router", () => {
     const inventory = createCliInventory(createCli());
     expect(inventory.primary).toEqual([...CLI_COMMAND_NAMES].sort());
-    expect(inventory.aliases).toEqual([
-      { name: "compare-bundles", target: "compare" },
-    ]);
+    expect(inventory.aliases).toEqual([]);
   }, 30_000);
 
   it("describes every primary command argument and option", () => {

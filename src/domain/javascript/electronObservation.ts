@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "../offsetDateTime.js";
 
 import { webRuntimeCommandTimeoutSchema } from "../browserDeadline.js";
 import { browserCompletenessSchema } from "../browserCompleteness.js";
@@ -26,7 +27,7 @@ export type ListElectronTargetsInput = z.infer<
 /** Input for passive structural inspection of one Electron file page. */
 const inspectElectronPageFacts = {
   ...approvedElectronInput,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   observation_ms: z.int().min(0).default(100),
   command_timeout_ms: webRuntimeCommandTimeoutSchema,
 } as const;
@@ -83,8 +84,8 @@ export const electronPageInspectionSchema = z.object({
   browser: browserVersionSchema,
   target: electronTargetSchema,
   capture_window: z.object({
-    started_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    started_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     observation_ms: z.int().min(0),
   }),
   completeness: browserCompletenessSchema,

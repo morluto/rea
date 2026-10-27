@@ -20,7 +20,7 @@ import {
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
 import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
   inspectAnalysisView,
@@ -41,6 +41,43 @@ import {
   scenarioCaptureFixture,
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+
+it.each(["inline", "retained-evidence", "invalid"] as const)(
+  "refuses an already cancelled %s view before source admission",
+  async (kind) => {
+    const parent = analysisViewLayoutEvidence();
+    const ledger = new EvidenceLedger();
+    expect(ledger.record(parent).ok).toBe(true);
+    const retained = ledger.forAnalysis(parent.evidence_id);
+    let lookups = 0;
+    const controller = new AbortController();
+    const reason = Object.freeze({ requested: "cancel-before-view-admission" });
+    controller.abort(reason);
+    const result = await inspectAnalysisView(
+      kind === "invalid"
+        ? null
+        : {
+            source:
+              kind === "inline"
+                ? { kind, evidence: parent }
+                : { kind, evidence_id: parent.evidence_id },
+            view: { kind: "summary" },
+          },
+      (id) => {
+        lookups++;
+        return ledger.forAnalysis(id);
+      },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.ok ? undefined : result.error.cause).toBe(reason);
+    expect(lookups).toBe(0);
+    expect(ledger.forAnalysis(parent.evidence_id)).toBe(retained);
+  },
+);
 
 it.each([false, true])(
   "summarizes the selected observation path rather than older retained display metadata (history=%s)",

@@ -1,5 +1,7 @@
 import {
+  requireMcpEvidenceBundle,
   requireMcpLifecycleResult,
+  requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
@@ -171,41 +173,37 @@ const verifyMcpInlineArtifactEvidence = async (
       { name: "inspect_artifact", arguments: {} },
       mcpOptions,
     );
-    assert.notEqual(inspected.isError, true, JSON.stringify(inspected));
-    const source = parseEvidence(inspected.structuredContent);
-    assert.deepEqual(
-      source.normalized_result,
-      inspected.structuredContent?.normalized_result,
-    );
-    assert.deepEqual(
-      JSON.parse(prompts.mcpText(inspected)),
-      inspected.structuredContent,
+    assert.notEqual(inspected.structuredContent, undefined);
+    const source = parseEvidence(
+      requireMcpOutput(inspected, "inspect_artifact"),
     );
     const compared = await client.callTool(
       {
         name: "compare_artifacts",
         arguments: {
-          left: inspected.structuredContent,
-          right: inspected.structuredContent,
+          left: source,
+          right: source,
         },
       },
       mcpOptions,
     );
-    assert.notEqual(compared.isError, true, JSON.stringify(compared));
-    const comparison = parseEvidence(compared.structuredContent);
-    assert.deepEqual(
-      comparison.normalized_result,
-      compared.structuredContent?.normalized_result,
+    assert.notEqual(compared.structuredContent, undefined);
+    const comparison = parseEvidence(
+      requireMcpOutput(compared, "compare_artifacts"),
     );
     assert.ok(comparison.evidence_links.includes(source.evidence_id));
-    const bundle = await client.callTool(
+    const bundleReply = await client.callTool(
       { name: "get_evidence_bundle", arguments: {} },
       mcpOptions,
     );
-    assert.notEqual(bundle.isError, true, JSON.stringify(bundle));
+    assert.ok(
+      bundleReply.structuredContent,
+      "MCP omitted structured Evidence bundle",
+    );
+    const bundle = requireMcpEvidenceBundle(bundleReply);
     for (const evidence of [source, comparison]) {
       assert.deepEqual(
-        bundle.structuredContent?.result?.records.find(
+        bundle.records.find(
           (record) => record.evidence_id === evidence.evidence_id,
         ),
         evidence,
@@ -215,13 +213,11 @@ const verifyMcpInlineArtifactEvidence = async (
       { name: "extract_artifact", arguments: {} },
       mcpOptions,
     );
-    assert.notEqual(extracted.isError, true, JSON.stringify(extracted));
-    const extraction = parseEvidence(extracted.structuredContent);
-    assert.deepEqual(
-      extraction.normalized_result,
-      extracted.structuredContent?.normalized_result,
+    assert.notEqual(extracted.structuredContent, undefined);
+    const extraction = parseEvidence(
+      requireMcpOutput(extracted, "extract_artifact"),
     );
-    const materialized = extracted.structuredContent?.normalized_result;
+    const materialized = extraction.normalized_result;
     assert.equal(typeof materialized?.output_root, "string");
     outputRoot = materialized.output_root;
     assert.equal(materialized.containment_verified, true);

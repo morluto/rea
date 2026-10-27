@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
-import { publicInputStrictObject } from "../publicInput.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -17,7 +16,7 @@ export const MAX_INSPECT_ERLANG_BEAM_ATOMS = 65536;
 export const MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS = 65536;
 
 /** Complete bounded inspection of one Erlang BEAM IFF container. */
-export const inspectErlangBeamInputSchema = publicInputStrictObject({
+export const inspectErlangBeamInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a BEAM file",
   ),

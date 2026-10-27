@@ -1,16 +1,12 @@
+import type { GodotPckAdmission } from "../GodotPckLocation.js";
+import type { PyInstallerAdmission } from "../pyinstaller/PyInstallerAdmission.js";
+import type { NodeSeaAdmission } from "../nodeSea/NodeSeaAdmission.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { GodotPckArtifactReader } from "../GodotPckArtifactReader.js";
-import { MachOSliceArtifactReader } from "../MachOSliceArtifactReader.js";
-import { NativeDmgArtifactReader } from "../NativeDmgArtifactReader.js";
-import { NodeSeaArtifactReader } from "../NodeSeaArtifactReader.js";
-import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
-import { ZipArtifactReader } from "../ZipArtifactReader.js";
+import { createArtifactReader } from "../createArtifactReader.js";
 import type {
   ArtifactInventoryCoverage,
   ArtifactOccurrence,
@@ -25,37 +21,26 @@ export const createReader = (
   path: string,
   format: ArtifactOccurrence["artifact_format"],
   environment: Readonly<NodeJS.ProcessEnv>,
-  rootSource?: StableRegularFileDescriptor,
+  readerAdmission?:
+    | StableRegularFileDescriptor
+    | NodeSeaAdmission
+    | PyInstallerAdmission
+    | GodotPckAdmission,
   asarHeaderAdmission?: AsarHeaderAdmission,
+  selectedPath?: string,
 ): ArtifactReader | undefined => {
-  if (isZipPackageFormat(format))
-    return new ZipArtifactReader(path, format, undefined, rootSource);
-  switch (format) {
-    case "directory":
-      return new DirectoryArtifactReader(path, "omit");
-    case "asar":
-      return new AsarArtifactReader(
-        path,
-        asarHeaderAdmission === undefined
-          ? {}
-          : { headerAdmission: asarHeaderAdmission },
-      );
-    case "pyinstaller":
-      return new PyInstallerArtifactReader(path, rootSource);
-    case "node-sea":
-      return new NodeSeaArtifactReader(path, rootSource);
-    case "godot-pck":
-      return new GodotPckArtifactReader(path, rootSource);
-    case "mach-o-universal":
-      return process.platform === "darwin"
-        ? new MachOSliceArtifactReader(path, environment, undefined, rootSource)
-        : undefined;
-    case "dmg":
-      if (process.platform !== "darwin") return undefined;
-      return new NativeDmgArtifactReader(path, environment);
-    default:
-      return undefined;
-  }
+  if (
+    (format === "mach-o-universal" || format === "dmg") &&
+    process.platform !== "darwin"
+  )
+    return undefined;
+  return createArtifactReader(path, format, {
+    environment,
+    unreadableDirectories: "omit",
+    admission: readerAdmission,
+    asarHeaderAdmission,
+    selectedPath,
+  });
 };
 
 /** Decide traversal scope and availability once, independently of diagnostic wording. */

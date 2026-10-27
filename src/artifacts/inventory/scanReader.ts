@@ -197,7 +197,7 @@ const visitArtifactEntries = async (
         entry,
         logicalPath,
         entry.kind === "metadata" ? frame.containerId : null,
-        duplicateOrdinal,
+        { duplicateOrdinal, sourceFormat: frame.reader.format },
       );
       let digested:
         | {

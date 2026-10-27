@@ -1,3 +1,10 @@
+import {
+  existingGhidraAnalysisProfile,
+  ghidraPinnedLanguage,
+  resolveGhidraAnalysisProfile,
+} from "./GhidraAnalysisProfile.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { resolveGhidraProject } from "./GhidraProjectSnapshot.js";
 import { DeferredAnalysisClient } from "../providers/DeferredAnalysisClient.js";
 import type { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
@@ -49,7 +56,6 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
@@ -64,6 +70,8 @@ import {
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
 import {
   CAPABILITIES,
+  existingProjectCapabilities,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   windowsP0Capabilities,
   GHIDRA_PROVIDER_IDENTITY,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
@@ -92,7 +100,7 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "hexagon",
 ]);
 
-/** Ghidra candidate backed by an isolated ephemeral headless import. */
+/** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   readonly #inspectionResources = new ArtifactResourceScope();
   readonly #inspectionWork = new Set<Promise<unknown>>();
@@ -138,9 +146,12 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   }
 
   capabilities(): readonly CapabilityDescriptor[] {
-    return (this.installationHost?.platform ?? process.platform) === "win32"
-      ? windowsP0Capabilities()
-      : CAPABILITIES;
+    const platform = this.installationHost?.platform ?? process.platform;
+    return this.config.ghidraExistingProject !== undefined
+      ? existingProjectCapabilities(platform)
+      : platform === "win32"
+        ? windowsP0Capabilities()
+        : CAPABILITIES;
   }
 
   async inspectAvailability(
@@ -180,9 +191,11 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     return {
       availability,
       capabilities:
-        readiness === undefined
-          ? CAPABILITIES
-          : windowsP0Capabilities(readiness),
+        this.config.ghidraExistingProject !== undefined
+          ? existingProjectCapabilities(installation.platform)
+          : readiness === undefined
+            ? CAPABILITIES
+            : windowsP0Capabilities(readiness),
     };
   }
 
@@ -191,6 +204,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     readiness: WindowsNativeReadiness | undefined,
   ): ProviderAvailability {
     const diagnostics = ghidraInstallationDiagnostics(installation);
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      installation.platform === "win32"
+    )
+      return {
+        status: "unavailable",
+        code: "unsupported_host",
+        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        diagnostics,
+      };
     if (installation.status === "available" && readiness?.available === false)
       return {
         status: "unavailable",
@@ -382,6 +405,45 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "resolve_analysis_profile",
       options?.scope,
     );
+    if (
+      this.config.ghidraExistingProject !== undefined &&
+      target.kind === "executable" &&
+      installation.status === "available"
+    ) {
+      if (
+        installation.platform === "win32" ||
+        ghidraPinnedLanguage(target) !== undefined ||
+        !(
+          target.format === "elf" ||
+          target.format === "pe" ||
+          isMachOFormat(target.format)
+        )
+      )
+        return err(
+          new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
+            diagnostics: {
+              reason:
+                "Existing-project mode supports native ELF/PE/Mach-O programs on POSIX without fresh-import loader preparation or pinned language overrides; use fresh import for this target/host.",
+            },
+          }),
+        );
+      const project = await resolveGhidraProject(
+        this.config.ghidraExistingProject,
+        target,
+        this.#inspectionResources,
+        options?.signal,
+      );
+      return ok({
+        profile: existingGhidraAnalysisProfile(
+          target,
+          {
+            ...GHIDRA_PROVIDER_IDENTITY,
+            version: installation.providerVersion,
+          },
+          jsonValueSchema.parse(project),
+        ),
+      });
+    }
     const resolved = await resolveGhidraAnalysisProfile(
       target,
       GHIDRA_PROVIDER_IDENTITY,

@@ -30,14 +30,17 @@ const facts = (
     },
   ],
 });
-const evidence = (interfaceFacts?: WasmInterface) => {
+const evidence = (
+  interfaceFacts?: WasmInterface,
+  format: "file" | "pe" = "file",
+) => {
   const report = wasmArtifactFixture();
   if (interfaceFacts !== undefined) report.interface = interfaceFacts;
   return createEvidence(
     {
       path: report.artifact.path,
       sha256: report.artifact.sha256,
-      format: "file",
+      format,
     },
     { id: "fixture", name: "typed fixture", version: "1" },
     {
@@ -143,6 +146,18 @@ it("authenticates semantic Evidence and binds display subject and selection iden
   expect(
     await compareWasmInterfaces({
       left: rebound,
+      right: evidence(facts("f")),
+      scope: "both",
+    }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
+});
+
+it("requires the producer's file subject format even for authentic Evidence", async () => {
+  const wrongFormat = evidence(facts("f"), "pe");
+  expect(parseEvidence(wrongFormat)).toEqual(wrongFormat);
+  expect(
+    await compareWasmInterfaces({
+      left: wrongFormat,
       right: evidence(facts("f")),
       scope: "both",
     }),

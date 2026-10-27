@@ -5,7 +5,7 @@ import {
 } from "./analysisViewCoverage.js";
 import { expect, it } from "vitest";
 
-import { functionDossierSchema } from "../hopperValues.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../../contracts/artifactComparisonExample.js";

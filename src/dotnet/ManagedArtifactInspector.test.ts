@@ -93,6 +93,22 @@ describe("managed PE optional-header directory count", () => {
 });
 
 describe("managed CLI directory availability", () => {
+  it("keeps a readable CLI directory when later declared entries are truncated", () => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(0xffffffff, optional + 92);
+    expect(readManagedPeLayout(bytes)).toMatchObject({
+      cliDirectoryState: "present",
+      cliIssue: null,
+      cli: expect.objectContaining({ headerSize: 72 }),
+    });
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.metadata.status).toBe("complete");
+  });
+
   it("keeps a declared but truncated CLI directory malformed", () => {
     const bytes = buildManagedPeFixture();
     const peOffset = bytes.readUInt32LE(0x3c);
@@ -566,6 +582,35 @@ describe("managed artifact coded indexes", () => {
     ).toBe(true);
   }, 30_000);
 });
+
+it.each([false, true])(
+  "resolves an attribute type without reading malformed constructor heaps (bad name %s)",
+  (badName) => {
+    const bytes = buildManagedPeFixture();
+    const layout = metadataLayoutFor(bytes);
+    const row = layout.table(10)!;
+    const nameColumn = row.offset + layout.codedIndexSize("MemberRefParent");
+    const signatureColumn = nameColumn + layout.stringIndexSize;
+    if (badName) {
+      if (layout.stringIndexSize === 2) bytes.writeUInt16LE(0xffff, nameColumn);
+      else bytes.writeUInt32LE(0xffffffff, nameColumn);
+    }
+    if (layout.blobIndexSize === 2)
+      bytes.writeUInt16LE(0xffff, signatureColumn);
+    else bytes.writeUInt32LE(0xffffffff, signatureColumn);
+
+    const result = inspectManagedArtifactBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.attributes[0]).toMatchObject({
+      constructor_token: "0x0a000001",
+      type_name: "System.Runtime.Versioning.TargetFrameworkAttribute",
+      decoded_fixed_string: ".NETCoreApp,Version=v8.0",
+    });
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+  },
+);
 
 describe("managed artifact reference inventory", () => {
   it("qualifies local custom-attribute names with their enclosing types", () => {

@@ -12,7 +12,10 @@ import {
   SERVER_START_FAILED,
 } from "../../../src/main/messages.js";
 import type { McpServeOptions } from "../../../src/main/types.js";
-import { StreamableHttpListenError } from "../../../src/server/http/streamableHttpListenError.js";
+import {
+  StreamableHttpHostAllowlistError,
+  StreamableHttpListenError,
+} from "../../../src/server/http/streamableHttpListenError.js";
 
 type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
@@ -199,6 +202,26 @@ describe("MCP runtime HTTP transport errors", () => {
     shutdown[0]?.();
     await nextTurn();
     expect(closeCalls).toBe(1);
+  });
+
+  it("reports host allowlist recovery instead of port advice", async () => {
+    const output: string[] = [];
+    const refused = new StreamableHttpListenError(
+      new StreamableHttpHostAllowlistError("0.0.0.0"),
+    );
+    expect(
+      await run(
+        dependencies({
+          serve: () => Promise.reject(refused),
+          output,
+          shutdown: [],
+          exitCodes: [],
+        }),
+      ),
+    ).toBe(1);
+    expect(output).toEqual([`${refused.remediationAction}\n`]);
+    expect(output[0]).toContain("Set MCP_ALLOWED_HOSTS");
+    expect(output[0]).not.toContain("Choose another --port");
   });
 
   it("reports an HTTP listener that cannot bind without its cause", async () => {

@@ -1,6 +1,5 @@
 import { z } from "zod";
-import { analysisStringSchema } from "../hopperValues.js";
-import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
+import { analysisStringSchema } from "../native/nativeString.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import {
   addressedValueSchema,
@@ -15,7 +14,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   boundedViewMessages,
   completeWithinViewCoverage,
@@ -31,6 +30,7 @@ const inventoryRecordSchema = addressedValueSchema.extend({
     addressedValueSchema.shape.string,
   ]),
 });
+type InventoryRecord = z.infer<typeof inventoryRecordSchema>;
 const fieldSchema = inventoryRecordSchema.keyof();
 
 export const nativeInventoryViewRequestSchema = z.strictObject({
@@ -58,32 +58,12 @@ export const nativeInventorySummarySchema = z.strictObject({
   selectable_fields: z.array(fieldSchema),
 });
 
-const checkedNames = new WeakSet<object>();
-const checkedStrings = new WeakSet<object>();
-type InventoryRecord = z.infer<typeof inventoryRecordSchema>;
-
-/** Cache only a successful, representation-preserving validation of owned immutable facts. */
-const readRows = (
-  parent: AnalysisViewParent,
-  strings: boolean,
-): Result<readonly InventoryRecord[], AnalysisError> => {
-  const checked = strings ? checkedStrings : checkedNames;
-  const source = parent.normalizedResult;
-  if (Array.isArray(source) && checked.has(source)) return ok(source);
-  const parsed = strings
-    ? parseAnalysisViewResult(nativeInventoryRowsSchemas.strings, parent)
-    : parseAnalysisViewResult(nativeInventoryRowsSchemas.names, parent);
-  if (!parsed.ok) return parsed;
-  if (
-    Array.isArray(source) &&
-    parent.sealedResult === true &&
-    canBorrowParsedJsonSnapshot(source, parsed.value)
-  ) {
-    checked.add(source);
-    return ok(source as readonly InventoryRecord[]);
-  }
-  return parsed;
-};
+const readNames = createAnalysisViewResultReader(
+  nativeInventoryRowsSchemas.names,
+);
+const readStrings = createAnalysisViewResultReader(
+  nativeInventoryRowsSchemas.strings,
+);
 
 /** Project already completed provider observations without another provider read or sort. */
 export const projectNativeInventoryView = (
@@ -107,9 +87,9 @@ export const projectNativeInventoryView = (
   const strings =
     parent.operation === "list_strings" ||
     parent.operation === "search_strings";
-  const parsed = readRows(parent, strings);
+  const parsed = strings ? readStrings(parent) : readNames(parent);
   if (!parsed.ok) return parsed;
-  const rows = parsed.value;
+  const rows: readonly InventoryRecord[] = parsed.value;
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: parent.operation,

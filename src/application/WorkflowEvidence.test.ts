@@ -16,9 +16,51 @@ import {
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { nativeApiBoundarySchema } from "../domain/native/nativeApiBoundary.js";
 import { projectNativeApiInspection } from "./native/NativeApiInspection.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import { ANALYSIS_SNAPSHOT_PROFILE } from "../domain/analysisSnapshot.fixture.js";
+import { createEvidence } from "../domain/evidence.js";
+
+it("links shared provider source Evidence once without copying its payload into the workflow", async () => {
+  const source = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "health",
+      parameters: { facet: "saved-analysis-report" },
+      result: { report: "historical content ".repeat(1_000) },
+    },
+    { immutable: true },
+  );
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(
+            "observed",
+            { id: "fixture", name: "Fixture", version: "1" },
+            { sourceEvidence: [source] },
+          ),
+        ),
+    },
+    async (observed) => {
+      await observed.execute("list_procedures", {});
+      await observed.execute("procedure_pseudo_code", { procedure: "0x1000" });
+      return ok({ count: 1 });
+    },
+  );
+  expect(result).toEqual({
+    ...ok({
+      result: { count: 1 },
+      limitations: [],
+      evidenceLinks: [source.evidence_id],
+    }),
+    sourceEvidence: [source],
+  });
+  expect(result.ok && JSON.stringify(result.value)).not.toContain(
+    "historical content",
+  );
+});
 
 it.each([false, true])(
   "propagates transient=%s through composed snapshot decisions while retaining Evidence",

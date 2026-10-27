@@ -25,7 +25,7 @@ import {
 import {
   functionDossierSchema,
   functionInstructionWindowSchema,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
@@ -328,7 +328,7 @@ export class IdaOperationRunner {
     this.limitations.push(...graph.limitations);
     for (const callee of graph.callees)
       if (!result.has(callee.address))
-        result.set(callee.address, identity({ ...callee, size: "unknown" }));
+        result.set(callee.address, identity(callee));
     return graph.coverage;
   }
 
@@ -524,7 +524,7 @@ export class IdaOperationRunner {
           : legacyCalleesSchema.parse(value);
       for (const item of items) {
         if ("type" in item && item.type === "external")
-          result.set(item.address, identity({ ...item, size: "unknown" }));
+          result.set(item.address, identity(item));
         else queries.push(item.name);
       }
     } else if (direction === "callers") {
@@ -577,7 +577,7 @@ export class IdaOperationRunner {
         if ("type" in item && item.type === "external")
           result.set(
             item.addr,
-            identity({ address: item.addr, name: item.name, size: "unknown" }),
+            identity({ address: item.addr, name: item.name }),
           );
         else queries.push(item.addr);
       }
@@ -661,6 +661,10 @@ export class IdaOperationRunner {
       return this.searchItems(operation, items, query);
     }
     if (operation === "list_strings" || operation === "search_strings") {
+      const selectedAddress =
+        query === undefined && parameters.address !== undefined
+          ? idaAddressSchema.parse(parameters.address)
+          : undefined;
       const nativePattern =
         this.protocol === "native" && query?.mode === "literal"
           ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
@@ -668,12 +672,9 @@ export class IdaOperationRunner {
       const items = await this.strings(nativePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
-        : parameters.address === undefined
+        : selectedAddress === undefined
           ? items
-          : items.filter(
-              ({ address }) =>
-                address === idaAddressSchema.parse(parameters.address),
-            );
+          : items.filter(({ address }) => address === selectedAddress);
     }
     if (operation === "list_documents") {
       if (this.options.admittedDocument === undefined)

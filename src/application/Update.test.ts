@@ -1,4 +1,14 @@
 import { join, resolve } from "node:path";
+import {
+  mkdtemp,
+  mkdir,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
@@ -396,6 +406,59 @@ describe("Bun installation ownership", () => {
     isFile: (path) =>
       Promise.resolve(manifests.includes(path.replaceAll("\\", "/"))),
   });
+
+  it.skipIf(process.platform === "win32")(
+    "preserves native symlink traversal through detection and pins the canonical global project",
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), "rea-bun-global-"));
+      try {
+        await mkdir(join(directory, "outer", "inner"), { recursive: true });
+        await symlink(
+          join(directory, "outer", "inner"),
+          join(directory, "alias"),
+        );
+        const selected = `${directory}/alias/../global`;
+        expect(
+          bunGlobalDirectory({ BUN_INSTALL: selected }, process.platform),
+        ).toBe(resolve(selected, "install", "global"));
+        expect(
+          bunGlobalDirectory({ XDG_CACHE_HOME: selected }, process.platform),
+        ).toBe(resolve(selected, ".bun", "install", "global"));
+        const selectedPackage = join(
+          directory,
+          "outer",
+          "global",
+          "node_modules",
+          "rea-agents",
+        );
+        await mkdir(selectedPackage, { recursive: true });
+        await writeFile(`${selected}/package.json`, "{}");
+        // The lexical alternative is also a valid project; it must not win.
+        await mkdir(join(directory, "global", "node_modules", "rea-agents"), {
+          recursive: true,
+        });
+        await writeFile(join(directory, "global", "package.json"), "{}");
+        const installation = await detectBunInstallation(
+          selectedPackage,
+          bunGlobalDirectory(
+            { BUN_INSTALL_GLOBAL_DIR: selected },
+            process.platform,
+          ),
+          {
+            canonicalPath: realpath,
+            isFile: async (path) => (await stat(path)).isFile(),
+          },
+        );
+        expect(installation).toEqual({
+          manager: "bun",
+          globalDirectory: await realpath(selected),
+          packageRoot: await realpath(selectedPackage),
+        });
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("identifies the package inside Bun's global project", async () => {
     await expect(

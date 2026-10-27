@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -18,10 +21,8 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import {
-  functionBodySchema,
-  functionDossierSchema,
-} from "../dist/domain/hopperValues.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { functionBodySchema } from "../dist/domain/native/functionBody.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
 import {
@@ -555,7 +556,6 @@ async function call(name, arguments_ = {}) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.ok(result.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(result, name);
 }
@@ -564,8 +564,7 @@ async function evidenceCall(name, arguments_) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const evidence = parseEvidence(result.structuredContent);
+  const evidence = parseEvidence(requireMcpOutput(result, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);

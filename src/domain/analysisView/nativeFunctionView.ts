@@ -2,7 +2,7 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import { analysisTextPage } from "./analysisViewText.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import type { FunctionDossier } from "../hopperValues.js";
+import type { FunctionDossier } from "../native/functionDossier.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type {

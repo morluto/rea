@@ -5,6 +5,7 @@ import {
   open,
   realpath,
   rename,
+  stat,
   type FileHandle,
 } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
@@ -353,7 +354,14 @@ const writeTextPartsOwned = async (
       return err(
         new EvidenceFileError("write", "not-file", { path: requestedPath }),
       );
-    const canonicalParent = await realpath(dirname(requestedPath));
+    const selectedParent = dirname(requestedPath);
+    // Native lookup must accept the parent before realpath can collapse it.
+    // On macOS realpath(file/..) succeeds even though that traversal is ENOTDIR.
+    if (!(await stat(selectedParent)).isDirectory())
+      return err(
+        new EvidenceFileError("write", "missing", { path: requestedPath }),
+      );
+    const canonicalParent = await realpath(selectedParent);
     const destination = resolve(canonicalParent, basename(requestedPath));
     const existing = await lstat(destination).catch((cause: unknown) => {
       if (fileErrorCode(cause) === "ENOENT") return undefined;

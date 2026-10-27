@@ -1,3 +1,4 @@
+import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { chmod, lstat, opendir, readlink, realpath } from "node:fs/promises";
@@ -264,12 +265,9 @@ export class FirmwareFileAccess {
           if (bytes.length === 0)
             throw firmwareReportFailure(operation, "empty", "Report is empty");
           try {
-            const value: unknown = JSON.parse(
-              new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-                bytes,
-              ),
-            );
-            return value;
+            const decoded = safeParseUtf8Json(bytes);
+            if (!decoded.ok) throw decoded.cause;
+            return decoded.value;
           } catch (cause: unknown) {
             throw firmwareReportFailure(
               operation,

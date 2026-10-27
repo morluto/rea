@@ -1,4 +1,5 @@
 import { localPathStringSchema } from "../domain/localPath.js";
+import { inspectDesktopApplicationInputSchema } from "../domain/desktopApplication.js";
 import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
@@ -24,23 +25,15 @@ export const registerDesktopApplicationCommands = (
       path: localPathStringSchema.describe("Local installation directory"),
     }),
     options: z.object({
-      max_entries: z
-        .number()
-        .int()
-        .positive()
-        .max(100_000)
-        .default(20_000)
-        .describe(
+      max_entries:
+        inspectDesktopApplicationInputSchema.shape.max_entries.describe(
           "Maximum directory entries to examine; exhaustion leaves partial coverage",
         ),
       ...analysisEvidenceDeliveryOptions,
-      max_probe_bytes: z
-        .number()
-        .int()
-        .min(4096)
-        .max(64 * 1024 * 1024)
-        .default(8 * 1024 * 1024)
-        .describe("Maximum total bytes read from selected file ranges"),
+      max_probe_bytes:
+        inspectDesktopApplicationInputSchema.shape.max_probe_bytes.describe(
+          "Maximum total bytes read from selected file ranges",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

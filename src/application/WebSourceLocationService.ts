@@ -1,14 +1,16 @@
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   selectedWebScriptArtifactsSchema,
@@ -23,6 +25,7 @@ import {
   type WebSourceLocationInput,
   type WebSourceMapReport,
 } from "../domain/webSourceLocation.js";
+import type { WebTraceObservation } from "../domain/webTraceObservation.js";
 import { webSourceOffset } from "../domain/webSourcePosition.js";
 import type { ExecutionOptions } from "./AnalysisProvider.js";
 import {
@@ -34,6 +37,7 @@ import type {
   WebSourceMapPort,
 } from "./WebSourceLocationPorts.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import { parseAnalysisInput } from "./AnalysisInput.js";
 
 const OPERATION = "trace_web_source_location";
 const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
@@ -88,18 +92,14 @@ export class WebSourceLocationService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const parsed = webSourceLocationInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      webSourceLocationInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const input = parsed.value;
     const admitted = admitContext(input);
     if (!admitted.ok) return admitted;
     const loaded = await this.artifacts.load(input, options);
@@ -113,11 +113,54 @@ export class WebSourceLocationService {
     const bound = validateSelectedWebScript(input, data, OPERATION);
     if (!bound.ok) return bound;
     const map = data.sourceMap;
+    const observation: WebTraceObservation = {
+      kind: "web-trace-observation",
+      analysis: "incomplete",
+      manifest: data.manifestFile,
+      source: data.sourceFile,
+    };
+    const incomplete = (error: AnalysisError): Result<never, AnalysisError> => {
+      const retained = webSourceMapReportSchema.safeParse(
+        error.partialObservation,
+      );
+      error.partialObservation = {
+        ...observation,
+        ...(retained.success
+          ? {
+              source_map_observation: {
+                association:
+                  observation.source_map !== undefined &&
+                  matchesSelectedReport(input, map.file.sha256, retained.data)
+                    ? ("selected" as const)
+                    : ("independent" as const),
+                report: retained.data,
+              },
+            }
+          : {}),
+      };
+      primaryAnalysisError(error).partialObservation = error.partialObservation;
+      return err(error);
+    };
     const pairing = verifyPairing(input, data);
-    if (!pairing.ok) return pairing;
-    const generatedOffset = pairing.value;
+    if (!pairing.ok) return incomplete(pairing.error);
+    observation.source_map = map.file;
+    const generatedOffset = webSourceOffset(
+      data.source,
+      input.generated_position,
+    );
+    if (generatedOffset === undefined)
+      return incomplete(
+        new AnalysisInputError(OPERATION, undefined, [
+          {
+            path: ["generated_position"],
+            reason: "invalid_format",
+            message:
+              "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
+          },
+        ]),
+      );
     if (options?.signal?.aborted)
-      return err(
+      return incomplete(
         new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
       );
     const traced = await this.decoder.trace(
@@ -132,9 +175,9 @@ export class WebSourceLocationService {
       },
       options,
     );
-    if (!traced.ok) return traced;
+    if (!traced.ok) return incomplete(traced.error);
     const report = verifyReport(input, map.file.sha256, traced.value);
-    if (!report.ok) return report;
+    if (!report.ok) return incomplete(report.error);
     const decodeTimeoutMs =
       input.decode_timeout_ms ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS;
     const limitations = [
@@ -155,7 +198,10 @@ export class WebSourceLocationService {
       execution: "unknown",
       limitations,
     });
-    if (!normalized.success) return invalidOutput(normalized.error.message);
+    if (!normalized.success)
+      return incomplete(
+        new AnalysisOutputError(OPERATION, normalized.error.message),
+      );
     return completeProviderEvidence(
       createEvidence(
         {
@@ -218,7 +264,7 @@ const admitContext = (
 const verifyPairing = (
   input: WebSourceLocationInput,
   data: z.output<typeof artifactsSchema>,
-): Result<number, AnalysisError> => {
+): Result<null, AnalysisError> => {
   const map = data.sourceMap;
   if (
     map.file.path !== input.source_map.path ||
@@ -230,16 +276,7 @@ const verifyPairing = (
     return invalidOutput(
       "Artifact port changed the selected source-map byte identity or URL context.",
     );
-  const generatedOffset = webSourceOffset(
-    data.source,
-    input.generated_position,
-  );
-  if (generatedOffset === undefined)
-    return invalid(
-      ["generated_position"],
-      "Selected generated position is outside the retained script text (one-based lines; zero-based UTF-16 columns).",
-    );
-  return ok(generatedOffset);
+  return ok(null);
 };
 
 const verifyReport = (
@@ -252,14 +289,23 @@ const verifyReport = (
     return invalidOutput(
       "Codec port returned malformed source-map point evidence.",
     );
-  if (
-    report.data.source_map_sha256 !== sha256 ||
-    report.data.url_context !== input.source_map.url ||
-    report.data.lookup.requested.line !== input.generated_position.line ||
-    report.data.lookup.requested.column !== input.generated_position.column
-  )
-    return invalidOutput(
-      "Codec port changed the selected map, URL context or generated point.",
+  if (!matchesSelectedReport(input, sha256, report.data))
+    return err(
+      new AnalysisOutputError(
+        OPERATION,
+        "Codec port changed the selected map, URL context or generated point.",
+        { partialObservation: report.data },
+      ),
     );
   return ok(report.data);
 };
+
+const matchesSelectedReport = (
+  input: WebSourceLocationInput,
+  sha256: string,
+  report: WebSourceMapReport,
+): boolean =>
+  report.source_map_sha256 === sha256 &&
+  report.url_context === input.source_map.url &&
+  report.lookup.requested.line === input.generated_position.line &&
+  report.lookup.requested.column === input.generated_position.column;

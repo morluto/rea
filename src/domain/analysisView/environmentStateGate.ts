@@ -2,6 +2,7 @@ import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   at,
   collectionPathOf,
   isObject,
@@ -246,7 +247,7 @@ const listQuery = (
         ordinal: record.ordinal,
         values,
         choices,
-        listed: items.map((item) => scalarText(item[field]) ?? ""),
+        listed: items.map((item) => scalarText(ownMember(item, field)) ?? ""),
         entities: context.inCollection(
           plan.type,
           collectionPathOf(record, false),
@@ -317,7 +318,7 @@ const listReproduces = (
       body === undefined ? undefined : listItems(body, plan.pointer);
     if (body === undefined || items === undefined) return false;
     const observed = new Map(
-      items.map((item) => [scalarText(item[field]) ?? "", item]),
+      items.map((item) => [scalarText(ownMember(item, field)) ?? "", item]),
     );
     const computed = view.query?.record_ordinals.includes(record.ordinal)
       ? evaluateQuery(
@@ -333,7 +334,7 @@ const listReproduces = (
           const entity = context.entity(
             plan.type,
             collection,
-            scalarText(item[field]) ?? "",
+            scalarText(ownMember(item, field)) ?? "",
           );
           return entity === undefined ? [] : [entity];
         }));

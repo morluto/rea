@@ -395,6 +395,15 @@ const projectionLimitations = (
     : [
         `Managed member Evidence selected only these declaring types: ${omissions.selectedTypes.join(", ")}; type, method, and field nodes of other types are omitted, not absent.`,
       ]),
+  ...(omissions.methodRows === undefined
+    ? []
+    : omissions.methodRows === null
+      ? [
+          "Managed member Evidence did not record its MethodDef row scope; coverage of methods and their relations outside the supplied observations is unknown.",
+        ]
+      : [
+          `Managed member Evidence examined MethodDef rows at offset ${omissions.methodRows.offset} with count ${omissions.methodRows.count} of ${omissions.methodRows.total} total rows; methods outside that interval and their relations are omitted, not absent.`,
+        ]),
   ...(omissions.unscopedTokenRelationships
     ? [
         "Managed boundary tokens were not linked to member nodes because matching module MVID scope was not established.",

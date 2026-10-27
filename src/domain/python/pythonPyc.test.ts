@@ -1,51 +1,50 @@
 import { expect, it } from "vitest";
 import {
   inspectPythonPycInputSchema,
-  pythonPycMagicEntry,
-  PYTHON_PYC_MAGIC_TABLE,
+  pythonPycMarshalProfile,
+  PYTHON_PYC_MARSHAL_PROFILES,
 } from "./pythonPyc.js";
+import { pythonBytecodeIdentity } from "./pythonBytecodeIdentity.js";
 
-it("maps pinned CPython 3.7–3.13 magics and leaves gaps unknown", () => {
-  expect(pythonPycMagicEntry(3394)).toEqual({
-    python_version: "3.7",
+it("keeps pinned CPython identity separate from standalone marshal coverage", () => {
+  expect(pythonPycMarshalProfile(3394)).toEqual({
     code_layout: "py37",
-    header_bytes: 16,
     negative_code_fields: "accepted",
   });
-  expect(pythonPycMagicEntry(3390)).toMatchObject({
-    python_version: "3.7",
-    header_bytes: 12,
+  expect(pythonBytecodeIdentity(3390)).toEqual({
+    pythonVersion: "3.7",
+    headerBytes: 12,
   });
-  expect(pythonPycMagicEntry(3391)).toMatchObject({
-    python_version: "3.7",
-    header_bytes: 12,
+  expect(pythonBytecodeIdentity(3391)).toEqual({
+    pythonVersion: "3.7",
+    headerBytes: 12,
   });
-  expect(pythonPycMagicEntry(3413)).toEqual({
-    python_version: "3.8",
+  expect(pythonPycMarshalProfile(3413)).toEqual({
     code_layout: "py38",
-    header_bytes: 16,
     negative_code_fields: "rejected",
   });
-  expect(pythonPycMagicEntry(3401)?.negative_code_fields).toBe("accepted");
-  expect(pythonPycMagicEntry(3410)?.negative_code_fields).toBe(
+  expect(pythonPycMarshalProfile(3401)?.negative_code_fields).toBe("accepted");
+  expect(pythonPycMarshalProfile(3410)?.negative_code_fields).toBe(
     "revision-dependent",
   );
-  expect(pythonPycMagicEntry(3411)?.negative_code_fields).toBe("rejected");
-  expect(pythonPycMagicEntry(3531)).toEqual({
-    python_version: "3.12",
+  expect(pythonPycMarshalProfile(3411)?.negative_code_fields).toBe("rejected");
+  expect(pythonPycMarshalProfile(3531)).toEqual({
     code_layout: "py311",
-    header_bytes: 16,
     negative_code_fields: "rejected",
   });
-  expect(pythonPycMagicEntry(3571)).toEqual({
-    python_version: "3.13",
+  expect(pythonPycMarshalProfile(3571)).toEqual({
     code_layout: "py311",
-    header_bytes: 16,
     negative_code_fields: "rejected",
   });
-  expect(pythonPycMagicEntry(3450)).toBeNull();
-  expect(pythonPycMagicEntry(62171)).toBeNull();
-  expect(PYTHON_PYC_MAGIC_TABLE.size).toBeGreaterThan(80);
+  // Recognizing a newer CPython identity does not authorize its code layout.
+  expect(pythonBytecodeIdentity(3627)).toEqual({
+    pythonVersion: "3.14",
+    headerBytes: 16,
+  });
+  expect(pythonPycMarshalProfile(3627)).toBeNull();
+  expect(pythonPycMarshalProfile(3450)).toBeNull();
+  expect(pythonPycMarshalProfile(62171)).toBeNull();
+  expect(PYTHON_PYC_MARSHAL_PROFILES.size).toBeGreaterThan(80);
 });
 
 it("rejects extra inspect arguments", () => {

@@ -1,3 +1,4 @@
+import { observePythonBytecodePrefix } from "../domain/python/pythonBytecodeIdentity.js";
 import { createHash } from "node:crypto";
 import { decodeMarshalUtf8 } from "../domain/python/marshalUtf8.js";
 import {
@@ -6,7 +7,7 @@ import {
   PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
-  pythonPycMagicEntry,
+  pythonPycMarshalProfile,
   type InspectPythonPycInput,
   type PythonPyc,
   type PythonPycCodeLayout,
@@ -205,20 +206,24 @@ export const parsePythonPyc = (
 ): PythonPyc => {
   if (bytes.length !== artifact.bytes)
     malformed("Selected artifact length disagrees with the retained bytes.");
-  if (bytes.length < 4) malformed("Selected file is shorter than a pyc magic.");
-  if (bytes[2] !== 0x0d || bytes[3] !== 0x0a)
-    malformed("Pyc magic is not a little-endian integer followed by CR LF.");
-  const magic = bytes.readUInt16LE(0);
-  const mapped = pythonPycMagicEntry(magic);
-  if (mapped !== null && mapped.header_bytes !== PYTHON_PYC_HEADER_BYTES)
+  const prefix = observePythonBytecodePrefix(bytes);
+  if (prefix.state === "incomplete")
+    return malformed("Selected file is shorter than a pyc magic.");
+  if (prefix.state === "invalid-crlf")
+    return malformed(
+      "Pyc magic is not a little-endian integer followed by CR LF.",
+    );
+  const { magic, identity } = prefix;
+  const mapped = pythonPycMarshalProfile(magic);
+  if (identity !== null && identity.headerBytes !== PYTHON_PYC_HEADER_BYTES)
     return unsupported(
-      `Pyc magic ${magic} uses an unsupported ${mapped.header_bytes}-byte CPython header.`,
+      `Pyc magic ${magic} uses an unsupported ${identity.headerBytes}-byte CPython header.`,
     );
   if (bytes.length < PYTHON_PYC_HEADER_BYTES)
     malformed(
       "Selected file is shorter than a 16-byte CPython 3.7+ pyc header.",
     );
-  if (mapped === null)
+  if (mapped === null || identity === null)
     return unsupported(
       `Pyc magic ${magic} is outside the pinned CPython 3.7–3.13 table.`,
     );
@@ -226,7 +231,7 @@ export const parsePythonPyc = (
   const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const header = {
     magic,
-    python_version: mapped.python_version,
+    python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,

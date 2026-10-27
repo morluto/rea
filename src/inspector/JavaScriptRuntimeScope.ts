@@ -58,7 +58,7 @@ export const authorizeRuntimeLocation = async (
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): Promise<RuntimeLocationDecision> => {
   throwIfRuntimeObservationCancelled(signal, operation);
-  if (value.startsWith("file:")) {
+  if (URL.parse(value)?.protocol === "file:") {
     const filePath = await authorizedElectronFile(
       value,
       signal,

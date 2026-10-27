@@ -16,12 +16,19 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { isImportMetaUrl } from "./javascriptStaticAnalysisHelpers.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+  semanticDefiniteEffectPrecedesReference,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticIterationSources,
   type SemanticIterationSource,
 } from "./javascriptSemanticIterationSources.js";
-import { joinSemanticPropertyPaths } from "./javascriptSemanticPropertyPaths.js";
+import {
+  joinSemanticPropertyPaths,
+  semanticPropertyPathKeyMatches,
+} from "./javascriptSemanticPropertyPaths.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticCopiedReferencePath,
@@ -789,6 +796,22 @@ export function* indexJavaScriptAmbientWritesSteps(
     state.ambientEscapes.retain(["global", null]);
 }
 
+/** Match lexical global identity; null denotes a direct global root. */
+const globalReferenceNamespace = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly [string, ...string[]],
+): string | null | undefined => {
+  const { root, members } = electronMemberPath(callee);
+  const matches = (expected: readonly string[]) =>
+    members.length === expected.length &&
+    members.every((key, index) => key === expected[index]);
+  if (isUnshadowedGlobal(root, state, path[0]) && matches(path.slice(1)))
+    return null;
+  const namespace = globalObjectName(root, state);
+  return namespace !== undefined && matches(path) ? namespace : undefined;
+};
+
 /**
  * Recognize an ambient property path, optionally through a global object, without a visible
  * source-local overwrite. This is a syntax-local identity fact, not proof that
@@ -802,18 +825,116 @@ export const isUnmodifiedGlobalReference = (
   const path: readonly [string, ...string[]] =
     typeof name === "string" ? [name] : name;
   if (state.ambientWrites.covers(["global", ...path])) return false;
-  const { root, members } = electronMemberPath(callee);
-  const matches = (expected: readonly string[]) =>
-    members.length === expected.length &&
-    members.every((key, index) => key === expected[index]);
-  if (isUnshadowedGlobal(root, state, path[0]) && matches(path.slice(1)))
-    return true;
-  const namespace = globalObjectName(root, state);
+  const namespace = globalReferenceNamespace(callee, state, path);
   return (
     namespace !== undefined &&
-    matches(path) &&
-    !state.ambientWrites.covers(["global", namespace])
+    (namespace === null || !state.ambientWrites.covers(["global", namespace]))
   );
+};
+
+export type GlobalReferenceRead =
+  | { readonly status: "unmodified" | "unrelated" | "unknown" }
+  | { readonly status: "replacement"; readonly value: t.Expression };
+
+/** Reuse retained write provenance and activation ordering at a selected read.
+ * The reader retains only matching effects, refreshing when their owner grows.
+ * Missing timing, possibly repeated activations, conditional replacements and
+ * parent writes stay unknown. */
+export const createGlobalReferenceReader = (
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly [string, ...string[]],
+): ((callee: t.Node) => GlobalReferenceRead) => {
+  const selected = ["global", ...path];
+  let generation = -1;
+  const byNamespace = new Map<
+    string | null,
+    typeof state.ambientWriteEffects
+  >();
+  const matches = (
+    effect: (typeof state.ambientWriteEffects)[number],
+    target: readonly string[],
+  ) =>
+    effect.path.length <= target.length &&
+    effect.path.every((key, index) =>
+      semanticPropertyPathKeyMatches(key, target[index]!),
+    );
+  return (callee) => {
+    const namespace = globalReferenceNamespace(callee, state, path);
+    if (namespace === undefined) return { status: "unrelated" };
+    if (
+      !state.ambientWrites.covers(selected) &&
+      (namespace === null || !state.ambientWrites.covers(["global", namespace]))
+    )
+      return { status: "unmodified" };
+    if (generation !== state.ambientWriteEffects.length) {
+      generation = state.ambientWriteEffects.length;
+      byNamespace.clear();
+    }
+    let effects = byNamespace.get(namespace);
+    if (effects === undefined) {
+      effects = state.ambientWriteEffects.filter(
+        (effect) =>
+          matches(effect, selected) ||
+          (namespace !== null && matches(effect, ["global", namespace])),
+      );
+      byNamespace.set(namespace, effects);
+    }
+    if (effects.length === 0) return { status: "unknown" };
+    const active = effects.filter(
+      (effect) => semanticEffectTiming(callee, effect.node, state) !== "after",
+    );
+    if (active.length === 0) return { status: "unmodified" };
+    if (
+      active.some(
+        (effect) =>
+          effect.path.length !== selected.length ||
+          !effect.path.every((key, index) => key === selected[index]),
+      )
+    )
+      return { status: "unknown" };
+    let replacement: t.AssignmentExpression | undefined;
+    for (const effect of active) {
+      const write = effect.node;
+      const writeNamespace = t.isAssignmentExpression(write)
+        ? globalReferenceNamespace(write.left, state, path)
+        : undefined;
+      if (
+        t.isAssignmentExpression(write, { operator: "=" }) &&
+        writeNamespace !== undefined &&
+        (writeNamespace === null ||
+          !state.ambientWrites.covers(["global", writeNamespace])) &&
+        semanticDefiniteEffectPrecedesReference(
+          write,
+          callee,
+          state.parentsByNode,
+        ) &&
+        (replacement === undefined ||
+          semanticDefiniteEffectPrecedesReference(
+            replacement,
+            write,
+            state.parentsByNode,
+          ))
+      )
+        replacement = write;
+    }
+    if (replacement === undefined) return { status: "unknown" };
+    const confirmed = replacement;
+    if (
+      active.some(
+        (effect) =>
+          effect.node !== confirmed &&
+          semanticEffectTiming(confirmed, effect.node, state) !== "before" &&
+          (effect.node === undefined ||
+            !semanticDefiniteEffectPrecedesReference(
+              effect.node,
+              confirmed,
+              state.parentsByNode,
+            )),
+      )
+    )
+      return { status: "unknown" };
+    return { status: "replacement", value: confirmed.right };
+  };
 };
 
 /** A module URL base is known only while its property has no visible write. */

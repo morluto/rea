@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { digestSchema } from "../domain/digests.js";
 import { uniqueSorted } from "../domain/canonicalOrdering.js";
 import { firmwareLogicalPath } from "./FirmwareFiles.js";
@@ -21,11 +25,20 @@ const scan = z.array(
     Analysis: z.object({
       file_path: z.string(),
       file_map: z.array(signature),
-      extractions: z.record(z.string(), jsonValueSchema),
+      extractions: jsonObjectSchema,
     }),
   }),
 );
-const report = z.object({ __typename__: z.string() }).catchall(jsonValueSchema);
+const report = jsonObjectSchema.pipe(
+  z.custom<Record<string, JsonValue> & { __typename__: string }>(
+    (value) =>
+      typeof value === "object" &&
+      value !== null &&
+      "__typename__" in value &&
+      typeof value.__typename__ === "string",
+    "Expected report __typename__ string",
+  ),
+);
 const task = z.object({
   path: z.string(),
   depth: integer,
@@ -68,17 +81,47 @@ const extractionError = z.object({ severity: z.literal("ERROR") });
 type ExtractionFailureKind =
   | "missing-extractor-dependency"
   | "extractor-failure";
-const extractionFailureKinds = (
+type DependencyFacts = { readonly names: Set<string>; unnamed: boolean };
+interface ExtractionProblemFacts {
+  readonly failureKinds: ExtractionFailureKind[];
+  /** null means no dependency report; unnamed preserves unavailable identity. */
+  readonly dependencies: DependencyFacts | null;
+}
+/** Parse each stage's direct problems once; nested diagnostic traversal is separate. */
+const extractionProblemFacts = (
   reports: readonly unknown[],
-): ExtractionFailureKind[] => {
+): ExtractionProblemFacts => {
   const kinds = new Set<ExtractionFailureKind>();
+  let dependencies: DependencyFacts | null = null;
   for (const item of reports) {
-    if (missingDependency.safeParse(item).success)
+    const parsed = missingDependency.safeParse(item);
+    if (parsed.success) {
       kinds.add("missing-extractor-dependency");
-    else if (extractionError.safeParse(item).success)
+      dependencies ??= { names: new Set<string>(), unnamed: false };
+      if (parsed.data.dependencies.length === 0) dependencies.unnamed = true;
+      for (const name of parsed.data.dependencies)
+        if (name === "") dependencies.unnamed = true;
+        else dependencies.names.add(name);
+    } else if (extractionError.safeParse(item).success)
       kinds.add("extractor-failure");
   }
-  return [...kinds];
+  return { failureKinds: [...kinds], dependencies };
+};
+
+/** Callers select the owner key; absence and an unnamed failure stay distinct. */
+const accumulateDependencies = (
+  owners: Map<string, DependencyFacts>,
+  key: string,
+  facts: DependencyFacts | null,
+): void => {
+  if (facts === null) return;
+  const known = owners.get(key);
+  if (known === undefined) {
+    owners.set(key, facts);
+    return;
+  }
+  for (const name of facts.names) known.names.add(name);
+  known.unnamed ||= facts.unnamed;
 };
 const region = z.object({
   id: z.string(),
@@ -107,7 +150,7 @@ const dependencyFailure = z.object({
 });
 
 /** Collect the named extractors from any dependency report nested in one value. */
-const missingDependencies = (value: unknown): string[] => {
+const diagnosticDependencyNames = (value: unknown): string[] => {
   // Producer-controlled name volume must not make deduplication quadratic;
   // a Set keeps collection linear and uniqueSorted restores canonical order.
   const found = new Set<string>();
@@ -138,7 +181,7 @@ const extractionDiagnostic = (
   stage: string | null,
   report: JsonValue,
 ): JsonValue => {
-  const dependencies = missingDependencies(report);
+  const dependencies = diagnosticDependencyNames(report);
   return {
     input_path: inputPath,
     ...(stage === null ? {} : { stage }),
@@ -257,30 +300,9 @@ export const normalizeUnblobReport = (
   }[] = [];
   const seen = new Set<string>();
   const taskFailures = new Set<string>();
-  type DependencyFacts = { readonly names: Set<string>; unnamed: boolean };
   const missingDependencies = new Map<string, DependencyFacts>();
   /** Dependencies reported by one chunk's extraction, keyed with its chunk id. */
   const chunkMissingDependencies = new Map<string, DependencyFacts>();
-  const dependencyNames = (
-    reports: readonly unknown[],
-  ): DependencyFacts | null => {
-    const names = new Set<string>();
-    let unnamed = false;
-    let reported = false;
-    for (const item of reports) {
-      const parsed = missingDependency.safeParse(item);
-      if (!parsed.success) continue;
-      reported = true;
-      if (
-        parsed.data.dependencies.length === 0 ||
-        parsed.data.dependencies.includes("")
-      )
-        unnamed = true;
-      for (const name of parsed.data.dependencies)
-        if (name !== "") names.add(name);
-    }
-    return reported ? { names, unnamed } : null;
-  };
   const dependencyRows = (
     facts: DependencyFacts,
   ): readonly { dependencies: readonly string[] }[] => [
@@ -289,38 +311,6 @@ export const normalizeUnblobReport = (
       : []),
     ...(facts.unnamed ? [{ dependencies: [] }] : []),
   ];
-  const noteMissingDependencies = (
-    path: string,
-    reports: readonly unknown[],
-  ): void => {
-    const names = dependencyNames(reports);
-    // null means no accepted failure; [] means a definite dependency failure
-    // whose executable identity the producer left unavailable.
-    if (names === null) return;
-    const known = missingDependencies.get(path) ?? {
-      names: new Set<string>(),
-      unnamed: false,
-    };
-    for (const name of names.names) known.names.add(name);
-    known.unnamed ||= names.unnamed;
-    missingDependencies.set(path, known);
-  };
-  const noteChunkMissingDependencies = (
-    path: string,
-    chunkId: string,
-    reports: readonly unknown[],
-  ): void => {
-    const names = dependencyNames(reports);
-    if (names === null) return;
-    const key = JSON.stringify([path, chunkId]);
-    const known = chunkMissingDependencies.get(key) ?? {
-      names: new Set<string>(),
-      unnamed: false,
-    };
-    for (const name of names.names) known.names.add(name);
-    known.unnamed ||= names.unnamed;
-    chunkMissingDependencies.set(key, known);
-  };
   for (const record of records) {
     const path = logical(record.task.path);
     if (seen.has(path))
@@ -376,9 +366,10 @@ export const normalizeUnblobReport = (
         diagnostics.push(
           jsonValueSchema.parse({ input_path: path, report: item }),
         );
-      noteMissingDependencies(path, [item]);
+      const problem = extractionProblemFacts([item]);
+      accumulateDependencies(missingDependencies, path, problem.dependencies);
       if (
-        extractionFailureKinds([item]).includes("extractor-failure") &&
+        problem.failureKinds.includes("extractor-failure") &&
         !taskFailures.has(path)
       ) {
         taskFailures.add(path);
@@ -414,8 +405,14 @@ export const normalizeUnblobReport = (
                 })
                 .parse(item)
             : null;
-        const failures = extractionFailureKinds(
+        const problems = extractionProblemFacts(
           detail?.extraction_reports ?? [],
+        );
+        // Chunk-nested reports retain their owning chunk, not the whole task.
+        accumulateDependencies(
+          chunkMissingDependencies,
+          JSON.stringify([path, parsed.id]),
+          problems.dependencies,
         );
         if (detail !== null)
           for (const problem of detail.extraction_reports) {
@@ -426,8 +423,6 @@ export const normalizeUnblobReport = (
                 jsonValueSchema.parse(problem),
               ),
             );
-            // Nested under one chunk: keep the owning chunk, not the whole task.
-            noteChunkMissingDependencies(path, parsed.id, [problem]);
           }
         addBlobOrigin(path, parsed.id, {
           handler: detail?.handler_name ?? null,
@@ -439,7 +434,7 @@ export const normalizeUnblobReport = (
           range: { offset: parsed.start_offset, length: parsed.size },
           handler: detail?.handler_name ?? null,
           encrypted: detail?.is_encrypted ?? null,
-          extraction_failure_kinds: failures,
+          extraction_failure_kinds: problems.failureKinds,
           root_file_range:
             path === "$input"
               ? {
@@ -465,7 +460,8 @@ export const normalizeUnblobReport = (
           );
           // The report owns its failure and dependencies. A produced subtask
           // is a derivation, not a new owner for the parent's report.
-          const dependencies = dependencyNames(parsed.extraction_reports);
+          const problems = extractionProblemFacts(parsed.extraction_reports);
+          const dependencies = problems.dependencies;
           const rows = [
             ...(dependencies === null
               ? []
@@ -473,9 +469,7 @@ export const normalizeUnblobReport = (
                   ...row,
                   kind: "missing-extractor-dependency" as const,
                 }))),
-            ...(extractionFailureKinds(parsed.extraction_reports).includes(
-              "extractor-failure",
-            )
+            ...(problems.failureKinds.includes("extractor-failure")
               ? [{ dependencies: [], kind: "extractor-failure" as const }]
               : []),
           ];

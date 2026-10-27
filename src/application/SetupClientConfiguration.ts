@@ -126,7 +126,12 @@ const configureClientDocument = async (
   const format = client.format;
   if (format === undefined || format === "unsupported")
     return { status: "failed", reason: "readback" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    undefined,
+    environment,
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return { status: "failed", reason: "readback" };
@@ -420,7 +425,12 @@ export const clientConfigurationAligned = async (
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
-    const files = await readClientConfigurationFiles(client);
+    const files = await readClientConfigurationFiles(
+      client,
+      undefined,
+      undefined,
+      providerEnvironment,
+    );
     if (!files.ok) {
       throwCleanupFailure(files.error);
       return false;
@@ -492,7 +502,12 @@ const inspectClientDocument = async (
   if (client.configPathError !== undefined)
     return { status: "invalid", remediation: client.configPathError };
   if (client.format === "unsupported") return { status: "already_current" };
-  const files = await readClientConfigurationFiles(client);
+  const files = await readClientConfigurationFiles(
+    client,
+    undefined,
+    undefined,
+    providerEnvironment,
+  );
   if (!files.ok) {
     throwCleanupFailure(files.error);
     return {

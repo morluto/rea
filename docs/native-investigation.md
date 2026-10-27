@@ -641,11 +641,10 @@ complete observation.
   outcome instead of rounded reference identities.
   UID 0 cannot distinguish conditional nil from ordinary nil. Limits are
   64 MiB of input, 200,000 objects/references and 128 nesting levels.
-  XML dictionary entries decoded as `__proto__` are omitted with an explicit
-  count because REA results cannot represent that key. XML tag whitespace and
-  comments do not change that handling. XML key names combine their text and
-  CDATA segments without trimming or expanding literal CDATA entities. Other
-  values and the original archive digest are preserved.
+  XML, OpenStep and binary dictionary entries retain their source keys,
+  including `__proto__`, through archive projection and CLI/MCP results.
+  XML key names combine their text and CDATA segments without trimming or
+  expanding literal CDATA entities. The original archive digest is preserved.
   Symbol fallback accepts complete Objective-C class/metaclass symbol leaves,
   including qualified names. Pointer/string labels that merely contain a class
   marker do not establish classes. Provider namespace method labels are not
@@ -701,10 +700,16 @@ complete observation.
   release their representation reservation for later documents.
   Repeated NIBArchive fields retain all serialized values in order. Array
   outlet connections resolve each serialized member and retain the collection
-  object ID and member position on the outlet observation. AppKit object-parent
-  registries use paired keys and parents; objects paired with `NSRoot` are
-  top-level, while nested objects keep their recorded parent. Conflicting or
-  unreadable registry pairs remain incomplete hierarchy evidence.
+  object ID and member position on the outlet observation. NIB hierarchy uses
+  recognized child fields, reverse `NSSuperview` links and window content links.
+  AppKit registry pairs with a resolvable `NSRoot` owner establish top-level
+  membership; other registry associations alone do not establish visual
+  parentage and leave hierarchy coverage partial. Known non-view cell ownership
+  and control-view backreferences remain raw facts. Conflicting explicit parents
+  remain unknown rather than choosing an archive-order winner. Retained objects
+  keep their decoded fields; uncertain registry diagnostics retain the source
+  registry, child and value IDs. Missing, malformed or repeated registry
+  declarations also qualify hierarchy coverage.
   `NSString` objects with the [recognized `NS.bytes` representation](https://github.com/swiftlang/swift-corelibs-foundation/blob/main/Sources/Foundation/NSString.swift#L201-L215) are decoded
   as UTF-8 without substituting malformed bytes. A failed conversion retains
   the source string object ID and `nibValues.NS.bytes` base64 data; dependent
@@ -1006,7 +1011,7 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 
 ## Provider and verification boundaries
 
-Install a Ghidra 12.1.x release and the 64-bit full JDK it declares, then configure REA to
+Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
 x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
@@ -1069,8 +1074,17 @@ counted as known archive omissions. Recognized symlinked `.nib` entries are
 not followed; they retain their paths and reader limitations as counted archive
 omissions. Either gap makes `archive_decode` partial and the graph truncated
 while preserving decoded documents. Its `examined` count remains actual decode
-attempts, and asset-catalog UI joins retain their existing incomplete-graph
-qualification.
+attempts. `archive_object_decode` separately reports whether archive selection
+and decoding examined the object sources; hierarchy-only and connection-only
+unknowns do not make that facet partial. Asset-catalog resource-key joins use
+this source coverage together with document and object projection coverage.
+Incomplete hierarchy or synthetic hierarchy-node limits alone do not qualify
+otherwise complete resource-key joins; omitted archives or resource objects do.
+Archive omission reasons are counted independently of the bounded path samples.
+A UID outside the exact supported range reports `unsupported_uid_exact_range`,
+not budget exhaustion. Mixed source failures report `multiple_archive_decode_causes`;
+limitations retain omission counts by cause even when individual paths exceed
+the reporting allowance.
 
 UI dispatch joins use the authored receiver's class independently of its
 presentation kind (controller, view, control or another object). An unresolved

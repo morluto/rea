@@ -246,11 +246,7 @@ const validateInspectionSubject = (
     throw new ArtifactInventoryValidationError(
       "Artifact inspection subject does not match its inventory manifest",
     );
-  if (
-    subject === null ||
-    subject.digest.sha256 !== manifest.root_sha256 ||
-    subject.format !== manifest.root_format
-  )
+  if (!subjectMatchesInventoryRoot(subject, manifest))
     throw new ArtifactInventoryValidationError(
       "Artifact inspection Evidence subject does not match its root manifest",
     );
@@ -295,16 +291,20 @@ const parseInventoryEvidencePage = (
   }
 };
 
+const subjectMatchesInventoryRoot = (
+  subject: Evidence["subject"],
+  manifest: ArtifactInventoryResult["manifest"],
+): boolean =>
+  subject !== null &&
+  subject.digest.sha256 === manifest.root_sha256 &&
+  subject.format === manifest.root_format;
+
 /** Both inventory carriers require the same authenticated root identity. */
 export const validateArtifactInventorySubject = (
   subject: Evidence["subject"],
   manifest: ArtifactInventoryResult["manifest"],
 ): void => {
-  if (
-    subject === null ||
-    subject.digest.sha256 !== manifest.root_sha256 ||
-    subject.format !== manifest.root_format
-  )
+  if (!subjectMatchesInventoryRoot(subject, manifest))
     throw new ArtifactInventoryValidationError(
       "Artifact inventory Evidence subject does not match its root digest",
     );

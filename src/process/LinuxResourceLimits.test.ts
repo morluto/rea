@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished, vi } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
@@ -15,7 +15,16 @@ import {
   readLinuxResourceLimits,
 } from "./LinuxResourceLimits.js";
 
-const kernel = vi.hoisted(() => ({ path: "", denied: false, opens: 0 }));
+const kernel = vi.hoisted(() => ({
+  path: "",
+  denied: false,
+  opens: 0,
+  maximumRead: Number.POSITIVE_INFINITY,
+  readFailure: undefined as Error | undefined,
+  failAt: Number.POSITIVE_INFINITY,
+  reads: [] as { position: number; length: number }[],
+  handles: [] as FileHandle[],
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const filesystem = await importOriginal<typeof import("node:fs/promises")>();
   return {
@@ -25,6 +34,21 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         return filesystem.open(...args);
       const file = await filesystem.open(kernel.path, args[1], args[2]);
       kernel.opens += 1;
+      kernel.handles.push(file);
+      const read = file.read.bind(file);
+      file.read = (async (...readArgs: unknown[]) => {
+        const [buffer, offset, length, position] = readArgs;
+        if (typeof length !== "number" || typeof position !== "number")
+          throw new Error("Expected positional limits report read");
+        kernel.reads.push({ position, length });
+        if (position >= kernel.failAt) throw kernel.readFailure;
+        return Reflect.apply(read, file, [
+          buffer,
+          offset,
+          Math.min(length, kernel.maximumRead),
+          position,
+        ]);
+      }) as FileHandle["read"];
       const close = file.close.bind(file);
       // Keep fixture ownership even when an assertion interrupts retry checks.
       onTestFinished(close);
@@ -205,4 +229,77 @@ it("readmits analysis and resolves the original cleanup error after kernel descr
   expect(kernel.opens).toBe(opened + 1);
   expect(first.error.cleanupIncomplete).toBe(false);
   if (!blocked.ok) expect(blocked.error.cleanupIncomplete).toBe(false);
+});
+
+const kernelReportFixture = async (text: string): Promise<void> => {
+  const directory = await createTestTempDirectory("rea-kernel-short-read-");
+  kernel.path = join(directory, "limits");
+  kernel.reads = [];
+  kernel.handles = [];
+  onTestFinished(() => {
+    kernel.path = "";
+    kernel.maximumRead = Number.POSITIVE_INFINITY;
+    kernel.readFailure = undefined;
+    kernel.failAt = Number.POSITIVE_INFINITY;
+    kernel.reads = [];
+    kernel.handles = [];
+  });
+  await writeFile(kernel.path, text);
+};
+
+it("clamps all inherited ceilings after positive short report reads", async () => {
+  const text = report("268435456 536870912", "0 1048576", "10 20");
+  await kernelReportFixture(text);
+  kernel.maximumRead = 7;
+  expect(await readLinuxResourceLimits(configured)).toEqual({
+    address_space_bytes: 268435456,
+    file_bytes: 0,
+    cpu_seconds: 10,
+  });
+  expect(kernel.reads.at(-1)?.position).toBe(Buffer.byteLength(text));
+  expect(kernel.reads.length).toBeGreaterThan(2);
+  expect(kernel.handles.every((handle) => handle.fd === -1)).toBe(true);
+});
+
+it.each([16 * 1024, 16 * 1024 + 1])(
+  "rejects a %i-byte report even when its initial short prefix contains all required limits",
+  async (bytes) => {
+    const prefix = report("unlimited unlimited");
+    await kernelReportFixture(prefix.padEnd(bytes, " "));
+    kernel.maximumRead = Buffer.byteLength(prefix);
+    await expect(readLinuxResourceLimits(configured)).rejects.toThrow(
+      "Inherited Linux limits exceed the report budget.",
+    );
+    expect(kernel.reads.length).toBeGreaterThan(1);
+    expect(
+      kernel.reads.every(
+        ({ position, length }) => position + length <= 16 * 1024,
+      ),
+    ).toBe(true);
+    expect(kernel.handles.every((handle) => handle.fd === -1)).toBe(true);
+  },
+);
+
+it("accepts a report below the fixed budget after reading through explicit EOF", async () => {
+  await kernelReportFixture(
+    report("unlimited unlimited").padEnd(16 * 1024 - 1, " "),
+  );
+  kernel.maximumRead = 127;
+  expect(await readLinuxResourceLimits(configured)).toEqual(configured);
+  expect(kernel.reads.at(-1)).toEqual({ position: 16 * 1024 - 1, length: 1 });
+  expect(kernel.handles.every((handle) => handle.fd === -1)).toBe(true);
+});
+
+it("preserves a later I/O failure instead of accepting a complete-looking short prefix", async () => {
+  const prefix = report("unlimited unlimited");
+  await kernelReportFixture(prefix + "unexamined suffix");
+  kernel.maximumRead = Buffer.byteLength(prefix);
+  kernel.failAt = Buffer.byteLength(prefix);
+  const cause = Object.assign(new Error("kernel report read failed"), {
+    code: "EIO",
+  });
+  kernel.readFailure = cause;
+  await expect(readLinuxResourceLimits(configured)).rejects.toBe(cause);
+  expect(kernel.reads).toHaveLength(2);
+  expect(kernel.handles.every((handle) => handle.fd === -1)).toBe(true);
 });

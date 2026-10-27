@@ -3,7 +3,10 @@ import { posix } from "node:path";
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import {
+  ExecFileOutputCancelledError,
+  execFileOutput,
+} from "../process/ExecFileOutput.js";
 
 const libraryPath = z
   .string()
@@ -76,15 +79,15 @@ export const inspectLinuxHopperPythonRuntime = async (
   signal?: AbortSignal,
   execute: typeof execFileOutput = execFileOutput,
 ): Promise<Result<LinuxHopperPythonRuntime, LinuxHopperPythonError>> => {
-  const cancelled = () =>
+  const cancelled = (reason: unknown) =>
     err(
       new LinuxHopperPythonError(
         "cancelled",
         "Python runtime inspection was cancelled.",
-        signal?.reason,
+        reason,
       ),
     );
-  if (isAborted(signal)) return cancelled();
+  if (isAborted(signal)) return cancelled(signal?.reason);
   let output: string;
   try {
     const result = await execute(
@@ -100,7 +103,8 @@ export const inspectLinuxHopperPythonRuntime = async (
     );
     output = result.stdout;
   } catch (cause: unknown) {
-    if (isAborted(signal)) return cancelled();
+    if (cause instanceof ExecFileOutputCancelledError)
+      return cancelled(cause.cause);
     return err(
       new LinuxHopperPythonError(
         "query_failed",
@@ -109,7 +113,7 @@ export const inspectLinuxHopperPythonRuntime = async (
       ),
     );
   }
-  if (isAborted(signal)) return cancelled();
+  if (isAborted(signal)) return cancelled(signal?.reason);
   let value: unknown;
   try {
     value = JSON.parse(output);

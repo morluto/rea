@@ -20,6 +20,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import {
+  requireMcpEvidenceBundle,
+  requireMcpOutput,
   mcpTextValue,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
@@ -277,7 +279,7 @@ try {
       ajv.validate(advertised.outputSchema, reply.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const mcp = parseEvidence(reply.structuredContent);
+    const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assert.equal(cli.evidence_id, mcp.evidence_id);
     assert.deepEqual(cli, mcp);
     const report = mcp.normalized_result;
@@ -382,12 +384,11 @@ try {
       name: "get_evidence_bundle",
       arguments: {},
     });
-    assert.notEqual(bundleReply.isError, true, mcpTextValue(bundleReply));
-    const bundle = JSON.parse(mcpTextValue(bundleReply)).result;
+    const bundle = requireMcpEvidenceBundle(bundleReply);
     const retained = bundle.records.find(
       ({ evidence_id }) => evidence_id === mcp.evidence_id,
     );
-    assert.deepEqual(parseEvidence(retained), mcp);
+    assert.deepEqual(retained, mcp);
     assert.deepEqual(await readFile(path), original);
     cases += 2;
     for (const [label, invalidBytes] of [
@@ -421,17 +422,11 @@ try {
         name: "get_evidence_bundle",
         arguments: {},
       });
-      assert.notEqual(
-        failedBundleReply.isError,
-        true,
-        mcpTextValue(failedBundleReply),
+      const failedBundle = requireMcpEvidenceBundle(failedBundleReply);
+      const failed = failedBundle.records.find(
+        ({ evidence_id }) => evidence_id === partial.evidence_id,
       );
-      const failedBundle = JSON.parse(mcpTextValue(failedBundleReply)).result;
-      const failed = parseEvidence(
-        failedBundle.records.find(
-          ({ evidence_id }) => evidence_id === partial.evidence_id,
-        ),
-      );
+      assert.ok(failed, "Retained failed WASM Evidence missing from bundle");
       assert.equal(failed.subject.digest.sha256, sha256(invalidBytes));
       assert.equal(
         failed.normalized_result.tool_profile.timeout_ms,
@@ -522,7 +517,7 @@ try {
       ajv.validate(advertised.outputSchema, reply.structuredContent),
       JSON.stringify(ajv.errors),
     );
-    const mcp = parseEvidence(reply.structuredContent);
+    const mcp = parseEvidence(requireMcpOutput(reply, "inspect_wasm_artifact"));
     assert.deepEqual(cli, mcp);
     const report = mcp.normalized_result;
     assert.equal(report.validation, "valid");

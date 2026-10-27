@@ -968,6 +968,138 @@ describe("snapshot switch rollback", () => {
 });
 
 describe("snapshot cache eligibility", () => {
+  it.each([
+    "decode_interface_builder",
+    "inspect_asset_catalog",
+    "inspect_keyed_archive",
+    "trace_dylib_resolution",
+  ] as const)(
+    "reobserves resource-scoped %s without executable snapshot Evidence",
+    async (operation) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const [baseCapability] = provider.capabilities();
+      if (baseCapability === undefined)
+        throw new Error("Expected fixture capability");
+      provider.capabilities = () => [
+        { ...baseCapability, operation, cachePolicy: "snapshot" },
+      ];
+      let observations = 0;
+      provider.createClient = () => ({
+        execute: async (name) =>
+          resultOk(
+            createAnalysisExecution(
+              name === "health" ? null : ++observations,
+              provider.identity(),
+            ),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        for (const observation of [1, 2]) {
+          const result = await session.execute(operation, {});
+          expect(result).toMatchObject({
+            ok: true,
+            value: { result: observation },
+          });
+          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+        }
+        expect(session.exportEvidenceBundle().records).toEqual([]);
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "retains source Evidence independently of snapshot eligibility (live=%s)",
+    async (live) => {
+      const [target] = await createBinarySessionTargets();
+      const provider = createCacheProvider([]);
+      const capabilities = provider.capabilities();
+      provider.capabilities = () =>
+        capabilities.map((capability) => ({
+          ...capability,
+          ...(live ? { cachePolicy: "live" as const } : {}),
+        }));
+      const source = createEvidence(
+        undefined,
+        provider.identity(),
+        {
+          operation: "health",
+          parameters: { facet: "saved-analysis-report" },
+          result: { original_analysis: "unknown" },
+        },
+        { immutable: true },
+      );
+      provider.createClient = () => ({
+        execute: async () =>
+          resultOk(
+            createAnalysisExecution("name", provider.identity(), {
+              sourceEvidence: [source],
+            }),
+          ),
+        close: async () => resultOk(null),
+      });
+      const session = createTestBinarySession(provider);
+      try {
+        expect((await session.open(target)).ok).toBe(true);
+        const parameters: Readonly<Record<string, JsonValue>> = live
+          ? { address: "0x1000", document: "main" }
+          : {};
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const result = await session.execute("address_name", parameters);
+          expect(result).toMatchObject({ ok: true });
+          if (result.ok) expect(result.value.evidenceId).toBeUndefined();
+        }
+        expect(session.exportEvidenceBundle().records).toEqual([source]);
+        expect(session.exportAnalysisSnapshot()).toMatchObject({
+          ok: true,
+          value: { entries: [] },
+        });
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  it("rejects invalid source Evidence on a non-replayable observation", async () => {
+    const [target] = await createBinarySessionTargets();
+    const provider = createCacheProvider([]);
+    const source = createEvidence(undefined, provider.identity(), {
+      operation: "health",
+      parameters: {},
+      result: "original",
+    });
+    provider.createClient = () => ({
+      execute: async () =>
+        resultOk(
+          createAnalysisExecution("name", provider.identity(), {
+            sourceEvidence: [{ ...source, normalized_result: "tampered" }],
+          }),
+        ),
+      close: async () => resultOk(null),
+    });
+    const session = createTestBinarySession(provider);
+    try {
+      expect((await session.open(target)).ok).toBe(true);
+      const result = await session.execute("address_name", {});
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceIntegrityError" },
+      });
+      expect(session.exportEvidenceBundle().records).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
   it("does not snapshot reads that depend on the provider cursor", async () => {
     const [first] = await createBinarySessionTargets();
     const calls: string[] = [];

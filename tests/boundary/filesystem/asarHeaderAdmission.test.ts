@@ -13,11 +13,13 @@ import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
 } from "../../../src/config/asarHeaderAdmission.js";
+import {
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";

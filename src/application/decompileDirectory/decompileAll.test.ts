@@ -9,6 +9,7 @@ import {
   type AnalysisOperation,
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
 import {
@@ -24,6 +25,7 @@ import {
   decompileJournalLineSchema,
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { createEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -1702,5 +1704,165 @@ describe("decompile_all repeated output failures", () => {
     expect(resumed.value).toMatchObject({
       counts: { failed: 7, skipped: 1, remaining: 0 },
     });
+  });
+});
+
+describe("decompile_all provider cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["procedure_info", false],
+    ["procedure_info", true],
+    ["procedure_pseudo_code", false],
+    ["procedure_pseudo_code", true],
+  ] as const)(
+    "retains %s cleanup and committed work with caller aborted=%s",
+    async (operation, abort) => {
+      const { port } = harness();
+      const controller = new AbortController();
+      const cause = new Error("provider cleanup stopped");
+      const callerReason = new Error("caller stopped");
+      const partial = createEvidence(subject, provider, {
+        operation,
+        parameters: { procedure: "0x2000" },
+        result:
+          operation === "procedure_info"
+            ? infoFor("0x2000")
+            : "int partial(void) {}",
+        analysisProfile: profile,
+        confidence: "observed",
+      });
+      const failure = new AnalysisCancelledError(operation, {
+        cause,
+        partialObservation: partial,
+        capturedOutput: {
+          stdout: "retained provider output",
+          stderr: "",
+          truncated: false,
+        },
+        cleanup: {
+          reason: "descriptor close denied",
+          resources: ["provider descriptor"],
+        },
+      });
+      const lease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["provider descriptor"],
+      );
+      lease.bindCleanupError(failure);
+      const observed: AnalysisOperation[] = [];
+      const failing: AnalysisOperationPort = {
+        execute: (selected, parameters, options) => {
+          observed.push(selected);
+          if (selected === operation && parameters.procedure === "0x2000") {
+            if (abort) controller.abort(callerReason);
+            return Promise.resolve(err(failure));
+          }
+          return port.execute(selected, parameters, options);
+        },
+      };
+      const result = await run(
+        new EnhancedTools(failing),
+        directory(),
+        {},
+        controller.signal,
+      );
+      expect(result).toEqual(err(failure));
+      expect(failure.cause).toBe(cause);
+      if (abort) {
+        expect(failure.secondaryFailures).toHaveLength(1);
+        expect(failure.secondaryFailures[0]).toBeInstanceOf(
+          AnalysisCancelledError,
+        );
+        expect(failure.secondaryFailures[0]?.cause).toBe(callerReason);
+      } else expect(failure.secondaryFailures).toHaveLength(0);
+      expect(failure.partialObservation).toBe(partial);
+      expect(failure.capturedOutput?.stdout).toBe("retained provider output");
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(observed.at(-1)).toBe(operation);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions).toHaveLength(1);
+      expect(index.functions[0]).toMatchObject({
+        address: "0x1000",
+        status: "written",
+      });
+      await expect(
+        readFile(join(directory(), "functions", "0x1000.c"), "utf8"),
+      ).resolves.toContain(sentinel);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    },
+  );
+});
+
+describe("decompile_all mixed cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it("waits for both provider and journal cleanup owners after mixed finalization failures", async () => {
+    const { port } = harness();
+    const providerFailure = new AnalysisOutputError(
+      "procedure_info",
+      "provider cleanup failed",
+      {
+        cleanup: {
+          reason: "provider close denied",
+          resources: ["provider descriptor"],
+        },
+      },
+    );
+    const closeFailure = new AnalysisOutputError(
+      "decompile_all",
+      "journal cleanup failed",
+      {
+        cleanup: {
+          reason: "journal close denied",
+          resources: ["journal descriptor"],
+        },
+      },
+    );
+    const providerLease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["provider descriptor"],
+    );
+    const journalLease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["journal descriptor"],
+    );
+    providerLease.bindCleanupError(providerFailure);
+    journalLease.bindCleanupError(closeFailure);
+    const close = DecompileExport.prototype.close;
+    vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
+      async function (this: DecompileExport) {
+        await close.call(this);
+        return err(closeFailure);
+      },
+    );
+    const failing: AnalysisOperationPort = {
+      execute: (operation, parameters, options) =>
+        operation === "procedure_info"
+          ? Promise.resolve(err(providerFailure))
+          : port.execute(operation, parameters, options),
+    };
+    const result = await run(new EnhancedTools(failing), directory());
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupPrimary).toBe(providerFailure);
+    expect(result.error.cleanupResources).toEqual(
+      expect.arrayContaining(["provider descriptor", "journal descriptor"]),
+    );
+    await journalLease.release();
+    expect(closeFailure.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await providerLease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
   });
 });

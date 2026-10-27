@@ -52,7 +52,6 @@ export const registerEvidenceCommands = (
       }),
   });
   cli.command(CLI_COMMANDS.compare, {
-    aliases: ["compare-bundles"],
     description: "Compare two canonical Evidence bundles",
     args: z.object({
       left: z.string().describe("Left Evidence bundle JSON path"),

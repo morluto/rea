@@ -72,6 +72,15 @@ code-point order. Dependency manifests remain package observations but do not
 declare Electron main or renderer entries. If only dependency manifests are
 present, the inventory artifact remains the graph root.
 
+Package observations keep the legacy `renderer` property as a derived entrypoint
+candidate: the first nonempty string from `renderer`, `browser`, then `module`.
+It does not assert that the source declares a literal `renderer` field.
+`renderer_declarations` records the actual present fields: strings, including
+empty strings, remain exact; non-string values use `{ "status": "non-string" }`
+without copying nested browser mappings. An empty record means no such fields
+were present; `null` means package metadata was invalid or unavailable. Renderer
+role mechanisms and package load edges name the field that supplied the candidate.
+
 ## Select sources before analysis
 
 For a question about known entry sources, supply exact artifact-relative file
@@ -239,10 +248,12 @@ An unpacked entry whose companion bytes were not supplied remains
 `unavailable`. REA continues analyzing embedded JavaScript and records the
 missing native/resource bytes as unknown. The occurrence keeps
 `hash_status: unavailable`; no content-addressed child artifact is created for
-those missing bytes. New inventories preserve an ASAR companion declaration as
-`unpacked: true`; an omitted flag in an older inventory does not establish that
-unavailable bytes belonged to a companion. See [MCP integrity handling](mcp-contracts.md#integrity-record-and-continue)
-for the tool-result contract.
+those missing bytes. New ASAR file occurrences record `unpacked: true` for
+companion files and `unpacked: false` for packed entries, including when the
+file bytes are unavailable. An omitted flag in an older inventory remains
+unknown; it does not establish either storage mode. See
+[MCP integrity handling](mcp-contracts.md#integrity-record-and-continue) for the
+tool-result contract.
 
 JavaScript whose syntax cannot be parsed retains unavailable semantic coverage
 with `incomplete-module` unknowns for each semantic family and unknown omitted

@@ -2,6 +2,9 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
+import { BinaryResourceFailure } from "../../../src/native/metadata/BinaryContainer.js";
+import { readMachoLoadCommandTableHeader } from "../../../src/domain/apple/machoLoadCommands.js";
+import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseExecutableHeader } from "../../../src/domain/binaryTarget.js";
@@ -46,6 +49,7 @@ it.each([
   { label: "undersized", field: 36, value: 4 },
   { label: "unaligned", field: 36, value: 12 },
   { label: "outside table", field: 36, value: 0xffffffff },
+  { label: "truncated declared table", field: 20, value: 24 },
   { label: "too many commands", field: 16, value: 2 },
   { label: "unclaimed table bytes", field: 16, value: 0 },
   { label: "trailing table bytes", field: 36, value: 8 },
@@ -60,6 +64,7 @@ it.each([
     );
     await writeFile(path, bytes);
     expect(parseExecutableHeader(bytes, "arm64").ok).toBe(false);
+    expect(() => readBinaryContainer(bytes)).toThrow(/load command/iu);
     const resolved = await parseBinaryTarget(path);
     expect(resolved.ok).toBe(false);
     if (resolved.ok || !(resolved.error instanceof BinaryTargetError))
@@ -86,6 +91,11 @@ it.each([
       "image",
     );
     await writeFile(path, bytes);
+    expect(readBinaryContainer(bytes)).toMatchObject({
+      format: "macho",
+      bits: wide ? 64 : 32,
+      byte_order: littleEndian ? "little" : "big",
+    });
     expect(await parseBinaryTarget(path)).toMatchObject({
       ok: true,
       value: { format: "mach-o", architecture: wide ? "arm64" : "x86" },
@@ -150,3 +160,14 @@ it.each([null, 0, 1])(
       });
   },
 );
+
+it("preserves native capacity priority when the command table also exceeds the file", () => {
+  const bytes = commandImage(true, true, [16]);
+  bytes.writeUInt32LE(16 * 1024 * 1024 + 1, 20);
+  expect(() => readBinaryContainer(bytes)).toThrow(BinaryResourceFailure);
+  const bounded = readMachoLoadCommandTableHeader(bytes, bytes.length);
+  expect(bounded).toMatchObject({
+    ok: false,
+    error: expect.stringContaining("truncated Mach-O load commands"),
+  });
+});
