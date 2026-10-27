@@ -175,6 +175,52 @@ describe("release configuration", () => {
 });
 
 describe("plugin manifests", () => {
+  it("ships the website favicon with readable Codex listing metadata before and after install", async () => {
+    const manifest = (await readJson(".codex-plugin/plugin.json")) as {
+      description: string;
+      interface: Record<string, unknown>;
+    };
+    const marketplace = (await readJson(
+      ".agents/plugins/marketplace.json",
+    )) as {
+      plugins: Array<{
+        description: string;
+        homepage: string;
+        interface: Record<string, unknown>;
+      }>;
+    };
+    const { logo, composerIcon, ...listing } = manifest.interface;
+    expect(marketplace.plugins[0]).toMatchObject({
+      description: manifest.description,
+      homepage: "https://rea.tools/",
+      interface: listing,
+    });
+    expect(String(listing.shortDescription).length).toBeLessThanOrEqual(30);
+    expect(listing.websiteURL).toBe("https://rea.tools/");
+    expect(logo).toBe("./assets/rea.svg");
+    expect(composerIcon).toBe(logo);
+    expect(await readJson("package.json")).toMatchObject({
+      files: expect.arrayContaining(["assets/rea.svg"]),
+    });
+    const icon = await readFile("assets/rea.svg", "utf8");
+    expect(icon).toContain('width="256" height="256"');
+    expect(icon.replace(' width="256" height="256"', "")).toBe(
+      await readFile("website/public/assets/favicon.svg", "utf8"),
+    );
+  });
+
+  it("keeps content-rewriting attributes out of Claude's submitted plugin root", async () => {
+    const rules = (await readFile(".gitattributes", "utf8"))
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    for (const rule of rules)
+      for (const attribute of rule.split(/\s+/u).slice(1))
+        expect(attribute).not.toMatch(
+          /^[-!]?(?:text|eol|filter|ident|working-tree-encoding|export-ignore|export-subst)(?:=|$)/u,
+        );
+  });
+
   it("distributes both plugins with generated canonical skills from the exact npm release", async () => {
     const pkg = (await readJson("package.json")) as {
       version: string;

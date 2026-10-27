@@ -15,7 +15,32 @@
         "installation": "AVAILABLE",
         "authentication": "ON_INSTALL"
       },
-      "category": "Developer Tools"
+      "category": "Developer Tools",
+      "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
+      "author": {
+        "name": "morluto",
+        "url": "https://github.com/morluto"
+      },
+      "homepage": "https://rea.tools/",
+      "repository": "https://github.com/morluto/rea",
+      "license": "MIT",
+      "interface": {
+        "displayName": "REA",
+        "shortDescription": "Reverse engineer with evidence",
+        "longDescription": "Inspect binaries, compare application versions, and analyze JavaScript, packages, firmware, and browser targets with shared CLI and MCP tools. REA separates observed evidence from inferences. Optional analysis engines are configured separately and remain bring-your-own.",
+        "developerName": "morluto",
+        "category": "Developer Tools",
+        "capabilities": ["Interactive", "Read", "Write"],
+        "websiteURL": "https://rea.tools/",
+        "supportURL": "https://github.com/morluto/rea/issues",
+        "brandColor": "#20252B",
+        "brandColorDark": "#89B4FA",
+        "defaultPrompt": [
+          "Use REA to explain how this binary implements a feature.",
+          "Use REA to compare two versions of this application.",
+          "Use REA to recover the sources from this JavaScript bundle."
+        ]
+      }
     }
   ]
 }

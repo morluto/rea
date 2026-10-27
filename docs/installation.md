@@ -1571,6 +1571,10 @@ The repository's single-plugin marketplaces are declared in
 Both select an exact `rea-agents` npm version instead of mutable source-checkout
 contents. Release Please updates their selectors alongside the plugin manifests.
 No plugin-only publication or generated skill files committed to Git are needed.
+Codex's marketplace entry includes the description and website so they are
+available before installation. Codex hides images for an uninstalled npm source;
+after installation, the plugin uses REA's website favicon for its logo and
+composer icon. The logo is included in the same npm artifact as the runtime.
 The qualified release archive contains a runtime-only manifest and
 `npm-shrinkwrap.json` plus bundled runtime dependencies, including PTY packages
 for each supported OS and CPU; development dependencies and development-only overrides
@@ -1585,6 +1589,17 @@ source changes. Missing builds and mismatched version pins fail with an actionab
 error. The authored `.agents/skills/` tree is not the plugin's shipped skill layout.
 Windows source workflows that need native controls still require the
 [Windows source-checkout build](https://github.com/morluto/rea/blob/main/native/windows/README.md#build).
+
+Claude's public directory submission validates the Git repository, not the npm
+marketplace selector. Submit the repository root containing
+`.claude-plugin/plugin.json`. Its validator rejects content-rewriting Git
+attributes as well as nonportable file names; REA keeps those attributes out of
+the root `.gitattributes`. A source-only Git tree does not contain the generated
+`skills/` or bundled runtime from the release archive, so repository validation
+alone does not establish that the source tree is an installable release plugin.
+The portal also requires the submitter's connected GitHub account to have push
+access to the submitted repository before submission. A contribution to upstream
+does not by itself grant that access.
 
 In Claude Code:
 

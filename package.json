@@ -103,6 +103,7 @@
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     ".codex-plugin/mcp.json",
+    "assets/rea.svg",
     "scripts/plugin-mcp-launcher.mjs",
     "npm-shrinkwrap.json"
   ],

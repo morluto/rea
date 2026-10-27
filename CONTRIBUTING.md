@@ -251,6 +251,14 @@ protocols in adapters and shared CLI/MCP workflows in the application layer.
 
 ### Windows source checkouts
 
+Clone with `git -c core.autocrlf=false clone <repository-url>` to retain the
+committed line endings. In an existing checkout, use
+`git config --local core.autocrlf false`; that setting applies to future
+checkouts and does not rewrite existing files. REA's formatter requires LF.
+Do not reintroduce `text`, `eol`, `filter`, `export-ignore`, or `export-subst`
+rules in `.gitattributes`: Claude's directory rejects content-rewriting
+attributes above the submitted plugin root.
+
 The published npm package includes the Windows x64 native addon and its
 manifest. A source checkout does not: `native/windows/build/` is ignored by
 Git, and neither `npm ci` nor `npm run build:cached` (or `npm run build`)
