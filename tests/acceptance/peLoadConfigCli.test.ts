@@ -58,6 +58,43 @@ for (const bits of [32, 64] as const) {
     },
   );
 
+  cliTest(
+    `retains PE${bits} TLS template metadata in virtual zero padding`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-pe-config-padding-cli-");
+      for (const range of [
+        [0x2180, 0x2280],
+        [0x2200, 0x2300],
+      ] as const) {
+        await writeFile(
+          join(root, "app.exe"),
+          peLoadConfigImage({
+            bits,
+            zeroFillCallback: true,
+            rawDataRange: range,
+          }),
+        );
+        const result = await cli.run({
+          arguments: ["inspect-pe-load-config", "app.exe", "--json"],
+          cwd: root,
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const evidence = toolContract(
+          "inspect_pe_load_config",
+        ).outputSchema.parse(result.json);
+        expect(evidence.normalized_result.tls).toMatchObject({
+          raw_data_size: 256,
+          raw_data_file_offset: null,
+          raw_data_section: ".text",
+        });
+        expect(evidence.normalized_result.tls?.callbacks).toHaveLength(1);
+        expect(evidence.normalized_result.load_config?.guard_flags?.raw).toBe(
+          0x500,
+        );
+        expect(evidence.subject?.local_path).toBe(join(root, "app.exe"));
+      }
+    },
+  );
   cliTest(`reads PE${bits} TLS callbacks through the CLI`, async ({ cli }) => {
     const root = await createTestTempDirectory("rea-pe-config-cli-");
     await writeFile(join(root, "app.exe"), peLoadConfigImage({ bits }));
