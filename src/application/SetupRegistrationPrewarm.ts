@@ -61,6 +61,7 @@ export type RegistrationRunnerLauncher = (
     readonly platform: NodeJS.Platform;
     readonly resources: ArtifactResourceScope;
     readonly launcher?: typeof spawnOwnedProviderProcess;
+    readonly windowsVerbatimArguments?: boolean;
   },
 ) => Promise<RegistrationRunnerLaunch>;
 
@@ -156,6 +157,9 @@ export const launchRegistrationRunnerCommand: RegistrationRunnerLauncher = (
         runId: `rea-registration-prewarm-${randomUUID()}`,
         expectedCommand: null,
         sweepTokenOwnedProcesses: true,
+        ...(options.windowsVerbatimArguments === undefined
+          ? {}
+          : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
         signal: controller.signal,
       });
       supervisor = new ProviderProcessSupervisor(

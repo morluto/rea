@@ -1560,6 +1560,43 @@ Ghidra/JDK installation; neither is inferred from startup alone.
 
 ## Agent plugins and marketplaces
 
+### Automatic setup
+
+`rea setup --client codex` and `rea setup --client claude_code` prefer the
+client's marketplace plugin for a new, provider-independent integration. This
+also applies when choosing those clients in interactive setup. The plan shows
+the exact marketplace and install commands, and requires the usual approval
+before either command runs. Setup verifies that the client reports `rea@rea`
+installed and enabled, and skips the separate MCP registration and skill copy.
+Rerunning setup leaves an enabled plugin installed without repeating the install.
+Claude Code's inventory command can migrate client settings, so setup defers that
+command until approval. Its plan includes the inventory and conditional install
+or enable commands even on reruns; an already enabled plugin needs no reinstall.
+
+Existing direct registrations remain direct. Older Codex clients without plugin
+commands, custom provider environment settings, a Hopper installation plan,
+`--skill=false`, `--skill-client`, or `--tool-families` retain direct setup.
+These explicit direct paths do not invoke the plugin manager; remove an existing
+REA plugin in the client before deliberately selecting a direct installation.
+An unreadable plugin list or failed plugin installation stops with remediation;
+setup never hides that failure by creating another MCP server. Resolve a plugin
+from another source or scope in the client's plugin manager before rerunning.
+For Claude Code versions without plugin commands, update the client or explicitly
+choose direct setup with `--skill=false`.
+
+Codex CLI and its desktop app must use the same Codex home for the installed
+plugin to appear in both. Start a new chat after installation. In Claude Code,
+restart or run `/reload-plugins`; local CLI plugins do not sync back to the
+Claude chat/Cowork app. Account-level Claude plugins must be added through
+Claude's supported app or organization flow. Claude Desktop's direct MCP
+integration remains separate; setup does not change account-level plugins.
+
+Remove a plugin using its owning client, for example `codex plugin remove rea@rea`
+or `claude plugin uninstall rea@rea --scope user`. `rea uninstall` manages direct
+registrations and skill copies, not client-owned plugins.
+
+### Manual plugin installation
+
 REA's npm package is the shared Claude Code and Codex plugin artifact. It
 contains `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`, and the
 canonical generated `skills/` tree. Both manifests select `./skills` and run a plain Node bootstrap pinned to
@@ -1608,13 +1645,15 @@ codex plugin add rea@rea
 Each release updates both manifest versions and their pinned server version
 together, which is when installed copies refresh the bundled skill and move to
 the new server. A plugin does not run `rea setup`, so provider
-configuration still follows the sections above. Use the plugin or a
-`rea setup` registration for a client, not both, to avoid two `rea` servers.
+configuration still follows the sections above. Use a plugin or a direct
+registration for a client, not both, to avoid two `rea` servers.
 
 `rea doctor` does not see plugin-owned state. Its client and skill checks read
 only the registrations and skill locations that `rea setup` manages, so for a
 plugin-only install `rea doctor --client <id>` and `rea doctor --skill` report
-`missing` and recommend `rea setup`. Do not follow that remediation. Check the
+`missing` and recommend `rea setup`. Setup's plugin path checks the client
+manager separately, and reports those clients under `doctor.scope.plugin_clients`.
+Do not add a direct registration to repair a plugin-only install. Check the
 plugin with the client instead (`claude plugin list` and `/mcp` in Claude
 Code, `codex plugin list` in Codex).
 

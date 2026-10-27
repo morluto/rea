@@ -64,6 +64,11 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper, Ghidra, or IDA installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs no native analysis engine.
 
+For new Codex and Claude Code integrations, setup prefers their marketplace
+plugin when the installed client supports it. The plugin supplies both the MCP
+server and skill. Existing direct registrations and custom provider settings
+keep their current setup path; review the plan before approving it.
+
 > **[Visit the REA website](https://rea.tools/)** for setup instructions, illustrated guides, and real case studies.
 
 ## Quick start

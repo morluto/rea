@@ -245,7 +245,13 @@ export const planSetupActions = async (input: {
       ? {}
       : { linuxPackageFamily: input.discovery.linuxPackageFamily }),
     command: input.command,
-  });
+  }).map((action) =>
+    action.kind === "configure_client"
+      ? (input.host.clientSetupAction?.(
+          action.id.slice("configure_client:".length),
+        ) ?? action)
+      : action,
+  );
   const blocker =
     (clientPlans.length > 0
       ? input.host.registrationCommandBlocker

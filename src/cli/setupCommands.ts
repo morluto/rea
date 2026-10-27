@@ -226,15 +226,26 @@ const runSetupCommand = async (
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
-  const [{ runSetup }, { systemSetupHost }, { createSystemDoctorHost }] =
-    await Promise.all([
-      import("../application/Setup.js"),
-      import("../application/SetupHost.js"),
-      import("../doctorRuntime.js"),
-    ]);
+  const [
+    { runSetup },
+    { systemSetupHost },
+    { createSystemDoctorHost },
+    { withPluginSetup },
+  ] = await Promise.all([
+    import("../application/Setup.js"),
+    import("../application/SetupHost.js"),
+    import("../doctorRuntime.js"),
+    import("../application/SetupPluginHost.js"),
+  ]);
   const result = await runSetup(
     setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    withPluginSetup(
+      systemSetupHost(createSystemDoctorHost(environment), environment),
+      environment,
+      options.skill !== false &&
+        options.skillClient.length === 0 &&
+        options.toolFamilies === undefined,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context)
