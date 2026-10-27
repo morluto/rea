@@ -4,7 +4,7 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const profileConstraint =
-  'REA_MCP_INPUT_SCHEMA_PROFILE accepts only "compact", the default. The "full" input profile was removed: remove the setting from the client registration, or set it to "compact". Canonical server-side validation still checks every call. Compact advertisements avoid provider or gateway limits such as Moonshot size caps (#1484) and WorkBuddy/CodeBuddy HTTP 400 code 11133 (#2999).';
+  'REA_MCP_INPUT_SCHEMA_PROFILE accepts only "compact", the default. The "full" input profile was removed: remove the setting from the client registration, or set it to "compact". Canonical server-side validation still checks every call. The removed full profile can still hit provider or gateway limits such as Moonshot size caps (#1484) or WorkBuddy/CodeBuddy HTTP 400 code 11133 (#2999).';
 
 /**
  * Only `compact` remains so registrations that spell the default keep
