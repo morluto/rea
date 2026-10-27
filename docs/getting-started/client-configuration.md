@@ -794,10 +794,12 @@ and top-level key when it upserts `rea`. WorkBuddy also reads a project-level
 user-level file only. Loading this registration and real REA tool calls
 through WorkBuddy are verified.
 
-If a gateway in front of WorkBuddy or CodeBuddy rejects the full catalog with
-HTTP 400 `code 11133` and an empty `param`, add
-`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of
-`mcpServers.rea` in that host's MCP config, then restart the host. The host
+If a WorkBuddy or CodeBuddy session hits HTTP 400 `code 11133` with an empty
+`param` while advertising REA tools, the gateway is rejecting the full input
+schema catalog. Compact advertisements are already the default on current REA,
+so this usually means an explicit `REA_MCP_INPUT_SCHEMA_PROFILE=full` override
+is still set. Remove that override, or set it to `compact`, on
+`mcpServers.rea.env` in that host's MCP config, then restart the host. The host
 name alone does not identify the downstream model; see
 [#2999](https://github.com/morluto/rea/issues/2999) and the compact profile
 section in [mcp-contracts.md](mcp-contracts.md).
@@ -817,13 +819,15 @@ user-level `~/.zcode/cli/config.json`. Entries carry `command`, `args`, and
 `~/.zcode/skills` rather than the shared directory, so setup installs its
 skill copy there.
 
-When that session routes through a WorkBuddy/CodeBuddy-backed gateway that
-rejects the full catalog with HTTP 400 `code 11133`, add
-`"REA_MCP_INPUT_SCHEMA_PROFILE": "compact"` to the `env` object of the
-effective REA entry—`mcp.servers.rea.env` in the native
-`~/.zcode/cli/config.json`, or `mcpServers.rea.env` in `~/.agents/mcp.json`
-when that fallback is the active registration—then start a new ZCode session
-([#2999](https://github.com/morluto/rea/issues/2999)).
+When a ZCode session hits HTTP 400 `code 11133` with an empty `param` while
+advertising REA tools through a WorkBuddy/CodeBuddy-backed gateway, treat it as
+a full-catalog rejection. Compact is already the default; clear or flip any
+explicit `REA_MCP_INPUT_SCHEMA_PROFILE=full` on the effective REA entry's
+`env`—`mcp.servers.rea.env` in the native `~/.zcode/cli/config.json`, or
+`mcpServers.rea.env` in `~/.agents/mcp.json` when that fallback is the active
+registration—then start a new ZCode session
+([#2999](https://github.com/morluto/rea/issues/2999)). The client name alone
+does not identify the downstream model.
 
 ZCode reads the user-scope `~/.agents/mcp.json` fallback only while the native
 `.zcode` config defines no servers at all, with no merging. When setup writes
