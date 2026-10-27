@@ -69,4 +69,26 @@ describe("Swift demangling CLI with line-terminator characters", () => {
       ]),
     });
   });
+
+  cliTest(
+    "emits compact JSON for missing-argument validation on piped stdout",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: ["demangle-swift", "--json"],
+        environment,
+        timeoutMs: 20_000,
+      });
+      expect(result.signal).toBeNull();
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        message:
+          "REA could not read the command arguments. Check the named argument and its expected type, then try again.",
+      });
+      // Piped stdout must stay compact; Incur's Formatter always indents.
+      expect(result.stdout).not.toContain("\n  ");
+      expect(result.stdout).toBe(`${JSON.stringify(result.json)}\n`);
+    },
+  );
 });
