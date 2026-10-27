@@ -258,6 +258,9 @@ checkouts and does not rewrite existing files. REA's formatter requires LF.
 Do not reintroduce `text`, `eol`, `filter`, `export-ignore`, or `export-subst`
 rules in `.gitattributes`: Claude's directory rejects content-rewriting
 attributes above the submitted plugin root.
+Windows CI sets `core.autocrlf=false` for the checkout action before any files
+are materialized, so dependency patches and generated-file checks retain their
+committed bytes even when the runner defaults to CRLF conversion.
 
 The published npm package includes the Windows x64 native addon and its
 manifest. A source checkout does not: `native/windows/build/` is ignored by
