@@ -67,6 +67,7 @@ describe("curated Windows test lane", () => {
   it.each([
     ["ci.yml", "windows-curated"],
     ["real-ghidra-windows.yml", "verify"],
+    ["real-cutter.yml", "cutter-upstream"],
   ])(
     "preserves committed bytes before %s/%s installs dependencies",
     async (file, job) => {
