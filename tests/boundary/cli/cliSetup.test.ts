@@ -290,6 +290,8 @@ describe("manual connector approval", () => {
         "#!/bin/sh\necho 'Hopper Disassembler v6.0.0'\n",
         { mode: 0o755 },
       );
+      // Linux's executable probe runs ldd before accepting this inert launcher.
+      await writeFile(join(bin, "ldd"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
       for (const runner of ["npx", "npm", "bun"])
         await writeFile(join(bin, runner), "#!/bin/sh\nexit 99\n", {
           mode: 0o755,
