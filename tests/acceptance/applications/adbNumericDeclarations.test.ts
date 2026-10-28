@@ -513,3 +513,77 @@ cliTest.skipIf(process.platform === "win32")(
     }
   },
 );
+
+cliTest.skipIf(process.platform === "win32")(
+  "retains malformed version declarations through CLI and MCP",
+  async ({ cli }) => {
+    const fixture = await createNumericAdbFixture();
+    await writeFile(
+      fixture.packageDetails,
+      [
+        `Package [${PACKAGE}]:`,
+        `  pkg=Package{fixture ${PACKAGE}}`,
+        "  versionCode=45abc minSdk=24",
+        `  versionCode=-${UNSAFE} targetSdk=34`,
+        "  versionCode=77x",
+        "",
+      ].join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-adb-package", SERIAL, PACKAGE, "--json"],
+      environment: fixture.environment,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const schema = toolContract("inspect_adb_package").outputSchema;
+    const evidence = schema.parse(result.json);
+    expect(evidence.normalized_result).toMatchObject({
+      version_code: `-${UNSAFE}`,
+      coverage: "partial",
+      numeric_issues: {
+        total: 2,
+        sample: [
+          {
+            field: "version_code",
+            reason: "invalid_format",
+            raw_line: "  versionCode=45abc minSdk=24",
+          },
+          {
+            field: "version_code",
+            reason: "invalid_format",
+            raw_line: "  versionCode=77x",
+          },
+        ],
+      },
+    });
+    const reply = await fixture.call("inspect_adb_package", {
+      serial: SERIAL,
+      package: PACKAGE,
+    });
+    expect(reply.isError).not.toBe(true);
+    expect(schema.parse(reply.structuredContent).normalized_result).toEqual(
+      evidence.normalized_result,
+    );
+    await writeFile(
+      fixture.packageDetails,
+      [
+        `Package [${PACKAGE}]:`,
+        `  pkg=Package{fixture ${PACKAGE}}`,
+        "  versionName=observed",
+        "  versionCode=45abc minSdk=24",
+        "",
+      ].join("\n"),
+    );
+    const malformedOnly = await fixture.call("inspect_adb_package", {
+      serial: SERIAL,
+      package: PACKAGE,
+    });
+    expect(malformedOnly.isError).not.toBe(true);
+    expect(
+      schema.parse(malformedOnly.structuredContent).normalized_result,
+    ).toMatchObject({
+      version_code: null,
+      coverage: "partial",
+      numeric_issues: { total: 1 },
+    });
+  },
+);
