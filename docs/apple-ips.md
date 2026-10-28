@@ -65,6 +65,8 @@ documentation does not list remain in `unlisted_keys` or `unlisted_body_keys`.
 Each examined thread, frame, and image row retains its immediate unknown key
 names in its own `unlisted_keys` array, including empty names. Unknown values
 are syntax-checked and discarded; their nested key names are not collected.
+Older retained reports may omit these row arrays; omission does not mean the
+row was examined and found to have no unknown keys.
 Like metadata and body keys, duplicate key names on these rows are refused.
 
 Each frame's `image_index` refers to its entry in `images`. Image architecture,
