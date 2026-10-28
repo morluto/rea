@@ -31,3 +31,13 @@ it("keeps the public entropy input closed after detail is added", () => {
     entropy.inputSchema.safeParse({ path: "/file", block_size: 257 }).success,
   ).toBe(false);
 });
+
+it("requires an absolute local path for the public entropy input", () => {
+  // A relative path reaches the schema but the runtime refuses it, so the
+  // advertised contract has to state the requirement instead of admitting a
+  // value that cannot succeed.
+  for (const path of ["sample.bin", "./sample.bin", "../sample.bin"]) {
+    expect(entropy.inputSchema.safeParse({ path }).success, path).toBe(false);
+  }
+  expect(entropy.inputSchema.safeParse({ path: "/file" }).success).toBe(true);
+});

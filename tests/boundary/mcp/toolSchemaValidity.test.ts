@@ -749,6 +749,47 @@ describe("MCP root input schemas", () => {
   });
 });
 
+const advertiseAndEnforceByteEntropyAbsolutePath = async (): Promise<void> => {
+  const server = new McpServer({ name: "schema-entropy-path", version: "0" });
+  const client = new Client({ name: "schema-entropy-path", version: "0" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const contract = TOOL_CONTRACTS.find(
+    ({ name }) => name === "inspect_byte_entropy",
+  );
+  if (contract === undefined)
+    throw new Error("inspect_byte_entropy was not registered");
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    async () => ({ content: [] }),
+  );
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    const advertised = tools.find((tool) => tool.name === contract.name);
+    if (advertised === undefined)
+      throw new Error("inspect_byte_entropy was not advertised");
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const validate = ajv.compile(advertised.inputSchema);
+    // The runtime refuses a relative path, so the advertised contract has to
+    // refuse it too rather than invite a request that cannot succeed.
+    expect(contract.inputSchema.safeParse({ path: "sample.bin" }).success).toBe(
+      false,
+    );
+    expect(validate({ path: "sample.bin" })).toBe(false);
+    expect(validate({ path: "/file" })).toBe(true);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+};
+
+it(
+  "advertises and enforces the byte-entropy absolute-path requirement",
+  advertiseAndEnforceByteEntropyAbsolutePath,
+);
+
 it(
   "advertises and enforces the process-owned environment key constraint",
   advertiseAndEnforceProcessEnvironmentKeyConstraint,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const offsetSchema = z
   .number()
@@ -10,7 +10,7 @@ const entropySchema = z.number().min(0).max(8);
 
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
-  path: localPathStringSchema,
+  path: absoluteLocalPathStringSchema,
   block_size: z
     .number()
     .int()
