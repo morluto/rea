@@ -63,14 +63,8 @@ const nativeUiScopeOptions = {
       "Exact selected application window ID",
     ),
   ),
-  screenshot: z
-    .boolean()
-    .default(true)
-    .describe("Capture only the selected window"),
-  accessibility: z
-    .boolean()
-    .default(true)
-    .describe("Read the selected window accessibility tree"),
+  screenshot: nativeUiScopeFields.screenshot,
+  accessibility: nativeUiScopeFields.accessibility,
   maxNodes: cliDecimalField(
     nativeUiScopeFields.max_nodes.describe(
       "Maximum accessibility nodes per capture",
