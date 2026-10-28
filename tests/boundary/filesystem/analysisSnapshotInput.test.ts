@@ -59,6 +59,10 @@ describe.each([
         retryable: false,
         details: { reason: expect.stringContaining(`at ${field}:`) },
       });
+      if (field === "target")
+        expect(projected.details?.reason).toBe(
+          "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
+        );
       expect(projected).not.toHaveProperty("cause");
       expect(projected).not.toHaveProperty("stack");
       expect(await readFile(path, "utf8")).toBe(encoded);
