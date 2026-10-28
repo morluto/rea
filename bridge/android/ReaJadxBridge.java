@@ -44,7 +44,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
-/** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
+/** REA-owned metadata boundary for the unmodified pinned jadx-headless-mcp JAR. */
 class ReaJadxBridge {
   // REA reads this identity from this source (JadxRelease.ts), so it is typed
   // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
