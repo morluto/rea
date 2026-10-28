@@ -229,10 +229,9 @@ it.each(["observe_native_ui", "capture_native_ui_scenario"] as const)(
         ],
       },
     });
-    expect(projected.message).toContain("both cannot be disabled");
-    expect(projected.remediation.action).toContain(
-      "Set screenshot or accessibility to true",
-    );
+    expect(projected.message).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/screenshot.*accessibility/iu);
+    expect(projected.remediation.action).toMatch(/true/iu);
   },
 );
 

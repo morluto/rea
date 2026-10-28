@@ -29,7 +29,7 @@ cliTest(
     ] as const) {
       const encoded = JSON.stringify(document);
       await writeFile(snapshot, encoded);
-      const output = await cli.sharedCliRun!({
+      const output = await cli.run({
         arguments: [
           "analyze",
           target,
