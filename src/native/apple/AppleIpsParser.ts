@@ -204,7 +204,7 @@ const imagesOf = (
 ): AppleIpsImage[] =>
   rows.map((row, index) => {
     const path = `body.usedImages[${String(index)}]`;
-    const members = read.row(row, path);
+    const { members, unlisted } = read.row(row, path);
     const source = read.text(members.source, `${path}.source`);
     const recordedUuid = read.text(members.uuid, `${path}.uuid`);
     const uuid = canonicalUuid(recordedUuid);
@@ -227,6 +227,7 @@ const imagesOf = (
       uuid_unknown: uuid.unknown || arch === null || arch === "",
       name: read.text(members.name, `${path}.name`),
       path: read.text(members.path, `${path}.path`),
+      unlisted_keys: [...unlisted],
     };
   });
 
@@ -256,12 +257,15 @@ const threadsOf = (
 ): AppleIpsThread[] =>
   rows.map((row, threadIndex) => {
     const path = `body.threads[${String(threadIndex)}]`;
-    const members = read.row(row, path);
+    const { members, unlisted } = read.row(row, path);
     const frames = (
       read.array(members.frames, `${path}.frames`, false) ?? []
     ).map((frame, frameIndex): AppleIpsFrame => {
       const framePath = `${path}.frames[${String(frameIndex)}]`;
-      const frameMembers = read.row(frame, framePath);
+      const { members: frameMembers, unlisted: frameUnlisted } = read.row(
+        frame,
+        framePath,
+      );
       const imageIndex = read.index(
         frameMembers.imageIndex,
         `${framePath}.imageIndex`,
@@ -291,6 +295,7 @@ const threadsOf = (
           frameMembers.symbolLocation,
           `${framePath}.symbolLocation`,
         ),
+        unlisted_keys: [...frameUnlisted],
       };
     });
     return {
@@ -301,6 +306,7 @@ const threadsOf = (
       queue: read.text(members.queue, `${path}.queue`),
       frames,
       ...threadStateOf(members.threadState, `${path}.threadState`, read),
+      unlisted_keys: [...unlisted],
     };
   });
 
