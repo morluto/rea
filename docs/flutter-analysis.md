@@ -112,8 +112,10 @@ server; older servers keep the complete request after schema discovery.
   and Dart/toolchain strings the build carries. `dart_version` accepts the
   labeled `Dart VM version:` form and the unlabeled Dart
   `Version::String()` form (`<version> (<channel>) (<commit time>)` with an
-  optional ` on "<os>_<arch>"` suffix) that release engines embed. Absence of
-  either form is reported as `null`, not guessed. Android clang/LLVM toolchain
+  optional ` on "<os>_<arch>"` suffix) that release engines embed. An
+  unlabeled match is a candidate based on its shape; it is not bound to a
+  Dart symbol and another string can match. `null` means no supported pattern
+  was found, not proof that no version exists. Android clang/LLVM toolchain
   lines are reported verbatim as build provenance.
   `build_id_candidates` preserves distinct IDs. `build_id` is populated only
   when all declared note ranges were examined and one ID was found;
