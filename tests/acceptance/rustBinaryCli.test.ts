@@ -104,6 +104,40 @@ cliTest(
 );
 
 cliTest(
+  "states the inflate ratio on the consumed stream when PE padding follows it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-pe-padding-");
+    const path = join(root, "padded.exe");
+    const bytes = createRustImage({ format: "pe", includeRustc: false });
+    const entry = 264;
+    // VirtualSize 0 selects SizeOfRawData, which file alignment pads to 512.
+    bytes.writeUInt32LE(0, entry + 8);
+    bytes.writeUInt32LE(512, entry + 16);
+    bytes.writeUInt32LE(512, 188);
+    await writeFile(path, bytes);
+
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = rustBinarySchema.parse(
+      toolContract("inspect_rust_binary").outputSchema.parse(result.json)
+        .normalized_result,
+    );
+    expect(report.auditable_metadata).toMatchObject({
+      section_bytes: 512,
+      compressed_bytes: rustDependencyPayload().length,
+    });
+    expect(
+      report.limitations.filter((line) => line.startsWith("Resource guards")),
+    ).toEqual([
+      "Resource guards bound the selected file to 256 MiB, the compressed dependency stream to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.",
+    ]);
+  },
+);
+
+cliTest(
   "preserves historical cargo-auditable features through CLI and stdio MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-features-legacy-");
