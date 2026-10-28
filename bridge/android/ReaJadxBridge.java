@@ -44,7 +44,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;
 
-/** REA-owned metadata boundary for the unmodified jadx-headless-mcp 0.7.1 JAR. */
+/** REA-owned metadata boundary for the unmodified pinned jadx-headless-mcp JAR. */
 class ReaJadxBridge {
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;

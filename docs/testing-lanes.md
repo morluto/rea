@@ -200,7 +200,7 @@ handler and can leave temporary workspace files. `verify:windows-native`
 separately checks binary input, backpressure, EOF and pending-write job closure.
 
 `npm run verify:android` requires an existing Java 17+ and an explicit
-`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
+`REA_JADX_MCP_JAR` for jadx-headless-mcp 0.8.0. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
 kept under ignored `_reference/`. No Gradle build, Android SDK, emulator or

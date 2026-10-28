@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { JADX_BRIDGE_IDENTITY } from "../../../src/android/JadxRelease.ts";
+import {
+  JADX_BRIDGE_IDENTITY,
+  JADX_RELEASE,
+} from "../../../src/android/JadxRelease.ts";
 
 // An actual child MCP server exercising the production stdio/process seam.
 // It is a protocol fixture, not evidence of JADX decompiler support.
@@ -65,7 +68,8 @@ const register = (name, handler) =>
   server.registerTool(name, { inputSchema: z.looseObject({}) }, handler);
 register("rea_jvm_status", () =>
   json({
-    engine_reported_version: mode === "engine-version" ? "0.7.0" : "0.7.1",
+    engine_reported_version:
+      mode === "engine-version" ? "0.7.0" : JADX_RELEASE.version,
     max_heap_bytes:
       mode === "heap-failure" || mode === "other-memory-failure"
         ? 67108864
