@@ -12,12 +12,14 @@ import {
   collectionPathOf,
   isObject,
   listItems,
+  listsIds,
   pointerTo,
   pointerTokens,
   recordedItemCount,
   same,
   scalarText,
   type JsonObject,
+  type ListedIds,
 } from "./environmentStateRules.js";
 
 /** The latest recordings that list their whole collection in state order, and the counters that equal the item count on each of them, or on every line when none does. */
@@ -29,10 +31,12 @@ export const listFacts = (
   readonly whole: ReadonlySet<number>;
   readonly counters: string[];
   readonly minted: string[];
+  readonly listedIds: ListedIds[];
 } => {
   const field = context.idField(plan.type);
   const whole = new Set<number>();
   const counting = new Map<number, string[]>();
+  const listing = new Set<string>();
   const names = mintedFor(context.minted, plan.latest);
   const minted = new Set<string>();
   for (const record of plan.latest)
@@ -44,6 +48,14 @@ export const listFacts = (
         minted.add(name);
       items.forEach((item) => union.add(item));
       const parent = plan.pointer === "" || !isObject(body) ? {} : body;
+      // A member listing the ids of two or more items does so by design, not by chance.
+      if (items.length >= 2)
+        for (const [name, value] of Object.entries(parent))
+          if (
+            name !== pointerTokens(plan.pointer)[0] &&
+            listsIds(value, items, field)
+          )
+            listing.add(name);
       const counted = itemTotals(parent, plan.pointer).filter(
         ([, value]) => recordedItemCount(value) !== undefined,
       );
@@ -72,7 +84,12 @@ export const listFacts = (
   // Counter presence is per envelope. Keep every observed page counter;
   // renderStateList updates only one the selected base actually counted.
   const counters = [...new Set([...counting.values()].flat())].sort(compare);
-  return { whole, counters, minted: [...minted].sort(compare) };
+  return {
+    whole,
+    counters,
+    minted: [...minted].sort(compare),
+    listedIds: [...listing].sort(compare).map((member) => ({ member, field })),
+  };
 };
 
 /**

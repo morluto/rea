@@ -175,7 +175,7 @@ describe("release configuration", () => {
 });
 
 describe("plugin manifests", () => {
-  it("ships the website favicon with readable Codex listing metadata before and after install", async () => {
+  it("keeps the shared plugin icon and Codex listing metadata aligned before and after install", async () => {
     const manifest = (await readJson(".codex-plugin/plugin.json")) as {
       description: string;
       interface: Record<string, unknown>;
@@ -197,16 +197,14 @@ describe("plugin manifests", () => {
     });
     expect(String(listing.shortDescription).length).toBeLessThanOrEqual(30);
     expect(listing.websiteURL).toBe("https://rea.tools/");
-    expect(logo).toBe("./assets/rea.svg");
+    expect(logo).toBe("./assets/rea-plugin.png");
     expect(composerIcon).toBe(logo);
     expect(await readJson("package.json")).toMatchObject({
-      files: expect.arrayContaining(["assets/rea.svg"]),
+      files: expect.arrayContaining(["assets/rea-plugin.png"]),
     });
-    const icon = await readFile("assets/rea.svg", "utf8");
-    expect(icon).toContain('width="256" height="256"');
-    expect(icon.replace(' width="256" height="256"', "")).toBe(
-      await readFile("website/public/assets/favicon.svg", "utf8"),
-    );
+    expect(await readJson(".claude-plugin/plugin.json")).toMatchObject({
+      icon: logo,
+    });
   });
 
   it("keeps content-rewriting attributes out of Claude's submitted plugin root", async () => {
@@ -385,8 +383,13 @@ describe("plugin release pins", () => {
       "longDescription",
       "developerName",
       "category",
+      "composerIcon",
+      "logo",
     ])
       expect(manifest.interface[field]).toEqual(expect.stringMatching(/\S/u));
+    expect(
+      String(manifest.interface.shortDescription).length,
+    ).toBeLessThanOrEqual(30);
     expect(manifest.interface.capabilities).toEqual(
       expect.arrayContaining([expect.stringMatching(/\S/u)]),
     );

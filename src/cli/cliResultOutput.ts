@@ -4,7 +4,12 @@ import type { Writable } from "node:stream";
 import { Filter } from "incur";
 import { estimateTokenCount } from "tokenx";
 
+import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 import type { ParsedCliOutputArguments } from "../cliOutput.js";
+import {
+  normalizeCliArguments,
+  splitIncurBuiltinArguments,
+} from "../cliBuiltinArguments.js";
 import {
   cliOperationFailureIdentity,
   cliOperationFailurePayload,
@@ -19,13 +24,19 @@ import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
-import { formatCliOutput } from "./cliOutputFormatter.js";
+import {
+  formatDelimitedOutputParts,
+  formatCliOutput,
+  prepareDelimitedOutput,
+  delimitedOutputInputError,
+} from "./cliOutputFormatter.js";
 import { jsonLinesErrorRecord } from "./jsonLines.js";
 import { writeCliJsonLines } from "./jsonLinesOutput.js";
 import {
   jsonOutputParts,
   isTerminalOutput,
   writeJsonOutput,
+  writeOutputParts,
   writeOutputText,
 } from "./jsonOutput.js";
 import type { CliInstance } from "./types.js";
@@ -49,6 +60,8 @@ export interface CliResultOutput {
   readonly error: AnalysisErrorProjection | undefined;
   /** Start another completed invocation on a reusable command registry. */
   begin(options: ParsedCliOutputArguments): void;
+  /** Preserve caller output controls while adapting SDK builtin flags. */
+  sdkArguments(args: readonly string[]): string[];
   /** SDK generators retain their own streaming event protocol. */
   delegateStreaming(): void;
   /** Retain one-shot SDK output until the SDK supplies its authoritative status. */
@@ -67,6 +80,9 @@ export const streamCliCommandResults = (
   visitRegisteredCommands(cli, (command, path, inheritedPolicy) =>
     wrapCommand(command, path, output, inheritedPolicy),
   );
+  const serve = cli.serve.bind(cli);
+  cli.serve = (args = process.argv.slice(2), serveOptions) =>
+    serve(output.sdkArguments(args), serveOptions);
 };
 
 const wrapCommand = (
@@ -121,7 +137,14 @@ export const createCliResultOutput = (
 ): CliResultOutput | undefined => {
   let options = initialOptions;
   if (!options.validation.ok) return undefined;
-  let format = options.format as "json" | "jsonl" | "yaml" | "toon" | "md";
+  let format = options.format as
+    | "json"
+    | "jsonl"
+    | "yaml"
+    | "toon"
+    | "md"
+    | "csv"
+    | "tsv";
   let handled = false;
   let failed = false;
   let error: AnalysisErrorProjection | undefined;
@@ -180,9 +203,11 @@ export const createCliResultOutput = (
       : error;
     // Recovery must remain actionable even when a token window/count was
     // requested. Do not apply those controls to this small typed failure.
+    const recoveryFormat =
+      format === "csv" || format === "tsv" ? "json" : format;
     const text = formatCliOutput(
       format === "jsonl" ? jsonLinesErrorRecord(document) : document,
-      format,
+      recoveryFormat,
     );
     handled = true;
     try {
@@ -198,7 +223,11 @@ export const createCliResultOutput = (
     metadata: CliResultOutputMetadata,
   ): Promise<boolean> => {
     completed = undefined;
-    if (metadata.format !== format) return false;
+    if (
+      metadata.format !== format &&
+      !((format === "csv" || format === "tsv") && metadata.format === "json")
+    )
+      return false;
     try {
       return await writeResult(value, metadata);
     } catch (cause: unknown) {
@@ -227,6 +256,22 @@ export const createCliResultOutput = (
       sdkParts.length = 0;
       sdkCompletion = undefined;
     },
+    sdkArguments(args) {
+      const normalized = normalizeCliArguments(args);
+      // The caller's parsed controls remain authoritative: the CLI may adapt
+      // CSV/TSV to JSON for Incur without changing the requested presentation.
+      if (format !== "jsonl" || !options.tokenCount) return normalized;
+      // Incur counts errors before REA can retain their diagnostic payload.
+      // Preserve operands using the shared builtin consumption rules.
+      const values = new Set(
+        splitIncurBuiltinArguments(normalized).outputValues.map(
+          ({ index }) => index,
+        ),
+      );
+      return normalized.filter(
+        (token, index) => token !== "--token-count" || values.has(index),
+      );
+    },
     delegateStreaming() {
       streaming = true;
     },
@@ -249,7 +294,14 @@ export const createCliResultOutput = (
             return;
           }
           if (exitCode === 0) {
-            for (const part of parts) await writeOutputText(destination, part);
+            if (options.tokenCount)
+              await writeOutputText(
+                destination,
+                `${estimateTokenCount(parts.join(""))}\n`,
+              );
+            else
+              for (const part of parts)
+                await writeOutputText(destination, part);
           } else {
             const text = parts.join("");
             let result: unknown = text;
@@ -305,6 +357,74 @@ export const createCliResultOutput = (
       !options.tokenCount
     )
       return false;
+    if (format === "csv" || format === "tsv") {
+      const meta = {
+        command: metadata.command,
+        duration: metadata.duration,
+      };
+      if (operationFailure !== undefined) {
+        const parsedFailure =
+          analysisErrorProjectionSchema.safeParse(operationFailure);
+        error = parsedFailure.success
+          ? parsedFailure.data
+          : projectAnalysisError(
+              delimitedOutputInputError(
+                ["--format"],
+                "CSV/TSV output was not produced because the command did not return a successful row collection.",
+                metadata.command,
+              ),
+            );
+        handled = true;
+        try {
+          await writeJsonOutput(
+            options.fullOutput
+              ? { ok: false, error: operationFailure, meta }
+              : operationFailure,
+            destination,
+          );
+        } catch (cause: unknown) {
+          failed = true;
+          throw cause;
+        }
+        return true;
+      }
+      const selection = resolveDelimitedRows(
+        value,
+        filterPaths,
+        metadata.command,
+      );
+      const prepared = selection.ok
+        ? prepareDelimitedOutput(selection.value.rows, format, {
+            fields: options.columns ?? [],
+            metadata: delimitedMetadata(selection.value, format, metadata),
+          })
+        : selection;
+      if (!prepared.ok) {
+        error = projectAnalysisError(prepared.error);
+        handled = true;
+        try {
+          await writeJsonOutput(
+            options.fullOutput ? { ok: false, error, meta } : error,
+            destination,
+          );
+        } catch (writeFailure: unknown) {
+          failed = true;
+          throw writeFailure;
+        }
+      } else {
+        handled = true;
+        try {
+          await writeOutputParts(
+            destination,
+            formatDelimitedOutputParts(prepared.value),
+          );
+        } catch (cause: unknown) {
+          failed = true;
+          throw cause;
+        }
+      }
+      return true;
+    }
     const selection =
       operationFailure !== undefined || filterPaths === undefined
         ? ok(operationFailure ?? value)
@@ -474,7 +594,13 @@ export const createCliResultOutput = (
       );
     }
     if (ownsSuccessfulTokenWindow) {
-      const formatted = formatCliOutput(filtered, format);
+      // Ordinary Markdown windows share rendering/counting's document, including
+      // its missing-selection fallback. Full output windows budget the data
+      // separately from their envelope and retain that policy.
+      const formatted = formatCliOutput(
+        format === "md" && !options.fullOutput ? document : filtered,
+        format,
+      );
       const window = sliceTextByTokenWindow(
         formatted,
         options.tokenOffset ?? 0,
@@ -584,6 +710,104 @@ const fullFailureEnvelope = (
 
 type FilterPaths = ReturnType<typeof Filter.parse>;
 type FilterPath = FilterPaths[number];
+
+interface DelimitedRowsSelection {
+  readonly rows: readonly unknown[];
+  readonly path: readonly string[];
+  readonly ancestors: readonly Readonly<Record<string, unknown>>[];
+}
+
+const resolveDelimitedRows = (
+  source: unknown,
+  paths: FilterPaths | undefined,
+  operation: string,
+): Result<DelimitedRowsSelection, AnalysisInputError> => {
+  const invalidSelection = (): Result<never, AnalysisInputError> =>
+    err(
+      delimitedOutputInputError(
+        ["--filter-output"],
+        "--filter-output must select exactly one row-array path using object-field segments only.",
+        operation,
+      ),
+    );
+  if (paths === undefined || paths.length !== 1) return invalidSelection();
+  const path: string[] = [];
+  for (const segment of paths[0] ?? []) {
+    if (!("key" in segment)) return invalidSelection();
+    path.push(segment.key);
+  }
+  if (path.length === 0) return invalidSelection();
+  let current: unknown = source;
+  const ancestors: Readonly<Record<string, unknown>>[] = [];
+  for (const key of path) {
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(current) ||
+      !Object.hasOwn(current, key)
+    )
+      return invalidSelection();
+    const owner = current as Readonly<Record<string, unknown>>;
+    ancestors.push(owner);
+    current = owner[key];
+  }
+  return Array.isArray(current)
+    ? ok({ rows: current, path, ancestors })
+    : invalidSelection();
+};
+
+const delimitedMetadata = (
+  selection: DelimitedRowsSelection,
+  format: "csv" | "tsv",
+  metadata: CliResultOutputMetadata,
+): Readonly<Record<string, unknown>> => {
+  const valueFromOwner = (
+    key: string,
+  ): { readonly found: boolean; readonly value: unknown } => {
+    for (let index = selection.ancestors.length - 1; index >= 0; index -= 1) {
+      const owner = selection.ancestors[index]!;
+      if (Object.hasOwn(owner, key)) return { found: true, value: owner[key] };
+    }
+    return { found: false, value: undefined };
+  };
+  const projectOwnFields = (
+    keys: readonly string[],
+  ): Readonly<Record<string, unknown>> =>
+    Object.fromEntries(
+      keys.flatMap((key) => {
+        const found = valueFromOwner(key);
+        return found.found ? [[key, found.value]] : [];
+      }),
+    );
+  const metadataValue = (key: string): unknown => valueFromOwner(key).value;
+  return {
+    version: 1,
+    format,
+    command: metadata.command,
+    duration: metadata.duration,
+    selected_path: selection.path,
+    coverage: metadataValue("coverage") ?? null,
+    source_coverage: metadataValue("source_coverage") ?? null,
+    source_complete: metadataValue("source_complete") ?? null,
+    view: metadataValue("view") ?? null,
+    limitations: metadataValue("limitations") ?? null,
+    unknowns: metadataValue("unknowns") ?? null,
+    provenance: projectOwnFields([
+      "parent_evidence_id",
+      "parent_operation",
+      "parent_digest",
+      "inventory_evidence_ids",
+    ]),
+    pagination: projectOwnFields([
+      "offset",
+      "limit",
+      "total",
+      "next_offset",
+      "truncated",
+      "pagination",
+    ]),
+  };
+};
 
 /** Apply Incur's parsed path grammar while merging sibling array selections. */
 type FilterProjection = Result<unknown, string>;

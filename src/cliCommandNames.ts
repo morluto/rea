@@ -29,6 +29,7 @@ export const CLI_COMMANDS = Object.freeze({
   inspectNativeDispatchMetadata: "inspect-native-dispatch-metadata",
   capabilities: "capabilities",
   providers: "providers",
+  guidedWorkflows: "guided-workflows",
   function: "function",
   annotateNativeFunction: "annotate-native-function",
   inspectNativeApi: "inspect-native-api",

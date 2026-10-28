@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -886,6 +887,41 @@ describe("evidence bundle process-capture payloads", () => {
   );
 });
 
+it.each([true, false])(
+  "refuses symlink exports in both overwrite modes (target exists: %s)",
+  async (targetExists) => {
+    const directory = await createTestTempDirectory("rea-evidence-link-");
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    const outsidePath = join(outside, "bundle.json");
+    const encoded = serializeEvidenceBundle(bundle());
+    if (targetExists) await writeFile(outsidePath, encoded);
+    const link = join(directory, "escaped.json");
+    await symlink(outsidePath, link);
+    if (targetExists)
+      expect(await readEvidenceBundle(link)).toMatchObject({
+        ok: true,
+        value: bundle(),
+      });
+    for (const overwrite of [false, true]) {
+      expect(await writeBundle(bundle(), link, overwrite)).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "not-file", path: link },
+      });
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect((await readdir(directory)).sort()).toEqual([
+        "escaped.json",
+        "outside",
+      ]);
+      expect(await readdir(outside)).toEqual(
+        targetExists ? ["bundle.json"] : [],
+      );
+      if (targetExists)
+        expect(await readFile(outsidePath, "utf8")).toBe(encoded);
+    }
+  },
+);
+
 describe("evidence bundle filesystem adapter", () => {
   it.skipIf(process.platform === "win32").each(["/", "/."])(
     "preserves the directory requirement of a missing output ending in %s",
@@ -933,24 +969,6 @@ describe("evidence bundle filesystem adapter", () => {
     });
     expect(await writeBundle(evidenceBundle, path, true)).toMatchObject({
       ok: true,
-    });
-  });
-
-  it("reads the caller-selected symlink target and refuses to replace a symlink", async () => {
-    const directory = await createTestTempDirectory("rea-evidence-");
-    const outside = join(directory, "outside");
-    await mkdir(outside);
-    const outsidePath = join(outside, "bundle.json");
-    await writeFile(outsidePath, serializeEvidenceBundle(bundle()));
-    const link = join(directory, "escaped.json");
-    await symlink(outsidePath, link);
-    expect(await readEvidenceBundle(link)).toMatchObject({
-      ok: true,
-      value: bundle(),
-    });
-    expect(await writeBundle(bundle(), link, true)).toMatchObject({
-      ok: false,
-      error: { _tag: "EvidenceFileError", reason: "not-file" },
     });
   });
 

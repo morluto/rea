@@ -9,6 +9,7 @@ import type {
   UnsignedAnalysisView,
 } from "./analysisView.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
+import { DELETED_FLAGS } from "./environmentStateRules.js";
 import { isClockZone } from "./environmentStateWriteValues.js";
 import { CLOCK_PATTERNS } from "./environmentStateWriteClockFormats.js";
 import {
@@ -168,6 +169,12 @@ const viewSchema = z.discriminatedUnion("shape", [
       .describe(
         "Record whose response, with the entity object replaced, every item response shares.",
       ),
+    deleted_flag: z
+      .enum(DELETED_FLAGS)
+      .optional()
+      .describe(
+        "Member its reads set true on an entity the application soft-deleted.",
+      ),
     ...replayedReadFields,
   }),
   z.strictObject({
@@ -188,6 +195,12 @@ const viewSchema = z.discriminatedUnion("shape", [
       .array(z.string())
       .describe(
         "Envelope members that count the listed entities: a top-level member's name, or a JSON pointer to one in a top-level object beside the list (`/pageInfo/totalRows`); a top-level name starting with `/` is written as its pointer (`/~1total`).",
+      ),
+    listed_ids: z
+      .array(z.strictObject({ member: z.string(), field: z.string() }))
+      .optional()
+      .describe(
+        "Top-level envelope members listing each listed entity's identity field in list order, as Paperless's `all` does.",
       ),
     query: listQuerySchema
       .optional()
@@ -232,6 +245,7 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     ...ruled,
     rule: z.literal("sequence"),
     scope: z.enum(["collection", "type"]),
+    start: z.number().int().exactOptional(),
   }),
   z.strictObject({ ...ruled, rule: z.literal("unique") }),
   z.strictObject({
@@ -249,6 +263,16 @@ const fieldRuleSchema = z.discriminatedUnion("rule", [
     rule: z.literal("nested-clock"),
     members: z.array(z.string()).min(1),
     format: clockFormatSchema,
+  }),
+  z.strictObject({
+    ...ruled,
+    rule: z.literal("made-object"),
+    clocks: z.array(z.string()).min(1),
+    format: clockFormatSchema,
+    own: z.array(z.string()),
+    counts: z.array(
+      z.strictObject({ member: z.string(), start: z.number().int() }),
+    ),
   }),
   z.strictObject({
     ...ruled,
@@ -362,6 +386,12 @@ const writePlanSchema = z.strictObject({
           ordinal: ordinalSchema,
           pointer: z.string(),
           shape: z.enum(["item", "list"]),
+          unloaded: z
+            .array(z.string())
+            .exactOptional()
+            .describe(
+              "JSON pointers into the entity to values the response had not loaded, which answers keep as the response showed them.",
+            ),
         })
         .exactOptional()
         .describe(
@@ -397,10 +427,13 @@ const writePlanSchema = z.strictObject({
       defaults: z
         .array(z.strictObject({ member: z.string(), value: jsonValueSchema }))
         .optional(),
+      blank: z
+        .array(z.strictObject({ member: z.string(), sent: jsonValueSchema }))
+        .optional(),
     })
     .nullable()
     .describe(
-      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), the member a call wraps its object in as a one-element array (envelope), and the value a create stores for an accepted member a call leaves out, as a call that left it out showed (defaults).",
+      "Body members the application stored as sent (accepted), members accepted only with their recorded value (fixed), members every call sends (required), the JSON type a later call stored an accepted member as when the observation does not show it (kinds), the member a call wraps its object in as a one-element array (envelope), the value a create stores for an accepted member a call leaves out, as a call that left it out showed (defaults), and members a recorded create sent empty, which a call that leaves them out is applied as sending (blank).",
     ),
   rules: z
     .array(fieldRuleSchema)

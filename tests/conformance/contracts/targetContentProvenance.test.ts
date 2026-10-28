@@ -19,6 +19,7 @@ describe("target-content provenance audit", () => {
       });
     expect([...TARGET_CONTENT_FREE_TOOLS].sort()).toEqual([
       "export_evidence_bundle",
+      "guided_workflows",
       "inspect_analysis_settings",
       "record_unknown",
       "update_analysis_settings",

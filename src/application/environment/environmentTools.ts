@@ -32,7 +32,7 @@ export const REPLAY_CATALOG_INSTRUCTIONS =
 /** JSON Schema advertised for one tool argument. */
 export interface EnvironmentToolProperty extends EnvironmentToolSchema {
   readonly oneOf?: readonly (
-    | { readonly type: "string" }
+    | { readonly type: "string" | "number" | "boolean" }
     | { readonly type: "array"; readonly items: { readonly type: "string" } }
   )[];
   readonly description: string;
@@ -325,6 +325,21 @@ export const hasRepeatedQueryArgument = (
   return false;
 };
 
+/** The arguments with a number or boolean given for a query parameter spelled as its JSON text, as a URL carries it. */
+export const withQueryText = (
+  tool: EnvironmentManifestTool,
+  args: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> => {
+  let spelled: Record<string, unknown> | undefined;
+  for (const argument of environmentToolArguments(tool).query.values()) {
+    const value = ownMember(args, argument);
+    if (typeof value !== "number" && typeof value !== "boolean") continue;
+    spelled ??= { ...args };
+    spelled[argument] = JSON.stringify(value);
+  }
+  return spelled ?? args;
+};
+
 /** Lazily render properties so admission precedes retaining a whole schema. */
 function* environmentToolProperties(
   tool: EnvironmentManifestTool,
@@ -351,9 +366,11 @@ function* environmentToolProperties(
         ? {
             oneOf: [
               { type: "string" },
+              { type: "number" },
+              { type: "boolean" },
               { type: "array", items: { type: "string" } },
             ],
-            description: `Query parameter ${describeText(name, "query name")}; optional. Supply one string for one occurrence or an array to preserve repeated values in captured order; repeated values replay their recorded request.`,
+            description: `Query parameter ${describeText(name, "query name")}; optional. Supply one value for one occurrence, a number or boolean sent as its JSON text, or an array of strings to preserve repeated values in captured order; repeated values replay their recorded request.`,
           }
         : {
             type: "string",

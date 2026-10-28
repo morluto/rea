@@ -23,6 +23,14 @@ again if a hint names a gap, then writes the bundle with
 - Map the application first with `inspect_web_page` (and `capture_web_screenshot`
   when layout matters): the login form's locators, and the API calls behind the
   pages that list and edit the entities the user asked about.
+- `inspect_web_page` cannot sign in. To see pages behind sign-in, run a short
+  `capture_browser_scenario` that signs in and opens them, with
+  `"capture": {"after_each_step": ["accessibility"]}` (`"dom"` for markup).
+  Read a step's tree with `inspect_analysis_view`, `view: {kind:
+  "browser-scenario", collection: "text", step_index, artifact:
+  "accessibility", offset: 0, limit: 2048}`, paging with `offset`. Capture
+  options are only `after_each_step`, `at_end`, `events`, `network` and
+  `limits`.
 
 ## Record a session an environment can learn writes from
 
@@ -124,8 +132,10 @@ client with it. Match `wait_for` locators to exactly one element.
    as a secret reference), submit, then `wait_for` an element only a signed-in
    user sees.
 2. Read with `request` steps: each collection the environment needs, twice
-   before any write, so fields that change on their own show up; one item of
-   each.
+   before any write, so fields that change on their own show up; then each
+   object a list shows by id, up to ten per collection. An object known only
+   from a list that leaves out fields its own read shows cannot be read by id
+   or updated in the environment.
 3. Write the way the application's UI does: fill its forms and click its
    buttons, so each request carries the fields the UI sends, including ones
    the server would otherwise derive. Give the click or key press that submits
@@ -145,8 +155,17 @@ client with it. Match `wait_for` locators to exactly one element.
    read 2, list; never several writes before their reads.
 4. Leave more than a second between a create and its first edit
    (`wait_for_timeout` with `duration_ms: 1100`).
-5. Update both objects and read each back; delete both and read each back
-   (expect 404) and the list.
+5. Update both objects and read each back, changing the fields a person
+   would change (a name, an email address, a status, a due date) rather than
+   only a description: a served update accepts only the members a recorded
+   update stored. Delete both and read each back (expect 404, or the object
+   marked deleted) and the list.
+6. Vary what the two creates send, however you write them: the first every
+   field the application takes, the second only what a person must give (its
+   title or name), with the other fields left out or empty. A served create
+   requires each member both creates filled in and lets a caller leave out one
+   a create left out or sent empty, so an agent that names only a title is not
+   refused for fields it had no reason to set.
 
 About `request` steps:
 
@@ -226,7 +245,7 @@ withheld with its hint:
 | `no-call`             | Re-record once with a write that succeeds.                                                    |
 | `side-effect`         | Stop: the application changes other entities.                                                 |
 | `contradicted`        | Stop: a later read disagrees with the modelled effect.                                        |
-| `body-unusable`       | Stop: the body is not a JSON object.                                                          |
+| `body-unusable`       | Re-record a UI write once with `request` steps (its body was not exposed); else stop.         |
 
 Use new scratch names on each attempt, and delete what an earlier attempt
 created before recording again (through the UI, or a `request` step with the

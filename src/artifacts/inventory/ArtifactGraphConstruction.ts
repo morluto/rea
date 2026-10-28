@@ -1,4 +1,5 @@
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
+import { detectHexRecordEncoding } from "../../domain/firmware/hexRecords.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import { asarHeaderAdmissionFailure } from "../AsarHeader.js";
 import { hasDestinationPath } from "../ArtifactPaths.js";
@@ -275,9 +276,16 @@ export const rootOccurrenceFor = (
   artifact_kind:
     metadata.format === "directory" ||
     isZipPackageFormat(metadata.format) ||
-    ["asar", "godot-pck", "dmg", "pkg", "pyinstaller", "node-sea"].includes(
-      metadata.format,
-    )
+    [
+      "asar",
+      "godot-pck",
+      "dmg",
+      "pkg",
+      "pyinstaller",
+      "node-sea",
+      "intel-hex",
+      "srec",
+    ].includes(metadata.format)
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,
@@ -567,7 +575,8 @@ const artifactRoleForFormat = (
       format: zipPackageFormatForPath(path) ?? format,
     };
   if (format === "plist") return { kind: "plist", format };
-  if (format === "godot-pck") return { kind: "container", format };
+  if (format === "godot-pck" || format === "intel-hex" || format === "srec")
+    return { kind: "container", format };
   return {
     kind: ["native-addon", "dynamic-library"].includes(byPath.kind)
       ? byPath.kind
@@ -584,6 +593,8 @@ export const classifyArtifactBytes = (
   const { prefix, mzWindowsHeaderSignature } = evidence;
   if (hasZipSignature(prefix)) return "zip";
   if (hasGodotPckHeader(prefix)) return "godot-pck";
+  const hexRecords = detectHexRecordEncoding(prefix);
+  if (hexRecords !== undefined) return hexRecords;
   if (hasBinaryPlistSignature(prefix)) return "plist";
   if (hasXmlPlistSignature(prefix)) return "plist";
   const fatFormat = classifyFatArtifact(evidence, fileSize);

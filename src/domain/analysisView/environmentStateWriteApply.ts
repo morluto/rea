@@ -12,15 +12,17 @@ import {
   scalarText,
   type JsonObject,
   type StateEntity,
+  type StateView,
 } from "./environmentStateRules.js";
-import type {
-  FieldRule,
-  GeneratedRule,
-  JsonKind,
-  StateWritePlan,
-  WriteBody,
-  WriteCall,
-  WriteResponse,
+import {
+  emptySpellings,
+  type FieldRule,
+  type GeneratedRule,
+  type JsonKind,
+  type StateWritePlan,
+  type WriteBody,
+  type WriteCall,
+  type WriteResponse,
 } from "./environmentStateWriteRules.js";
 import {
   stampProblem,
@@ -148,6 +150,13 @@ export const bodyProblem = (
     }
     if (!body.accepted.includes(member))
       return `Member ${member} is not one the capture showed stored (${bodyContract(body)}).`;
+    // A recorded call sent this member empty, as a form does for a field left as it was.
+    if (
+      body.blank?.some(
+        (entry) => entry.member === member && same(entry.sent, value),
+      ) === true
+    )
+      continue;
     const recorded = ownMember(shapes.entity, member);
     const kind =
       recorded === undefined || recorded === null
@@ -227,6 +236,7 @@ const ruledValue = (
     case "clock":
     case "nested-clock":
     case "held-clock":
+    case "made-object":
       return generate(rule);
     case "echo":
       return ok(
@@ -320,15 +330,37 @@ const copiedShapes = (
     }),
   );
 
+/** A create's call with the members it left out that recorded calls sent empty, as the earliest sent them; one a call that left it out showed a default for keeps that default. */
+const withBlanks = (body: WriteBody, call: WriteCall): WriteCall => {
+  const given = call.body ?? {};
+  const left = (body.blank ?? []).filter(
+    ({ member }, index, blank) =>
+      !Object.hasOwn(given, member) &&
+      !(body.defaults ?? []).some((entry) => entry.member === member) &&
+      blank.findIndex((entry) => entry.member === member) === index,
+  );
+  return left.length === 0
+    ? call
+    : {
+        ...call,
+        body: {
+          ...Object.fromEntries(left.map(({ member, sent }) => [member, sent])),
+          ...given,
+        },
+      };
+};
+
 /** The fields of a created entity: the observed entity with every ruled field taken from the call or generated. */
 export const createdFields = (
   plan: Pick<StateWritePlan, "rules" | "body">,
   observed: JsonObject,
-  call: WriteCall,
+  sentCall: WriteCall,
   generate: GenerateValue,
   referenced?: ReferencedEntity,
+  idField?: string,
 ): Applied<JsonObject> => {
   if (plan.body === null) return err("The tool has no modelled body.");
+  const call = withBlanks(plan.body, sentCall);
   const problem = bodyProblem(plan.body, call, {
     entity: { ...copiedShapes(plan.rules, observed), ...observed },
   });
@@ -347,9 +379,37 @@ export const createdFields = (
     else if (rule.rule === "echo" || rule.rule === "reference")
       delete written[rule.field];
   }
+  ownMadeMembers(plan.rules, written, idField);
   const unspelled = derive(plan.rules, observed, written, call.body ?? {});
   return unspelled === undefined ? ok(written) : err(unspelled);
 };
+
+/** Set each made object's members that hold the entity's identity to the identity it was written with, generated or sent. */
+const ownMadeMembers = (
+  rules: readonly FieldRule[],
+  written: JsonObject,
+  idField: string | undefined,
+): void => {
+  const identity =
+    idField ?? rules.find((rule) => rule.rule === "identity")?.field;
+  const id = identity === undefined ? undefined : ownMember(written, identity);
+  if (id === undefined) return;
+  for (const rule of rules) {
+    if (rule.rule !== "made-object" || rule.own.length === 0) continue;
+    const made = ownMember(written, rule.field);
+    if (made === undefined || !isObject(made)) continue;
+    const owned: JsonObject = { ...made };
+    for (const member of rule.own)
+      setOwnMember(owned, member, spelledIdentity(ownMember(made, member), id));
+    setOwnMember(written, rule.field, owned);
+  }
+};
+
+/** An identity spelled as a recorded member spells it: a string, or a number when the identity is one. */
+const spelledIdentity = (
+  exemplar: JsonValue | undefined,
+  id: JsonValue,
+): JsonValue => (typeof exemplar === "string" ? (scalarText(id) ?? id) : id);
 
 /** Rules an update gives a new value on every call. */
 const REGENERATED: ReadonlySet<FieldRule["rule"]> = new Set([
@@ -491,6 +551,27 @@ export const optionalFields = (
   );
 };
 
+/** Fields an item view of the type shows that no initial entity of the type holds, which only later reads showed. */
+export const laterItemFields = (
+  views: Iterable<StateView>,
+  entities: readonly StateEntity[],
+  type: string | null,
+): Set<string> => {
+  const fields = new Set<string>();
+  for (const view of views)
+    if (view.shape === "item" && view.type === type)
+      for (const field of view.fields)
+        if (!view.required_fields.includes(field)) fields.add(field);
+  for (const entity of entities)
+    if (entity.type === type)
+      for (const held of [
+        entity.fields,
+        ...entity.view_fields.map((view) => view.fields),
+      ])
+        for (const field of Object.keys(held)) fields.delete(field);
+  return fields;
+};
+
 /** A write's answer body from its recorded response: the entity or identity rendered in, nothing, or the recorded body; optional fields show only when written. */
 export const writtenResponse = (
   response: WriteResponse,
@@ -500,8 +581,14 @@ export const writtenResponse = (
     readonly id: string;
     /** Generated clocks keep the response's spelling independently of the stored entity's. */
     readonly clocks?: readonly string[];
+    /** Members the call sent, which the answer shows as stored. */
+    readonly sent?: readonly string[];
+    /** Pointers into the entity to values the recorded answer had not loaded, which the answer keeps as recorded. */
+    readonly unloaded?: readonly string[];
   },
   optional: readonly string[] = [],
+  /** Fields only later reads showed, which the answer leaves out when the entity does not hold them. */
+  later: ReadonlySet<string> = new Set(),
 ): Applied<JsonValue | undefined> => {
   if (response.shape === "empty") return ok(undefined);
   if (response.shape === "recorded" || recorded === undefined)
@@ -522,7 +609,7 @@ export const writtenResponse = (
     return err("The recorded response does not carry the entity.");
   const held = (field: string) => Object.hasOwn(written.fields!, field);
   const missing = Object.keys(shown).filter(
-    (field) => !held(field) && !optional.includes(field),
+    (field) => !held(field) && !optional.includes(field) && !later.has(field),
   );
   if (missing.length > 0)
     return err(
@@ -532,32 +619,95 @@ export const writtenResponse = (
     ...Object.keys(shown).filter(held),
     ...optional.filter((field) => !Object.hasOwn(shown, field) && held(field)),
   ];
-  return ok(
-    replaceAt(
-      recorded,
-      pointer,
-      Object.fromEntries(
-        fields.map((field) => {
-          const value = ownMember(written.fields!, field)!;
-          const clock =
-            written.clocks?.includes(field) === true
-              ? readClock(ownMember(shown, field))
-              : undefined;
-          return [
-            field,
-            clock === undefined ? value : respellClock(value, clock.format),
-          ];
-        }),
-      ),
-    ),
+  const entity = Object.fromEntries(
+    fields.map((field): [string, JsonValue] => {
+      const value = ownMember(written.fields!, field)!;
+      const answered = ownMember(shown, field);
+      // An answer spells an empty list or map the call did not send as its recording did.
+      if (
+        answered !== undefined &&
+        written.sent?.includes(field) !== true &&
+        emptySpellings(answered, value)
+      )
+        return [field, answered];
+      const clock =
+        written.clocks?.includes(field) === true
+          ? readClock(answered)
+          : undefined;
+      return [
+        field,
+        clock === undefined ? value : respellClock(value, clock.format),
+      ];
+    }),
   );
+  const answer = (written.unloaded ?? []).reduce<JsonObject>(
+    (rendered, path) => {
+      const tokens = pointerTokens(path);
+      const kept = memberAt(shown, tokens);
+      if (kept !== undefined) return withMemberAt(rendered, tokens, kept);
+      // A member the answer left out of an object it showed stays out.
+      return isObject(memberAt(shown, tokens.slice(0, -1)))
+        ? withoutMemberAt(rendered, tokens)
+        : rendered;
+    },
+    entity,
+  );
+  return ok(replaceAt(recorded, pointer, answer));
 };
 
-/** The shared bulk renderer: fixed acknowledgements, or one first-template element per written entity. */
+/** The value under these member names, nested objects included. */
+const memberAt = (
+  value: JsonValue | undefined,
+  tokens: readonly string[],
+): JsonValue | undefined =>
+  tokens.reduce<JsonValue | undefined>(
+    (inner, token) => (isObject(inner) ? ownMember(inner, token) : undefined),
+    value,
+  );
+
+/** A copy with the value under these member names replaced, when the object holds every one of them. */
+const withMemberAt = (
+  object: JsonObject,
+  tokens: readonly string[],
+  value: JsonValue,
+): JsonObject => {
+  const [first, ...rest] = tokens;
+  if (first === undefined || !Object.hasOwn(object, first)) return object;
+  if (rest.length === 0) return { ...object, [first]: value };
+  const inner = object[first];
+  return isObject(inner)
+    ? { ...object, [first]: withMemberAt(inner, rest, value) }
+    : object;
+};
+
+/** A copy without the value under these member names, when the object holds every one of them. */
+const withoutMemberAt = (
+  object: JsonObject,
+  tokens: readonly string[],
+): JsonObject => {
+  const [first, ...rest] = tokens;
+  if (first === undefined || !Object.hasOwn(object, first)) return object;
+  if (rest.length === 0) {
+    const { [first]: _dropped, ...kept } = object;
+    return kept;
+  }
+  const inner = object[first];
+  return isObject(inner)
+    ? { ...object, [first]: withoutMemberAt(inner, rest) }
+    : object;
+};
+
+/** The shared bulk renderer: fixed acknowledgements, or one first-template element per written entity, each with the single answer's optional and later fields. */
 export const writtenBulkResponse = (
   response: WriteResponse,
   recorded: JsonValue | undefined,
-  written: readonly { readonly fields: JsonObject; readonly id: string }[],
+  written: readonly {
+    readonly fields: JsonObject;
+    readonly id: string;
+    readonly sent?: readonly string[];
+  }[],
+  optional: readonly string[] = [],
+  later: ReadonlySet<string> = new Set(),
 ): Applied<JsonValue | undefined> => {
   if (response.shape === "empty") return ok(undefined);
   if (response.shape === "recorded") return ok(recorded);
@@ -570,6 +720,8 @@ export const writtenBulkResponse = (
       { ...response, pointer: "" },
       template,
       entity,
+      optional,
+      later,
     );
     if (!element.ok) return element;
     elements.push(element.value ?? null);

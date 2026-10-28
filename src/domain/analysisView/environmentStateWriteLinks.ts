@@ -23,6 +23,7 @@ import {
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 import {
   pathValuesOf,
+  type FieldRule,
   type WriteEffect,
 } from "./environmentStateWriteRules.js";
 
@@ -44,9 +45,14 @@ const identityValues = (object: JsonValue | undefined): string[] =>
       })
     : [];
 
+/** The one object a one-element array holds, else the value itself. */
+const unwrapped = (value: JsonValue): JsonValue =>
+  Array.isArray(value) && value.length === 1 ? value[0]! : value;
+
 /**
  * The ids a write's response names for an entity it made: an identity-named member of the body or of
- * an object member (an envelope) at any length, or a scalar body or sole scalar member long enough to name one.
+ * an object member (an envelope, or the one object of a one-element array member) at any length, or a
+ * scalar body or sole scalar member long enough to name one.
  */
 export const respondedIds = (body: JsonValue | undefined): string[] => {
   if (body === undefined || body === null) return [];
@@ -60,7 +66,7 @@ export const respondedIds = (body: JsonValue | undefined): string[] => {
     ...new Set([
       ...identityValues(body),
       ...(members.length === 1 ? named(members[0]) : []),
-      ...members.flatMap(identityValues),
+      ...members.flatMap((member) => identityValues(unwrapped(member))),
     ]),
   ];
 };
@@ -394,6 +400,27 @@ export const recordedPathValues = (
     ),
   );
 };
+
+/** Whether a linked create may take any path arguments: it creates into its type's own collection, whose path has no parameters, and stores each path value in a field, so none changes where it creates. */
+export const anyLinkedSource = (
+  plan: {
+    readonly target: string | null;
+    readonly collection: string | null;
+    readonly rules: readonly FieldRule[];
+  },
+  template: string,
+): boolean =>
+  plan.target !== null &&
+  plan.collection !== null &&
+  normalizedPath(plan.collection) === plan.target &&
+  !segmentsOf(plan.target).some(isParam) &&
+  segmentsOf(template)
+    .filter(isParam)
+    .every((segment) =>
+      plan.rules.some(
+        (rule) => rule.rule === "path" && rule.from === segment.slice(1, -1),
+      ),
+    );
 
 /**
  * Whether a linked create's call sends the path values its exemplar did, each as recorded or in the

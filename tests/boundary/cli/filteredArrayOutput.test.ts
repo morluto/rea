@@ -8,6 +8,7 @@ import {
   parseCliOutputArguments,
   renderCliDocument,
 } from "../../../src/cliOutput.js";
+import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
 import {
   createCliResultOutput,
   streamCliCommandResults,
@@ -24,8 +25,10 @@ const freezeRecursively = <T>(value: T): T => {
 
 const runFilteredCli = async (
   value: unknown,
-  format: "json" | "jsonl" | "yaml" | "toon" | "md",
+  format: "json" | "jsonl" | "yaml" | "toon" | "md" | "csv" | "tsv",
   filter?: string,
+  fields?: readonly string[],
+  expectedExitCode = 0,
 ): Promise<string> => {
   const cli = Cli.create("filtered-array-test", { sync: false });
   cli.command("rows", { run: () => value });
@@ -34,6 +37,7 @@ const runFilteredCli = async (
     "--format",
     format,
     ...(filter === undefined ? [] : ["--filter-output", filter]),
+    ...(fields === undefined ? [] : ["--columns", fields.join(",")]),
   ];
   const chunks: Buffer[] = [];
   const output = createCliResultOutput(
@@ -48,9 +52,9 @@ const runFilteredCli = async (
   if (output === undefined) throw new Error("Missing CLI output owner");
   streamCliCommandResults(cli, output);
   let fallback = "";
-  await cli.serve(args, {
+  await cli.serve(adaptCliOutputArgumentsForIncur(args), {
     exit: (code) => {
-      expect(code).toBe(0);
+      expect(code).toBe(expectedExitCode);
     },
     stdout: (text) => {
       if (!output.handled) fallback += text;
@@ -61,6 +65,144 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it.each(["csv", "tsv"] as const)(
+  "exports only explicitly selected %s fields and retains page metadata",
+  async (format) => {
+    const value = {
+      normalized_result: {
+        rows: [{ name: "alpha", note: "café", other: "not selected" }],
+        coverage: {
+          status: "page",
+          examined: 1,
+          total: 3,
+          next_offset: 1,
+          exhausted: false,
+        },
+        source_coverage: { status: "partial" },
+        source_complete: false,
+        view: { offset: 0, limit: 1, fields: ["name", "note"] },
+      },
+    };
+    const output = await runFilteredCli(
+      value,
+      format,
+      "normalized_result.rows",
+      ["note", "name"],
+    );
+    const [metadataLine, header, row] = output.trimEnd().split(/\r?\n/u);
+    expect(
+      JSON.parse(metadataLine!.slice("# rea-delimited-v1 ".length)),
+    ).toMatchObject({
+      selected_path: ["normalized_result", "rows"],
+      coverage: { total: 3, next_offset: 1 },
+      source_coverage: { status: "partial" },
+      source_complete: false,
+      view: { offset: 0, limit: 1 },
+    });
+    expect(header).toBe(format === "csv" ? "note,name" : "note\tname");
+    expect(row).toBe(format === "csv" ? "café,alpha" : "café\talpha");
+    expect(output).not.toContain("not selected");
+  },
+);
+
+it("retains owning-view metadata when rows are selected through a nested page", async () => {
+  const value = {
+    normalized_result: {
+      kind: "managed-members",
+      parent_evidence_id: "evd_parent",
+      parent_operation: "inspect_managed_members",
+      parent_digest: "parent",
+      coverage: { total: 4, next_offset: 2, exhausted: false },
+      source_coverage: { status: "partial" },
+      limitations: ["Source bodies were not available"],
+      unknowns: [{ reason: "body_unavailable", member: "Run" }],
+      view: {
+        kind: "managed-members",
+        collection: "methods",
+        offset: 1,
+        limit: 1,
+      },
+      page: { collection: "methods", rows: [{ name: "Run" }] },
+    },
+  };
+  const output = await runFilteredCli(
+    value,
+    "csv",
+    "normalized_result.page.rows",
+    ["name"],
+  );
+  const [metadataLine] = output.split(/\r?\n/u);
+  expect(
+    JSON.parse(metadataLine!.slice("# rea-delimited-v1 ".length)),
+  ).toMatchObject({
+    selected_path: ["normalized_result", "page", "rows"],
+    coverage: { total: 4, next_offset: 2 },
+    source_coverage: { status: "partial" },
+    limitations: ["Source bodies were not available"],
+    unknowns: [{ reason: "body_unavailable", member: "Run" }],
+    view: { collection: "methods", offset: 1, limit: 1 },
+    provenance: {
+      parent_evidence_id: "evd_parent",
+      parent_operation: "inspect_managed_members",
+      parent_digest: "parent",
+    },
+  });
+});
+
+it("refuses spreadsheet formula-leading text in CSV but preserves it in JSON", async () => {
+  const value = { rows: [{ logical_path: "=1+1" }] };
+  const csv = await runFilteredCli(value, "csv", "rows", ["logical_path"], 1);
+  expect(JSON.parse(csv)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    message: expect.stringContaining("formula-leading"),
+  });
+  const json = await runFilteredCli(value, "json");
+  expect(JSON.parse(json)).toEqual(value);
+});
+
+it("returns a structured limitation when a selected CSV cell is nested", async () => {
+  const output = await runFilteredCli(
+    { normalized_result: { rows: [{ nested: { value: "not flattened" } }] } },
+    "csv",
+    "normalized_result.rows",
+    ["nested"],
+    1,
+  );
+  expect(JSON.parse(output)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          message: expect.stringContaining("not flattened"),
+        },
+      ],
+    },
+  });
+});
+
+it("returns a structured limitation when the selected view is not a row array", async () => {
+  const output = await runFilteredCli(
+    { normalized_result: { summary: { count: 1 } } },
+    "tsv",
+    "normalized_result.summary",
+    ["count"],
+    1,
+  );
+  expect(JSON.parse(output)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      issues: [
+        {
+          message: expect.stringContaining("row-array path"),
+        },
+      ],
+    },
+  });
+});
 
 it("renders only each record's own fields in heterogeneous Markdown tables", async () => {
   const value: unknown = JSON.parse(

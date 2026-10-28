@@ -5,9 +5,12 @@ import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import { createMarkdownRenderer, disposeMdItInstance } from "vitepress";
 import { afterAll, expect } from "vitest";
 
+import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
 import { renderCliDocument } from "../../../src/cliOutput.js";
+import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -30,6 +33,55 @@ const renderedCells = (html: string): string[] => {
   return cells;
 };
 
+const tableColumnByHeader = (html: string, header: string): string[] => {
+  const text = (node: DefaultTreeAdapterTypes.Node): string =>
+    node.nodeName === "#text" && "value" in node
+      ? node.value
+      : "childNodes" in node
+        ? node.childNodes.map(text).join("")
+        : "";
+  const descendants = (
+    node: DefaultTreeAdapterTypes.Node,
+    tagName: string,
+  ): DefaultTreeAdapterTypes.Element[] => {
+    const elements: DefaultTreeAdapterTypes.Element[] = [];
+    const visit = (candidate: DefaultTreeAdapterTypes.Node): void => {
+      if ("tagName" in candidate && candidate.tagName === tagName)
+        elements.push(candidate as DefaultTreeAdapterTypes.Element);
+      if ("childNodes" in candidate) candidate.childNodes.forEach(visit);
+    };
+    visit(node);
+    return elements;
+  };
+  const cellText = (row: DefaultTreeAdapterTypes.Element): string[] =>
+    row.childNodes
+      .filter(
+        (node): node is DefaultTreeAdapterTypes.Element =>
+          "tagName" in node && (node.tagName === "th" || node.tagName === "td"),
+      )
+      .map(text);
+
+  for (const table of descendants(parseFragment(html), "table")) {
+    const rows = descendants(table, "tr");
+    const headerIndex = rows.findIndex((row) =>
+      row.childNodes.some((node) => "tagName" in node && node.tagName === "th"),
+    );
+    if (headerIndex < 0) continue;
+    const headerCells = cellText(rows[headerIndex]!);
+    const columnIndex = headerCells.indexOf(header);
+    if (columnIndex < 0) continue;
+    return rows
+      .slice(headerIndex + 1)
+      .filter((row) =>
+        row.childNodes.some(
+          (node) => "tagName" in node && node.tagName === "td",
+        ),
+      )
+      .map((row) => cellText(row)[columnIndex] ?? "");
+  }
+  throw new Error(`No Markdown table has a ${JSON.stringify(header)} column`);
+};
+
 cliTest(
   "preserves literal Evidence keys and values when Markdown tables are rendered",
   async ({ cli }) => {
@@ -39,6 +91,16 @@ cliTest(
       "`code` **bold** _name_ ~~deleted~~ [label](target) ![alt](image)";
     const punctuation = "\\`tick` \\*star* \\[label](target) a|b <T> &copy;";
     const identifiers = "x__y__z _a_b_ 中_文 snake_case_";
+    const edgeSpaceEntries = {
+      "  leading ": "  leading ",
+      leading: "leading",
+      "trailing  ": "trailing  ",
+      " ": " ",
+      "   ": "   ",
+      "": "",
+      "  中文🙂  ": "  中文🙂  ",
+      " &#32; &copy; <T> a|b ": " &#32; &copy; <T> a|b ",
+    };
     const row = {
       [literal]: literal,
       punctuation,
@@ -48,6 +110,7 @@ cliTest(
       disabled: false,
       absent: null,
       source_index: identifiers,
+      ...edgeSpaceEntries,
     };
     const result = { scalar: { [literal]: literal }, rows: [row] };
     const record = createEvidence(
@@ -93,6 +156,7 @@ cliTest(
       "false",
       "null",
       identifiers,
+      ...Object.values(edgeSpaceEntries),
     ];
     expect(renderedCells(html)).toEqual(expectedCells);
     expect(html).not.toMatch(/<(?:em|strong|s|code|img)(?:\s|>)/u);
@@ -101,6 +165,55 @@ cliTest(
     expect(
       renderedCells(renderer.render(renderCliDocument(result, "md", false))),
     ).toEqual(expectedCells);
+  },
+);
+
+cliTest(
+  "preserves safetensors identifier edge spaces in rendered CLI tables",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-model-edge-spaces-");
+    const path = join(root, "model.safetensors");
+    const names = ["  leading ", "leading", "trailing  ", "plain"];
+    const header = JSON.stringify(
+      Object.fromEntries(
+        names.map((name, index) => [
+          name,
+          {
+            dtype: "F32",
+            shape: [1],
+            data_offsets: [index * 4, index * 4 + 4],
+          },
+        ]),
+      ),
+    );
+    await writeFile(
+      path,
+      safetensorsFixture(header, Buffer.alloc(names.length * 4)).bytes,
+    );
+    const base = ["inspect-model-artifact", path, "--detail", "complete"];
+    const json = await cli.run({ arguments: [...base, "--json"] });
+    const markdown = await cli.run({
+      arguments: [...base, "--format", "md"],
+    });
+    expect(json.exitCode, json.stderr).toBe(0);
+    expect(markdown.exitCode, markdown.stderr).toBe(0);
+
+    const response = toolContract("inspect_model_artifact").outputSchema.parse(
+      json.json,
+    );
+    const report = modelArtifactSchema.parse(response.normalized_result);
+    const expectedNames = report.tensors.map(({ name }) => name);
+    expect(expectedNames).toEqual([
+      "  leading ",
+      "leading",
+      "plain",
+      "trailing  ",
+    ]);
+
+    const renderer = await createMarkdownRenderer(root, { linkify: false });
+    expect(
+      tableColumnByHeader(renderer.render(markdown.stdout), "name"),
+    ).toEqual(expectedNames);
   },
 );
 

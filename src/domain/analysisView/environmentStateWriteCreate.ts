@@ -20,10 +20,14 @@ import {
 } from "./environmentStateWriteApply.js";
 import {
   createdToken,
+  heldObjects,
   isOpaqueToken,
+  nextMadeCount,
   restampedFields,
+  stampedBy,
 } from "./environmentStateWriteStamps.js";
 import {
+  anyLinkedSource,
   recordedPathValues,
   respondedIds,
   sameLinkedSource,
@@ -64,7 +68,8 @@ import {
 import {
   laterObservation,
   newEntityIn,
-  respelledInstant,
+  loadedLater,
+  unloadedPointers,
   withRead,
   type Observed,
 } from "./environmentStateWriteObserve.js";
@@ -90,6 +95,7 @@ import {
   isUuid,
   likeGeneratedInteger,
   nextSequence,
+  startedSequence,
   sequenceNumber,
   spelledLike,
 } from "./environmentStateWriteValues.js";
@@ -141,8 +147,7 @@ const withReadBack = (
       Object.entries(later.object).some(
         ([field, value]) =>
           Object.hasOwn(own.object, field) &&
-          !same(own.object[field], value) &&
-          !respelledInstant(own.object[field], value),
+          !loadedLater(own.object[field], value),
       ))
   )
     return own;
@@ -150,10 +155,18 @@ const withReadBack = (
   const object = withRead(own.object, later.object, shape);
   if (same(object, own.object)) return own;
   if (shape === "item") context.observed(later.ordinal);
+  // Answers keep the values the response had not loaded, which the state holds as the item read shows them.
+  const unloaded =
+    shape === "item" ? unloadedPointers(own.object, later.object) : [];
   return {
     ...own,
     object,
-    read: { ordinal: later.ordinal, pointer: later.pointer, shape },
+    read: {
+      ordinal: later.ordinal,
+      pointer: later.pointer,
+      shape,
+      ...(unloaded.length === 0 ? {} : { unloaded }),
+    },
   };
 };
 
@@ -297,6 +310,8 @@ const refineCreate = (
 const earlierOf = (draft: WriteDraft) => ({
   kept: draft.kept,
   clockOf: (field: string) => clockEvidence(draft, field),
+  startOf: (field: string) => draft.starts.get(field),
+  createCollections: draft.createCollections,
   ampersands: draft.ampersands,
 });
 
@@ -458,6 +473,13 @@ const buildCreate = (
   noteHeldAmpersands(draft.ampersands, explained.rules, held);
   noteAmpersands(draft.ampersands, explained.rules, evidence.observed.object);
   for (const entity of held) noteFixedWidths(draft.fixedWidth, entity);
+  const ruled = new Set(explained.rules.map((rule) => rule.field));
+  for (const [field, value] of Object.entries(evidence.observed.object)) {
+    const integer = sequenceNumber(value);
+    if (ruled.has(field) || integer === undefined) continue;
+    const next = nextInteger(held, field, value);
+    if (next === undefined || integer >= next) draft.starts.set(field, integer);
+  }
   return true;
 };
 
@@ -497,10 +519,13 @@ const followsSequences = (
         rule.scope === "type" || entity.collection === created.collection,
     );
     const next = nextSequence(
-      nextInteger(
-        fieldsOf(scope),
-        rule.field,
-        ownMember(draft.observed, rule.field),
+      startedSequence(
+        nextInteger(
+          fieldsOf(scope),
+          rule.field,
+          ownMember(draft.observed, rule.field),
+        ),
+        rule.start,
       ),
       draft.sequences.get(key),
     );
@@ -515,10 +540,42 @@ const agreesLater = (
   context: EffectContext,
   draft: WriteDraft,
   created: Pick<StateEntity, "type" | "collection" | "fields">,
-  call: { readonly body: JsonObject; readonly observed: JsonObject },
+  call: {
+    readonly body: JsonObject;
+    readonly observed: JsonObject;
+    readonly startMs: number | undefined;
+  },
 ): boolean =>
-  followsCreateRules(context, draft, { ...created, observed: call.observed }) &&
-  !contradictsDefault(draft.plan.rules, call, created.fields);
+  followsCreateRules(context, draft, {
+    ...created,
+    observed: call.observed,
+    startMs: call.startMs,
+  }) &&
+  !contradictsDefault(draft.plan.rules, call, created.fields) &&
+  !unruledDiffers(draft.plan.rules, call.observed, {
+    written: created.fields,
+    volatile: context.volatileOf(created.type),
+  });
+
+/** Whether the call stored a field no rule writes and no read leaves unchecked otherwise than the plan keeps it, as the exemplar stored it. */
+const unruledDiffers = (
+  rules: readonly FieldRule[],
+  observed: JsonObject,
+  plan: {
+    readonly written: JsonObject;
+    readonly volatile: ReadonlySet<string>;
+  },
+): boolean => {
+  const { written, volatile } = plan;
+  const ruled = new Set(rules.map((rule) => rule.field));
+  return Object.keys(observed).some(
+    (field) =>
+      !ruled.has(field) &&
+      !volatile.has(field) &&
+      Object.hasOwn(written, field) &&
+      !same(observed[field], ownMember(written, field)),
+  );
+};
 
 /** Whether an echoed member the call left out was stored otherwise than its learned default. */
 const contradictsDefault = (
@@ -540,6 +597,7 @@ const followsCreateRules = (
   draft: WriteDraft,
   created: Pick<StateEntity, "type" | "collection" | "fields"> & {
     readonly observed: JsonObject;
+    readonly startMs: number | undefined;
   },
 ): boolean =>
   draft.plan.rules.every((rule) => {
@@ -575,7 +633,56 @@ const followsCreateRules = (
     return (
       rule.rule !== "identity" || rule.generator !== "uuid" || isUuid(value)
     );
-  }) && followsSequences(context, draft, created);
+  }) &&
+  followsSequences(context, draft, created) &&
+  followsMadeObjects(context, draft, created);
+
+/** The key a made object's count is taken under in a plan's sequences. */
+const madeKey = (field: string, member: string): string => `${field}/${member}`;
+
+/** Whether a later call's recorded made objects hold what serving makes: the exemplar's members, the entity's identity, clocks, and each count one past what held objects show or started with, past the plan's last. */
+const followsMadeObjects = (
+  context: EffectContext,
+  draft: WriteDraft,
+  created: Pick<StateEntity, "type" | "collection" | "fields"> & {
+    readonly observed: JsonObject;
+    readonly startMs: number | undefined;
+  },
+): boolean =>
+  draft.plan.rules.every((rule) => {
+    if (rule.rule !== "made-object") return true;
+    const made = ownMember(created.observed, rule.field);
+    const exemplar = ownMember(draft.observed, rule.field);
+    if (!isObject(made) || !isObject(exemplar)) return false;
+    const id = scalarText(
+      ownMember(created.fields, context.idField(created.type)),
+    );
+    const held = heldObjects(
+      [
+        ...context.state.ofType(created.type),
+        ...context.startedWith(created.type),
+      ].map((entity) => entity.fields),
+      rule.field,
+    );
+    return [...new Set([...Object.keys(exemplar), ...Object.keys(made)])].every(
+      (member) => {
+        const value = ownMember(made, member);
+        if (rule.clocks.includes(member))
+          return stampedBy(value, rule.format, created.startMs);
+        if (rule.own.includes(member)) return scalarText(value) === id;
+        const count = rule.counts.find((entry) => entry.member === member);
+        if (count === undefined)
+          return same(value, ownMember(exemplar, member));
+        return (
+          sequenceNumber(value) ===
+          nextSequence(
+            nextMadeCount(held, count, ownMember(exemplar, member)),
+            draft.sequences.get(madeKey(rule.field, member)),
+          )
+        );
+      },
+    );
+  });
 
 /** Widen the plan's clock formats to the trimmed spelling a later call showed, and its other clocks with them unless a value the plan saw shows them at a fixed width. */
 const fitClocks = (draft: WriteDraft, fields: JsonObject): void => {
@@ -610,6 +717,17 @@ const takeSequences = (
       ownMember(draft.observed, rule.field),
     );
     if (value !== undefined) draft.sequences.set(key, value);
+  }
+  for (const rule of draft.plan.rules) {
+    if (rule.rule !== "made-object") continue;
+    const made = ownMember(created.fields, rule.field);
+    for (const { member } of rule.counts) {
+      const value = isObject(made)
+        ? sequenceNumber(ownMember(made, member))
+        : undefined;
+      if (value !== undefined)
+        draft.sequences.set(madeKey(rule.field, member), value);
+    }
   }
 };
 
@@ -677,6 +795,7 @@ const fromLinkedSource = (
   draft: WriteDraft,
   step: WriteStep,
 ): boolean =>
+  anyLinkedSource(draft.plan, step.tool.path_template) ||
   sameLinkedSource(
     step.tool.path_template,
     context.records.find(
@@ -806,6 +925,7 @@ export const applyCreate = (
           ownMember(observed.object, rule.field) ?? null,
         ),
       referencedIn(context),
+      idField,
     );
   // A later call that agrees with the plan widens it, as a later update does: to members it alone sent or left out, an
   // array it showed sorted, or a clock spelling. One that disagrees leaves the plan as it was.
@@ -829,7 +949,11 @@ export const applyCreate = (
         context,
         draft,
         { type, collection, fields: fields.value },
-        { body: call.body, observed: observed.object },
+        {
+          body: call.body,
+          observed: observed.object,
+          startMs: startOf(context, step),
+        },
       ))
   ) {
     refuse(draft, step, "unexplained-change");
@@ -845,6 +969,8 @@ export const applyCreate = (
     draft.plan.rules,
   );
   const inserted = insertCreated(context, draft, entity(stored, id));
+  context.io.retain(collection.length * 2 + 16);
+  draft.createCollections.push(collection);
   return {
     kind: "applied",
     targets: [inserted, collectionTarget(type, collection)],

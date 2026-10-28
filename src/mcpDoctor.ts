@@ -8,8 +8,7 @@ import { StringDecoder } from "node:string_decoder";
 import { createCatalogIdentity } from "./catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
-  CLI_OUTPUT_FORMATS,
-  type CliOutputFormat,
+  CLI_DOCUMENT_OUTPUT_FORMATS,
   missingCliOutputValueMessage,
   renderCliDocument,
 } from "./cliOutput.js";
@@ -20,7 +19,7 @@ import {
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { promptsForToolFamilies } from "./contracts/promptContracts.js";
+import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
@@ -32,8 +31,8 @@ import {
   mcpDoctorDeadlineRecovery,
 } from "./mcpStartupPolicy.js";
 
-const OUTPUT_FORMATS = CLI_OUTPUT_FORMATS;
-type OutputFormat = CliOutputFormat;
+const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
+type OutputFormat = (typeof OUTPUT_FORMATS)[number];
 
 /**
  * Canonical `rea mcp doctor` options. This schema is the single source of

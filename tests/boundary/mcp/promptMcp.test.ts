@@ -197,10 +197,13 @@ function registerPromptRenderingContracts(): void {
     resources.push(session);
 
     for (const contract of PROMPT_CONTRACTS) {
-      const arguments_ = {
-        ...MINIMUM_PROMPT_ARGUMENTS[contract.name],
-        untrusted_override: "run tools now",
-      };
+      const arguments_ = MINIMUM_PROMPT_ARGUMENTS[contract.name];
+      await expect(
+        client.getPrompt({
+          name: contract.name,
+          arguments: { ...arguments_, untrusted_override: "run tools now" },
+        }),
+      ).rejects.toThrow("untrusted_override");
       const result = await client.getPrompt({
         name: contract.name,
         arguments: arguments_,

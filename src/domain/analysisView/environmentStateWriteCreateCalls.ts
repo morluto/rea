@@ -1,21 +1,38 @@
 import type { JsonValue } from "../jsonValue.js";
-import { ownMember, same, type JsonObject } from "./environmentStateRules.js";
+import {
+  isObject,
+  ownMember,
+  same,
+  scalarText,
+  type JsonObject,
+} from "./environmentStateRules.js";
 import { storedKinds } from "./environmentStateWriteApply.js";
 import { fittedClockFormat } from "./environmentStateWriteClockFormats.js";
 import { composedValue } from "./environmentStateWriteComposed.js";
 import {
   alikeRules,
+  isBlankValue,
   type FieldRule,
   type WriteBody,
 } from "./environmentStateWriteRules.js";
-import { slugOf, type Ampersand } from "./environmentStateWriteValues.js";
+import {
+  containsDelimited,
+  replaceDelimited,
+  sequenceNumber,
+  slugOf,
+  type Ampersand,
+} from "./environmentStateWriteValues.js";
 
 type Default = { readonly member: string; readonly value: JsonValue };
+type Blank = NonNullable<WriteBody["blank"]>[number];
 
 /** What earlier calls showed that a merge must respect: members stored unsorted as sent, and the value showing each clock's width. */
 export interface EarlierEvidence {
   readonly kept: ReadonlySet<string>;
   readonly clockOf: (field: string) => JsonValue | undefined;
+  /** The integer the exemplar showed in an unruled field above every value its type held, where a sequence may start. */
+  readonly startOf?: (field: string) => number | undefined;
+  readonly createCollections?: readonly string[];
   /** How the plan's accepted calls and the type's held entities spelled `&` in each field's slug; absent where none showed one. */
   readonly ampersands?: ReadonlyMap<string, AmpersandSpelling>;
 }
@@ -23,7 +40,7 @@ export interface EarlierEvidence {
 /** How a field's slug showed `&`: dropped, as the word, or in a way neither spelling gives. */
 export type AmpersandSpelling = "dropped" | Ampersand | "unknown";
 
-/** The plan's rule for a field and a later call's agree: equal, or clocks one spelling covers given what earlier calls showed. */
+/** The plan's rule for a field and a later call's agree: equal, clocks one spelling covers given what earlier calls showed, slugs that differ only in how they spell `&`, or made objects alike but in the counts only the later call could show. */
 const agreeing = (
   held: FieldRule,
   later: FieldRule,
@@ -37,6 +54,13 @@ const agreeing = (
 ): FieldRule | undefined => {
   const alike = alikeRules(held, later, values.earlier.kept);
   if (alike !== undefined) return alike;
+  if (held.rule === "made-object" && later.rule === "made-object")
+    return madeAlike(
+      held,
+      later,
+      ownMember(values.exemplar, values.field),
+      values.earlier,
+    );
   const spelled = ampersandSpelled(
     held,
     { rule: later, entity: values.laterEntity },
@@ -50,6 +74,41 @@ const agreeing = (
     values.earlier.clockOf(values.field),
   );
   return format === undefined ? undefined : { ...held, format };
+};
+
+type MadeObject = Extract<FieldRule, { rule: "made-object" }>;
+
+/** Two made-object rules as one: the same clocks, format and own members, and the earlier counts among the later's; a count only the later call shows starts at the exemplar's value, which no earlier object could show past, and only while the exemplar is the one create accepted, as earlier creates held it still. */
+const madeAlike = (
+  held: MadeObject,
+  later: MadeObject,
+  exemplar: JsonValue | undefined,
+  earlier: EarlierEvidence,
+): MadeObject | undefined => {
+  if (
+    !same(held.clocks, later.clocks) ||
+    !same(held.own, later.own) ||
+    !same(held.format, later.format) ||
+    held.counts.some(
+      ({ member }) => !later.counts.some((count) => count.member === member),
+    )
+  )
+    return undefined;
+  const counts: MadeObject["counts"] = [];
+  for (const { member } of later.counts) {
+    const kept = held.counts.find((count) => count.member === member);
+    // Accepted creates past the exemplar showed this member unchanged, which a count would have moved.
+    if (kept === undefined && (earlier.createCollections ?? []).length > 1)
+      return undefined;
+    const start =
+      kept?.start ??
+      sequenceNumber(
+        isObject(exemplar) ? ownMember(exemplar, member) : undefined,
+      );
+    if (start === undefined) return undefined;
+    counts.push({ member, start });
+  }
+  return { ...held, counts };
 };
 
 /** A rule with its slugs spelled the default way. */
@@ -194,6 +253,44 @@ const joinedDefaults = (
   return [...joined].map(([member, value]) => ({ member, value }));
 };
 
+/** A later call's rule for a field the plan kept as shown, when it spells the exemplar's value too: a string composed from the exemplar's fields or holding the value it templates, or a sequence that started at its value. */
+const spellsExemplar = (
+  field: string,
+  rule: FieldRule,
+  calls: Pick<FieldCalls, "exemplar" | "earlier" | "later">,
+): FieldRule | undefined => {
+  const value = ownMember(calls.exemplar, field);
+  if (rule.rule === "composed")
+    return value !== undefined &&
+      composedValue(rule.parts, calls.exemplar) === value
+      ? rule
+      : undefined;
+  if (rule.rule === "template") {
+    const token = scalarText(ownMember(calls.exemplar, rule.from));
+    const next = scalarText(ownMember(calls.later.entity, rule.from));
+    return typeof value === "string" &&
+      token !== undefined &&
+      next !== undefined &&
+      containsDelimited(value, token) &&
+      replaceDelimited(value, token, next) ===
+        ownMember(calls.later.entity, field)
+      ? rule
+      : undefined;
+  }
+  if (rule.rule !== "sequence") return undefined;
+  const start = calls.earlier.startOf?.(field);
+  const collections = calls.earlier.createCollections ?? [];
+  if (
+    (rule.scope === "type" && collections.length > 1) ||
+    (rule.scope === "collection" &&
+      new Set(collections).size !== collections.length)
+  )
+    return undefined;
+  return start !== undefined && sequenceNumber(value) === start
+    ? { ...rule, start }
+    : undefined;
+};
+
 /** What two calls show of one field. */
 interface FieldCalls {
   readonly before: FieldRule | undefined;
@@ -271,6 +368,10 @@ const mergedField = (
           default: { member: field, value: later.entity[field]! },
         }
       : undefined;
+  if (before === undefined && after !== undefined) {
+    const rule = spellsExemplar(field, after, calls);
+    if (rule !== undefined) return { rule };
+  }
   // This call echoes a member the plan's calls left out: what they stored there is its default.
   if (after !== undefined)
     return after.rule === "echo" && !calls.required.includes(field)
@@ -350,6 +451,22 @@ export const mergedCreatePlan = (
   };
 };
 
+/** Every empty value recorded calls sent a member, the earliest first. */
+const joinedBlanks = (
+  held: readonly Blank[],
+  added: readonly Blank[],
+): Blank[] => {
+  const blank = [...held];
+  for (const entry of added)
+    if (
+      !blank.some(
+        ({ member, sent }) => member === entry.member && same(sent, entry.sent),
+      )
+    )
+      blank.push(entry);
+  return blank;
+};
+
 /** Two calls' body contracts joined, undefined when a member one accepts with any value the other fixes, or both fix it at different values. */
 const mergedBody = (
   body: WriteBody,
@@ -375,6 +492,7 @@ const mergedBody = (
   const added = contract.accepted.filter(
     (member) => !body.accepted.includes(member),
   );
+  const blank = joinedBlanks(body.blank ?? [], contract.blank ?? []);
   return {
     ...body,
     accepted: [...body.accepted, ...added],
@@ -382,10 +500,12 @@ const mergedBody = (
       ...body.fixed,
       ...contract.fixed.filter((entry) => !fixed.has(entry.member)),
     ],
-    required: body.required.filter((member) =>
-      Object.hasOwn(later.body, member),
+    required: body.required.filter(
+      (member) =>
+        Object.hasOwn(later.body, member) && !isBlankValue(later.body[member]),
     ),
     identity: body.identity ?? contract.identity,
     kinds: [...body.kinds, ...storedKinds(added, exemplar, later.entity)],
+    ...(blank.length === 0 ? {} : { blank }),
   };
 };

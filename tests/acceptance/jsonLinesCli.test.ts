@@ -184,3 +184,50 @@ cliTest(
     }
   },
 );
+
+for (const full of [false, true]) {
+  cliTest(
+    `retains counted JSONL parser diagnostics (full: ${full})`,
+    async ({ cli }) => {
+      for (const extra of [[], ["--zzz-bogus"]]) {
+        const invalid = await cli.run({
+          arguments: [
+            "inspect-artifact",
+            "--format",
+            "jsonl",
+            "--token-count",
+            ...(full ? ["--full-output"] : []),
+            ...extra,
+          ],
+        });
+        expect(invalid.exitCode).toBe(1);
+        expect(invalid.stderr).toBe("");
+        const diagnostic =
+          extra.length === 0
+            ? {
+                code: "VALIDATION_ERROR",
+                fieldErrors: [
+                  expect.objectContaining({
+                    path: "path",
+                    missing: true,
+                    expected: "string",
+                  }),
+                ],
+              }
+            : { code: "UNKNOWN", message: "Unknown flag: --zzz-bogus" };
+        expect(JSON.parse(invalid.stdout)).toMatchObject({
+          $rea: "jsonl/v1",
+          type: "error",
+          ok: false,
+          result: full
+            ? {
+                ok: false,
+                error: diagnostic,
+                meta: { command: expect.any(String) },
+              }
+            : diagnostic,
+        });
+      }
+    },
+  );
+}

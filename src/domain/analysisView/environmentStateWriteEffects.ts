@@ -94,6 +94,10 @@ export interface WriteDraft {
   readonly updates: UpdateCall[];
   /** The last value each sequence took, by field and, for a collection's sequence, collection; the next call must follow it. */
   readonly sequences: Map<string, number>;
+  /** Integers the exemplar showed in fields no rule wrote, above every value its type held, where a later call's sequence may start. */
+  readonly starts: Map<string, number>;
+  /** Collections of accepted create calls, used to check late sequence adoption. */
+  readonly createCollections: string[];
   /** The collection a create writes into when its own path names no state type: the one its returned id was read under. */
   readonly linked?: string | undefined;
   /** Fields an item action's call found already at the value it sets them to. */
@@ -163,6 +167,8 @@ export interface EffectContext {
   readonly isWrite: (record: StateRecordFacts) => boolean;
   readonly viewOf: (ordinal: number) => StateView | undefined;
   readonly idField: (type: string) => string;
+  /** Fields of a type whose values change on their own, which no read checks. */
+  readonly volatileOf: (type: string) => ReadonlySet<string>;
   /** Mark a later read as a create's or update's observation, so it does not check that write. */
   readonly observed: (ordinal: number) => void;
   /** Whether an unmodelled write may have changed the entity since the state last saw it. */
@@ -171,6 +177,8 @@ export interface EffectContext {
   readonly initialDocument: (tool: string) => StateDocument | undefined;
   /** The entities of a type the initial state held, whose values a sequence never reuses. */
   readonly startedWith: (type: string) => readonly StateEntity[];
+  /** Fields the type's item views show that no initial entity holds, which an answer leaves out for an entity without them. */
+  readonly laterFields: (type: string) => ReadonlySet<string>;
   /** Whether another tool's modelled write to the target awaits a check, which a later read must still make. */
   readonly pending: (target: string) => boolean;
 }

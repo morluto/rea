@@ -577,6 +577,8 @@ const requireExtractableFormat = async (
     !directory &&
     format !== "asar" &&
     format !== "godot-pck" &&
+    format !== "intel-hex" &&
+    format !== "srec" &&
     format !== "mach-o-universal" &&
     !isZipPackageFormat(format)
   ) {

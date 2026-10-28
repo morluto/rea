@@ -368,13 +368,13 @@ const writeTextPartsOwned = async (
       throw cause;
     });
     if (existing !== undefined) {
-      if (!overwrite)
-        return err(
-          new EvidenceFileError("write", "exists", { path: requestedPath }),
-        );
       if (!existing.isFile() || existing.isSymbolicLink())
         return err(
           new EvidenceFileError("write", "not-file", { path: requestedPath }),
+        );
+      if (!overwrite)
+        return err(
+          new EvidenceFileError("write", "exists", { path: requestedPath }),
         );
     }
     assertWriteActive(cancellation);

@@ -394,25 +394,44 @@ describe("Apktool locale selection input schema", () => {
 });
 
 describe("reference-source outline-depth input schema", () => {
-  it("aligns advertised bounds with the parser's accepted values", async () => {
+  it("parses decimal CLI tokens into the advertised safe integer schema", async () => {
     const cli = createCli({});
     const advertised = await advertisedSchema(cli, "import-reference-source");
     const outlineDepth = advertised.options?.properties?.outlineDepth;
     expect(outlineDepth).toMatchObject({ type: "integer", minimum: 0 });
 
     const parser = parserSchema(cli, "import-reference-source", "options");
-    expect(parser?.safeParse({ outlineDepth: -1 }).success).toBe(false);
-    expect(parser?.safeParse({ outlineDepth: 0 }).success).toBe(true);
-    expect(parser?.safeParse({ outlineDepth: 2 }).success).toBe(true);
+    expect(parser?.safeParse({}).success).toBe(true);
+    const parsedValues = [
+      ["0", 0],
+      ["2", 2],
+      ["02", 2],
+      [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+    ] as const;
+    for (const [token, expected] of parsedValues) {
+      const parsed = parser?.safeParse({ outlineDepth: token });
+      expect(parsed?.success).toBe(true);
+      if (parsed === undefined || !parsed.success)
+        throw new Error(`Expected outline-depth token ${token} to parse`);
+      expect(parsed.data).toMatchObject({ outlineDepth: expected });
+    }
+    for (const token of ["", "-1", "9007199254740992"]) {
+      expect(parser?.safeParse({ outlineDepth: token }).success).toBe(false);
+    }
 
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile({
       ...advertised.options,
       $schema: "https://json-schema.org/draft/2020-12/schema",
     });
+    for (const [token] of parsedValues) {
+      const parsed = parser?.safeParse({ outlineDepth: token });
+      if (parsed === undefined || !parsed.success)
+        throw new Error(`Expected outline-depth token ${token} to parse`);
+      expect(validate(parsed.data)).toBe(true);
+    }
     expect(validate({ outlineDepth: -1 })).toBe(false);
-    expect(validate({ outlineDepth: 0 })).toBe(true);
-    expect(validate({ outlineDepth: 2 })).toBe(true);
+    expect(validate({ outlineDepth: 9007199254740992 })).toBe(false);
   });
 });
 

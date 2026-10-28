@@ -9,7 +9,11 @@ import {
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "../cliBuiltinArguments.js";
-import { CLI_OUTPUT_FORMATS, parseCliOutputArguments } from "../cliOutput.js";
+import {
+  CLI_DOCUMENT_OUTPUT_FORMATS,
+  CLI_OUTPUT_FORMATS,
+  parseCliOutputArguments,
+} from "../cliOutput.js";
 import { bashCompletionScript } from "./bashCompletionRegistration.js";
 
 type Commands = Parameters<typeof Completions.complete>[0];
@@ -17,7 +21,7 @@ type CompletionCli = Parameters<typeof Cli.toCommands.get>[0];
 type ServeOptions = NonNullable<Parameters<CompletionCli["serve"]>[1]>;
 const ROOT_FLAGS = new Set(["--mcp", "--update", "--version"]);
 
-const standardGlobals = (root: boolean): z.ZodObject =>
+const standardGlobals = (root: boolean, doctor: boolean): z.ZodObject =>
   z.object(
     Object.fromEntries([
       ...[...VALUED_OUTPUT_FLAGS].map(
@@ -25,7 +29,11 @@ const standardGlobals = (root: boolean): z.ZodObject =>
           [
             flag.slice(2),
             flag === "--format"
-              ? z.enum(CLI_OUTPUT_FORMATS).optional()
+              ? z
+                  .enum(
+                    doctor ? CLI_DOCUMENT_OUTPUT_FORMATS : CLI_OUTPUT_FORMATS,
+                  )
+                  .optional()
               : z.string().optional(),
           ] as const,
       ),
@@ -111,7 +119,10 @@ export const createCliCompletions = (
         input,
         input.length - 1,
         {
-          schema: standardGlobals(before.length === 0),
+          schema: standardGlobals(
+            before.length === 0,
+            before[0] === "mcp" && before[1] === "doctor",
+          ),
           alias: { help: "h" },
         },
       );

@@ -257,6 +257,36 @@ it.each([
   },
 );
 
+it("reads and redacts marked gzip content its received size bounds", async () => {
+  const { collector, events, secrets } = harness({
+    request_body: false,
+    response_body: true,
+    header_values: false,
+  });
+  const request = new RequestFixture("marked");
+  const body = '{"token":"secret-token"}';
+  request.responseSize = 20;
+  const response = new ResponseFixture(request, body);
+  vi.spyOn(response, "headers").mockReturnValue({
+    "content-type": "application/json",
+    "content-encoding": "gzip",
+  });
+  secrets.responseProtector("login", [
+    { name: "token", json_pointer: "/token", secret: true },
+  ])?.(request);
+  collector.request(request);
+  collector.response(response);
+  collector.finished(request);
+  await collector.finish();
+  const content = events.find(
+    (event) => event.kind === "network-content" && event.phase === "response",
+  );
+  expect(content).toBeDefined();
+  const text = bodyText(content!);
+  expect(text).not.toContain("secret-token");
+  expect(text).toContain("[REDACTED:page:login.token]");
+});
+
 it("preserves unselected source spellings while redacting escaped aliases", async () => {
   const { collector, events, secrets } = harness({
     request_body: false,
@@ -317,7 +347,7 @@ it("associates sensitive fields by request identity while keeping same-URL unmar
   );
 });
 
-it.each(["gzip", "cache"])(
+it.each(["br", "cache"])(
   "withholds marked response content when decoded bounds are unknown: %s",
   async (kind) => {
     const { collector, events, secrets } = harness();
@@ -328,10 +358,10 @@ it.each(["gzip", "cache"])(
       request,
       JSON.stringify({ token: secret }),
     );
-    if (kind === "gzip")
+    if (kind === "br")
       vi.spyOn(response, "headers").mockReturnValue({
         "content-type": "application/json",
-        "content-encoding": "gzip",
+        "content-encoding": "br",
       });
     secrets.responseProtector("login", [
       { name: "token", json_pointer: "/token", secret: true },

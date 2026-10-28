@@ -20,6 +20,9 @@ import {
   containsDelimited,
   isUuid,
   readClock,
+  sequenceNumber,
+  spelledLike,
+  type ClockFormat,
 } from "./environmentStateWriteValues.js";
 
 /** A clock value counts as written by the request when it lies this close to the request's start. */
@@ -241,6 +244,147 @@ export const createdNestedClock = (
     return ms >= startMs - TRUNCATION_MS && ms <= startMs + NESTED_WINDOW_MS;
   });
   return stamped ? nestedRule(field, value, members, evidence.type) : undefined;
+};
+
+/** Whether a clock is one a request starting at `startMs` stamped, in the given format. */
+export const stampedBy = (
+  value: JsonValue | undefined,
+  format: ClockFormat,
+  startMs: number | undefined,
+): boolean => {
+  const clock = readClock(value);
+  return (
+    clock !== undefined &&
+    startMs !== undefined &&
+    same(clock.format, format) &&
+    clock.ms >= startMs - TRUNCATION_MS &&
+    clock.ms <= startMs + NESTED_WINDOW_MS
+  );
+};
+
+/** The largest integer the objects hold at a member, spelled as the exemplar spells it. */
+const largestAt = (
+  objects: readonly JsonObject[],
+  member: string,
+  exemplar: JsonValue | undefined,
+): number | undefined => {
+  let largest: number | undefined;
+  for (const object of objects) {
+    const value = sequenceNumber(ownMember(object, member), exemplar);
+    if (value !== undefined && (largest === undefined || value > largest))
+      largest = value;
+  }
+  return largest;
+};
+
+/** The objects held entities keep at a field. */
+export const heldObjects = (
+  entities: readonly JsonObject[],
+  field: string,
+): JsonObject[] =>
+  entities.flatMap((entity) => {
+    const value = ownMember(entity, field);
+    return value !== undefined && isObject(value) ? [value] : [];
+  });
+
+/** One past the largest integer held objects show at a member, never below a start. */
+export const nextMadeCount = (
+  objects: readonly JsonObject[],
+  count: { readonly member: string; readonly start: number },
+  exemplar: JsonValue | undefined,
+): number => {
+  const largest = largestAt(objects, count.member, exemplar);
+  return Math.max(
+    largest === undefined ? count.start : largest + 1,
+    count.start,
+  );
+};
+
+/**
+ * On a create, an object the application made with the entity: members holding a clock the request stamped, others the
+ * entity's own identity or one past the largest integer held objects show there, and the rest as every held object
+ * shows them. Undefined without a stamped clock, since only that shows the request made the object.
+ */
+export const createdMadeObject = (
+  field: string,
+  value: JsonValue,
+  evidence: {
+    readonly startMs: number | undefined;
+    readonly type: readonly JsonObject[];
+    readonly entity: JsonObject;
+    readonly idField: string;
+  },
+): FieldRule | undefined => {
+  const { startMs } = evidence;
+  if (!isObject(value) || startMs === undefined) return undefined;
+  const keys = Object.keys(value);
+  const clocks = keys.filter((key) => {
+    const ms = readClock(value[key])?.ms;
+    return (
+      ms !== undefined &&
+      ms >= startMs - TRUNCATION_MS &&
+      ms <= startMs + NESTED_WINDOW_MS
+    );
+  });
+  const format =
+    clocks.length === 0 ? undefined : readClock(value[clocks[0]!])!.format;
+  if (
+    format === undefined ||
+    clocks.some((key) => !same(readClock(value[key])!.format, format))
+  )
+    return undefined;
+  const id = scalarText(ownMember(evidence.entity, evidence.idField));
+  const own = keys.filter(
+    (key) =>
+      !clocks.includes(key) &&
+      id !== undefined &&
+      scalarText(value[key]) === id,
+  );
+  const held = heldObjects(evidence.type, field);
+  const counts = keys.flatMap((key) => {
+    if (clocks.includes(key) || own.includes(key)) return [];
+    const integer = sequenceNumber(value[key]);
+    const largest = largestAt(held, key, value[key]);
+    return integer !== undefined &&
+      largest !== undefined &&
+      integer === largest + 1
+      ? [{ member: key, start: integer }]
+      : [];
+  });
+  const varying = new Set([
+    ...clocks,
+    ...own,
+    ...counts.map(({ member }) => member),
+  ]);
+  const alike = held.every((object) =>
+    [...new Set([...Object.keys(object), ...keys])].every(
+      (key) =>
+        varying.has(key) || same(ownMember(object, key), ownMember(value, key)),
+    ),
+  );
+  return alike
+    ? { field, rule: "made-object", clocks, format, own, counts }
+    : undefined;
+};
+
+/** A served made object: the exemplar's, its clocks set to the write's clock and each count to the value `next` gives; its own members follow the entity's identity once written. */
+export const madeObjectValue = (
+  base: JsonValue | undefined,
+  rule: Extract<FieldRule, { rule: "made-object" }>,
+  clock: JsonValue,
+  next: (count: { readonly member: string; readonly start: number }) => number,
+): Result<JsonValue, string> => {
+  if (base === undefined || !isObject(base))
+    return err(`The plan holds no ${rule.field} object to make.`);
+  const made: JsonObject = { ...base };
+  for (const member of rule.clocks) setOwnMember(made, member, clock);
+  for (const count of rule.counts)
+    setOwnMember(
+      made,
+      count.member,
+      spelledLike(ownMember(base, count.member) ?? "", next(count)),
+    );
+  return ok(made);
 };
 
 /** A served nested clock: the object the entity holds, or the observed one for a create, with its stamped members set to the clock. */

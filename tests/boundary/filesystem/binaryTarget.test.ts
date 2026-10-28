@@ -514,6 +514,33 @@ describe("binary target I/O: package classification", () => {
     );
   });
 
+  it("classifies Intel HEX and S-records by a valid first record", async () => {
+    const directory = await createTestTempDirectory("rea-hex-target-");
+    const hex = join(directory, "firmware.hex");
+    const text = join(directory, "firmware.txt");
+    const srec = join(directory, "firmware.mot");
+    const bad = join(directory, "bad.hex");
+    await Promise.all([
+      writeFile(hex, ":0300300002337A1E\n:00000001FF\n"),
+      writeFile(text, ":00000001FF\n"),
+      writeFile(srec, "S9030000FC\n"),
+      writeFile(bad, ":0300300002337A1F\n:00000001FF\n"),
+    ]);
+    for (const [path, format] of [
+      [hex, "intel-hex"],
+      [text, "intel-hex"],
+      [srec, "srec"],
+    ] as const)
+      expect(await parseBinaryTarget(path)).toMatchObject({
+        ok: true,
+        value: { kind: "archive", format },
+      });
+    expect(await parseBinaryTarget(bad)).toMatchObject({
+      ok: false,
+      error: { _tag: "BinaryTargetError" },
+    });
+  });
+
   it("does not trust a ZIP-family extension without ZIP magic", async () => {
     const directory = await createTestTempDirectory("rea-fake-archive-");
     const path = join(directory, "fake.zip");

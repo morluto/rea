@@ -100,10 +100,10 @@
     "third_party/pwndbg/README.md",
     "third_party/pwndbg/LICENSE.md",
     "licenses",
+    "assets/rea-plugin.png",
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
     ".codex-plugin/mcp.json",
-    "assets/rea.svg",
     "scripts/plugin-mcp-launcher.mjs",
     "npm-shrinkwrap.json"
   ],
@@ -387,7 +387,7 @@
   },
   "overrides": {
     "typed-rest-client": {
-      "qs": "6.16.0"
+      "qs": "6.16.1"
     },
     "vitepress": {
       "vite": "6.4.4"

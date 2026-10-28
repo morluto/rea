@@ -122,6 +122,51 @@ export const nodeSeaEntryMetadataSchema = z.strictObject({
   index: uint32,
 });
 
+/**
+ * Intel HEX or Motorola S-record facts derived from every record. Start
+ * addresses are declared values, not proven entry points.
+ */
+export const hexRecordsMetadataSchema = z.strictObject({
+  kind: z.literal("hex-records"),
+  encoding: z.enum(["intel-hex", "srec"]),
+  variant: z
+    .enum(["I8HEX", "I16HEX", "I32HEX", "S19", "S28", "S37", "mixed"])
+    .nullable(),
+  line_count: offset,
+  record_count: offset,
+  data_record_count: offset,
+  data_bytes: offset,
+  duplicate_bytes: offset,
+  region_count: offset,
+  lowest_address: uint32.nullable(),
+  highest_address: uint32.nullable(),
+  termination: z.enum(["present", "absent"]),
+  start_address: uint32.nullable(),
+  start_address_record: z.enum(["05", "S7", "S8", "S9"]).nullable(),
+  start_segment_cs: uint32.nullable(),
+  start_segment_ip: uint32.nullable(),
+  header_hex: z
+    .string()
+    .regex(/^(?:[0-9a-f]{2}){0,252}$/u)
+    .nullable(),
+  header_text: z.string().nullable(),
+  declared_data_record_count: uint32.nullable(),
+});
+export type HexRecordsMetadata = z.infer<typeof hexRecordsMetadataSchema>;
+
+/** One address-contiguous region; lines span its contributing data records. */
+export const hexRecordRegionMetadataSchema = z.strictObject({
+  kind: z.literal("hex-record-region"),
+  start_address: uint32,
+  end_address: uint32,
+  length: offset,
+  record_count: offset,
+  first_line: offset,
+  last_line: offset,
+});
+export type HexRecordRegionMetadata = z.infer<
+  typeof hexRecordRegionMetadataSchema
+>;
 /** Runtime member identity, independent of blob layout and directory order. */
 export const nodeSeaEntryDeclaration = (
   metadata: z.infer<typeof nodeSeaEntryMetadataSchema>,
@@ -144,6 +189,8 @@ export const artifactFormatMetadataSchema = z.discriminatedUnion("kind", [
   pyInstallerEntryMetadataSchema,
   nodeSeaMetadataSchema,
   nodeSeaEntryMetadataSchema,
+  hexRecordsMetadataSchema,
+  hexRecordRegionMetadataSchema,
 ]);
 export type ArtifactFormatMetadata = z.infer<
   typeof artifactFormatMetadataSchema

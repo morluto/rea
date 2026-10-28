@@ -163,3 +163,51 @@ mcpTest(
     }
   },
 );
+
+mcpTest(
+  "rejects dangling section-name references and recovers in the same session",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-elf-notes-presence-mcp-");
+      const path = join(root, "program");
+      const bytes = elfNoteFixture({ ownership: "program" });
+      bytes.writeUInt16LE(5, 62);
+      await writeFile(path, bytes);
+      const rejected = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(parseMcpToolError(rejected).error).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        details: {
+          issues: [
+            expect.objectContaining({
+              path: ["path"],
+              reason: "invalid_format",
+              message: "ELF section table is missing",
+            }),
+          ],
+        },
+      });
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+      bytes.writeUInt16LE(0, 62);
+      await writeFile(path, bytes);
+      const accepted = await client.callTool({
+        name: "inspect_elf_notes",
+        arguments: { path },
+      });
+      expect(accepted.isError).not.toBe(true);
+      const evidence = toolContract("inspect_elf_notes").outputSchema.parse(
+        accepted.structuredContent,
+      );
+      expect(evidence.normalized_result.entries[0]?.gnu?.build_id_hex).toBe(
+        "0123456789abcdef0123456789abcdef01234567",
+      );
+    } finally {
+      await session.close();
+    }
+  },
+);

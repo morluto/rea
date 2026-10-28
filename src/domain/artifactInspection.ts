@@ -317,6 +317,19 @@ const probesFor = (
           },
         ]
       : [];
+  if (format === "intel-hex" || format === "srec")
+    return inventory.occurrences.some(
+      (row) => row.format_metadata?.kind === "hex-record-region",
+    )
+      ? [
+          {
+            operation: "open_binary",
+            rationale:
+              "Extract regions with extract_artifact, then open one with format raw-binary, a caller-chosen architecture, and entry_point set to the region start address (raw-binary maps file offset 0 at entry_point).",
+            authority: "native-analysis-provider",
+          },
+        ]
+      : [];
   return format === "directory"
     ? directoryProbes(inventory)
     : probesForFormat(format);

@@ -1482,6 +1482,8 @@ interface FakeResponse {
   /** The body size the browser received, when it differs from the body's. */
   readonly size?: number;
   readonly encoding?: string;
+  /** The Content-Length the response declares. */
+  readonly length?: string;
   /** A body still arriving: the text resolves with it. */
   readonly late?: Promise<string>;
 }
@@ -1513,10 +1515,14 @@ const uiPage = (responses: readonly FakeResponse[], clickFails = false) => {
         request: () => request,
         url: () => response.url,
         status: () => response.status,
-        headers: () =>
-          response.encoding === undefined
+        headers: () => ({
+          ...(response.encoding === undefined
             ? {}
-            : { "content-encoding": response.encoding },
+            : { "content-encoding": response.encoding }),
+          ...(response.length === undefined
+            ? {}
+            : { "content-length": response.length }),
+        }),
         body: async () => {
           reads.count += 1;
           return Buffer.from(await (response.late ?? response.body));
@@ -1698,9 +1704,11 @@ describe("saving from a UI step's response", () => {
   });
 
   it.each([
-    { encoding: "gzip", size: 32 },
     { encoding: "br", size: 32 },
+    { encoding: "gzip, zstd", size: 32 },
     { encoding: "identity", size: 0 },
+    { encoding: "gzip", size: 0 },
+    { size: 0, length: "0" },
     { size: -1 },
     { size: Number.NaN },
   ])(
@@ -1758,6 +1766,52 @@ describe("saving from a UI step's response", () => {
     ).rejects.toThrow(
       "answered 422; values are saved only from a 2xx response",
     );
+  });
+});
+
+describe("saving from a compressed or cached UI response", () => {
+  it.each([
+    { encoding: "gzip", size: 32 },
+    { encoding: "deflate", size: 32 },
+    { encoding: "x-gzip", size: 32 },
+    { size: 0, length: "17" },
+    { encoding: "gzip", size: 0, length: "32" },
+  ])(
+    "saves from a response whose received size or declared length bounds its decoded size: %j",
+    async (bounds) => {
+      const parsed = clickSaving("/api/items");
+      const secrets = resolved(parsed);
+      const { page, reads } = uiPage([
+        {
+          method: "POST",
+          url: `${ORIGIN}/api/items`,
+          status: 201,
+          body: '{"id":"record-7"}',
+          ...bounds,
+        },
+      ]);
+      await perform(page, parsed.actions[0]!, secrets);
+      expect(secrets.savedValue("item")).toBe("record-7");
+      expect(reads.count).toBe(1);
+    },
+  );
+
+  it("refuses a compressed response that could decode past the limit without reading it", async () => {
+    const parsed = clickSaving("/api/items");
+    const { page, reads } = uiPage([
+      {
+        method: "POST",
+        url: `${ORIGIN}/api/items`,
+        status: 201,
+        body: '{"id":"x"}',
+        encoding: "gzip",
+        size: 12_000,
+      },
+    ]);
+    await expect(
+      perform(page, parsed.actions[0]!, resolved(parsed)),
+    ).rejects.toThrow("could decode past the size limit");
+    expect(reads.count).toBe(0);
   });
 });
 

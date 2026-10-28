@@ -1,4 +1,12 @@
 import spawn from "cross-spawn";
+import { spawn as spawnWindows } from "node:child_process";
+import { win32 } from "node:path";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { findWindowsExecutable } from "../process/WindowsExecutable.js";
+import {
+  isWindowsBatchFile,
+  windowsBatchCommand,
+} from "../process/WindowsBatchCommand.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   ProviderProcessSupervisor,
@@ -40,6 +48,7 @@ export class UpdateCommandRunner {
           workingDirectory,
           "complete",
           this.#resources,
+          deadline.signal,
           deadline,
         ),
       );
@@ -67,6 +76,7 @@ export class UpdateCommandRunner {
           workingDirectory,
           "diagnostics",
           this.#resources,
+          this.#controller.signal,
         ),
       )
       .catch((cause: unknown) =>
@@ -87,19 +97,73 @@ const runUpdateProcess = async (
   workingDirectory: string | undefined,
   retention: "complete" | "diagnostics",
   resources: ArtifactResourceScope,
+  lookupSignal: AbortSignal,
   probe?: ProviderStartupDeadline,
 ): Promise<Result<string, string>> => {
   if (probe?.signal.aborted)
     return err("Update metadata probe cancelled before launch.");
   const [executable, ...args] = command;
   if (executable === undefined) return err("No executable supplied.");
-  const environment = withoutPackageRunnerIdentity(selectedEnvironment);
-  const child = spawn(executable, args, {
-    stdio: ["ignore", "pipe", "pipe"],
-    env: environment,
-    windowsHide: true,
-    ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-  });
+  const environment = snapshotEnvironment(
+    withoutPackageRunnerIdentity(selectedEnvironment),
+  );
+  let selectedExecutable = executable;
+  let selectedArguments = args;
+  let windowsVerbatimArguments = false;
+  if (process.platform === "win32") {
+    if (
+      !win32.isAbsolute(executable) &&
+      !/[\\/]/u.test(executable) &&
+      win32.parse(executable).root === ""
+    ) {
+      const found = await findWindowsExecutable(executable, environment, {
+        signal: lookupSignal,
+        allowBatch: true,
+        ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
+      });
+      if (!found.ok) {
+        const failure = found.error;
+        return err(
+          failure.kind === "interrupted"
+            ? "Update command PATH lookup interrupted before launch."
+            : failure.kind === "inspection"
+              ? `Update command PATH candidate could not be inspected: ${failure.path} (${failure.code ?? "unknown"}).`
+              : failure.kind === "invalid_extension"
+                ? `Invalid Windows PATHEXT extension: ${failure.extension}`
+                : `Update executable was not found on the selected Windows PATH/PATHEXT: ${executable}`,
+        );
+      }
+      selectedExecutable = found.value;
+    } else {
+      selectedExecutable = win32.resolve(
+        workingDirectory ?? process.cwd(),
+        executable,
+      );
+    }
+    if (isWindowsBatchFile(selectedExecutable)) {
+      const invocation = windowsBatchCommand({
+        environment,
+        batchPath: selectedExecutable,
+        arguments: args,
+      });
+      selectedExecutable = invocation.command;
+      selectedArguments = [...invocation.arguments];
+      windowsVerbatimArguments = true;
+    }
+  }
+  if (lookupSignal.aborted)
+    return err("Update command cancelled before launch.");
+  const child = (process.platform === "win32" ? spawnWindows : spawn)(
+    selectedExecutable,
+    selectedArguments,
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: environment,
+      windowsHide: true,
+      windowsVerbatimArguments,
+      ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
+    },
+  );
   let processFailure: string | undefined;
   const supervisor = new ProviderProcessSupervisor(
     { process: child, ownsProcessLifetime: true },

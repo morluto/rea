@@ -51,6 +51,7 @@ const generator = () => {
     clock: NOW,
     "nested-clock": { at: NOW },
     "held-clock": NOW,
+    "made-object": { at: NOW },
   };
   const generate = (rule: GeneratedRule) => {
     asked.push(rule);

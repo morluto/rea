@@ -530,10 +530,11 @@ id the application assigns:
   that names no string or number fails the step, so later steps never send a
   missing value, as does a response over 4,000,000 characters: a request step
   stops reading and aborts its fetch there. A UI step reads a body only when
-  its positive received size is known, at most 12,000,000 bytes, and its
-  Content-Encoding is absent or identity. Compressed responses and unknown or
-  zero cache sizes are refused before materializing the body; decoded text
-  over the character limit also fails. The UI action may already have applied.
+  its decoded size is bounded at 12,000,000 bytes or less: its received size,
+  or the declared Content-Length of one served from cache, times 1032 for each
+  gzip or deflate coding, the most DEFLATE expands. Other codings and unknown
+  or zero sizes are refused before materializing the body; decoded text over
+  the character limit also fails. The UI action may already have applied.
 - `{saved:name}` sends a saved value in a request step's `path`, including its
   query, and in a `goto` destination's `url`, percent-encoded; a destination's
   structured `query` values are sent as declared. A saved value that makes a

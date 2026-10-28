@@ -42,7 +42,8 @@ export const usesWriteClock = (plan: Pick<StateWritePlan, "rules">): boolean =>
     (rule) =>
       rule.rule === "clock" ||
       rule.rule === "held-clock" ||
-      rule.rule === "nested-clock",
+      rule.rule === "nested-clock" ||
+      rule.rule === "made-object",
   );
 
 /** Rules that generate a value when served; the gate takes the recorded value instead. */
@@ -52,10 +53,12 @@ export type GeneratedRule =
       readonly rule: "identity";
       readonly generator: "sequence" | "uuid" | "token";
     }
+  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them. */
   | {
       readonly field: string;
       readonly rule: "sequence";
       readonly scope: "collection" | "type";
+      readonly start?: number;
     }
   | { readonly field: string; readonly rule: "unique" }
   /** The value kept with each UUID at the pointers (`*` for any array index) replaced by a fresh one, as rewritten child rows are. */
@@ -81,6 +84,15 @@ export type GeneratedRule =
       readonly field: string;
       readonly rule: "held-clock";
       readonly format: ClockFormat;
+    }
+  /** An object made with the entity, which no initial entity holds: `clocks` take the write's clock, `own` the entity's identity, each of `counts` one past the largest value held objects show and never below its start; other members as the exemplar showed them. */
+  | {
+      readonly field: string;
+      readonly rule: "made-object";
+      readonly clocks: string[];
+      readonly format: ClockFormat;
+      readonly own: string[];
+      readonly counts: { readonly member: string; readonly start: number }[];
     };
 
 /** How one field of a written entity gets its value; fields no rule names keep the observed value. */
@@ -241,7 +253,33 @@ export interface WriteBody {
   readonly defaults?:
     | { readonly member: string; readonly value: JsonValue }[]
     | undefined;
+  /** Members a recorded create sent empty, which a call may leave out: one left out is applied as sent that value. */
+  readonly blank?:
+    | { readonly member: string; readonly sent: JsonValue }[]
+    | undefined;
 }
+
+/** Whether two values both say a container is empty, as `null`, `[]` or `{}`, which encoders spell differently from one answer to another. */
+export const emptySpellings = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean =>
+  [left, right].every(
+    (value) =>
+      value === null ||
+      (Array.isArray(value)
+        ? value.length === 0
+        : typeof value === "object" && Object.keys(value).length === 0),
+  );
+
+/** A value a form sends for a field left empty: `""`, `null`, `false`, `[]` or `{}`. */
+export const isBlankValue = (value: JsonValue | undefined): boolean =>
+  value === "" ||
+  value === null ||
+  value === false ||
+  (Array.isArray(value)
+    ? value.length === 0
+    : typeof value === "object" && Object.keys(value).length === 0);
 
 /**
  * How a write names its entities when its path does not end in one: an action segment after the
@@ -284,6 +322,8 @@ export interface StateWritePlan {
       readonly ordinal: number;
       readonly pointer: string;
       readonly shape: "item" | "list";
+      /** Pointers into the entity to values the response had not loaded, which answers keep as it showed them. */
+      readonly unloaded?: string[];
     };
   } | null;
   readonly response: WriteResponse | null;

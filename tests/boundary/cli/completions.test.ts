@@ -42,7 +42,10 @@ it("resolves enabled builtin scopes in the same tree as registered commands", ()
   expect(complete(["rea", "mcp"], 2)).toEqual(["add", "doctor"]);
   expect(complete(["rea", ""])).toEqual(["instructions", "mcp", "completions"]);
   expect(complete(["rea", "completions", "b"])).toEqual(["bash"]);
-  expect(complete(["rea", "mcp", "add", "--c"])).toEqual(["--command"]);
+  expect(complete(["rea", "mcp", "add", "--c"])).toEqual([
+    "--command",
+    "--columns",
+  ]);
 });
 
 it("uses canonical global flag metadata and retains command options and enum hints", () => {
@@ -61,6 +64,15 @@ it("uses canonical global flag metadata and retains command options and enum hin
     "raw-binary",
   ]);
   expect(complete(["rea", "instructions", "--format", ""])).toEqual([
+    "toon",
+    "json",
+    "yaml",
+    "md",
+    "jsonl",
+    "csv",
+    "tsv",
+  ]);
+  expect(complete(["rea", "mcp", "doctor", "--format", ""])).toEqual([
     "toon",
     "json",
     "yaml",
@@ -139,6 +151,6 @@ printf 'format=%s\\n' "\${COMPREPLY[*]}"
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("mcp=add doctor\n");
-    expect(result.stdout).toContain("format=toon json yaml md jsonl\n");
+    expect(result.stdout).toContain("format=toon json yaml md jsonl csv tsv\n");
   },
 );

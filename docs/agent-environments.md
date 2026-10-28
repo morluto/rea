@@ -406,7 +406,8 @@ returns that record's recorded response. Selection compares the supplied path
 parameters against the record's path segments at the parameter indexes, then
 the supplied query values against the record's query string, and keeps the
 record with the most matches; ties keep manifest order. A query argument accepts
-one string or an array of strings for repeated values; the array is matched
+one string, a number or boolean sent as its JSON text, or an array of strings for
+repeated values; the array is matched
 against every occurrence in captured order. The raw recorded query remains the
 replay evidence. The result reports
 where the answer came from:
@@ -613,8 +614,9 @@ shape and carries no annotations.
 Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
 values (sampled within the list budget above; the manifest keeps them all);
-query parameter names accept an optional string or array of strings (for
-repeated values in captured order); write methods accept an
+query parameter names accept an optional string, number or boolean (a number or
+boolean is sent as its JSON text) or array of strings (for repeated values in
+captured order); write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
@@ -768,7 +770,12 @@ sending a `derived` rule's member to an entity that does not hold the value the
 recorded call found, a nested clock on an entity holding no such object, and a
 rendered answer missing a field the recorded response carried, and an update or delete of an entity the state does not hold answers
 the recorded 400, 404 or 410 of the tool or of an item view of the type, if
-any. A refused call leaves the state unchanged. Values a write generates are
+any. A served delete of a type whose item view has a `deleted_flag` (the
+member, `deleted`, `isDeleted` or `is_deleted`, its reads set `true` on a
+record the application soft-deleted, as EspoCRM does) keeps the entity until
+`data/reset` or `data/add`, within the size `data/add` loads, so a read of it by
+id answers its last fields with that flag `true`. A refused call leaves the
+state unchanged. Values a write generates are
 deterministic: the clock starts at `write_clock` and advances one second per
 served write, sequences take one past both the largest held value and the
 largest they generated, and UUIDs and tokens derive from the state Evidence

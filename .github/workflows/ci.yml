@@ -906,6 +906,7 @@ jobs:
           tests/boundary/process/packageNpmInvocation.test.ts
           tests/boundary/process/packedBridgeVerification.test.ts
           tests/boundary/process/windowsOutputCapture.test.ts
+          tests/boundary/process/windowsExecutableSelection.test.ts
           tests/acceptance/webModuleCli.test.ts
           tests/acceptance/webSourceLocationCli.test.ts
           tests/boundary/cli/referenceSourceImportStatus.test.ts

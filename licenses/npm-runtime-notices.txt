@@ -1,7 +1,7 @@
 REA third-party npm runtime copyright, license and NOTICE texts
 Collected from integrity-verified locked npm archives. Release-specific supplements and upstream notice gaps are identified in their entries.
 External engines are separately obtained; see THIRD_PARTY_NOTICES.md.
-Runtime dependency fingerprint (SHA-256): 31bd2b9c5690c9d963d7dcf25da2fec9bc16a3d4724f661cf92489dd106fdbe1
+Runtime dependency fingerprint (SHA-256): 09f8570cf168ddd3ad7c877dbcdd1ef5013de3af884a37fd27e6da3b99b49664
 
 ===== @babel/helper-string-parser@8.0.6 =====
 Declared license: MIT
@@ -3926,10 +3926,10 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 
-===== fast-uri@3.1.8 =====
+===== fast-uri@3.1.9 =====
 Declared license: BSD-3-Clause
-Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz
-Integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==
+Archive: https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz
+Integrity: sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==
 Scope: npm runtime dependency, including optional platform packages.
 
 --- package/LICENSE ---

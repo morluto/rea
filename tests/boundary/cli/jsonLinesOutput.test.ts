@@ -483,6 +483,58 @@ describe("JSON Lines counting and transport", () => {
   });
 });
 
+describe("SDK-owned JSON Lines parser diagnostics", () => {
+  it.each([false, true])(
+    "retains counted parser diagnostics (full: %s)",
+    async (full) => {
+      const args = [
+        "rows",
+        "--format",
+        "jsonl",
+        "--token-count",
+        ...(full ? ["--full-output"] : []),
+      ];
+      for (const extra of [[], ["--zzz-bogus"]]) {
+        const stream = capture(args);
+        const cli = Cli.create("sdk-count", { sync: false }).command("rows", {
+          args: z.object({ required: z.string() }),
+          run: () => [{ id: "row" }],
+        });
+        streamCliCommandResults(cli, stream.output);
+        let status = 0;
+        await cli.serve([...args, ...extra], {
+          stdout: (text) => {
+            stream.output.captureSdkOutput(text);
+          },
+          exit: (code) => {
+            status = code;
+          },
+        });
+        await stream.output.finishSdkOutput(status);
+        expect(status).toBe(1);
+        const diagnostic = {
+          code: extra.length === 0 ? "VALIDATION_ERROR" : "UNKNOWN",
+          message: expect.any(String),
+        };
+        expect(lines(stream.text())).toEqual([
+          expect.objectContaining({
+            $rea: "jsonl/v1",
+            type: "error",
+            ok: false,
+            result: full
+              ? expect.objectContaining({
+                  ok: false,
+                  error: expect.objectContaining(diagnostic),
+                  meta: expect.any(Object),
+                })
+              : expect.objectContaining(diagnostic),
+          }),
+        ]);
+      }
+    },
+  );
+});
+
 describe("SDK-owned JSON Lines outcomes", () => {
   it("uses SDK status to frame validation errors and resets ownership between invocations", async () => {
     const stream = capture(["--format", "jsonl"]);
@@ -517,10 +569,21 @@ describe("SDK-owned JSON Lines outcomes", () => {
     expect(stream.output.error).toBeUndefined();
   });
 
-  it.each([false, true])(
-    "preserves sentinel data and frames sentinel failure using SDK outcome (%s)",
-    async (failure) => {
-      const stream = capture(["--format", "jsonl"]);
+  it.each([
+    { failure: false, count: false },
+    { failure: true, count: false },
+    { failure: false, count: true },
+    { failure: true, count: true },
+  ])(
+    "preserves sentinel outcomes under counting (%j)",
+    async ({ failure, count }) => {
+      const args = [
+        "result",
+        "--format",
+        "jsonl",
+        ...(count ? ["--token-count"] : []),
+      ];
+      const stream = capture(args);
       const cli = Cli.create("sdk-sentinel", { sync: false }).command(
         "result",
         {
@@ -538,7 +601,7 @@ describe("SDK-owned JSON Lines outcomes", () => {
       );
       streamCliCommandResults(cli, stream.output);
       let status = 0;
-      await cli.serve(["result", "--format", "jsonl"], {
+      await cli.serve(args, {
         stdout: (text) => {
           stream.output.captureSdkOutput(text);
         },
@@ -549,12 +612,19 @@ describe("SDK-owned JSON Lines outcomes", () => {
       expect(stream.text()).toBe("");
       await stream.output.finishSdkOutput(status);
       expect(lines(stream.text())[0]).toEqual(
-        failure
-          ? jsonLinesErrorRecord({
-              code: "EXPLICIT_FAILURE",
-              message: "Caller-owned error",
-            })
-          : { code: "EXPLICIT_FAILURE", message: "Successful data" },
+        count && !failure
+          ? estimateTokenCount(
+              JSON.stringify({
+                code: "EXPLICIT_FAILURE",
+                message: "Successful data",
+              }) + "\n",
+            )
+          : failure
+            ? jsonLinesErrorRecord({
+                code: "EXPLICIT_FAILURE",
+                message: "Caller-owned error",
+              })
+            : { code: "EXPLICIT_FAILURE", message: "Successful data" },
       );
     },
   );

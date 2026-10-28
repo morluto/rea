@@ -636,6 +636,12 @@ boundaries. FreeBuff MCP loading and skill discovery have not been verified
 with an installed native FreeBuff client/version; filesystem tests cover REA's
 editing, discovery, and ownership behavior only. Automatic applicability
 requires the FreeBuff profile directory even when the shared MCP file exists.
+When uninstall cannot establish FreeBuff or another shared-storage reader from
+product discovery, a malformed or unreadable shared MCP file is retained
+unchanged and does not stop other REA removals, including `--purge-data`. When
+FreeBuff or ZCode product applicability is established or unresolved, the same
+malformed shared file stops uninstall before removals. See
+[Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
 FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
 reject `rea setup --client freebuff` as an unsupported client. See the

@@ -2,6 +2,13 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
 import { z } from "incur";
 import {
+  bytePatternFields,
+  validateBytePattern,
+  MAX_BYTE_SEARCH_MATCHES,
+} from "../domain/native/bytePattern.js";
+import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+
+import {
   addressOrProcedureGuidance,
   equalSelectorGuidance,
   resolveCliAnalysisSelector,
@@ -25,6 +32,10 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
+const bytePatternInputSchema = z
+  .object(bytePatternFields)
+  .superRefine(validateBytePattern);
+
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
   cli: CliInstance,
@@ -36,10 +47,10 @@ export const registerCoreNativeCommands = (
     description: "Find masked byte patterns in initialized provider memory",
     args: z.object({
       path: z.string().describe("Local executable path"),
-      pattern: z.string().describe("Hexadecimal byte pairs with ?? wildcards"),
+      pattern: bytePatternFields.pattern,
     }),
     options: z.object({
-      mask: z.string().optional().describe("Equal-length hexadecimal bit mask"),
+      mask: bytePatternFields.mask,
       start: z.string().optional().describe("Inclusive start address"),
       end: z.string().optional().describe("Inclusive end address"),
       cursor: z
@@ -50,27 +61,43 @@ export const registerCoreNativeCommands = (
         .number()
         .int()
         .min(1)
-        .max(1000)
+        .max(MAX_BYTE_SEARCH_MATCHES)
         .default(100)
         .describe("Maximum matches on this page"),
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, CLI_COMMANDS.searchBytes, () =>
-        runDirectAnalysis(
+      logCliCommand(logger, CLI_COMMANDS.searchBytes, async () => {
+        const selection = {
+          pattern: args.pattern,
+          ...(options.mask === undefined ? {} : { mask: options.mask }),
+        };
+        const parsed = bytePatternInputSchema.safeParse(selection);
+        if (!parsed.success)
+          return projectAnalysisError(
+            analysisInputErrorFromIssues(
+              "search_bytes",
+              parsed.error.issues,
+              selection,
+              { cause: parsed.error },
+            ),
+          );
+        return runDirectAnalysis(
           args.path,
           "search_bytes",
           {
-            pattern: args.pattern,
+            pattern: parsed.data.pattern,
+            ...(parsed.data.mask === undefined
+              ? {}
+              : { mask: parsed.data.mask }),
             limit: options.limit,
-            ...(options.mask === undefined ? {} : { mask: options.mask }),
             ...(options.start === undefined ? {} : { start: options.start }),
             ...(options.end === undefined ? {} : { end: options.end }),
             ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
           },
           directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
-      ),
+        ).then(projectCliAnalysisResult);
+      }),
   });
   cli.command(CLI_COMMANDS.inspectNativeLoadImage, {
     description:

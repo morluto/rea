@@ -10,12 +10,14 @@ import { registerEnvironmentBundleTool } from "./registerApplicationTools/enviro
 import { registerReconstructionObligationLedgerTool } from "./registerApplicationTools/obligationLedger.js";
 import { registerProjectMobileApplicationGraphTools } from "./registerApplicationTools/projectMobileApplicationGraph.js";
 import type { ApplicationToolRegistration } from "./registerApplicationTools/types.js";
+import { registerGuidedWorkflowTool } from "./registerGuidedWorkflowTool.js";
 
 /** Register provider-neutral JavaScript application graph workflows. */
 export const registerApplicationTools = (
   server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
+  registerGuidedWorkflowTool(server);
   registerTraceFeatureTool(server, options);
   registerTraceJavaScriptSemanticsTool(server, options);
   registerCompareApplicationVersionsTool(server, options);

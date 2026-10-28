@@ -249,6 +249,13 @@ export const nextSequence = (
 ): number =>
   taken === undefined ? (held ?? 1) : Math.max(held ?? taken + 1, taken + 1);
 
+/** The next held integer of a sequence that never goes below its `start`. */
+export const startedSequence = (
+  held: number | undefined,
+  start: number | undefined,
+): number | undefined =>
+  start === undefined ? held : Math.max(held ?? start, start);
+
 /** An integer spelled as the recorded value spells integers: a number, or a string of digits. */
 export const spelledLike = (exemplar: JsonValue, value: number): JsonValue =>
   maskedCount(exemplar) !== undefined
