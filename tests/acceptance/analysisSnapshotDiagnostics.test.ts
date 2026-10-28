@@ -59,6 +59,10 @@ cliTest(
         });
         expect(error).not.toHaveProperty("cause");
         expect(error).not.toHaveProperty("stack");
+        if (field === "target")
+          expect(error.details?.reason).toBe(
+            "Analysis snapshot validation failed at target: Invalid input: expected object, received undefined (2 more issues)",
+          );
       }
       expect(mcpError.details).toEqual(cliError.details);
       expect(await readFile(snapshot, "utf8")).toBe(encoded);
