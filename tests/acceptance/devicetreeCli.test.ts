@@ -146,22 +146,27 @@ cliTest("inspects a relative DTB and preserves the source", async ({ cli }) => {
 });
 for (const version of [16, 17] as const) {
   cliTest(
-    `inspects a v${version} DTB with empty strings at the reservation boundary`,
+    `inspects a v${version} DTB with empty strings at arbitrary in-blob offsets`,
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-dtb-empty-strings-");
-      const path = join(root, "board.dtb");
-      await writeFile(path, emptyStringsAtReservationBoundaryFixture(version));
-      const result = await cli.run({
-        arguments: ["inspect-devicetree", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const report = toolContract("inspect_devicetree").outputSchema.parse(
-        result.json,
-      ).normalized_result;
-      expect(report).toMatchObject({
-        nodes: [{ path: "/" }],
-        reservations: [],
-      });
+      for (const offset of [0, 44, 56, 60, 72]) {
+        const path = join(root, `board-${String(offset)}.dtb`);
+        const bytes = emptyStringsAtReservationBoundaryFixture(version);
+        bytes.writeUInt32BE(offset, 12);
+        await writeFile(path, bytes);
+        const result = await cli.run({
+          arguments: ["inspect-devicetree", path, "--json"],
+        });
+        expect(result.exitCode, result.stderr).toBe(0);
+        const report = toolContract("inspect_devicetree").outputSchema.parse(
+          result.json,
+        ).normalized_result;
+        expect(report).toMatchObject({
+          nodes: [{ path: "/" }],
+          reservations: [],
+        });
+        expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+      }
     },
   );
 }
