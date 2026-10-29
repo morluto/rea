@@ -245,12 +245,18 @@ export interface KunaIncomingReferences {
   readonly excludedAliasRows: number;
 }
 
+/** Code from incoming-reference admission, plus the address field when one failed. */
+export interface KunaIncomingReferenceError {
+  readonly code: string;
+  readonly field?: string;
+}
+
 /** Native --to unifies forwarding aliases; REA xrefs asks for the exact address. */
 export const parseKunaIncomingReferences = (
   text: string,
   input: string,
   target: string,
-): Result<KunaIncomingReferences, string> => {
+): Result<KunaIncomingReferences, KunaIncomingReferenceError> => {
   try {
     const document = xrefsDocument.parse(
       parseKunaJson(text, KUNA_XREF_OUTPUT_BYTES, addressKeys),
@@ -296,6 +302,16 @@ export const parseKunaIncomingReferences = (
       sha256: createHash("sha256").update(text).digest("hex"),
     });
   } catch (cause: unknown) {
-    return err(cause instanceof Error ? cause.message : String(cause));
+    if (cause instanceof KunaDocumentError) {
+      const field = cause.detail?.field;
+      return err(
+        typeof field === "string"
+          ? { code: cause.code, field }
+          : { code: cause.code },
+      );
+    }
+    return err({
+      code: cause instanceof Error ? cause.message : String(cause),
+    });
   }
 };
