@@ -265,9 +265,9 @@ const notesClaims = (
       id: "feature_modules",
       expectedValue: {
         paths: ["csv.js", "main.js", "preload.js", "renderer.js"],
-        // The renderer's exportNotes().catch(...) leaves a Promise member
-        // unresolved in static analysis, so the graph reports partial coverage.
-        coverage: "partial",
+        // The renderer's unresolved Promise member cannot hide an Electron
+        // call path, so it does not make this feature trace partial.
+        coverage: "complete-within-source",
       },
       source: {
         ...derived,
