@@ -924,8 +924,23 @@ export class JavaScriptSymbolicBindings {
     this.#loaderFreeBindingsInProgress.add(binding.bindingId);
     this.#loaderProofDepth += 1;
     try {
+      let projected = initializer.node;
+      for (const key of initializer.projection) {
+        if (
+          key === null ||
+          (!t.isExpression(projected) && !t.isSuper(projected))
+        )
+          return false;
+        projected = t.memberExpression(
+          projected,
+          typeof key === "number"
+            ? t.numericLiteral(key)
+            : t.stringLiteral(key),
+          true,
+        );
+      }
       const loaderFree = this.#isLoaderFree(
-        initializer.node,
+        projected,
         0,
         invocation,
         callerParameterLoaderFree,
@@ -970,9 +985,7 @@ export class JavaScriptSymbolicBindings {
             invocation,
             callerParameterLoaderFree,
           )
-        : !semanticResolutionBlocked(this.state, node, node.name) &&
-            !this.state.ambientBindingWrites.has(node.name) &&
-            LOADER_FREE_AMBIENT_VALUES.has(node.name);
+        : this.#isLoaderFreeAmbientReference(node);
     }
     if (t.isUnaryExpression(node))
       return (
@@ -1138,6 +1151,7 @@ export class JavaScriptSymbolicBindings {
               invocation,
             )) ||
           t.isThisExpression(child) ||
+          t.isSuper(child) ||
           t.isImport(child) ||
           t.isImportExpression(child) ||
           literalMemberProof === false ||
@@ -1163,14 +1177,12 @@ export class JavaScriptSymbolicBindings {
     proofInvocation?: t.CallExpression | t.OptionalCallExpression,
   ): boolean {
     const binding = resolveSemanticBindingState(this.state, node, node.name);
-    if (binding === undefined)
-      return (
-        !semanticResolutionBlocked(this.state, node, node.name) &&
-        !this.state.ambientBindingWrites.has(node.name) &&
-        LOADER_FREE_AMBIENT_VALUES.has(node.name)
-      );
+    if (binding === undefined) return this.#isLoaderFreeAmbientReference(node);
     if (binding.kind === "parameter")
-      return parameterLoaderFree.get(binding.bindingId) ?? false;
+      return (
+        !this.#isMemberReceiver(node) &&
+        (parameterLoaderFree.get(binding.bindingId) ?? false)
+      );
     if (binding.kind === "catch") return false;
     const invocation = this.#calleeInvocation(node);
     return (
@@ -1181,6 +1193,36 @@ export class JavaScriptSymbolicBindings {
         parameterLoaderFree,
         proofInvocation,
       )
+    );
+  }
+
+  #isLoaderFreeAmbientReference(node: t.Identifier): boolean {
+    if (
+      semanticResolutionBlocked(this.state, node, node.name) ||
+      this.state.ambientBindingWrites.has(node.name) ||
+      !LOADER_FREE_AMBIENT_VALUES.has(node.name)
+    )
+      return false;
+    const parent = this.state.parentsByNode.get(node);
+    if (
+      !(t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) ||
+      parent.object !== node
+    )
+      return true;
+    const key = semanticStaticPropertyKey(parent.property, parent.computed);
+    if (key === null) return true;
+    const path = ["global", node.name, key] as const;
+    return (
+      !this.state.ambientWrites.covers(path) &&
+      !this.state.ambientEscapes.covers(path)
+    );
+  }
+
+  #isMemberReceiver(node: t.Identifier): boolean {
+    const parent = this.state.parentsByNode.get(node);
+    return (
+      (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+      parent.object === node
     );
   }
 
@@ -1225,11 +1267,23 @@ export class JavaScriptSymbolicBindings {
           !isObjectPrototypeSetter(property, key) &&
           semanticStaticPropertyKey(property.key, property.computed) === key,
       );
+    const inheritedMemberChanged =
+      key !== null &&
+      (owner === "Object" ? [owner] : [owner, "Object"]).some(
+        (prototypeOwner) => {
+          const path = ["global", prototypeOwner, "prototype", key] as const;
+          return (
+            this.state.ambientWrites.covers(path) ||
+            this.state.ambientEscapes.covers(path)
+          );
+        },
+      );
     return (
       this.#isLoaderFree(object, depth + 1) &&
       (!node.computed || this.#isLoaderFree(node.property, depth + 1)) &&
       (ownObjectProperty ||
-        (!this.state.prototypeRequireMutationOwners.has(owner) &&
+        (!inheritedMemberChanged &&
+          !this.state.prototypeRequireMutationOwners.has(owner) &&
           !this.state.prototypeRequireMutationOwners.has("Object")))
     );
   }
