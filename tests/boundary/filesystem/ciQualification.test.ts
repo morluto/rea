@@ -44,7 +44,7 @@ function run(overrides: Record<string, unknown> = {}) {
     id: 7,
     status: "completed",
     conclusion: "success",
-    path: ".github/workflows/ci.yml",
+    path: ".github/workflows/ci.yml@main",
     event: "schedule",
     created_at: new Date(now - 120_000).toISOString(),
     head_sha: validSha,

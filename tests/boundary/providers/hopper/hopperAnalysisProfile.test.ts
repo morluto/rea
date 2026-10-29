@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
+import { createInspectionResources } from "../../../fixtures/inspectionResources.js";
 
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import {
@@ -12,9 +13,12 @@ import {
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
 
+let inspectionResources = createInspectionResources();
 let directory: string | undefined;
 
 afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
@@ -63,19 +67,25 @@ describe("Hopper analysis profiles", () => {
     expect("loaderArgs" in input).toBe(false);
   });
 
-  it("reports an unresolved profile when the launcher version is unavailable", async () => {
+  it("refuses a profile when the selected launcher cannot be fingerprinted", async () => {
     const resolved = await resolveHopperAnalysisProfile(
       target("elf", "x86_64"),
       {
         launcherPath: "/missing/hopper",
         loaderArgsOverride: [],
         provider: HOPPER_PROVIDER_IDENTITY,
+        resourceScope: inspectionResources.owner,
       },
     );
-    expect(resolved).toEqual({
-      ok: true,
-      value: {
-        profile: null,
+    expect(resolved).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        operation: "resolve_analysis_profile",
+        diagnostics: {
+          launcher_path: "/missing/hopper",
+          system_code: "ENOENT",
+        },
       },
     });
   });
@@ -99,6 +109,7 @@ describe("Hopper analysis profiles", () => {
           launcherPath,
           loaderArgsOverride: scenario.override,
           provider: HOPPER_PROVIDER_IDENTITY,
+          resourceScope: inspectionResources.owner,
         },
       );
       expect(resolved).toMatchObject({
@@ -106,6 +117,8 @@ describe("Hopper analysis profiles", () => {
         value: {
           profile: {
             parameters: {
+              function_dossier_coverage:
+                "observed-facets-and-call-relationships-v1",
               loader: {
                 source: scenario.source,
                 arguments: scenario.arguments,
@@ -126,6 +139,7 @@ describe("Hopper analysis profiles", () => {
       launcherPath: launcher,
       loaderArgsOverride: [],
       provider: HOPPER_PROVIDER_IDENTITY,
+      resourceScope: inspectionResources.owner,
       signal: controller.signal,
     });
 

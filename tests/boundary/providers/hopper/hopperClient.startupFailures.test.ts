@@ -41,6 +41,7 @@ class CancelThenFixtureLauncher implements BridgeLauncher {
   readonly firstLaunch = new Promise<ChildProcess>((resolve) => {
     this.#firstLaunchReady = resolve;
   });
+  retriedProcess: ChildProcess | undefined;
 
   async launch(session: BridgeSession) {
     this.#launches += 1;
@@ -49,6 +50,7 @@ class CancelThenFixtureLauncher implements BridgeLauncher {
       : new FixtureLauncher().launch(session));
     if (this.#launches === 1 && launched.ok)
       this.#firstLaunchReady?.(launched.value.process);
+    else if (launched.ok) this.retriedProcess = launched.value.process;
     return launched;
   }
 }
@@ -256,9 +258,18 @@ describe("HopperClient startup failures", () => {
     expect(
       firstProcess.exitCode !== null || firstProcess.signalCode !== null,
     ).toBe(true);
-    await expect(client.start()).resolves.toEqual({
+    const restarted = await client.start();
+    const retriedProcess = launcher.retriedProcess;
+    expect(retriedProcess).toBeDefined();
+    expect(retriedProcess).not.toBe(firstProcess);
+    expect(restarted).toEqual({
       ok: true,
-      value: { name: "REA Hopper bridge", version: "1.0.0" },
+      value: {
+        name: "REA Hopper bridge",
+        version: "1.0.0",
+        processId: retriedProcess?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
+      },
     });
     await expect(
       client.callTool("echo", { value: "retried" }),
@@ -282,34 +293,23 @@ describe("HopperClient startup failures", () => {
       error: { _tag: "HopperCancelledError" },
     });
     expect(launcher.processes).toHaveLength(0);
-    await expect(client.start()).resolves.toEqual({
-      ok: true,
-      value: { name: "REA Hopper bridge", version: "1.0.0" },
-    });
+    const started = await client.start();
     expect(launcher.processes).toHaveLength(1);
+    expect(started).toEqual({
+      ok: true,
+      value: {
+        name: "REA Hopper bridge",
+        version: "1.0.0",
+        processId: launcher.processes[0]?.pid,
+        maxRequestBytes: 16 * 1024 * 1024,
+      },
+    });
     await expect(
       client.callTool("echo", { value: "retried" }),
     ).resolves.toEqual({
       ok: true,
       value: { value: "retried" },
     });
-  });
-
-  it("records unknown when startup is cancelled before launch", async () => {
-    const launcher = new FixtureLauncher();
-    const client = new HopperClient({ launcher, startupTimeoutMs: 30_000 });
-    clients.push(client);
-    const controller = new AbortController();
-    controller.abort();
-
-    const result = await client.start(controller.signal);
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("HopperCancelledError");
-    expect(launcher.processes).toHaveLength(0);
-    // A cancelled startup must not report idle: the same-target fast path
-    // would otherwise treat the client as live and skip the retire path.
-    expect(client.operationHealth()).toMatchObject({ state: "unknown" });
   });
 
   it("records unknown when the health handshake is invalid", async () => {

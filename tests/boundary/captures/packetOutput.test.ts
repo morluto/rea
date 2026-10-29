@@ -15,7 +15,7 @@ it("preserves repeated field values and missing fields while discarding export i
     },
     { _source: { layers: { "frame.number": ["7"] } } },
   ]);
-  expect(parsePacketOutput(output, ["ip.addr"])).toEqual([
+  expect(parsePacketOutput(output)).toEqual([
     { "frame.number": ["2"], "ip.addr": ["192.0.2.1", "192.0.2.2"] },
     { "frame.number": ["7"] },
   ]);
@@ -27,7 +27,6 @@ it.each(
     [{ "frame.number": ["1"], "ip.addr": "192.0.2.1" }],
     [{ "frame.number": ["0"] }],
     [{ "frame.number": ["1", "2"] }],
-    [{ "frame.number": ["1"], "unselected.field": ["hidden"] }],
     [{ "frame.number": ["2"] }, { "frame.number": ["2"] }],
     [{ "frame.number": ["2"] }, { "frame.number": ["1"] }],
   ].map((layers) => [layers]),
@@ -35,7 +34,19 @@ it.each(
   expect(() =>
     parsePacketOutput(
       JSON.stringify(layers.map((value) => ({ _source: { layers: value } }))),
-      ["ip.addr"],
     ),
   ).toThrow();
+});
+
+it("preserves canonical field names emitted for a selected alias", () => {
+  const output = JSON.stringify([
+    {
+      _source: {
+        layers: { "frame.number": ["1"], "dhcp.type": ["1"] },
+      },
+    },
+  ]);
+  expect(parsePacketOutput(output)).toEqual([
+    { "frame.number": ["1"], "dhcp.type": ["1"] },
+  ]);
 });

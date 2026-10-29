@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { isAbsolute } from "node:path";
 
-import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
+import { bundleComparisonInputSchema } from "../domain/bundleComparison.js";
 
 import { processTraceSpecificationSchema } from "../domain/process/processTraceSpecification.js";
 import { evidenceSchema } from "../domain/evidence.js";
+import { evidenceSourceInputSchema } from "../domain/evidenceReference.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
 import { evidenceRecordFiltersSchema } from "../domain/evidenceRecordSummary.js";
+import { residualUnknownSchema } from "../domain/residualUnknown.js";
 
 /** Complete retained Evidence, or selected discovery metadata without payloads. */
 export const getEvidenceBundleInputSchema = z.strictObject({
@@ -27,40 +29,51 @@ export const addressContextInputSchema = z.strictObject({
 
 /** Session-owned Evidence bundle import options. */
 export const importEvidenceBundleInputSchema = z.strictObject({
-  path: localPathStringSchema
-    .refine(isAbsolute, {
-      message:
-        "path must be an absolute local filesystem path (for example /tmp/evidence.json or C:\\rea\\evidence.json)",
-    })
-    .describe(
-      "Absolute local filesystem path for the evidence bundle to import; relative paths are rejected.",
-    ),
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute local filesystem path for the evidence bundle to import; relative paths are rejected.",
+  ),
 });
+
+/** MCP compares files selected on the server host, so require explicit paths. */
+export const bundleComparisonMcpInputSchema =
+  bundleComparisonInputSchema.extend({
+    left_bundle_path: absoluteLocalPathStringSchema.describe(
+      "Absolute local filesystem path to the left Evidence bundle.",
+    ),
+    right_bundle_path: absoluteLocalPathStringSchema.describe(
+      "Absolute local filesystem path to the right Evidence bundle.",
+    ),
+  });
 
 /** Evidence references for deterministic process comparison. */
 export const processComparisonInputSchema = z.strictObject({
   left: evidenceSchema,
   right: evidenceSchema,
   trace_spec: processTraceSpecificationSchema.optional(),
-  max_capture_age_ms: z.number().int().nonnegative().optional(),
+  max_capture_age_ms: z.int().nonnegative().optional(),
 });
+
+/** Name each compared artifact inventory once: inline, retained, or in a local Evidence file. */
+export const artifactComparisonInputSchema = z.strictObject({
+  left: evidenceSourceInputSchema,
+  right: evidenceSourceInputSchema,
+});
+export type ArtifactComparisonInput = z.output<
+  typeof artifactComparisonInputSchema
+>;
 
 /** Residual-unknown list filters. */
 export const listUnknownsInputSchema = z.strictObject({
-  status: z
-    .enum(["open", "investigating", "blocked", "contradicted", "resolved"])
-    .optional(),
-  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-  domain: z.string().trim().min(1).optional(),
+  status: residualUnknownSchema.shape.status.optional(),
+  severity: residualUnknownSchema.shape.severity.optional(),
+  domain: residualUnknownSchema.shape.domain.optional(),
   offset: z
-    .number()
     .int()
     .min(0)
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
     .describe("Zero-based offset in the stable filtered unknown ID order."),
   limit: z
-    .number()
     .int()
     .positive()
     .max(Number.MAX_SAFE_INTEGER)

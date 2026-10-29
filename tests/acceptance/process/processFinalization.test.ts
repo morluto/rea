@@ -14,15 +14,19 @@ import {
   type ProcessCapture,
 } from "../../../src/domain/process/processCaptureParsing.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { runCliJson } from "../../fixtures/cliJsonProcess.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
+import {
+  CAPTURE_SKIP_REASON,
+  itWithCaptureCapability as captureTest,
+} from "../../boundary/process/processCaptureCapability.js";
 import { expectSerializedUnverifiedHostCleanup } from "../../support/hostCleanup.js";
 
 const finalizationFixture = fileURLToPath(
   new URL("../../fixtures/processFinalization.mjs", import.meta.url),
 );
+const cliCaptureTest = cliTest.skipIf(CAPTURE_SKIP_REASON);
 
 type CaptureScenario = Record<string, unknown>;
 type CaptureOutcome =
@@ -49,31 +53,35 @@ const captureScenario = (
 });
 
 const captureViaCli = async (
+  cli: TestCli,
   root: string,
   scenario: CaptureScenario,
 ): Promise<CaptureOutcome> => {
   const scenarioPath = join(root, "scenario.json");
   await writeFile(scenarioPath, JSON.stringify(scenario));
-  const document = await runCliJson([
-    "capture-process",
-    scenarioPath,
-    "--format",
-    "json",
-  ]);
+  const result = await cli.run({
+    arguments: ["capture-process", scenarioPath, "--format", "json"],
+    environment: process.env,
+  });
+  expect(result.signal, result.stderr).toBeNull();
+  const document = result.json;
   if (
     typeof document === "object" &&
     document !== null &&
     "code" in document &&
     document.code === "cleanup_incomplete"
-  )
+  ) {
+    expect(result.exitCode, result.stderr).toBe(1);
     return {
       kind: "partial",
       partial: expectSerializedUnverifiedHostCleanup({ error: document }),
     };
+  }
   if (typeof document === "object" && document !== null && "code" in document)
     throw new Error(
       `CLI capture returned an unexpected error: ${JSON.stringify(document).slice(0, 1_000)}`,
     );
+  expect(result.exitCode, result.stderr).toBe(0);
   return {
     kind: "capture",
     capture: parseProcessCapture(parseEvidence(document).normalized_result),
@@ -261,9 +269,10 @@ const expectIgnoringFinalization = (outcome: CaptureOutcome): void => {
   ).toBeUndefined();
 };
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "captures a cooperative finalizer through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("cooperative", root, {
       timeout_ms: 1_500,
@@ -271,16 +280,16 @@ captureTest.each(["CLI", "MCP"] as const)(
     });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
     expectCooperativeFinalization(outcome);
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "records the non-zero exit code of a finalizer through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario(
       "cooperative",
@@ -290,16 +299,16 @@ captureTest.each(["CLI", "MCP"] as const)(
     );
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
     expectCooperativeFinalization(outcome, 3);
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "forces SIGKILL after the finalization interval through the compiled %s workflow",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-accept-");
     const scenario = captureScenario("ignoring", root, {
       timeout_ms: 1_500,
@@ -307,11 +316,10 @@ captureTest.each(["CLI", "MCP"] as const)(
     });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
     expectIgnoringFinalization(outcome);
   },
-  20_000,
 );
 
 captureTest(
@@ -376,14 +384,15 @@ captureTest(
   20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "keeps the default identity through the compiled %s workflow without finalization_ms",
-  async (adapter) => {
+  { timeout: 20_000 },
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-default-");
     const scenario = captureScenario("ignoring", root, { timeout_ms: 500 });
     const outcome =
       adapter === "CLI"
-        ? await captureViaCli(root, scenario)
+        ? await captureViaCli(cli, root, scenario)
         : await captureViaMcp(scenario);
     if (outcome.kind === "partial") {
       expect(
@@ -405,12 +414,11 @@ captureTest.each(["CLI", "MCP"] as const)(
       "the comparison contract keeps its legacy identity",
     ).not.toHaveProperty("finalization_ms");
   },
-  20_000,
 );
 
-captureTest.each(["CLI", "MCP"] as const)(
+cliCaptureTest.for(["CLI", "MCP"] as const)(
   "rejects an unrepresentable combined capture budget through the compiled %s workflow",
-  async (adapter) => {
+  async (adapter, { cli }) => {
     const root = await createTestTempDirectory("rea-finalization-budget-");
     const scenario = captureScenario("cooperative", root, {
       timeout_ms: Number.MAX_SAFE_INTEGER,
@@ -420,14 +428,14 @@ captureTest.each(["CLI", "MCP"] as const)(
     if (adapter === "CLI") {
       const scenarioPath = join(root, "scenario.json");
       await writeFile(scenarioPath, JSON.stringify(scenario));
-      const response = await runCliJson([
-        "capture-process",
-        scenarioPath,
-        "--format",
-        "json",
-      ]);
+      const response = await cli.run({
+        arguments: ["capture-process", scenarioPath, "--format", "json"],
+        environment: process.env,
+      });
+      expect(response.exitCode, response.stderr).toBe(1);
+      expect(response.signal, response.stderr).toBeNull();
       expect(
-        JSON.stringify(response),
+        JSON.stringify(response.json),
         "CLI rejects the combined budget",
       ).toContain("timeout_ms + finalization_ms + settle_ms");
     } else {

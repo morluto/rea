@@ -1,23 +1,29 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { mkdir, open, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  readGhidraProfileArtifact,
+  writeGhidraProfileArtifact,
+  ghidraFileFailure,
+} from "./GhidraFileArtifacts.js";
+import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Seed file format admitted by this adapter. */
 export const GHIDRA_SEED_FORMAT = "rea-ghidra-seeds-v1";
-export const GHIDRA_SEED_SCRIPT = "ReaGhidraApplySeeds.java";
 export const MAX_GHIDRA_SEED_BYTES = 32 * 1024 * 1024;
 export const MAX_GHIDRA_SEED_ENTRIES = 1_000_000;
-const MAX_SEED_NAME_LENGTH = 2000;
+export const MAX_GHIDRA_SEED_NAME_LENGTH = 2000;
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/u);
-const count = z.number().int().nonnegative();
+const count = z.int().nonnegative();
 
 /** Caller-declared seeds committed into the analysis profile before import. */
 export const ghidraSeedCommitmentSchema = z.strictObject({
@@ -87,13 +93,13 @@ export const parseGhidraSeeds = (
     if (
       name !== undefined &&
       (name.length === 0 ||
-        name.length > MAX_SEED_NAME_LENGTH ||
+        name.length > MAX_GHIDRA_SEED_NAME_LENGTH ||
         /[\s\0]/u.test(name))
     )
       return err(
         seedLineError(
           number,
-          `name must be 1..${MAX_SEED_NAME_LENGTH} characters without whitespace`,
+          `name must be 1..${MAX_GHIDRA_SEED_NAME_LENGTH} characters without whitespace`,
         ),
       );
     if (kind === "label" && name === undefined)
@@ -132,114 +138,117 @@ const normalizedSeeds = (entries: readonly SeedEntry[]): string =>
     )
     .join("");
 
-/** Read a bounded regular file through one handle without following links. */
-const readSeedFile = async (path: string): Promise<Buffer> => {
-  const file = await open(
-    path,
-    constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-  );
-  try {
-    const stat = await file.stat();
-    if (!stat.isFile() || stat.size > MAX_GHIDRA_SEED_BYTES)
-      throw new Error(
-        `Ghidra seed file must be a regular file of at most ${MAX_GHIDRA_SEED_BYTES} bytes: ${path}`,
-      );
-    const bytes = Buffer.alloc(stat.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const read = await file.read(
-        bytes,
-        offset,
-        bytes.length - offset,
-        offset,
-      );
-      if (read.bytesRead === 0)
-        throw new Error(`Incomplete Ghidra seed file read: ${path}`);
-      offset += read.bytesRead;
-    }
-    return bytes;
-  } finally {
-    await file.close();
-  }
-};
-
 const sha256 = (bytes: Buffer | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-const decodeSeeds = (bytes: Buffer) => {
-  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  return parseGhidraSeeds(text);
+/** Parse seed facts before final close so later cleanup cannot replace invalid input. */
+const readSeeds = (
+  path: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<readonly SeedEntry[]> =>
+  readGhidraProfileArtifact(
+    path,
+    MAX_GHIDRA_SEED_BYTES,
+    resources,
+    signal,
+    (bytes) => {
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        throw seedLineError(0, "file is not valid UTF-8");
+      }
+      const parsed = parseGhidraSeeds(text);
+      if (!parsed.ok) throw parsed.error;
+      return parsed.value;
+    },
+  );
+
+/** Preserve native lookup semantics while allowing configured symbolic links. */
+const resolveSeedPath = async (configured: string): Promise<string> => {
+  // Darwin realpath may collapse file/.. even though native lookup rejects it.
+  const selected = await stat(configured);
+  if (!selected.isFile())
+    throw new NonRegularFileReadError(configured, selected.isDirectory());
+  return realpath(configured);
 };
 
 /** Resolve the configured seed file into an immutable profile commitment. */
 export const resolveGhidraAnalysisSeeds = async (
   configured: string | undefined,
-): Promise<
-  Result<
-    GhidraSeedCommitment | undefined,
-    ConfigurationError | ProviderAdapterError
-  >
-> => {
-  if (configured === undefined) return ok(undefined);
-  let bytes: Buffer;
-  let path: string;
-  try {
-    path = await realpath(configured);
-    bytes = await readSeedFile(path);
-  } catch (cause: unknown) {
-    return err(
-      new ProviderAdapterError("ghidra", "resolve_analysis_profile", {
-        cause,
-        diagnostics: {
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<Result<GhidraSeedCommitment | undefined, AnalysisError>> =>
+  resources
+    .run(async () => {
+      if (configured === undefined) return ok(undefined);
+      let entries: readonly SeedEntry[];
+      let path: string;
+      try {
+        path = await resolveSeedPath(configured);
+        entries = await readSeeds(path, resources, signal);
+      } catch (cause: unknown) {
+        return err(
+          ghidraFileFailure(cause, "resolve_analysis_profile", {
+            setting: "REA_GHIDRA_SEED_FILE",
+            path: configured,
+          }),
+        );
+      }
+      const normalized = normalizedSeeds(entries);
+      const tally = { function: 0, code: 0, label: 0 };
+      for (const entry of entries) tally[entry.kind] += 1;
+      return ok<GhidraSeedCommitment>({
+        format: GHIDRA_SEED_FORMAT,
+        path,
+        configured_path: configured,
+        sha256: sha256(normalized),
+        entries: tally,
+      });
+    })
+    .catch((cause: unknown) =>
+      err(
+        ghidraFileFailure(cause, "resolve_analysis_profile", {
           setting: "REA_GHIDRA_SEED_FILE",
-          path: configured,
-          reason: cause instanceof Error ? cause.message : String(cause),
-        },
-      }),
+        }),
+      ),
     );
-  }
-  let parsed: ReturnType<typeof decodeSeeds>;
-  try {
-    parsed = decodeSeeds(bytes);
-  } catch {
-    return err(seedLineError(0, "file is not valid UTF-8"));
-  }
-  if (!parsed.ok) return parsed;
-  const normalized = normalizedSeeds(parsed.value);
-  const tally = { function: 0, code: 0, label: 0 };
-  for (const entry of parsed.value) tally[entry.kind] += 1;
-  return ok({
-    format: GHIDRA_SEED_FORMAT,
-    path,
-    configured_path: configured,
-    sha256: sha256(normalized),
-    entries: tally,
-  });
-};
 
 /** Re-read the committed seeds and write the canonical copy the script applies. */
 export const snapshotGhidraAnalysisSeeds = async (
   commitment: GhidraSeedCommitment,
   runtimeRoot: string,
-): Promise<string> => {
-  ghidraSeedCommitmentSchema.parse(commitment);
-  if ((await realpath(commitment.configured_path)) !== commitment.path)
-    throw new Error(
-      "Ghidra seed file resolved path differs from explicit configuration",
-    );
-  const parsed = decodeSeeds(await readSeedFile(commitment.path));
-  if (!parsed.ok) throw parsed.error;
-  const normalized = normalizedSeeds(parsed.value);
-  if (sha256(normalized) !== commitment.sha256)
-    throw new Error(
-      `Ghidra seed file changed after the analysis profile was committed: ${commitment.path}`,
-    );
-  const directory = join(runtimeRoot, "seeds");
-  await mkdir(directory, { mode: 0o700 });
-  const path = join(directory, "seeds.tsv");
-  await writeFile(path, normalized, { flag: "wx", mode: 0o600 });
-  return path;
-};
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string> =>
+  resources
+    .run(async () => {
+      ghidraSeedCommitmentSchema.parse(commitment);
+      if (
+        (await resolveSeedPath(commitment.configured_path)) !== commitment.path
+      )
+        throw new Error(
+          "Ghidra seed file resolved path differs from explicit configuration",
+        );
+      const entries = await readSeeds(commitment.path, resources, signal);
+      const normalized = normalizedSeeds(entries);
+      if (sha256(normalized) !== commitment.sha256)
+        throw new Error(
+          `Ghidra seed file changed after the analysis profile was committed: ${commitment.path}`,
+        );
+      const directory = join(runtimeRoot, "seeds");
+      await mkdir(directory, { mode: 0o700 });
+      const path = join(directory, "seeds.tsv");
+      await writeGhidraProfileArtifact(path, normalized, resources, signal);
+      return path;
+    })
+    .catch((cause: unknown) => {
+      throw ghidraFileFailure(cause, "open_binary", {
+        setting: "REA_GHIDRA_SEED_FILE",
+        path: commitment.path,
+      });
+    });
 
 const totalEntries = (commitment: GhidraSeedCommitment): number =>
   commitment.entries.function +

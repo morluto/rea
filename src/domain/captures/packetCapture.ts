@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { fixedTupleSchema } from "../fixedTupleSchema.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 
 const argument = z
   .string()
@@ -81,10 +85,14 @@ export const packetCaptureSelectorBudgetIssue = {
   message:
     "Packet selectors exceed the 32 KiB encoded argument budget; reduce fields, decode-as rules or filter text.",
 };
-export const inspectPacketCaptureInputSchema = captureInputShape.refine(
+const packetCaptureSelectionSchema = captureInputShape.refine(
   withinPacketCaptureSelectorBudget,
   packetCaptureSelectorBudgetIssue,
 );
+export const inspectPacketCaptureInputSchema =
+  packetCaptureSelectionSchema.safeExtend({
+    path: absoluteLocalPathStringSchema.describe("Absolute local capture path"),
+  });
 export const packetCaptureOptionsSchema = captureInputShape
   .omit({ path: true })
   .refine(withinPacketCaptureSelectorBudget, packetCaptureSelectorBudgetIssue);
@@ -95,7 +103,7 @@ export type InspectPacketCaptureInput = z.infer<
 /** Values remain strings; repeated occurrences remain ordered arrays. */
 export const packetFieldsSchema = z
   .object({
-    "frame.number": z.tuple([z.string().regex(/^[1-9][0-9]*$/)]),
+    "frame.number": fixedTupleSchema([z.string().regex(/^[1-9][0-9]*$/)]),
   })
   .catchall(z.array(z.string()));
 export const packetCaptureSchema = z
@@ -105,7 +113,7 @@ export const packetCaptureSchema = z
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       bytes: z.number().int().nonnegative(),
     }),
-    selection: inspectPacketCaptureInputSchema,
+    selection: packetCaptureSelectionSchema,
     packets: z.array(packetFieldsSchema),
     output_window: z.strictObject({
       matching_packets: z
@@ -122,6 +130,11 @@ export const packetCaptureSchema = z
     diagnostics: z.string(),
     tool: z.strictObject({
       configured_path: z.string(),
+      selection_source: z
+        .enum(["environment", "path"])
+        .describe(
+          "Whether REA_TSHARK_COMMAND selected the tool or PATH located it",
+        ),
       path: z.string(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/),
       version_banner: z.string(),

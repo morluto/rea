@@ -1,18 +1,96 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import * as t from "@babel/types";
 
 import {
   analyzeParsedJavaScriptSemantics,
   analyzeParsedJavaScriptSemanticsSteps,
-  classifyParsedJavaScriptElectronBindings,
-  classifyParsedJavaScriptElectronBindingsSteps,
-  classifyParsedJavaScriptOpenReceivers,
-  classifyParsedJavaScriptOpenReceiversSteps,
+  indexJavaScriptElectronIdentitySteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import * as semanticProjection from "./javascriptSemanticProjection.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 import {
+  completeSemanticSteps,
   traverseJavaScriptAst,
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
+
+it("bounds repeated capture checks while preserving unindexed and escaped unknowns", () => {
+  const count = 128;
+  const parsed = parseJavaScriptSource(
+    [
+      "const options = {webPreferences: {sandbox: true}};",
+      ...Array.from({ length: count }, () => "new BrowserWindow(options);"),
+    ].join("\n"),
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const sites = parsed.program.body.flatMap((node) =>
+    t.isExpressionStatement(node) && t.isNewExpression(node.expression)
+      ? [node.expression]
+      : [],
+  );
+  const first = sites[0];
+  if (first === undefined || !t.isIdentifier(first.arguments[0]))
+    throw new Error("Expected capture");
+  expect(index.referenceMayHaveChangedAt(first, first.arguments[0])).toBe(true);
+  completeSemanticSteps(index.indexMemberMutationFactsSteps());
+  const binding = index.bindingForReferenceAt(first.arguments[0]);
+  if (binding === undefined) throw new Error("Expected local binding");
+  let reads = 0;
+  const effects = new Proxy(binding.escapedPaths, {
+    get(target, key, receiver) {
+      if (typeof key === "string" && /^\d+$/u.test(key)) reads += 1;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  Object.defineProperty(binding, "escapedPaths", { value: effects });
+  const changed = sites.map((site) => {
+    const reference = site.arguments[0];
+    if (!t.isIdentifier(reference)) throw new Error("Expected local reference");
+    return index.referenceMayHaveChangedAt(site, reference, ["webPreferences"]);
+  });
+  expect(changed).toEqual([
+    false,
+    ...Array.from({ length: count - 1 }, () => true),
+  ]);
+  // Allow implementation headroom while rejecting a full N-by-N effect report.
+  expect(reads).toBeLessThanOrEqual(count * 4);
+});
+
+it.each([false, true])(
+  "checkpoints suppressed GraphQL sources, including alias proof (aliases: %s)",
+  (aliased) => {
+    const count = 1100;
+    const source = Array.from({ length: count }, (_, index) => {
+      const value = `{body:"query Q${index} { id }",locationOffset:{line:1,column:1}}`;
+      const declaration = aliased ? `const source${index}=${value};` : "";
+      return `${declaration}const doc${index}={kind:"OperationDefinition",operation:"query",name:{kind:"Name",value:"Q${index}"},loc:{source:${aliased ? `source${index}` : value}}};`;
+    }).join("\n");
+    const parsed = parseJavaScriptSource(source, "sources.mjs");
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    const scan = createJavaScriptGraphqlScan(index);
+    let operations = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter: (node) => {
+        if (scan.inspect(node) !== undefined) operations += 1;
+      },
+    });
+    expect(operations).toBe(count);
+    let checkpoints = 0;
+    for (const finding of scan.finish()) {
+      expect(finding).toBeUndefined();
+      checkpoints += 1;
+    }
+    expect(checkpoints).toBeGreaterThanOrEqual(count);
+  },
+);
 
 const source = `
 import { readFile } from "node:fs";
@@ -110,26 +188,25 @@ new NativeWindow();
 `;
   const parsed = parseJavaScriptSource(text, "receivers.js");
   if (parsed === null) throw new Error("Expected parsed source");
-  const openSteps = classifyParsedJavaScriptOpenReceiversSteps(parsed);
+  const openSteps = indexJavaScriptBindingsWithReceiversSteps(parsed.program);
   let openStep = openSteps.next();
   expect(openStep.done).toBe(false);
   while (openStep.done !== true) openStep = openSteps.next();
-  expect([...openStep.value]).toEqual([
+  expect([...openStep.value.receivers.openReceivers]).toEqual([
     [text.indexOf('ambient.open("/local")'), "local"],
     [text.indexOf('ambient.open("/global")'), "window"],
   ]);
-  expect(openStep.value).toEqual(classifyParsedJavaScriptOpenReceivers(parsed));
 
-  const electronSteps = classifyParsedJavaScriptElectronBindingsSteps(parsed);
+  const electronSteps = indexJavaScriptElectronIdentitySteps(
+    parsed.program,
+    openStep.value.bindings,
+  );
   let electronStep = electronSteps.next();
   expect(electronStep.done).toBe(false);
   while (electronStep.done !== true) electronStep = electronSteps.next();
-  expect([...electronStep.value]).toEqual([
+  expect([...electronStep.value.bindings]).toEqual([
     [text.lastIndexOf("NativeWindow()"), ["BrowserWindow"]],
   ]);
-  expect(electronStep.value).toEqual(
-    classifyParsedJavaScriptElectronBindings(parsed),
-  );
 });
 
 it("resolves Electron APIs through proven immutable aliases", () => {
@@ -184,7 +261,13 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
   const parsed = parseJavaScriptSource(text, "aliases.js");
   if (parsed === null) throw new Error("Expected parsed source");
 
-  expect([...classifyParsedJavaScriptElectronBindings(parsed)]).toEqual([
+  const index = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+  );
+  const electron = completeSemanticSteps(
+    indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
+  );
+  expect([...electron.bindings]).toEqual([
     [text.indexOf("Win({"), ["BrowserWindow"]],
     [text.indexOf("bridge.exposeInMainWorld"), ["contextBridge"]],
     [text.indexOf('ipc.handle("main:ping"'), ["ipcMain"]],
@@ -195,4 +278,26 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
     [text.indexOf('require("electron").notAnApi.ipcMain.handle'), []],
     [text.indexOf('require("electron")["ipcMain.handle"]'), []],
   ]);
+});
+
+it("reuses the lexical references during stepped child-argument analysis", () => {
+  const parsed = parseJavaScriptSource(
+    `
+    import {spawn} from "node:child_process";
+    const argv=[]; spawn("tool",argv,{stdio:"inherit"});
+  `,
+    "references.mjs",
+  );
+  if (parsed === null) throw new Error("Expected parsed source");
+  const collector = vi.spyOn(semanticProjection, "collectSemanticReferences");
+  try {
+    const ir = completeSemanticSteps(
+      analyzeParsedJavaScriptSemanticsSteps(parsed),
+    );
+    expect(ir.childProcessSpawns[0]?.stdioMode).toBe("inherit");
+    expect(ir.references.some(({ name }) => name === "argv")).toBe(true);
+    expect(collector).not.toHaveBeenCalled();
+  } finally {
+    collector.mockRestore();
+  }
 });

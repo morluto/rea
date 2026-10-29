@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { browserScenarioCaptureSchema } from "./browserScenarioCapture.js";
+import { retainedBrowserScenarioCaptureSchema } from "./browserScenarioCapture.js";
 
 /** Scenario artifact families compared after step alignment. */
 export const browserScenarioArtifactKindSchema = z.enum([
@@ -74,12 +74,14 @@ const normalizationInputSchema = z
 
 /** Input for step-aligned comparison of two browser scenario captures. */
 export const compareBrowserScenariosInputSchema = z.strictObject({
-  before_scenario: browserScenarioCaptureSchema.describe(
-    "Earlier complete normalized_result from capture_browser_scenario.",
-  ),
-  after_scenario: browserScenarioCaptureSchema.describe(
-    "Later complete normalized_result from capture_browser_scenario.",
-  ),
+  before_scenario: retainedBrowserScenarioCaptureSchema
+    .describe(
+      "Earlier complete normalized_result from capture_browser_scenario.",
+    )
+    .meta({ "x-rea-complete-observation": true }),
+  after_scenario: retainedBrowserScenarioCaptureSchema
+    .describe("Later complete normalized_result from capture_browser_scenario.")
+    .meta({ "x-rea-complete-observation": true }),
   normalization: normalizationInputSchema
     .default({ rules: [] })
     .describe("Exact-literal rules committed in the comparison result."),
@@ -123,26 +125,37 @@ const alignmentFailureSchema = z.strictObject({
   step_id: z.string().min(1).nullable(),
   reason: z.string().min(1),
 });
-const builtInNormalizationSchema = z.enum([
+export const BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES = [
   "ignore_step_elapsed_ms",
   "ignore_event_sequence",
   "ignore_event_step_index",
   "compare_screenshot_content_digest",
   "compare_normalized_text_content",
-]);
+  "compare_storage_entries_as_unordered_collection",
+  "ignore_capture_local_network_transaction_ids",
+  "ignore_network_request_timing",
+  "attribute_network_transactions_to_request_step",
+  "compare_network_transactions_as_unordered_collection",
+  "preserve_redirect_transaction_ancestry",
+] as const;
+const builtInNormalizationSchema = z.enum(
+  BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES,
+);
 
 /** Step alignment, recorded normalization, and inline artifact differences. */
 export const browserScenarioDiffSchema = z.strictObject({
   comparison_kind: z.literal("browser_scenario"),
   overall_status: z.enum(["changed", "unchanged", "unknown"]),
   normalization: z.strictObject({
-    built_in_rules: z.array(builtInNormalizationSchema).length(5),
+    built_in_rules: z
+      .array(builtInNormalizationSchema)
+      .length(BROWSER_SCENARIO_BUILT_IN_NORMALIZATION_RULES.length),
     rules: z.array(normalizationRuleSchema),
     sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   }),
   alignment: z.strictObject({
     status: z.enum(["aligned", "partial", "failed"]),
-    aligned_steps: z.number().int().min(0),
+    aligned_steps: z.int().min(0),
     before_only: z.array(z.string().min(1)),
     after_only: z.array(z.string().min(1)),
     failures: z.array(alignmentFailureSchema),
@@ -150,8 +163,8 @@ export const browserScenarioDiffSchema = z.strictObject({
   steps: z.array(
     z.strictObject({
       step_id: z.string().min(1),
-      before_step_index: z.number().int().min(0),
-      after_step_index: z.number().int().min(0),
+      before_step_index: z.int().min(0),
+      after_step_index: z.int().min(0),
       before_action: z.string().min(1),
       after_action: z.string().min(1),
       status: z.enum(["changed", "unchanged", "unknown"]),
@@ -159,7 +172,7 @@ export const browserScenarioDiffSchema = z.strictObject({
     }),
   ),
   artifact_diffs: z.strictObject({
-    total: z.number().int().min(0),
+    total: z.int().min(0),
   }),
   limitations: z.array(z.string().min(1)),
 });

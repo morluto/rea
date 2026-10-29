@@ -1,17 +1,15 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { resolvePairedEvidenceRequest } from "../../application/EvidenceInputResolver.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { compareJavaScriptExportShapesEvidenceValidated } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
+import { compareJavaScriptExportShapesEvidence } from "../../application/javascript/JavaScriptApplicationWorkflowService.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
-const contract = applicationToolContract("compare_javascript_export_shapes");
+const contract = toolContract("compare_javascript_export_shapes");
 
 /** Register the execution-free exact JavaScript export-shape comparison. */
 export const registerCompareJavaScriptExportShapesTool = (
@@ -28,39 +26,33 @@ export const registerCompareJavaScriptExportShapesTool = (
         contract.name,
         context.mcpReq.signal,
         async () => {
-          const resolved = resolvePairedEvidenceRequest(
-            input,
-            options.evidenceById,
-          );
-          if (!resolved.ok)
-            return server.delivery.toCallToolResult(resolved, contract);
-          const parsed = resolved.value;
           const result = await logToolExecution(
             options.logger,
             contract.name,
             () =>
               Promise.resolve(
-                compareJavaScriptExportShapesEvidenceValidated(parsed),
+                compareJavaScriptExportShapesEvidence(
+                  input,
+                  options.evidenceById,
+                ),
               ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
-          const recorded = recordSessionEvidenceSources(
+          const recorded = recordEvidenceSources(
             options.recordEvidence,
-            [parsed.left, parsed.right],
+            result.value.sources,
           );
           if (!recorded.ok)
             return server.delivery.toCallToolResult(recorded, contract);
-          const comparison = javaScriptExportShapeComparisonResultSchema.parse(
-            result.value.normalized_result,
-          );
+          const comparison = result.value.result;
           const unknown =
             comparison.summary.unknown > 0 ||
             comparison.coverage.status !== "complete-within-inputs";
           return recordResult(
             { ...options, delivery: server.delivery },
             contract,
-            result.value,
+            result.value.evidence,
             unknown ? "javascript-export-shape" : undefined,
           );
         },

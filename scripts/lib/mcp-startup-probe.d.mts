@@ -1,15 +1,13 @@
-interface McpStartupPolicy {
-  readonly initializeBudgetMs: number;
-  readonly toolsListBudgetMs: number;
-  readonly firstCatalogBudgetMs: number;
-  readonly doctorDeadlineMs: number;
-}
+import type {
+  McpPhaseBudget,
+  McpStartupBudgets,
+} from "../../src/config/mcpStartupBudgets.js";
 
 interface McpProcessOptions {
   readonly command: string;
   readonly args: readonly string[];
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly policy: McpStartupPolicy;
+  readonly policy: McpStartupBudgets;
 }
 
 interface McpModuleProfileOptions extends McpProcessOptions {
@@ -46,6 +44,9 @@ export function profileMcpModuleLoading(
 
 /** Parse Linux procfs VmRSS text into bytes. */
 export function parseLinuxVmRssBytes(status: string): number | null;
+
+/** Name one MCP startup phase budget. Mirrors `mcpPhaseBudgetRecovery`. */
+export function mcpStartupPhaseBudgetRecovery(budget: McpPhaseBudget): string;
 
 /** Collect unique file-backed ESM module URLs from Node diagnostics. */
 export function createEsmModuleProfileCollector(packageName?: string): {

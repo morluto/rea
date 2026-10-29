@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -290,6 +293,7 @@ try {
       );
       const compute = await call("analyze_function", {
         procedure: addressOf(fixtureSymbols.compute),
+        detail: "complete",
       });
       assert.ok(compute.pseudocode.trim());
       assert.doesNotMatch(
@@ -300,6 +304,7 @@ try {
       assert.match(compute.pseudocode, /(?:0xb|\b11\b|<<)/u);
       const dispatch = await call("analyze_function", {
         procedure: addressOf(fixtureSymbols.dispatch),
+        detail: "complete",
       });
       assert.ok(dispatch.pseudocode.trim());
       for (const literal of oracle.expected_strings)
@@ -392,14 +397,8 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 360000 },
   );
-  assert.notEqual(response.isError, true, JSON.stringify(response));
-  const projected = requireMcpOperationResult(response, name);
-  if (name === "close_binary") return projected;
-  const evidence = parseEvidence(response.structuredContent);
+  if (name === "close_binary") return requireMcpLifecycleResult(response, name);
+  const evidence = parseEvidence(requireMcpOutput(response, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.deepEqual(
-    evidence.normalized_result,
-    response.structuredContent.normalized_result,
-  );
-  return projected;
+  return evidence.normalized_result;
 }

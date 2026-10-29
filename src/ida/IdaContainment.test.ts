@@ -1,3 +1,4 @@
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -148,9 +149,14 @@ const found = (query: string, fn: typeof function_) => ({
 });
 
 describe("IDA containment capabilities", () => {
-  it("declares both operations for the headless profile only", () => {
+  it("declares document identity in both profiles and address resolution only in headless", () => {
     const declared = (mode: "attached" | "headless", native = false) =>
-      idaCapabilities(mode, false, native)
+      idaCapabilities(
+        IDA_COMPATIBILITY_PROFILES[
+          native ? "native" : mode === "attached" ? "legacy" : "modern"
+        ],
+        false,
+      )
         .map(({ operation }) => operation)
         .filter(
           (operation) =>
@@ -159,7 +165,7 @@ describe("IDA containment capabilities", () => {
         );
 
     expect(
-      idaCapabilities("headless", false)
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.modern, false)
         .filter(
           ({ operation }) =>
             operation === "resolve_containing_procedure" ||
@@ -172,35 +178,32 @@ describe("IDA containment capabilities", () => {
       "resolve_containing_procedure",
       "list_documents",
     ]);
-    expect(declared("attached")).toEqual([]);
-    expect(declared("attached", true)).toEqual([]);
+    expect(declared("attached")).toEqual(["list_documents"]);
+    expect(declared("attached", true)).toEqual(["list_documents"]);
     expect(
-      idaCapabilities("attached", false).map(({ operation }) => operation),
-      "attached profiles do not even declare them",
-    ).not.toContain("list_documents");
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).map(
+        ({ operation }) => operation,
+      ),
+      "attached profiles declare the bound document but not address resolution",
+    ).toContain("list_documents");
   });
 
-  it.each(["resolve_containing_procedure", "list_documents"] as const)(
-    "refuses %s on the legacy attached profile without calling upstream",
-    async (operation) => {
-      const { client, producer } = await session({}, "attached");
-      try {
-        const result = await client.execute(
-          operation,
-          operation === "list_documents" ? {} : { address: "0x1000" },
-        );
-
-        expect(result.ok).toBe(false);
-        if (!result.ok)
-          expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
-        expect(producer.calls.some(({ name }) => name === "lookup_funcs")).toBe(
-          false,
-        );
-      } finally {
-        expect((await client.close()).ok).toBe(true);
-      }
-    },
-  );
+  it("refuses address resolution on the legacy attached profile", async () => {
+    const { client, producer } = await session({}, "attached");
+    try {
+      const result = await client.execute("resolve_containing_procedure", {
+        address: "0x1000",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+      expect(producer.calls.some(({ name }) => name === "lookup_funcs")).toBe(
+        false,
+      );
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
 });
 
 describe("headless IDA containing procedure", () => {
@@ -218,6 +221,7 @@ describe("headless IDA containing procedure", () => {
         procedure: {
           address: "0x1000",
           name: "main",
+          symbol: null,
           classification: null,
           body: {
             available: false,

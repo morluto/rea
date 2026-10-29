@@ -1,5 +1,7 @@
 import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { build } from "plist";
 import { expect, it } from "vitest";
@@ -13,6 +15,32 @@ const archive = build({
   $objects: ["$null", "Café"],
   $top: { root: { CF$UID: 1 } },
 });
+
+it("preflights repeated unterminated quoted declarations without suffix rescans", async () => {
+  const preflightUrl = new URL(
+    "../../../dist/artifacts/apple/PropertyListDecodeBudget.js",
+    import.meta.url,
+  ).href;
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import { preflightPropertyListDecode } from ${JSON.stringify(preflightUrl)};
+      const xml = '<!DOCTYPE "x>x" '.repeat(70000);
+      const observed = preflightPropertyListDecode(Buffer.from(xml), 16 * 1024 * 1024);
+      process.stdout.write(JSON.stringify({ observed, expected: xml.length * 4 }));
+    `,
+    ],
+    { timeout: 5000 },
+  );
+  const result = JSON.parse(stdout) as {
+    observed: { estimatedBytes: number };
+    expected: number;
+  };
+  expect(result.observed.estimatedBytes).toBe(result.expected);
+}, 10000);
 
 const fixture = async (declaration: string) => {
   const bundlePath = await createTestTempDirectory("rea-xml-declaration-");

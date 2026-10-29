@@ -20,6 +20,7 @@ import {
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { silentLogger } from "../../../src/logger.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
 const connect = async (
@@ -85,38 +86,42 @@ const withGhidraFixtureIdentity = (
   };
 };
 
-it("keeps 6502 out of detected lifecycle output contracts", () => {
-  const schema = toolContract("open_binary").outputSchema;
-  const result = {
-    path: "/fixture/image.bin",
-    kind: "executable",
-    sha256: "a".repeat(64),
-    architecture: "6502",
-  };
-  expect(
-    schema.safeParse({ result: { ...result, format: "pe" } }).success,
-  ).toBe(false);
-  expect(
-    schema.safeParse({
-      result: { ...result, format: "raw-binary", entry_point: "0x8001" },
-    }).success,
-  ).toBe(true);
-  const validateAdvertised = new Ajv2020({ strict: false }).compile(
-    z.toJSONSchema(schema),
-  );
-  expect(validateAdvertised({ result: { ...result, format: "pe" } })).toBe(
-    false,
-  );
-  expect(
-    validateAdvertised({
-      result: { ...result, format: "raw-binary", entry_point: "0x8001" },
-    }),
-  ).toBe(true);
-});
+it.each(RAW_ONLY_ARCHITECTURES)(
+  "keeps %s out of detected lifecycle output contracts",
+  (architecture) => {
+    const schema = toolContract("open_binary").outputSchema;
+    const result = {
+      path: "/fixture/image.bin",
+      kind: "executable",
+      sha256: "a".repeat(64),
+      architecture,
+    };
+    expect(
+      schema.safeParse({ result: { ...result, format: "pe" } }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({
+        result: { ...result, format: "raw-binary", entry_point: "0x8000" },
+      }).success,
+    ).toBe(true);
+    const validateAdvertised = new Ajv2020({ strict: false }).compile(
+      z.toJSONSchema(schema),
+    );
+    expect(validateAdvertised({ result: { ...result, format: "pe" } })).toBe(
+      false,
+    );
+    expect(
+      validateAdvertised({
+        result: { ...result, format: "raw-binary", entry_point: "0x8000" },
+      }),
+    ).toBe(true);
+  },
+);
 
 it.each([
   ["arm", "0x08000000", "0x8000000", "1eff2fe1"],
   ["6502", "0x008001", "0x8001", "a92a60"],
+  ["m68k", "0x00001000", "0x1000", "4e714e7170014e75"],
 ])(
   "opens a headerless %s image when architecture and entry are supplied",
   async (architecture, entryPoint, canonical, bytes) => {
@@ -144,32 +149,38 @@ it.each([
   },
 );
 
-it("rejects an unaligned AArch64 entry before selecting or starting a provider", async () => {
-  const root = await createTestTempDirectory("rea-raw-mcp-alignment-");
-  const path = join(root, "image.bin");
-  await writeFile(path, Buffer.from("c0035fd6", "hex"));
-  const { client, session } = await connect({
-    ...createCacheProvider([]),
-    resolveAnalysisProfile: () => {
-      throw new Error("unaligned input must not select a provider");
-    },
-    createClient: () => {
-      throw new Error("unaligned input must not launch a provider");
-    },
-  });
-  const opened = await client.callTool({
-    name: "open_binary",
-    arguments: {
-      path,
-      format: "raw-binary",
-      architecture: "arm64",
-      entry_point: "0x8000001",
-    },
-  });
-  expect(opened.isError).toBe(true);
-  expect(JSON.stringify(opened.content)).toContain("must be 4-byte aligned");
-  expect(session.activeTarget()).toBeUndefined();
-});
+it.each([
+  ["arm64", "c0035fd6", "0x8000001", "must be 4-byte aligned"],
+  ["m68k", "4e75", "0x1001", "must be 2-byte aligned"],
+])(
+  "rejects an unaligned %s entry before selecting or starting a provider",
+  async (architecture, bytes, entryPoint, reason) => {
+    const root = await createTestTempDirectory("rea-raw-mcp-alignment-");
+    const path = join(root, "image.bin");
+    await writeFile(path, Buffer.from(bytes, "hex"));
+    const { client, session } = await connect({
+      ...createCacheProvider([]),
+      resolveAnalysisProfile: () => {
+        throw new Error("unaligned input must not select a provider");
+      },
+      createClient: () => {
+        throw new Error("unaligned input must not launch a provider");
+      },
+    });
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: {
+        path,
+        format: "raw-binary",
+        architecture,
+        entry_point: entryPoint,
+      },
+    });
+    expect(opened.isError).toBe(true);
+    expect(JSON.stringify(opened.content)).toContain(reason);
+    expect(session.activeTarget()).toBeUndefined();
+  },
+);
 
 it("rejects raw-binary open requests that omit architecture", async () => {
   const root = await createTestTempDirectory("rea-raw-mcp-missing-");

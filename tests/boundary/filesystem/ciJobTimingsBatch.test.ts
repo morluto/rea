@@ -18,6 +18,8 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
       workflow_runs: [
         {
           id: 42,
+          event: "push",
+          head_branch: "main",
           run_attempt: 3,
           status: "completed",
           conclusion: "failure",
@@ -43,51 +45,9 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
         },
       ],
     },
-    [
-      {
-        jobs: [
-          {
-            name: "Release lane",
-            status: "completed",
-            conclusion: "success",
-            created_at: recent,
-            started_at: recent,
-            completed_at: new Date(Date.parse(recent) + 50_000).toISOString(),
-            steps: [],
-          },
-        ],
-      },
-    ],
-    [
-      {
-        jobs: [
-          {
-            name: "Failed lane",
-            status: "completed",
-            conclusion: "failure",
-            created_at: recent,
-            started_at: recent,
-            completed_at: new Date(Date.parse(recent) + 55_000).toISOString(),
-            steps: [],
-          },
-        ],
-      },
-    ],
-    [
-      {
-        jobs: [
-          {
-            name: "Cancelled lane",
-            status: "completed",
-            conclusion: "cancelled",
-            created_at: recent,
-            started_at: recent,
-            completed_at: new Date(Date.parse(recent) + 30_000).toISOString(),
-            steps: [],
-          },
-        ],
-      },
-    ],
+    completedJobs("Release lane", "success", recent, 50),
+    completedJobs("Failed lane", "failure", recent, 55),
+    completedJobs("Cancelled lane", "cancelled", recent, 30),
   ]);
   const result = await runBatch(fixture);
   const manifest = JSON.parse(
@@ -116,8 +76,20 @@ it("collects the latest attempt for recent completed CI and Release runs into a 
   expect(manifest.errors).toEqual([]);
   expect(manifest.runs).toMatchObject([
     { id: 43, runAttempt: 2, conclusion: "success" },
-    { id: 42, runAttempt: 3, conclusion: "failure" },
-    { id: 41, runAttempt: 1, conclusion: "cancelled" },
+    {
+      id: 42,
+      runAttempt: 3,
+      conclusion: "failure",
+      event: "push",
+      headBranch: "main",
+    },
+    {
+      id: 41,
+      runAttempt: 1,
+      conclusion: "cancelled",
+      event: null,
+      headBranch: null,
+    },
   ]);
   expect(manifest.runs).toEqual(
     expect.arrayContaining([
@@ -233,6 +205,31 @@ it("retains a partial manifest when its collection budget is exhausted", async (
   expect(manifest.runs[0]).toMatchObject({ status: "error" });
   expect(manifest.truncation.join(" ")).toContain("Time budget");
 });
+
+function completedJobs(
+  name: string,
+  conclusion: string,
+  startedAt: string,
+  seconds: number,
+) {
+  return [
+    {
+      jobs: [
+        {
+          name,
+          status: "completed",
+          conclusion,
+          created_at: startedAt,
+          started_at: startedAt,
+          completed_at: new Date(
+            Date.parse(startedAt) + seconds * 1000,
+          ).toISOString(),
+          steps: [],
+        },
+      ],
+    },
+  ];
+}
 
 async function createFixture(responses: unknown[]) {
   const directory = await createTestTempDirectory("rea-ci-job-timings-batch-");

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ProcessOwnershipHost } from "./ProcessOwnership.js";
 import {
   observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
   signalProcessWithStartIdentity,
 } from "./ProcessOwnershipObservation.js";
 
@@ -35,6 +36,26 @@ describe("process start identity lease", () => {
       state: "readable",
       identity: "start-1",
     });
+  });
+
+  it("confirms exit or PID replacement without treating unreadable state as exit", async () => {
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", host(undefined)),
+    ).resolves.toBe("exited");
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", host("replacement-start")),
+    ).resolves.toBe("exited");
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", host("start-1")),
+    ).resolves.toBe("present");
+    const unavailable: ProcessOwnershipHost = {
+      ...host("start-1"),
+      processIdentities: async () =>
+        new Map([[42, { state: "unavailable", reason: "reader unavailable" }]]),
+    };
+    await expect(
+      observeProcessStartIdentityExit(42, "start-1", unavailable),
+    ).resolves.toBe("unverified");
   });
 
   it("does not adopt a replacement PID's first identity for an owned launch", async () => {

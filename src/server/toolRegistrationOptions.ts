@@ -5,17 +5,6 @@ import {
   toolOutputSchemaWithMetadata,
 } from "../contracts/toolSchemaMetadata.js";
 
-/** Preserve advertised contracts while the application owns structured input failures. */
-export const applicationValidatedInputSchema = (
-  schema: StandardSchemaWithJSON,
-): StandardSchemaWithJSON => ({
-  "~standard": {
-    ...schema["~standard"],
-    vendor: "rea-application",
-    validate: (value: unknown) => ({ value }),
-  },
-});
-
 /** Project the canonical Zod contracts directly into SDK registration. */
 export const toolRegistrationOptions = <Contract extends ToolContract>(
   contract: Contract,
@@ -32,3 +21,20 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   outputSchema: toolOutputSchemaWithMetadata(contract),
   annotations: contract.annotations,
 });
+
+/** Register a workflow that validates raw input before effects and projects its own errors. */
+export const applicationToolRegistrationOptions = <
+  Contract extends ToolContract,
+>(
+  contract: Contract,
+) => {
+  const registration = toolRegistrationOptions(contract);
+  const inputSchema: StandardSchemaWithJSON = {
+    "~standard": {
+      ...registration.inputSchema["~standard"],
+      vendor: "rea-application",
+      validate: (value: unknown) => ({ value }),
+    },
+  };
+  return { ...registration, inputSchema };
+};

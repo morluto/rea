@@ -8,12 +8,100 @@ API access on this thread: moving dispatch to a worker can deadlock Hopper.
 import json
 import hmac
 import os
+import re
 import socket
 from typing import Any, Optional, Protocol, Sequence
 
 BAD_ADDRESSES = (-1, 0xFFFFFFFFFFFFFFFF, None)
 # The native label setter truncates NSString names at this UTF-16 extent.
 HOPPER_SYMBOL_NAME_UTF16_UNITS = 1024
+# Request JSON payload budget in bytes, excluding the trailing LF.
+# REA_BRIDGE_MAX_REQUEST_BYTES selects it. Unset stays 16777216.
+# 7464 is the authenticated Cutter frame of the largest bounded symbol name.
+# Cutter's 64-receipt recovery status is smaller with a null path. A path
+# that does not fit is null, not an older descriptor path.
+# 536870887 is Node's 536870888-character string ceiling minus the framing LF.
+# The ceiling is the encoded payload; JSON expansion is measured before it.
+_BRIDGE_MAX_REQUEST_BYTES_SETTING = "REA_BRIDGE_MAX_REQUEST_BYTES"
+DEFAULT_BRIDGE_MAX_REQUEST_BYTES = 16 * 1024 * 1024
+MINIMUM_BRIDGE_MAX_REQUEST_BYTES = 7464
+MAXIMUM_BRIDGE_MAX_REQUEST_BYTES = 536870887
+
+
+def _bridge_max_request_bytes_constraint():
+    return (
+        "REA_BRIDGE_MAX_REQUEST_BYTES must be a positive decimal integer "
+        "from %d to %d bytes; the default is %d bytes (16 MiB). "
+        "A value below %d bytes cannot carry the largest admitted "
+        "symbol-name command, and a larger value is refused so the encoded "
+        "payload plus its framing LF stays one string under Node's "
+        "single-string ceiling."
+        % (
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
+
+
+def _parse_bridge_max_request_bytes(raw):
+    """Refuse a non-decimal or out-of-range ceiling. Never fall back."""
+    constraint = _bridge_max_request_bytes_constraint()
+    if isinstance(raw, bool):
+        raise RuntimeError(constraint)
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, str):
+        # ASCII digits only. str.isdigit() accepts numerals such as U+0668
+        # that the TypeScript setting rejects.
+        if re.fullmatch(r"[1-9][0-9]*", raw) is None:
+            raise RuntimeError(constraint)
+        value = int(raw)
+    else:
+        raise RuntimeError(constraint)
+    if (
+        value < MINIMUM_BRIDGE_MAX_REQUEST_BYTES
+        or value > MAXIMUM_BRIDGE_MAX_REQUEST_BYTES
+    ):
+        raise RuntimeError(constraint)
+    return value
+
+
+def _resolve_bridge_max_request_bytes():
+    """Prefer the bootstrap injection, then the process environment, then 16 MiB."""
+    injected = globals().get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if injected is not None:
+        return _parse_bridge_max_request_bytes(injected), "setting"
+    raw = os.environ.get(_BRIDGE_MAX_REQUEST_BYTES_SETTING)
+    if raw is None:
+        return DEFAULT_BRIDGE_MAX_REQUEST_BYTES, "default"
+    return _parse_bridge_max_request_bytes(raw), "setting"
+
+
+MAX_REQUEST_BYTES, BRIDGE_MAX_REQUEST_BYTES_SOURCE = (
+    _resolve_bridge_max_request_bytes()
+)
+
+
+def _bridge_max_request_bytes_recovery():
+    return (
+        "The effective REA_BRIDGE_MAX_REQUEST_BYTES value is %d bytes "
+        "(source %s; default %d, floor %d, maximum %d). "
+        "Set REA_BRIDGE_MAX_REQUEST_BYTES in the environment that starts REA "
+        "to a decimal integer from %d to %d, then restart REA. "
+        "Restart Hopper or Cutter from that same environment so the bridge "
+        "uses this ceiling."
+        % (
+            MAX_REQUEST_BYTES,
+            BRIDGE_MAX_REQUEST_BYTES_SOURCE,
+            DEFAULT_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+            MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+        )
+    )
 _rea_session_document = None
 _search_inventory_cache = {}
 _pseudocode_cache = {}
@@ -236,11 +324,27 @@ def _name_matches(document, address, name):
     return observed == name or (not name and observed is None)
 
 
-def _address(document, value=None):
-    """Keep explicit hexadecimal coordinates distinct from symbol names."""
+def _bookmark_api(document, name):
+    method = getattr(document, name, None)
+    if not callable(method):
+        raise CapabilityUnavailableError(
+            "Hopper's public Python API does not expose %s" % name
+        )
+    return method
+
+
+def _bookmark_name(document, address):
+    return _bookmark_api(document, "getBookmarkName")(address)
+
+
+def _address_selection(document, value=None):
+    """Own the coordinate and whether it was selected by symbol or address."""
     if value is None:
-        return document.getCurrentAddress()
+        return document.getCurrentAddress(), "cursor"
     _api_text(value, "Address")
+    if value.startswith("file-offset:"):
+        raise InvalidRequestError("Hopper does not support file-offset: selectors; select Ghidra for source-file coordinates or use a Hopper analysis address")
+    source = "address"
     if value.lower().startswith("0x"):
         try:
             address = int(value, 16)
@@ -251,6 +355,8 @@ def _address(document, value=None):
         # Prefer an observed symbol, retaining bare-hex compatibility only
         # when Hopper has no symbol with the supplied name.
         address = document.getAddressForName(value)
+        if address not in BAD_ADDRESSES:
+            source = "symbol"
         if address in BAD_ADDRESSES:
             try:
                 address = int(value, 16)
@@ -258,7 +364,11 @@ def _address(document, value=None):
                 raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
-    return address
+    return address, source
+
+
+def _address(document, value=None):
+    return _address_selection(document, value)[0]
 
 
 def _segment(document, address):
@@ -269,10 +379,15 @@ def _segment(document, address):
 
 
 def _procedure(document, value=None):
-    address = document.getCurrentAddress() if value is None else _address(document, value)
+    address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
         raise InvalidRequestError("No procedure exists at the requested address")
+    if source == "symbol" and address != result.getEntryPoint():
+        raise InvalidRequestError(
+            "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
+            % (value, _hex(address), _procedure_name(result), _hex(result.getEntryPoint()))
+        )
     return result
 
 
@@ -285,6 +400,7 @@ def _procedure_identity(procedure):
     return {
         "address": _hex(procedure.getEntryPoint()),
         "name": _procedure_name(procedure),
+        "symbol": None,
         "classification": None,
         "body": {
             "available": False,
@@ -431,10 +547,6 @@ def _procedure_map(document):
     return result
 
 
-def _strings(document):
-    return {address: record["value"] for address, record in _string_inventory(document).items()}
-
-
 def _string_record(segment, address, display):
     """Read one native typed object, retaining its shortened display separately."""
     length = segment.getObjectLength(address)
@@ -521,7 +633,7 @@ def _search_inventory(document, kind):
         if kind == "procedure":
             values = _procedure_map(document)
         elif kind == "string":
-            values = _strings(document)
+            values = _string_inventory(document)
         elif kind == "name":
             values = {_hex(address): value for address, value in _name_map(document).items()}
         else:
@@ -548,23 +660,17 @@ def _search_results(document, kind, params):
     else:
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
-    selected = []
-    for item in _search_inventory(document, kind):
-        if not matches(item[1]):
-            continue
-        selected.append(item)
-    if not selected:
-        return []
     if kind == "string":
-        records = _string_inventory(document)
-        return [{"address": address, **records[address]} for address, _ in selected]
-    return [
-            {
-                "address": address,
-                "value": value,
-            }
-            for address, value in selected
+        return [
+            {"address": address, **record}
+            for address, record in _search_inventory(document, kind)
+            if matches(record["value"])
         ]
+    return [
+        {"address": address, "value": value}
+        for address, value in _search_inventory(document, kind)
+        if matches(value)
+    ]
 
 
 def _unavailable(reason):
@@ -644,7 +750,7 @@ def _analyze_function(document, params):
             "end": _hex(_basic_block_end(procedure, block)),
             "successors": sorted(set(successors), key=lambda value: int(value, 16)),
         })
-    pseudo = _pseudocode(document, procedure) or ""
+    pseudo = _pseudocode(document, procedure)
     assembly_lines = _assembly(procedure).splitlines()
     callers = sorted((_procedure_identity(item) for item in procedure.getAllCallerProcedures()), key=lambda item: int(item["address"], 16))
     callees = sorted((_procedure_identity(item) for item in procedure.getAllCalleeProcedures()), key=lambda item: int(item["address"], 16))
@@ -706,7 +812,7 @@ def _analyze_function(document, params):
             "signature": procedure.signatureString(),
             "locals": _procedure_locals(procedure),
         },
-        "pseudocode": pseudo,
+        "pseudocode": pseudo or "",
         "assembly": assembly_lines,
         "comments": comments,
         "callers": callers, "callees": callees,
@@ -718,6 +824,12 @@ def _analyze_function(document, params):
         "basic_blocks": blocks,
         "native_api": None,
         "native_value_flow": None,
+        "facet_availability": {
+            "pseudocode": {"available": True} if pseudo is not None else _unavailable("Hopper did not supply pseudocode."),
+            **{facet: {"available": True} for facet in (
+                "assembly", "comments", "callers", "callees", "references", "strings_names", "cfg"
+            )},
+        },
         "limitations": [
             "Native CallReference classifications are observed where available; detailed reference flags remain unknown.",
             "Hopper's public Python API does not expose equivalent external or thunk classification in this dossier.",
@@ -730,7 +842,13 @@ def _analyze_function(document, params):
 def _dispatch(method, params):
     """Dispatch only the closed operation set implemented by REA's public tools."""
     if method == "health":
-        return {"name": "REA Hopper bridge", "version": "1.0.0", "run_id": REA_RUN_ID}
+        return {
+            "name": "REA Hopper bridge",
+            "version": "1.0.0",
+            "run_id": REA_RUN_ID,
+            "process_id": os.getpid(),
+            "max_request_bytes": MAX_REQUEST_BYTES,
+        }
     if method in ("shutdown", "shutdown_document"):
         document = _session_document()
         if document is None:
@@ -953,6 +1071,7 @@ def _dispatch(method, params):
             length = sum(max(0, _basic_block_end(procedure, block) - block.getStartingAddress()) for block in blocks)
             return {
                 "name": _procedure_name(procedure),
+                "symbol": None,
                 "entrypoint": _hex(procedure.getEntryPoint()),
                 "basicblock_count": procedure.getBasicBlockCount(),
                 "length": length,
@@ -993,23 +1112,41 @@ def _dispatch(method, params):
         observed = getter(address)
         return observed == comment or (comment == "" and observed is None)
     if method == "list_bookmarks":
-        return [{"address": _hex(item), "name": document.getBookmarkName(item)} for item in document.getBookmarks()]
+        return [{"address": _hex(item), "name": _bookmark_name(document, item)} for item in _bookmark_api(document, "getBookmarks")()]
     if method == "set_bookmark":
         address = _address(document, params.get("address"))
         _segment(document, address)
         name = params.get("name")
         if name is not None:
             _api_text(name, "Bookmark name")
-        document.setBookmarkAtAddress(address, name)
-        return document.hasBookmarkAtAddress(address)
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
+        exists = has_bookmark(address)
+        if name is None and exists:
+            # Omission means preserve the existing bookmark and its name.
+            return True
+        _bookmark_api(document, "getBookmarkName")
+        if name == "" and exists:
+            rename = _bookmark_api(document, "renameBookmarkAtAddress")
+            rename(address, name)
+        else:
+            setter = _bookmark_api(document, "setBookmarkAtAddress")
+            setter(address, name)
+        if not has_bookmark(address):
+            return False
+        observed = _bookmark_name(document, address)
+        if name is None:
+            return observed is None or observed == ""
+        return observed == name or (name == "" and observed is None)
     if method == "unset_bookmark":
         address = _address(document, params.get("address"))
         # Permit removing a legacy orphan bookmark, but do not report success
         # for an unmapped address with no bookmark to remove.
-        if not document.hasBookmarkAtAddress(address):
+        has_bookmark = _bookmark_api(document, "hasBookmarkAtAddress")
+        remove_bookmark = _bookmark_api(document, "removeBookmarkAtAddress")
+        if not has_bookmark(address):
             _segment(document, address)
-        document.removeBookmarkAtAddress(address)
-        return not document.hasBookmarkAtAddress(address)
+        remove_bookmark(address)
+        return not has_bookmark(address)
     raise InvalidRequestError("Unknown bridge method")
 
 
@@ -1019,8 +1156,22 @@ def _serve_connection(connection):
     should_stop = False
     try:
         while True:
-            line = file.readline()
+            # Bound the read itself. The payload budget excludes LF, so permit
+            # one additional byte for the delimiter while still refusing an
+            # oversized unterminated peer without waiting for EOF.
+            line = file.readline(MAX_REQUEST_BYTES + 1)
             if not line:
+                break
+            if not line.endswith(b"\n"):
+                message = (
+                    "Bridge request exceeds the %d-byte payload limit. %s"
+                    % (MAX_REQUEST_BYTES, _bridge_max_request_bytes_recovery())
+                    if len(line) > MAX_REQUEST_BYTES
+                    else "Incomplete bridge request frame"
+                )
+                _write_message(file, {"id": 0, "error": _safe_diagnostic(
+                    InvalidRequestError(message)
+                )})
                 break
             request_id = None
             authenticated = False
@@ -1046,6 +1197,10 @@ def _serve_connection(connection):
                 ):
                     raise PermissionError("Invalid bridge capability")
                 authenticated = True
+                # The connection grace period only bounds unauthenticated idle
+                # clients. Native analysis and a connected owner's idle time
+                # remain unbounded after capability validation.
+                connection.settimeout(None)
                 _write_message(file, {"id": request_id, "event": {
                     "type": "progress",
                     "phase": "hopper_bridge",
@@ -1137,13 +1292,17 @@ def _run():
     server.bind(REA_SOCKET)
     os.chmod(REA_SOCKET, 0o600)
     server.listen(1)
+    # A bridge can start after its caller's startup/cleanup deadline. Bound
+    # the first accept as well as reconnects so an orphan cannot pin Hopper's
+    # dedicated Python thread and prevent later documents from starting REA.
+    server.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
     try:
         while True:
             try:
                 connection, _ = server.accept()
             except socket.timeout:
                 break
-            connection.settimeout(None)
+            connection.settimeout(REA_RECONNECT_TIMEOUT_SECONDS)
             if _serve_connection(connection):
                 break
             # Match REA's cleanup handshake budget without pinning Hopper's

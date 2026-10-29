@@ -1,14 +1,18 @@
 import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
   NonRegularFileReadError,
   openRegularFile,
   RegularFileAdmissionFailure,
+  RegularFileOperationCancelled,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const { mockOpen } = vi.hoisted(() => ({ mockOpen: vi.fn() }));
 
@@ -18,6 +22,44 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 }));
 
 afterEach(() => mockOpen.mockReset());
+
+it("returns the original validated metadata snapshot with its actual descriptor", async () => {
+  const { open } =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  const root = await createTestTempDirectory("rea-admission-snapshot-");
+  const path = join(root, "selected.bin");
+  const original = Buffer.from("admitted α测试\0\n");
+  await writeFile(path, original);
+  let validated: Stats | undefined;
+  let opened: FileHandle | undefined;
+  mockOpen.mockImplementationOnce(async (...args: Parameters<typeof open>) => {
+    const handle = await open(...args);
+    opened = handle;
+    const stat = handle.stat.bind(handle);
+    vi.spyOn(handle, "stat").mockImplementationOnce(async () => {
+      validated = await stat();
+      return validated;
+    });
+    return handle;
+  });
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  try {
+    expect(descriptor.handle).toBe(opened);
+    expect(descriptor.initial).toBe(validated);
+    expect(descriptor.initial.size).toBe(original.length);
+    await writeFile(
+      path,
+      "a later, longer replacement extent on the same inode",
+    );
+    expect(descriptor.initial).toBe(validated);
+    expect(descriptor.initial.size).toBe(original.length);
+    expect(descriptor.handle.stat).toHaveBeenCalledOnce();
+  } finally {
+    await descriptor.handle.close();
+  }
+});
 
 it.each(["cancellation after open", "non-regular metadata", "stat failure"])(
   "retains the exact owner when close fails after %s",
@@ -65,7 +107,10 @@ it.each(["cancellation after open", "non-regular metadata", "stat failure"])(
       expect(cause.cause).toBeInstanceOf(NonRegularFileReadError);
     else if (failureCase === "stat failure")
       expect(cause.cause).toBe(statFailure);
-    else expect(cause.cause).toBe(cancellation);
+    else {
+      expect(cause.cause).toBeInstanceOf(RegularFileOperationCancelled);
+      expect(cause.cause).toMatchObject({ reason: cancellation });
+    }
   },
 );
 
@@ -107,7 +152,7 @@ it.each([
   },
 );
 
-it("keeps cancellation that arrives during the non-regular metadata probe", async () => {
+it("preserves the non-regular admission failure when cancellation arrives during its metadata probe", async () => {
   const controller = new AbortController();
   const cancellation = new Error("cancelled during probe");
   mockOpen.mockImplementation(async () => {
@@ -120,5 +165,5 @@ it("keeps cancellation that arrives during the non-regular metadata probe", asyn
       symlinks: "follow",
       signal: controller.signal,
     }),
-  ).rejects.toBe(cancellation);
+  ).rejects.toBeInstanceOf(NonRegularFileReadError);
 });

@@ -191,7 +191,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               resolved_path: null,
               resolution_status: status,
             }),
-            evidence: sourceEvidence(sourcePath, source, limitation),
+            evidence: sourceEvidence(
+              sourcePath,
+              source,
+              specifier === "#encoded-separator" && moduleKind === "import"
+                ? "percent-encoded slash or backslash bytes"
+                : limitation,
+            ),
           }),
         );
     expect(imports).toContainEqual(

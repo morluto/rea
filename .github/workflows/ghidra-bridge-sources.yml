@@ -1,0 +1,64 @@
+name: Ghidra bridge source compilation
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+
+jobs:
+  ghidra-bridge-sources:
+    name: Compile packaged Ghidra bridge sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
+      GHIDRA_RELEASE_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Validate the SDK pin against the provider's verified release
+        run: node scripts/verify-ghidra-bridge-sources.mjs --check-sdk-pin >> "$GITHUB_ENV"
+      # The bridge probe imports only source-owned ARM/Thumb bytes and never
+      # executes target code. All SDK/project state stays in runner storage.
+      - name: Acquire checksum-verified Ghidra SDK in isolated runner storage
+        shell: bash
+        run: |
+          ghidra_root="${RUNNER_TEMP}/rea-ghidra"
+          mkdir -p "${ghidra_root}"
+          curl -fsSL --retry 3 --write-out 'ghidra_download_bytes=%{size_download} ghidra_download_seconds=%{time_total}\n' -o "${ghidra_root}/ghidra.zip" "${GHIDRA_RELEASE_URL}"
+          echo "${GHIDRA_RELEASE_SHA256}  ${ghidra_root}/ghidra.zip" | sha256sum -c -
+          unzip -q "${ghidra_root}/ghidra.zip" -d "${ghidra_root}"
+          rm "${ghidra_root}/ghidra.zip"
+          properties="$(find "${ghidra_root}" -path '*/Ghidra/application.properties' -print -quit)"
+          test -n "${properties}"
+          echo "GHIDRA_INSTALL_DIR=$(dirname "$(dirname "${properties}")")" >> "${GITHUB_ENV}"
+      # JAVA_HOME_<major>_X64 comes from the runner image, not the env context.
+      - name: Compile bridge sources with the verified runner JDK
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          test -n "${!java_home_variable}"
+          JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
+      - name: Inspect real ARM and Thumb instruction context through the bridge
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          probe_root="${RUNNER_TEMP}/rea-arm-context"
+          mkdir -p "${probe_root}/project"
+          printf '\036\377\057\341\160\107\000\000' > "${probe_root}/arm-thumb.bin"
+          timeout 180s "${GHIDRA_INSTALL_DIR}/support/analyzeHeadless" "${probe_root}/project" ArmContext \
+            -import "${probe_root}/arm-thumb.bin" -loader BinaryLoader -processor ARM:LE:32:v7 \
+            -noanalysis -readOnly -deleteProject \
+            -scriptPath "${GITHUB_WORKSPACE}/tests/conformance/ghidra;${GITHUB_WORKSPACE}/bridge/ghidra" \
+            -postScript ReaArmContextProbe.java "${GITHUB_WORKSPACE}/bridge/ghidra" \
+            > "${probe_root}/output.log" 2>&1 || { cat "${probe_root}/output.log"; exit 1; }
+          cat "${probe_root}/output.log"
+          grep -F 'REA_ARM_CONTEXT_OK arm=0 thumb=1 unavailable=null (injected provider value)' "${probe_root}/output.log"

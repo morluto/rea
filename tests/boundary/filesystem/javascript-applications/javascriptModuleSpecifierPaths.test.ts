@@ -6,8 +6,9 @@ import { promisify } from "node:util";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import type { JavaScriptArtifactFile } from "../../../../src/domain/javascript/javascriptArtifactFiles.js";
-import { resolveArtifactPathByContext } from "../../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import { resolveStandaloneArtifactPath } from "../../../support/javascriptArtifactPathResolution.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
+import { importReferenceSource } from "../../../support/referenceSourceResourceScope.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 
 const filesFor = (paths: readonly string[]) =>
@@ -99,7 +100,7 @@ describe("module specifier punctuation", () => {
     (punctuation) => {
       const literal = `app/dep.cjs${punctuation}literal.cjs`;
       const stripped = "app/dep.cjs";
-      const commonJs = resolveArtifactPathByContext({
+      const commonJs = resolveStandaloneArtifactPath({
         declaredPath: `./dep.cjs${punctuation}literal.cjs`,
         sourcePath: "app/main.js",
         context: "module-specifier",
@@ -111,7 +112,7 @@ describe("module specifier punctuation", () => {
         resolved_path: literal,
       });
 
-      const esm = resolveArtifactPathByContext({
+      const esm = resolveStandaloneArtifactPath({
         declaredPath: `./dep.cjs${punctuation}literal.cjs`,
         sourcePath: "app/main.js",
         context: "module-specifier",
@@ -123,7 +124,7 @@ describe("module specifier punctuation", () => {
         resolved_path: stripped,
       });
 
-      const noStrippedTarget = resolveArtifactPathByContext({
+      const noStrippedTarget = resolveStandaloneArtifactPath({
         declaredPath: `./dep.cjs${punctuation}literal.cjs`,
         sourcePath: "app/main.js",
         context: "module-specifier",
@@ -141,7 +142,7 @@ describe("module specifier punctuation", () => {
     "keeps HTML URL suffix handling for %s",
     (punctuation) => {
       expect(
-        resolveArtifactPathByContext({
+        resolveStandaloneArtifactPath({
           declaredPath: `./dep.cjs${punctuation}literal.cjs`,
           sourcePath: "app/main.js",
           context: "html-reference",
@@ -159,22 +160,26 @@ describe("module specifier punctuation", () => {
 });
 
 describe("ESM module URL decoding", () => {
-  it("resolves URL-encoded imports to the files loaded by Node", async () => {
+  it("resolves ESM URL paths to the files loaded by Node", async () => {
     const cases = [
-      ["./plain.mjs", "plain.mjs"],
-      ["./space%20name.mjs", "space name.mjs"],
-      ["./pr%C3%A9load.mjs", "préload.mjs"],
-      ["./name%3F%23.mjs", "name?#.mjs"],
-      ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs"],
+      ["./plain.mjs", "plain.mjs", "static"],
+      ["./space%20name.mjs", "space name.mjs", "static"],
+      ["./pr%C3%A9load.mjs", "préload.mjs", "static"],
+      ["./name%3F%23.mjs", "name?#.mjs", "static"],
+      ["./percent%2520.mjs?cache=1#v2", "percent%20.mjs", "static"],
+      ["./nested\\direct.mjs", "nested/direct.mjs", "static"],
+      ["./unused\\..\\nested\\parent.mjs", "nested/parent.mjs", "dynamic"],
     ] as const;
     const root = await createTestTempDirectory("rea-module-url-");
     const main = join(root, "main.mjs");
+    await mkdir(join(root, "nested"));
     await writeFile(
       main,
       cases
-        .map(
-          ([specifier], index) =>
-            `import value${index} from ${JSON.stringify(specifier)}; console.log(value${index});`,
+        .map(([specifier, , mode], index) =>
+          mode === "dynamic"
+            ? `const { default: value${index} } = await import(${JSON.stringify(specifier)}); console.log(value${index});`
+            : `import value${index} from ${JSON.stringify(specifier)}; console.log(value${index});`,
         )
         .join("\n"),
     );
@@ -184,7 +189,11 @@ describe("ESM module URL decoding", () => {
         `export default ${JSON.stringify(target)};`,
       );
       const encoded = specifier.slice(2).split("?", 1)[0]?.split("#", 1)[0];
-      if (encoded !== undefined && encoded !== target)
+      if (
+        encoded !== undefined &&
+        encoded !== target &&
+        (!encoded.includes("\\") || process.platform !== "win32")
+      )
         await writeFile(join(root, encoded), 'export default "encoded decoy";');
     }
     const native = await promisify(execFile)(process.execPath, [main], {
@@ -212,11 +221,27 @@ describe("ESM module URL decoding", () => {
       for (const edge of imports)
         expect(edge.properties.resolved_path).toBe(target);
     }
+
+    const historical = await importReferenceSource({
+      root,
+      caller: "relative-module-separators-test",
+      policy: { secretPatterns: [] },
+    });
+    if (!historical.ok) throw historical.error;
+    for (const [, target] of cases)
+      expect(historical.value.relationships).toContainEqual(
+        expect.objectContaining({
+          from_path: "main.mjs",
+          to: target,
+          kind: "imports",
+          resolution: "internal",
+        }),
+      );
   });
 
   it("preserves CommonJS literal percent names", () => {
     expect(
-      resolveArtifactPathByContext({
+      resolveStandaloneArtifactPath({
         declaredPath: "./space%20name.cjs",
         sourcePath: "app/main.js",
         context: "module-specifier",
@@ -233,7 +258,7 @@ describe("ESM module URL decoding", () => {
     "rejects malformed or NUL URL %s",
     (declaredPath) => {
       expect(
-        resolveArtifactPathByContext({
+        resolveStandaloneArtifactPath({
           declaredPath,
           sourcePath: "app/main.js",
           context: "module-specifier",
@@ -342,7 +367,6 @@ describe("package exports URL path rejections", () => {
         "./actual%00file.cjs",
         "./actual%2Ffile.cjs",
         "./actual%5Cfile.cjs",
-        "./actual%2Efile.cjs",
         "./../../../../escape.cjs",
       ].map((declaredPath) => ({ moduleKind, declaredPath })),
     ),
@@ -365,7 +389,7 @@ describe("package exports URL path rejections", () => {
         },
       });
       expect(
-        resolveArtifactPathByContext({
+        resolveStandaloneArtifactPath({
           declaredPath: "fixture",
           sourcePath: "app/main.js",
           context: "module-specifier",
@@ -398,15 +422,32 @@ describe("package exports URL path rejections", () => {
         ...crossContainer,
         container_sha256: "c".repeat(64),
       });
-      expect(
-        resolveArtifactPathByContext({
+      const resolveTarget = () =>
+        resolveStandaloneArtifactPath({
           declaredPath: "fixture",
           sourcePath: "app/main.js",
           context: "module-specifier",
           moduleKind,
           files,
-        }),
-      ).toMatchObject({ resolved_path: null, resolution_status: "not-found" });
+        });
+      expect(resolveTarget()).toMatchObject({
+        resolved_path: null,
+        resolution_status: "unavailable",
+        candidate_path: target,
+        limitations: [
+          expect.stringContaining("crosses an artifact container boundary"),
+        ],
+      });
+      files.delete(target);
+      expect(resolveTarget()).toMatchObject({
+        resolved_path: null,
+        resolution_status: "not-found",
+      });
+      files.set(target, crossContainer);
+      expect(resolveTarget()).toMatchObject({
+        resolved_path: target,
+        resolution_status: "resolved",
+      });
     },
   );
 });

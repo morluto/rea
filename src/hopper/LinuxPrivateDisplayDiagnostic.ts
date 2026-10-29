@@ -29,7 +29,7 @@ const diagnosticContextSchema = z.object({
     .string()
     .regex(/^[a-z0-9_]+$/u)
     .nullable(),
-  xvfb_stderr_bytes: z.number().int().nonnegative().safe(),
+  xvfb_stderr_bytes: z.int().nonnegative().safe(),
 });
 
 const failureCodeSchema = z.string().transform((value, context) => {

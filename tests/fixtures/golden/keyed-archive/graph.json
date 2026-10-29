@@ -57,7 +57,7 @@
     },
     {
       "id": 3,
-      "kind": "dictionary",
+      "kind": "scalar",
       "class_id": null,
       "class_name": null,
       "status": "observed",

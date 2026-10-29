@@ -1,4 +1,4 @@
-import type { ToolResultDelivery } from "../toolResult.js";
+import type { ToolResultDelivery } from "../ToolResultDelivery.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import type { Evidence } from "../../domain/evidence.js";
 import type { ApplicationToolRegistration } from "./types.js";
@@ -14,15 +14,25 @@ export const recordResult = (
     | "javascript-export-shape"
     | "source-to-bundle-comparison",
 ) => {
-  const recorded =
-    unknownKind === undefined
-      ? options.recordEvidence?.(evidence)
-      : options.recordEvidenceWithUnknown?.(
-          evidence,
-          unknownRegistration(evidence, unknownKind),
-        );
+  const recorded = recordApplicationResult(options, evidence, unknownKind);
   return options.delivery.toEvidenceToolResult(evidence, contract, recorded);
 };
+
+/** Record the complete parent before choosing a delivery projection. */
+export const recordApplicationResult = (
+  options: ApplicationToolRegistration,
+  evidence: Evidence,
+  unknownKind?:
+    | "application-version-comparison"
+    | "javascript-export-shape"
+    | "source-to-bundle-comparison",
+) =>
+  unknownKind === undefined
+    ? options.recordEvidence?.(evidence)
+    : options.recordEvidenceWithUnknown?.(
+        evidence,
+        unknownRegistration(evidence, unknownKind),
+      );
 
 const unknownRegistration = (
   evidence: Evidence,

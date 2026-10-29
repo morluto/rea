@@ -103,9 +103,9 @@ describe("HopperRequestQueue deadlines", () => {
       { timeoutMs: 25, signal: controller.signal },
     );
     controller.abort();
-    await expect(pending).resolves.toEqual({
+    await expect(pending).resolves.toMatchObject({
       ok: false,
-      error: new HopperCancelledError(),
+      error: { cause: controller.signal.reason },
     });
     expect(vi.getTimerCount()).toBe(0);
     queue.accept(1, ok(null));
@@ -118,6 +118,7 @@ describe("HopperRequestQueue deadlines", () => {
     const send = vi.fn();
     const queue = new HopperRequestQueue(send);
     const controller = new AbortController();
+    const reason = { source: "progress" };
     const pending = queue.run(
       1,
       "echo",
@@ -127,7 +128,7 @@ describe("HopperRequestQueue deadlines", () => {
         signal: controller.signal,
         progress: {
           report: () => {
-            controller.abort();
+            controller.abort(reason);
             return Promise.resolve();
           },
         },
@@ -135,7 +136,7 @@ describe("HopperRequestQueue deadlines", () => {
     );
     await expect(pending).resolves.toMatchObject({
       ok: false,
-      error: { _tag: "HopperCancelledError" },
+      error: { cause: reason },
     });
     expect(vi.getTimerCount()).toBe(0);
     expect(send).not.toHaveBeenCalled();
@@ -297,4 +298,71 @@ describe("Hopper deadlines before timer dispatch", () => {
     expect(queue.activity()).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
   });
+});
+
+describe("HopperRequestQueue caller abort reasons", () => {
+  const reason = { source: "caller", opaque: 7 };
+
+  it("retains an opaque reason for a signal aborted before admission", async () => {
+    const queue = new HopperRequestQueue(() => {});
+    const controller = new AbortController();
+    controller.abort(reason);
+    const result = await queue.run(
+      1,
+      "echo",
+      {},
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(HopperCancelledError);
+    expect(result.error.cause).toBe(reason);
+  });
+
+  it("retains an opaque reason when the active caller aborts", async () => {
+    const sent: number[] = [];
+    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+    const controller = new AbortController();
+    const pending = queue.run(1, "echo", {}, { signal: controller.signal });
+    controller.abort(reason);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(sent).toEqual([1]);
+    expect(queue.accept(1, ok(null))).toBe(true);
+    expect(result.error.cause).toBe(reason);
+    expect(queue.activity()).toBeNull();
+  });
+
+  it("retains an opaque reason for a queued caller without transmitting it", async () => {
+    const sent: number[] = [];
+    const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+    const active = queue.run(1, "active", {}, {});
+    const controller = new AbortController();
+    const queued = queue.run(2, "queued", {}, { signal: controller.signal });
+    controller.abort(reason);
+    const result = await queued;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error.cause).toBe(reason);
+    expect(queue.hasQueued(2)).toBe(false);
+    queue.accept(1, ok(null));
+    await active;
+    expect(sent).toEqual([1]);
+  });
+});
+
+it("does not hand a waiting request to the sender until it reaches the wire", async () => {
+  const sent: number[] = [];
+  const queue = new HopperRequestQueue(({ id }) => sent.push(id));
+  const active = queue.run(1, "active", { value: "A" }, {});
+  const queued = queue.run(2, "queued", { value: "B" }, {});
+  expect(sent).toEqual([1]);
+  expect(queue.queuedCount()).toBe(1);
+  queue.accept(1, ok(null));
+  expect(sent).toEqual([1, 2]);
+  queue.accept(2, ok(null));
+  await active;
+  await queued;
 });

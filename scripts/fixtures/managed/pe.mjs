@@ -280,7 +280,7 @@ const buildManagedMetadata = (options, methods) => {
     methodDefRow({
       name: stringsForMethods[index],
       signature: methodSignature,
-      rva: method.rva ?? 0x2800 + index * 0x20,
+      rva: method.rva,
       flags: method.flags ?? 0x0016,
       implFlags: method.implFlags ?? 0,
     }),
@@ -325,13 +325,64 @@ const buildManagedMetadata = (options, methods) => {
   return metadata;
 };
 
+const align = (value, boundary) => Math.ceil(value / boundary) * boundary;
+
+const managedFixtureLayout = (options, methods, metadataLength) => {
+  const resourceLength =
+    4 + (options.resourceData ?? Buffer.from("resource-data")).length;
+  const metadataOffset = 0x0300;
+  const resourceOffset = Math.max(
+    0x0800,
+    align(metadataOffset + metadataLength, 0x200),
+  );
+  const readyToRunOffset = Math.max(
+    0x0900,
+    align(resourceOffset + resourceLength, 0x200),
+  );
+  const methodOffsets = [];
+  let nextMethodOffset = Math.max(
+    0x0a00,
+    align(readyToRunOffset + (options.readyToRun === true ? 4 : 0), 0x200),
+  );
+  for (const method of methods) {
+    // RVA zero denotes a method without a mapped IL body, such as P/Invoke.
+    if (method.rva === 0) {
+      methodOffsets.push(null);
+      continue;
+    }
+    const offset =
+      method.rva === undefined
+        ? nextMethodOffset
+        : 0x0200 + (method.rva - 0x2000);
+    methodOffsets.push(offset);
+    nextMethodOffset =
+      Math.max(offset, nextMethodOffset) +
+      align(Math.max(0x20, (method.body ?? retOnlyIlBody).length), 0x20);
+  }
+  return { metadataOffset, resourceOffset, readyToRunOffset, methodOffsets };
+};
+
 const buildManagedImage = (options, methods, metadata) => {
   const resourceData = options.resourceData ?? Buffer.from("resource-data");
   const resourceDirectory = Buffer.concat([
     u32(resourceData.length),
     resourceData,
   ]);
-  const image = Buffer.alloc(0x1000);
+  const { metadataOffset, resourceOffset, readyToRunOffset, methodOffsets } =
+    managedFixtureLayout(options, methods, metadata.length);
+  const contentEnd = Math.max(
+    metadataOffset + metadata.length,
+    resourceOffset + resourceDirectory.length,
+    readyToRunOffset + (options.readyToRun === true ? 4 : 0),
+    ...methodOffsets.flatMap((offset, index) =>
+      offset === null
+        ? []
+        : [offset + (methods[index].body ?? retOnlyIlBody).length],
+    ),
+    0x1000,
+  );
+  const imageSize = align(contentEnd, 0x200);
+  const image = Buffer.alloc(imageSize);
   image.write("MZ", 0, "ascii");
   image.writeUInt32LE(0x80, 0x3c);
   image.writeUInt32LE(0x0000_4550, 0x80);
@@ -351,16 +402,16 @@ const buildManagedImage = (options, methods, metadata) => {
   else image.writeUInt32LE(0x0040_0000, optional + 28);
   image.writeUInt32LE(0x1000, optional + 32);
   image.writeUInt32LE(0x200, optional + 36);
-  image.writeUInt32LE(0x3000, optional + 56);
+  image.writeUInt32LE(align(0x2000 + imageSize - 0x200, 0x1000), optional + 56);
   image.writeUInt32LE(0x200, optional + 60);
   image.writeUInt32LE(16, optional + directoryOffset - 4);
   image.writeUInt32LE(0x2000, optional + directoryOffset + 14 * 8);
   image.writeUInt32LE(72, optional + directoryOffset + 14 * 8 + 4);
   const section = optional + optionalSize;
   image.write(".text\0\0\0", section, "ascii");
-  image.writeUInt32LE(0x1000, section + 8);
+  image.writeUInt32LE(imageSize - 0x200, section + 8);
   image.writeUInt32LE(0x2000, section + 12);
-  image.writeUInt32LE(0x0e00, section + 16);
+  image.writeUInt32LE(imageSize - 0x200, section + 16);
   image.writeUInt32LE(0x0200, section + 20);
   image.writeUInt32LE(0x6000_0020, section + 36);
   const cli = 0x0200;
@@ -371,27 +422,41 @@ const buildManagedImage = (options, methods, metadata) => {
   image.writeUInt32LE(metadata.length, cli + 12);
   image.writeUInt32LE(options.cliFlags ?? 1, cli + 16);
   image.writeUInt32LE(0x0600_0001, cli + 20);
-  image.writeUInt32LE(0x2600, cli + 24);
+  image.writeUInt32LE(0x2000 + (resourceOffset - 0x0200), cli + 24);
   image.writeUInt32LE(resourceDirectory.length, cli + 28);
   if (options.readyToRun === true) {
-    image.writeUInt32LE(0x2700, cli + 64);
+    image.writeUInt32LE(0x2000 + (readyToRunOffset - 0x0200), cli + 64);
     image.writeUInt32LE(4, cli + 68);
-    image.write("RTR\0", 0x0900, "ascii");
+    image.write("RTR\0", readyToRunOffset, "ascii");
   }
   methods.forEach((method, index) => {
-    const offset = 0x0a00 + index * 0x20;
+    const offset = methodOffsets[index];
+    if (offset === null) return;
     (method.body ?? retOnlyIlBody).copy(image, offset);
   });
-  metadata.copy(image, 0x0300);
-  resourceDirectory.copy(image, 0x0800);
+  metadata.copy(image, metadataOffset);
+  resourceDirectory.copy(image, resourceOffset);
   return image;
 };
 
 /** Build a source-owned PE/CLI fixture without committing compiled binaries. */
 export const buildManagedPeFixture = (options = {}) => {
   const methods = managedFixtureMethods(options);
-  const metadata = buildManagedMetadata(options, methods);
-  return buildManagedImage(options, methods, metadata);
+  const provisionalMetadata = buildManagedMetadata(
+    options,
+    methods.map((method) => ({ ...method, rva: method.rva ?? 0x2800 })),
+  );
+  const layout = managedFixtureLayout(
+    options,
+    methods,
+    provisionalMetadata.length,
+  );
+  const methodsWithRvas = methods.map((method, index) => ({
+    ...method,
+    rva: method.rva ?? 0x2000 + (layout.methodOffsets[index] - 0x0200),
+  }));
+  const metadata = buildManagedMetadata(options, methodsWithRvas);
+  return buildManagedImage(options, methodsWithRvas, metadata);
 };
 export const buildNativePeFixture = () => {
   const image = buildManagedPeFixture();

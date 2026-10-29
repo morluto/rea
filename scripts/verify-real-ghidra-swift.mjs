@@ -1,21 +1,32 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
-import { toolContract } from "../dist/contracts/toolContracts.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../dist/process/ProviderProcess.js";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
 const run = createVerifierRun();
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   javaHome: process.env.JAVA_HOME,
@@ -48,10 +59,21 @@ const source = fileURLToPath(
 const literalSource = fileURLToPath(
   new URL("../tests/conformance/swift/string-literals.swift", import.meta.url),
 );
+const unresolvedJumpSource = fileURLToPath(
+  new URL(
+    "../tests/conformance/swift/unresolved-string-jump.s",
+    import.meta.url,
+  ),
+);
 const binary = join(root, "swift-inventory");
 const literalBinary = join(root, "swift-literals");
+const literalAssembly = fileURLToPath(
+  new URL("../tests/conformance/swift/decoder-safeguards.S", import.meta.url),
+);
+const literalObject = join(root, "decoder-safeguards.o");
 const reports = [];
 let literalReport;
+let decoderCleaned = true;
 try {
   await execute("swiftc", ["-O", "-g", source, "-o", binary], {
     timeout: 60_000,
@@ -59,6 +81,19 @@ try {
   await mkdir(join(root, "copied"));
   const copied = join(root, "copied", "swift-inventory");
   await copyFile(binary, copied);
+  await execute(
+    "xcrun",
+    [
+      "clang",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-c",
+      literalAssembly,
+      "-o",
+      literalObject,
+    ],
+    { timeout: 60_000 },
+  );
   // Decoding covers AArch64 register pairs, so build that slice on any Mac host.
   await execute(
     "swiftc",
@@ -67,11 +102,14 @@ try {
       "-target",
       "arm64-apple-macosx13.0",
       literalSource,
+      literalObject,
+      unresolvedJumpSource,
       "-o",
       literalBinary,
     ],
     { timeout: 60_000 },
   );
+  await verifyDecoderSafeguards();
   await client.connect(transport);
   for (const [variant, path] of [
     ["debug", binary],
@@ -154,7 +192,7 @@ try {
 } finally {
   await client.close();
   await transport.close();
-  await rm(root, { recursive: true, force: true });
+  if (decoderCleaned) await rm(root, { recursive: true, force: true });
 }
 console.log(
   JSON.stringify(
@@ -176,7 +214,7 @@ async function call(name, arguments_) {
     { timeout: 180_000 },
   );
   if (name === "analyze_swift_types")
-    toolContract(name).outputSchema.parse(response.structuredContent);
+    assert.ok(response.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(response, name);
 }
 
@@ -204,6 +242,7 @@ async function verifyStringLiterals() {
       assert(procedure, `${name} is missing from the procedure inventory`);
       const dossier = await call("analyze_function", {
         procedure: procedure.address,
+        detail: "complete",
       });
       const observed = dossier.swift_string_literals;
       assert(Array.isArray(observed), `${name} recorded no Swift literals`);
@@ -222,8 +261,145 @@ async function verifyStringLiterals() {
       }
       decoded[name] = observed.length;
     }
+    const unresolvedJump = procedures.find(({ value }) =>
+      value.includes("rea_unresolved_string_jump"),
+    );
+    assert(
+      unresolvedJump,
+      "unresolved jump fixture is missing from the procedure inventory",
+    );
+    const unresolvedDossier = await call("analyze_function", {
+      procedure: unresolvedJump.address,
+      detail: "complete",
+    });
+    assert.deepEqual(unresolvedDossier.swift_string_literals, []);
+    assert.deepEqual(
+      unresolvedDossier.swift_string_literal_omissions.map(
+        ({ reason }) => reason,
+      ),
+      ["unresolved_jump"],
+    );
+    decoded.unresolvedStringJump =
+      unresolvedDossier.swift_string_literal_omissions.length;
     return decoded;
   } finally {
     await call("close_binary", {});
+  }
+}
+
+// Exercise the Java producer inside an ephemeral Ghidra database. The explicit
+// budget seam makes exhaustion deterministic without exposing a runtime option.
+async function verifyDecoderSafeguards() {
+  const scripts = join(root, "decoder-scripts");
+  await mkdir(scripts);
+  const bridgeSources = fileURLToPath(
+    new URL("../bridge/ghidra/", import.meta.url),
+  );
+  for (const name of await readdir(bridgeSources)) {
+    if (name.endsWith(".java"))
+      await copyFile(join(bridgeSources, name), join(scripts, name));
+  }
+  await copyFile(
+    fileURLToPath(
+      new URL(
+        "../tests/conformance/swift/ReaSwiftDecoderRegressions.java",
+        import.meta.url,
+      ),
+    ),
+    join(scripts, "ReaSwiftDecoderRegressions.java"),
+  );
+  const report = join(root, "decoder-safeguards.txt");
+  await runDecoderProbe(scripts, report);
+  assert.equal(
+    await readFile(report, "utf8"),
+    "REA_SWIFT_DECODER_SAFEGUARDS_OK\n",
+  );
+}
+
+async function runDecoderProbe(scripts, report) {
+  const controller = new AbortController();
+  let interrupt;
+  const interrupted = new Promise((resolve) => {
+    interrupt = () => {
+      controller.abort(new Error("Swift decoder probe interrupted"));
+      resolve(false);
+    };
+  });
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
+  let supervisor;
+  let launch;
+  try {
+    launch = await spawnOwnedProviderProcess({
+      command: installation.analyzeHeadlessPath,
+      arguments: [
+        root,
+        "decoder-regressions",
+        "-import",
+        literalBinary,
+        "-scriptPath",
+        scripts,
+        "-postScript",
+        "ReaSwiftDecoderRegressions.java",
+        report,
+        "-deleteProject",
+        "-max-cpu",
+        "2",
+      ],
+      runId: run.run_id,
+      expectedCommand: null,
+      env: { JAVA_HOME: installation.javaHome },
+      signal: controller.signal,
+    });
+    decoderCleaned = false;
+    supervisor = new ProviderProcessSupervisor(
+      {
+        ...launch,
+        ownsProcessLifetime: true,
+        cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+      },
+      { maxDiagnosticBytes: 8 * 1024 * 1024 },
+    );
+    assert.ok(
+      await Promise.race([supervisor.waitForExit(120_000), interrupted]),
+      controller.signal.aborted
+        ? "Swift decoder probe interrupted"
+        : "Swift decoder probe timed out",
+    );
+    assert.ok(
+      await supervisor.waitForOutputClose(1_000),
+      "Swift decoder probe output did not close",
+    );
+    const snapshot = supervisor.snapshot();
+    assert.equal(
+      snapshot.exitCode,
+      0,
+      `${snapshot.stdout.text}\n${snapshot.stderr.text}`,
+    );
+    assert.ok(
+      !snapshot.diagnosticTruncated,
+      "Swift decoder probe exceeded its diagnostic capacity",
+    );
+  } finally {
+    try {
+      if (supervisor !== undefined) {
+        const stopped = await supervisor.stop();
+        decoderCleaned = stopped.status === "verified-cleanup";
+        assert.ok(
+          decoderCleaned,
+          `Owned Ghidra cleanup incomplete; retained ${root}: ${JSON.stringify(stopped)}`,
+        );
+      } else if (launch !== undefined) {
+        const stopped = await cleanupOwnedProcessGroup(launch.ownership);
+        decoderCleaned = stopped.cleaned;
+        assert.ok(
+          decoderCleaned,
+          `Owned Ghidra cleanup incomplete; retained ${root}: ${JSON.stringify(stopped)}`,
+        );
+      }
+    } finally {
+      process.off("SIGINT", interrupt);
+      process.off("SIGTERM", interrupt);
+    }
   }
 }

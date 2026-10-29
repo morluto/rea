@@ -3,21 +3,31 @@
   "entry": [
     "src/main.ts",
     "src/cli.ts",
+    "src/cliOutput.ts",
+    "src/cliBuiltinArguments.ts",
+    "src/cli/cliResultOutput.ts",
+    "src/mcpDoctor.ts",
     "src/composition/javascriptAnalysisWorkerProcess.ts",
+    "src/composition/webBundleAnalysisWorkerProcess.ts",
     "src/contracts/errorSchemas.ts",
-    "src/evaluation/AgentEvaluationFixtures.ts",
-    "src/application/RealHopperAssertions.ts",
     "scripts/verify/fridaBindingsCompatibility.ts",
     "scripts/verify/termux/browser.mjs",
     "scripts/verify-real-ghidra-noreturn.mjs",
+    "scripts/verify-real-ghidra-decompiler-failure.mjs",
+    "scripts/verify-real-ghidra-decompile-timeout.mjs",
     "tests/processOwnershipRunner.ts"
   ],
   "project": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"],
   "vitepress": {
     "entry": ["docs/.vitepress/config.ts"]
   },
-  "ignoreBinaries": ["mkfifo"],
-  "ignoreDependencies": ["electron", "esbuild", "webpack"],
+  "ignoreBinaries": ["^g\\+\\+$", "mkfifo"],
+  "ignoreDependencies": [
+    "@stryker-mutator/command-runner",
+    "electron",
+    "esbuild",
+    "webpack"
+  ],
   "ignoreExportsUsedInFile": true,
   "rules": {
     "files": "error",

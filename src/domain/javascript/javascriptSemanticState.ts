@@ -1,4 +1,15 @@
+import type { JavaScriptOpaqueScopeEffects } from "./javascriptSemanticOpaqueEffects.js";
+import type { SemanticIterationSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
+import {
+  semanticStaticPropertyKey,
+  staticJavaScriptTruthiness,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 
 import type {
   JavaScriptSemanticPropertyPath,
@@ -11,18 +22,29 @@ import type {
   JavaScriptSemanticModuleLink,
   JavaScriptSemanticCallable,
   JavaScriptSemanticScope,
+  JavaScriptSemanticReference,
 } from "./javascriptSemanticIr.js";
 import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutionMode.js";
+import type {
+  JavaScriptSemanticResourceLimit,
+  JavaScriptSemanticValue,
+} from "./javascriptSemanticValueTypes.js";
 
 /** Internal initializer plus a destructuring/member projection. */
-interface JavaScriptSemanticInitializer {
+export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
   readonly entryBody?: t.BlockStatement;
+  readonly iterationSources?: readonly {
+    readonly node: t.Node;
+    readonly projection: JavaScriptSemanticPropertyPath;
+  }[];
 }
 
 /** Additional references from destructuring copies and possible defaults. */
 interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticInitializer {
+  /** This source is a value replacement, rather than a declaration fallback. */
+  readonly assignment?: true;
   readonly copyKind?: "object-rest" | "array-rest";
   readonly copyProjectionOffset?: number;
   readonly copyExcludedKeys?: readonly string[];
@@ -32,17 +54,51 @@ interface JavaScriptSemanticReferenceInitializer extends JavaScriptSemanticIniti
 }
 
 /** Mutable binding state used only while constructing the immutable IR. */
+export interface JavaScriptSemanticMemberEffect {
+  readonly path: JavaScriptSemanticPropertyPath;
+  readonly node: t.Node | undefined;
+  /** Selected RHS values retained by the shared pattern-store owner. */
+  readonly assignedSources?: readonly SemanticIterationSource[];
+  /** Binding values whose receiver identities were selected for this effect. */
+  readonly receiverInitializers?: readonly JavaScriptSemanticInitializer[];
+  /** Proof that the write selects this captured receiver, not just a possible alias. */
+  readonly receiverIdentity?: "definite" | "possible";
+  /** Capture of this binding used while following an aliased effect receiver. */
+  readonly receiverAt?: t.Node;
+}
+
+export type JavaScriptSemanticEffectTiming = "before" | "after" | "unknown";
+
+export interface JavaScriptSemanticReferenceEffect {
+  readonly kind: "binding-write" | "member-write" | "escape" | "ambient-write";
+  readonly path?: JavaScriptSemanticPropertyPath;
+  readonly timing: JavaScriptSemanticEffectTiming;
+}
+
+/** Source-ordered effects relevant to one binding or projected member use. */
+export interface JavaScriptSemanticReferenceEffectsAtSite {
+  readonly bindingId: string | null;
+  readonly resolution: JavaScriptSemanticReference["resolution"];
+  /** Whether alias-aware member and escape effects were collected for this source. */
+  readonly memberEffectsIndexed: boolean;
+  readonly effects: readonly JavaScriptSemanticReferenceEffect[];
+}
+
+export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
+  readonly kind: "write" | "escape";
+}
+
 export interface JavaScriptSemanticBindingState {
+  readonly hostOrigin?: "commonjs-wrapper";
   readonly bindingId: string;
   readonly scopeId: string;
   readonly name: string;
   kind: JavaScriptSemanticDefinition["kind"];
+  /** Source declaration form retained internally for CommonJS wrapper bindings. */
+  declarationKinds: Set<"var" | "let" | "const" | "using" | "await using">;
   mutable: boolean;
-  readonly mutatedPaths: JavaScriptSemanticPropertyPath[];
-  readonly escapedPaths: {
-    readonly path: JavaScriptSemanticPropertyPath;
-    readonly node: t.Node | undefined;
-  }[];
+  readonly memberWrites: JavaScriptSemanticMemberEffect[];
+  readonly escapedPaths: JavaScriptSemanticMemberEffect[];
   readonly definitions: JavaScriptSemanticDefinition[];
   readonly initializers: JavaScriptSemanticInitializer[];
   readonly referenceInitializers: JavaScriptSemanticReferenceInitializer[];
@@ -59,18 +115,44 @@ export interface JavaScriptSemanticScopeState {
   readonly location: JavaScriptSemanticScope["location"];
   bindingsComplete: boolean;
   readonly bindings: Map<string, JavaScriptSemanticBindingState>;
+  /** Object environment introduced by `with`, active only for its body. */
+  readonly dynamicWithStatement?: t.WithStatement;
+  /** Ordinary functions own `arguments`; arrow functions inherit it. */
+  readonly implicitArguments?: true;
 }
 
 /** Shared state for semantic collection and evaluation. */
 export interface JavaScriptSemanticAnalysisState {
+  arrayIterationUnknown: boolean;
+  readonly program: t.Program;
+  readonly opaqueEffects: JavaScriptOpaqueScopeEffects;
   /** Effective loader for static imports in this source artifact. */
   readonly staticImportResolutionMode: JavaScriptModuleResolutionMode;
+  /** Bounds encountered during this analysis, independent of later projections. */
+  readonly valueResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Getter query bounds encountered while resolving object and class properties. */
+  readonly getterResourceLimits: Set<JavaScriptSemanticResourceLimit>;
+  /** Callee sites whose possible local returns needed a broader projection. */
+  readonly returnedReferenceWidenings: Set<t.Node>;
   readonly parentsByNode: WeakMap<t.Node, t.Node>;
+  /** TypeScript syntax omitted from JavaScript value evaluation. */
+  readonly erasedSyntaxNodes: WeakSet<t.Node>;
   readonly scopes: JavaScriptSemanticScopeState[];
   readonly scopesById: Map<string, JavaScriptSemanticScopeState>;
   /** Scope boundaries and descendant scopes resolved on demand. */
   readonly scopeByNode: WeakMap<t.Node, JavaScriptSemanticScopeState>;
   readonly bindingsById: Map<string, JavaScriptSemanticBindingState>;
+  /** Resolved identifier writes retained at their exact source sites. */
+  readonly bindingWrites: Map<string, t.Node[]>;
+  /** Source evidence that Object.prototype may supply a `require` property. */
+  prototypeRequireMutationObserved: boolean | undefined;
+  /** Source evidence that Object.prototype may add inherited enumerable keys. */
+  prototypeEnumerationMayAffect: boolean | undefined;
+  /** Effects on a cached require exports object, independent of local projections. */
+  readonly requiredModuleEffects: Map<
+    string,
+    JavaScriptSemanticRequiredModuleEffect[]
+  >;
   readonly callables: JavaScriptSemanticCallable[];
   readonly callableNodesById: Map<string, t.Node>;
   readonly moduleLinks: JavaScriptSemanticModuleLink[];
@@ -80,9 +162,66 @@ export interface JavaScriptSemanticAnalysisState {
     JavaScriptSemanticModuleLink,
     JavaScriptSemanticBindingState
   >;
-  readonly conditionalInitializers: WeakSet<t.Node>;
-  /** Source-local writes, tagged by global-object or import.meta identity. */
+  /** Default expressions capture their value at the export statement. */
+  readonly defaultExportExpressions: WeakMap<
+    JavaScriptSemanticModuleLink,
+    t.Node
+  >;
+  /** Initializer expressions whose write can be skipped by enclosing control flow. */
+  readonly conditionallySkippedExpressions: WeakSet<t.Node>;
+  /** Unbound identifier writes retain their source sites for capture ordering. */
+  readonly ambientBindingWrites: Map<string, t.Node[]>;
+  /** Source-local writes, tagged by global, import.meta or CJS module identity. */
   readonly ambientWrites: SemanticPropertyPathCoverage;
+  /** Browser receivers proven to be only the ambient global identity. */
+  readonly retainedGlobalCallReceivers: WeakSet<t.Node>;
+  /** Store targets whose ownership is unknown or ambient, as classified by ambient indexing. */
+  readonly escapingReferenceStores: WeakSet<t.MemberExpression>;
+  /** Ambient object identities passed to calls whose effects are not evaluated. */
+  readonly ambientEscapes: SemanticPropertyPathCoverage;
+  /** Capture sites keep later opaque effects from changing earlier copies. */
+  readonly ambientEscapeEffects: JavaScriptSemanticMemberEffect[];
+  /** Source sites distinguish replacement before an ambient identity capture from later writes. */
+  readonly ambientWriteEffects: JavaScriptSemanticMemberEffect[];
+}
+
+/** Record one producer outcome without traversing or retaining its value graph. */
+export const recordSemanticValueLimit = (
+  state: JavaScriptSemanticAnalysisState,
+  value: JavaScriptSemanticValue,
+): void => {
+  if (value.status === "unknown" && value.resourceLimit !== undefined)
+    state.valueResourceLimits.add(value.resourceLimit);
+};
+
+/** One parsed source owns its optional indexes and their per-source lifetime. */
+export interface JavaScriptBindingIndex {
+  readonly sourceType: t.Program["sourceType"];
+  readonly bindings: JavaScriptSemanticAnalysisState;
+  indexAmbientWritesSteps(): Generator<void, void>;
+  indexMemberMutationFactsSteps(): Generator<void, void>;
+  /** Resolve certain lexical ownership without collecting mutation reports. */
+  bindingForReferenceAt(
+    referenceNode: t.Node,
+  ): JavaScriptSemanticBindingState | undefined;
+  effectsForReferenceAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Order declarations within one activation; deferred and repeating effects stay unknown. */
+  effectsForReferenceWithinActivationAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): JavaScriptSemanticReferenceEffectsAtSite;
+  /** Stop at the first relevant prior/uncertain effect without retaining a report. */
+  referenceMayHaveChangedAt(
+    site: t.Node,
+    referenceNode: t.Node,
+    propertyPath?: JavaScriptSemanticPropertyPath,
+  ): boolean;
+  referencesSteps(): Generator<void, readonly JavaScriptSemanticReference[]>;
 }
 
 /**
@@ -104,7 +243,7 @@ export const semanticStableInitializer = (
         (definition?.kind === "function" || definition?.kind === "class"))) &&
     binding.initializers.length === 1 &&
     initializer !== undefined &&
-    !state.conditionalInitializers.has(initializer.node)
+    !state.conditionallySkippedExpressions.has(initializer.node)
     ? initializer
     : undefined;
 };
@@ -135,35 +274,18 @@ export const resolveSemanticBindingState = (
   node: t.Node,
   name: string,
 ): JavaScriptSemanticBindingState | undefined => {
-  let scope = semanticScopeForNode(state, node);
-  while (scope !== undefined) {
-    const binding = scope.bindings.get(name);
-    if (binding !== undefined) return binding;
-    if (!scope.bindingsComplete) return undefined;
-    scope =
-      scope.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(scope.parentScopeId);
-  }
-  return undefined;
+  const lookup = semanticBindingLookupAt(state, node, name);
+  return lookup.kind === "binding" ? lookup.binding : undefined;
 };
 
-/** Report whether an omitted binding scope blocks a trustworthy miss. */
+/** Report whether an omitted or dynamic binding blocks a trustworthy miss. */
 export const semanticResolutionBlocked = (
   state: JavaScriptSemanticAnalysisState,
   node: t.Node,
   name: string,
 ): boolean => {
-  let scope = semanticScopeForNode(state, node);
-  while (scope !== undefined) {
-    if (scope.bindings.has(name)) return false;
-    if (!scope.bindingsComplete) return true;
-    scope =
-      scope.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(scope.parentScopeId);
-  }
-  return false;
+  const lookup = semanticBindingLookupAt(state, node, name);
+  return lookup.kind !== "binding" && lookup.kind !== "ambient";
 };
 
 const semanticScopeForNode = (
@@ -188,24 +310,223 @@ const semanticScopeForNode = (
   return undefined;
 };
 
-/** Resolve one name starting from an explicitly selected lexical scope. */
+type SemanticBindingLookup =
+  | {
+      readonly kind: "binding" | "uncertain-binding";
+      readonly binding: JavaScriptSemanticBindingState;
+    }
+  | {
+      readonly kind:
+        | "ambient"
+        | "uncertain-ambient"
+        | "captured"
+        | "unknown"
+        | "implicit-arguments";
+    };
+
+/** Retain both a dynamic lookup's uncertainty and its possible outer write owner. */
+export const semanticBindingLookupFromScope = (
+  scope: JavaScriptSemanticScopeState | undefined,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): SemanticBindingLookup => {
+  let uncertain = false;
+  while (scope !== undefined) {
+    const binding = scope.bindings.get(name);
+    if (binding !== undefined)
+      return { kind: uncertain ? "uncertain-binding" : "binding", binding };
+    if (name === "arguments" && scope.implicitArguments === true)
+      return { kind: "implicit-arguments" };
+    if (!scope.bindingsComplete) {
+      if (scope.dynamicWithStatement === undefined) return { kind: "unknown" };
+      const lookup = semanticWithRequireLookup(
+        state,
+        scope.dynamicWithStatement,
+        name,
+      );
+      if (lookup === "captures") return { kind: "captured" };
+      if (lookup === "unknown") uncertain = true;
+    }
+    scope =
+      scope.parentScopeId === null
+        ? undefined
+        : state.scopesById.get(scope.parentScopeId);
+  }
+  return { kind: uncertain ? "uncertain-ambient" : "ambient" };
+};
+
+/** Return certain and possible binding ownership without discarding uncertainty. */
+export const semanticBindingLookupAt = (
+  state: JavaScriptSemanticAnalysisState,
+  node: t.Node,
+  name: string,
+): SemanticBindingLookup =>
+  semanticBindingLookupFromScope(
+    semanticScopeForNode(state, node),
+    name,
+    state,
+  );
+
+/** Resolve a certain lexical binding from an explicitly selected scope. */
 export const resolveSemanticBindingFromScope = (
   scope: JavaScriptSemanticScopeState,
   name: string,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticBindingState | undefined => {
-  let candidate: JavaScriptSemanticScopeState | undefined = scope;
-  while (candidate !== undefined) {
-    const binding = candidate.bindings.get(name);
-    if (binding !== undefined) return binding;
-    if (!candidate.bindingsComplete) return undefined;
-    candidate =
-      candidate.parentScopeId === null
-        ? undefined
-        : state.scopesById.get(candidate.parentScopeId);
+  const lookup = semanticBindingLookupFromScope(scope, name, state);
+  return lookup.kind === "binding" ? lookup.binding : undefined;
+};
+
+type SemanticWithRequireLookup = "captures" | "skips" | "unknown";
+const semanticUnscopablesKey = Symbol("semantic-unscopables-key");
+
+/** Classify only source-visible own `require` entries in a literal with object. */
+const semanticWithRequireLookup = (
+  state: JavaScriptSemanticAnalysisState,
+  statement: t.WithStatement,
+  name: string,
+): SemanticWithRequireLookup => {
+  if (name !== "require") return "unknown";
+  const object = unwrapJavaScriptExpression(statement.object).node;
+  if (!t.isObjectExpression(object)) return "unknown";
+  let ownRequire = false;
+  let hasUnknownOwnProperties = false;
+  let prototypeIsNull = false;
+  let unknownPrototype = false;
+  for (const property of object.properties) {
+    if (t.isSpreadElement(property)) {
+      hasUnknownOwnProperties = true;
+      continue;
+    }
+    const key = semanticWithPropertyName(
+      property.key,
+      property.computed,
+      state,
+    );
+    if (key === "require") ownRequire = true;
+    else if (
+      key === "__proto__" &&
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand
+    ) {
+      const prototype = unwrapJavaScriptExpression(property.value).node;
+      if (t.isNullLiteral(prototype)) prototypeIsNull = true;
+      else unknownPrototype = true;
+    } else if (key === null && property.computed) {
+      hasUnknownOwnProperties = true;
+    }
+  }
+  if (ownRequire) {
+    const unscopablesValue = finalSemanticWithSymbolProperty(object, state);
+    if (unscopablesValue === "unknown") return "unknown";
+    if (unscopablesValue === undefined)
+      return prototypeIsNull ||
+        (!unknownPrototype && state.prototypeRequireMutationObserved === false)
+        ? "captures"
+        : "unknown";
+    const unscopables = unwrapJavaScriptExpression(unscopablesValue).node;
+    if (!t.isObjectExpression(unscopables))
+      return isSemanticWithPrimitive(unscopables) ? "captures" : "unknown";
+    const entry = finalSemanticWithStringProperty(unscopables, "require");
+    if (entry === "unknown") return "unknown";
+    if (entry === undefined) {
+      const prototype = semanticWithPrototypeKind(unscopables);
+      return prototype === "null" ||
+        (prototype === "ordinary" &&
+          state.prototypeRequireMutationObserved === false)
+        ? "captures"
+        : "unknown";
+    }
+    const truthiness = staticJavaScriptTruthiness(entry);
+    return truthiness === true
+      ? "skips"
+      : truthiness === false
+        ? "captures"
+        : "unknown";
+  }
+  if (hasUnknownOwnProperties || unknownPrototype) return "unknown";
+  if (prototypeIsNull) return "skips";
+  return state.prototypeRequireMutationObserved === false ? "skips" : "unknown";
+};
+
+const semanticWithPropertyName = (
+  key: t.Node,
+  computed: boolean,
+  state: JavaScriptSemanticAnalysisState,
+): string | typeof semanticUnscopablesKey | null => {
+  if (
+    computed &&
+    t.isMemberExpression(key) &&
+    !key.computed &&
+    t.isIdentifier(key.object, { name: "Symbol" }) &&
+    semanticStaticPropertyKey(key.property, false) === "unscopables" &&
+    resolveSemanticBindingState(state, key.object, "Symbol") === undefined &&
+    !semanticResolutionBlocked(state, key.object, "Symbol")
+  )
+    return semanticUnscopablesKey;
+  return semanticStaticPropertyKey(key, computed);
+};
+
+const finalSemanticWithSymbolProperty = (
+  object: t.ObjectExpression,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node | undefined | "unknown" => {
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index];
+    if (property === undefined || t.isSpreadElement(property)) return "unknown";
+    const name = semanticWithPropertyName(
+      property.key,
+      property.computed,
+      state,
+    );
+    if (name === semanticUnscopablesKey)
+      return t.isObjectProperty(property) ? property.value : "unknown";
+    if (name === null && property.computed) return "unknown";
   }
   return undefined;
 };
+
+const semanticWithPrototypeKind = (
+  object: t.ObjectExpression,
+): "null" | "ordinary" | "other" => {
+  for (const property of object.properties) {
+    if (
+      t.isObjectProperty(property) &&
+      !property.computed &&
+      !property.shorthand &&
+      t.isIdentifier(property.key, { name: "__proto__" })
+    )
+      return t.isNullLiteral(unwrapJavaScriptExpression(property.value).node)
+        ? "null"
+        : "other";
+  }
+  return "ordinary";
+};
+
+const finalSemanticWithStringProperty = (
+  object: t.ObjectExpression,
+  sought: string,
+): t.Node | undefined | "unknown" => {
+  for (let index = object.properties.length - 1; index >= 0; index -= 1) {
+    const property = object.properties[index];
+    if (property === undefined || t.isSpreadElement(property)) return "unknown";
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (name === sought)
+      return t.isObjectProperty(property) ? property.value : "unknown";
+    if (name === null && property.computed) return "unknown";
+  }
+  return undefined;
+};
+
+const isSemanticWithPrimitive = (node: t.Node): boolean =>
+  t.isNullLiteral(node) ||
+  t.isBooleanLiteral(node) ||
+  t.isStringLiteral(node) ||
+  t.isNumericLiteral(node) ||
+  t.isBigIntLiteral(node) ||
+  (t.isUnaryExpression(node, { operator: "-" }) &&
+    (t.isNumericLiteral(node.argument) || t.isBigIntLiteral(node.argument)));
 
 /** Select the function/program owner for a var declaration. */
 export const semanticVariableScope = (
@@ -234,5 +555,92 @@ export const isUnshadowedGlobal = (
   name: string,
 ): boolean =>
   t.isIdentifier(node, { name }) &&
-  resolveSemanticBindingState(state, node, name) === undefined &&
-  !semanticResolutionBlocked(state, node, name);
+  (resolveSemanticBindingState(state, node, name) === undefined
+    ? !semanticResolutionBlocked(state, node, name)
+    : isUnmodifiedCommonJsWrapperBinding(node, name, state));
+
+/** A program-level `var` redeclaration still denotes its untouched CJS wrapper parameter. */
+export const isUnmodifiedCommonJsWrapperBinding = (
+  node: t.Node,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const binding = commonJsWrapperBindingDeclaration(node, name, state);
+  return (
+    binding !== undefined &&
+    !semanticBindingHasPriorValueWrite(node, binding, state)
+  );
+};
+
+/** Retained value and pattern stores share one source-ordered write boundary. */
+export const semanticBindingHasPriorValueWrite = (
+  site: t.Node,
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (binding.definitions.some(({ kind }) => kind === "function")) return true;
+  const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const read = semanticBindingAtRead(binding, site, state.parentsByNode);
+  const retained =
+    read.status === "ordered"
+      ? new Set([
+          ...read.binding.initializers,
+          ...read.binding.referenceInitializers,
+        ])
+      : undefined;
+  const representedWrites = new Set<t.Node>();
+  const retainedWrites = new Set<t.Node>();
+  for (const source of [
+    ...binding.initializers,
+    ...binding.referenceInitializers,
+  ]) {
+    let owner: t.Node | undefined = source.node;
+    while (owner !== undefined && !writes.includes(owner))
+      owner = state.parentsByNode.get(owner);
+    if (owner !== undefined) {
+      representedWrites.add(owner);
+      if (retained === undefined || retained.has(source))
+        retainedWrites.add(owner);
+    } else if (
+      (retained === undefined || retained.has(source)) &&
+      semanticEffectTiming(site, source.node, state) !== "after"
+    )
+      return true;
+  }
+  return writes.some(
+    (write) =>
+      (!representedWrites.has(write) || retainedWrites.has(write)) &&
+      semanticEffectTiming(site, write, state) !== "after",
+  );
+};
+
+/** Explicit wrapper facts and program `var` redeclarations retain their lexical identity. */
+export const commonJsWrapperBindingDeclaration = (
+  node: t.Node,
+  name: string,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticBindingState | undefined => {
+  if (
+    !["module", "exports", "require", "__dirname", "__filename"].includes(
+      name,
+    ) ||
+    !t.isIdentifier(node, { name })
+  )
+    return undefined;
+  const binding = resolveSemanticBindingState(state, node, name);
+  if (binding === undefined) return undefined;
+  const scope = state.scopesById.get(binding.scopeId);
+  if (
+    scope?.kind !== "program" ||
+    ![...binding.declarationKinds].every((kind) => kind === "var")
+  )
+    return undefined;
+  // The index owns explicit wrapper parameters, including ones with no source
+  // redeclaration. Babel's module classification does not invalidate that fact.
+  if (binding.hostOrigin === "commonjs-wrapper") return binding;
+  // Without an explicit host fact, preserve the legacy script-var inference.
+  return state.program.sourceType === "script" &&
+    binding.declarationKinds.size > 0
+    ? binding
+    : undefined;
+};

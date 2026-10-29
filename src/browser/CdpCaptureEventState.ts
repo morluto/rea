@@ -1,3 +1,4 @@
+import type { CdpContextFrameClaim } from "./CdpScriptContextFacts.js";
 import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpCaptureCompleteness } from "./CdpCaptureCompleteness.js";
@@ -12,10 +13,18 @@ export interface CdpCaptureEventsState {
   rejectedSourceMapMetadataBudgetCount: number;
   readonly scriptMetadataBytesById: Map<string, number>;
   retainedScriptMetadataBytes: number;
-  readonly executionContextFrames: Map<string, string>;
+  /** Console, websocket-frame and selected request/response shape outputs share one allowance. */
+  retainedEventBytes: number;
+  readonly bodyShapeBytesByRequestId: Map<
+    string,
+    { readonly request: number; readonly response: number }
+  >;
+  readonly executionContextFrames: Map<string, CdpContextFrameClaim>;
   readonly network: Map<string, NetworkState>;
   readonly networkRequestTimestamps: Map<string, number>;
   readonly malformedRedirectRequestIds: Set<string>;
+  /** Requests whose selected JSON request-body shape was expected but not obtained. */
+  readonly missingRequestBodyShapeIds: Set<string>;
   readonly webSocketConnectionsById: Map<
     string,
     WebPageInspection["network"]["websocket_connections"][number]
@@ -26,6 +35,7 @@ export interface CdpCaptureEventsState {
   readonly completeness: CdpCaptureCompleteness;
   originViolation: boolean;
   navigationDuringCapture: boolean;
+  unknownRootIdentity: boolean;
   mainFrameId: string | undefined;
   /**
    * Identity of the document last observed in the main frame. `frameNavigated`

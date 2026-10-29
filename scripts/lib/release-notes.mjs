@@ -53,7 +53,7 @@ export const releaseInventorySchema = z.object({
   pullRequests: z.array(pullRequest),
 });
 
-export async function readReleaseHistory(run, base, target) {
+export async function requireCompleteReleaseHistory(run) {
   if (
     (await run("git", ["rev-parse", "--is-shallow-repository"])).trim() !==
     "false"
@@ -61,6 +61,10 @@ export async function readReleaseHistory(run, base, target) {
     throw new Error(
       "Release inventory requires complete Git history; fetch --unshallow first",
     );
+}
+
+export async function readReleaseHistory(run, base, target) {
+  await requireCompleteReleaseHistory(run);
   const resolve = async (ref) =>
     sha.parse(
       (
@@ -98,9 +102,9 @@ export async function readReleaseHistory(run, base, target) {
   return { base: baseSha, target: targetSha, commits };
 }
 
-// REA history maps Anthropic and Cursor's agent trailers to ordinary User actors.
+// GitHub maps these coding-agent trailers to ordinary User actors.
 // Keep those source identities in the inventory while excluding automation credit.
-const AGENT_ACCOUNTS = new Set(["claude", "cursoragent"]);
+const AGENT_ACCOUNTS = new Set(["claude", "cursoragent", "codex", "copilot"]);
 // REA's maintainer requested external-contributor thanks without self-credit.
 const MAINTAINER_ACCOUNTS = new Set(["morluto"]);
 const human = (value) =>
@@ -365,42 +369,56 @@ export function verifyReleaseNotes(raw, text, body) {
   };
 }
 
-const VERSION_ONLY_PLUGIN_MANIFESTS = new Set([
-  ".claude-plugin/plugin.json",
-  ".codex-plugin/plugin.json",
+const VERSION_ONLY_PLUGIN_METADATA = new Set([
   ".cursor-plugin/plugin.json",
   ".cursor-plugin/mcp.json",
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".codex-plugin/mcp.json",
+  ".claude-plugin/marketplace.json",
+  ".agents/plugins/marketplace.json",
 ]);
 
-/** Serialize a plugin manifest with its release-owned version fields blanked. */
-function pluginManifestWithoutVersions(text) {
+/** Serialize plugin metadata with only its release-owned version fields blanked. */
+function pluginMetadataWithoutVersions(path, text) {
   const manifest = JSON.parse(text);
   if (manifest === null || typeof manifest !== "object") return text;
+  if (path.endsWith("marketplace.json")) {
+    if (Array.isArray(manifest.plugins))
+      for (const plugin of manifest.plugins)
+        if (
+          plugin?.name === "rea" &&
+          plugin?.source?.source === "npm" &&
+          plugin.source.package === "rea-agents" &&
+          typeof plugin.source.version === "string"
+        )
+          plugin.source.version = "";
+    return JSON.stringify(manifest);
+  }
   if ("version" in manifest) manifest.version = "";
   const launch = manifest.mcpServers?.rea?.args;
-  // The current launcher stores only the product's bare SemVer pin; older
-  // manifests used an explicit package specifier. Canonicalize both forms
-  // while retaining any explicitly different package name as behavior.
-  if (Array.isArray(launch) && typeof launch[1] === "string")
-    launch[1] =
-      valid(launch[1]) === launch[1]
-        ? "rea-agents@"
-        : launch[1].replace(/@[^@/]*$/u, "@");
+  // Only the scalar pinned version is release-owned; the launcher owns the
+  // fixed package name and the executable/path remain product behavior.
+  if (Array.isArray(launch) && typeof launch[1] === "string") launch[1] = "";
   return JSON.stringify(manifest);
 }
 
 /**
- * A plugin manifest also carries plugin behavior, so a release may change only
- * its version and pinned server launch. Any other difference, an unreadable
+ * Plugin metadata also carries behavior, so a release may change only
+ * its version, pinned server launch, and exact REA marketplace version. Any other difference, an unreadable
  * side, or a manifest added by the release counts as a product change.
  */
 async function changesOnlyPluginVersions(run, path, from, to) {
   try {
     return (
-      pluginManifestWithoutVersions(
+      pluginMetadataWithoutVersions(
+        path,
         await run("git", ["show", `${from}:${path}`]),
       ) ===
-      pluginManifestWithoutVersions(await run("git", ["show", `${to}:${path}`]))
+      pluginMetadataWithoutVersions(
+        path,
+        await run("git", ["show", `${to}:${path}`]),
+      )
     );
   } catch {
     return false;
@@ -479,7 +497,7 @@ export async function verifyInventoryHistory(run, raw, source) {
     for (const path of paths) {
       if (allowed.has(path)) continue;
       if (
-        VERSION_ONLY_PLUGIN_MANIFESTS.has(path) &&
+        VERSION_ONLY_PLUGIN_METADATA.has(path) &&
         (await changesOnlyPluginVersions(run, path, inventory.target, resolved))
       )
         continue;

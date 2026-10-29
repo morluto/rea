@@ -1,5 +1,6 @@
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { hasNibArchiveSignature } from "../../domain/apple/appleArchiveFormat.js";
+import { isInterfaceBuilderConnectionClass } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
 import { TextDecoder } from "node:util";
 import {
   InterfaceBuilderDecodeBudget,
@@ -28,11 +29,36 @@ export interface NibArchiveDocument {
   readonly objects: readonly {
     readonly id: number;
     readonly class_name: string;
+    /** Single-valued fields. Repeated serialized keys are disjoint below. */
     readonly values: Readonly<Record<string, JsonValue>>;
+    readonly repeated_values?: Readonly<Record<string, readonly JsonValue[]>>;
   }[];
   readonly classes: readonly string[];
   readonly limitations: readonly string[];
 }
+
+/** Serialized collection members in source order; metadata fields are not members. */
+export const nibCollectionMembers = (
+  object: NibArchiveDocument["objects"][number] | undefined,
+): readonly JsonValue[] | undefined => {
+  if (
+    object === undefined ||
+    !/^(?:NS|NSMutable)(?:Array|Set)$/u.test(
+      object.class_name.replace(/\0+$/u, ""),
+    )
+  )
+    return undefined;
+  const keys = ["UINibEncoderEmptyKey", "NS.objects"];
+  const populated = keys.filter(
+    (key) =>
+      Object.hasOwn(object.values, key) ||
+      Object.hasOwn(object.repeated_values ?? {}, key),
+  );
+  if (populated.length > 1) return undefined;
+  const key = populated[0];
+  if (key === undefined) return [];
+  return object.repeated_values?.[key] ?? [object.values[key]!];
+};
 
 /** Decode Apple's length-prefixed NIBArchive representation without loading UI classes. */
 export const decodeNibArchive = (
@@ -126,6 +152,7 @@ export const decodeNibArchive = (
     const className = classes[object.class_index];
     if (className === undefined) return [];
     const fields: Record<string, JsonValue> = {};
+    const repeated: Record<string, JsonValue[]> = {};
     for (
       let index = object.value_start;
       index < object.value_start + object.value_count;
@@ -134,7 +161,26 @@ export const decodeNibArchive = (
       const value = values.get(index);
       if (value === undefined) continue;
       const key = keys[value.key_index];
-      if (key !== undefined)
+      if (key === undefined) continue;
+      if (Object.hasOwn(repeated, key)) {
+        budget.reserve(
+          16,
+          "NIBArchive repeated fields exceed the decode budget",
+        );
+        repeated[key]!.push(value.value);
+      } else if (Object.hasOwn(fields, key)) {
+        budget.reserve(
+          96,
+          "NIBArchive repeated fields exceed the decode budget",
+        );
+        Object.defineProperty(repeated, key, {
+          value: [fields[key]!, value.value],
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+        delete fields[key];
+      } else
         // Archive keys are data, including the legacy __proto__ setter name.
         Object.defineProperty(fields, key, {
           value: value.value,
@@ -143,13 +189,20 @@ export const decodeNibArchive = (
           writable: true,
         });
     }
-    return [{ id, class_name: className, values: fields }];
+    return [
+      {
+        id,
+        class_name: className,
+        values: fields,
+        ...(Object.keys(repeated).length === 0
+          ? {}
+          : { repeated_values: repeated }),
+      },
+    ];
   });
   let connectionObjectCount = 0;
   for (const object of objects)
-    if (
-      /(?:Outlet|Connection|Segue|ActionConnection)/iu.test(object.class_name)
-    )
+    if (isInterfaceBuilderConnectionClass(object.class_name))
       connectionObjectCount += 1;
 
   return {
@@ -339,6 +392,24 @@ const parseValues = (
   return output;
 };
 
+/**
+ * Value type tags in a NIBArchive value table. The two boolean tags carry no
+ * payload; AppKit's own nib decoder reads tag 4 as NO and tag 5 as YES.
+ */
+const NibValueType = {
+  int8: 0,
+  int16: 1,
+  int32: 2,
+  int64: 3,
+  booleanFalse: 4,
+  booleanTrue: 5,
+  float32: 6,
+  float64: 7,
+  data: 8,
+  nil: 9,
+  objectReference: 10,
+} as const;
+
 const readValue = (
   bytes: Buffer,
   cursor: { offset: number },
@@ -348,24 +419,24 @@ const readValue = (
   budget: InterfaceBuilderDecodeBudget,
 ): JsonValue => {
   switch (type) {
-    case 0:
+    case NibValueType.int8:
       ensureRange(cursor.offset, 1, end, `value ${index}`);
       return bytes.readInt8(cursor.offset++);
-    case 1:
+    case NibValueType.int16:
       ensureRange(cursor.offset, 2, end, `value ${index}`);
       {
         const value = bytes.readInt16LE(cursor.offset);
         cursor.offset += 2;
         return value;
       }
-    case 2:
+    case NibValueType.int32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       {
         const value = bytes.readInt32LE(cursor.offset);
         cursor.offset += 4;
         return value;
       }
-    case 3:
+    case NibValueType.int64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       {
         const value = bytes.readBigInt64LE(cursor.offset);
@@ -375,25 +446,25 @@ const readValue = (
           ? Number(value)
           : value.toString();
       }
-    case 4:
-      return true;
-    case 5:
+    case NibValueType.booleanFalse:
       return false;
-    case 6:
+    case NibValueType.booleanTrue:
+      return true;
+    case NibValueType.float32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       {
         const value = bytes.readFloatLE(cursor.offset);
         cursor.offset += 4;
-        return Number.isFinite(value) ? value : null;
+        return value;
       }
-    case 7:
+    case NibValueType.float64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       {
         const value = bytes.readDoubleLE(cursor.offset);
         cursor.offset += 8;
-        return Number.isFinite(value) ? value : null;
+        return value;
       }
-    case 8: {
+    case NibValueType.data: {
       const length = readVarint(bytes, cursor, end);
       const next = checkedEnd(
         cursor.offset,
@@ -409,9 +480,9 @@ const readValue = (
       cursor.offset = next;
       return { $nib_data_base64: encoded };
     }
-    case 9:
+    case NibValueType.nil:
       return null;
-    case 10:
+    case NibValueType.objectReference:
       ensureRange(cursor.offset, 4, end, `value ${index} reference`);
       {
         const objectIndex = bytes.readUInt32LE(cursor.offset);
@@ -433,33 +504,33 @@ const skipValue = (
   index: number,
 ): void => {
   switch (type) {
-    case 0:
+    case NibValueType.int8:
       ensureRange(cursor.offset, 1, end, `value ${index}`);
       cursor.offset += 1;
       return;
-    case 1:
+    case NibValueType.int16:
       ensureRange(cursor.offset, 2, end, `value ${index}`);
       cursor.offset += 2;
       return;
-    case 2:
-    case 10:
+    case NibValueType.int32:
+    case NibValueType.objectReference:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       cursor.offset += 4;
       return;
-    case 3:
-    case 7:
+    case NibValueType.int64:
+    case NibValueType.float64:
       ensureRange(cursor.offset, 8, end, `value ${index}`);
       cursor.offset += 8;
       return;
-    case 6:
+    case NibValueType.float32:
       ensureRange(cursor.offset, 4, end, `value ${index}`);
       cursor.offset += 4;
       return;
-    case 4:
-    case 5:
-    case 9:
+    case NibValueType.booleanFalse:
+    case NibValueType.booleanTrue:
+    case NibValueType.nil:
       return;
-    case 8: {
+    case NibValueType.data: {
       const length = readVarint(bytes, cursor, end);
       cursor.offset = checkedEnd(
         cursor.offset,

@@ -15,6 +15,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import {
+  createGhidraVerifierMcpOperations,
+  resolveGhidraVerifierTimeouts,
+} from "./ghidra-verifier-timeouts.mjs";
+import {
   requireMcpOperationResult,
   requireMcpToolError,
   mcpTextValue,
@@ -26,17 +30,22 @@ export async function verifyGhidraFileOffsets(
   entrypoint,
   procedure,
 ) {
+  const environment = {
+    ...process.env,
+    REA_ANALYSIS_PROVIDER: "ghidra",
+    REA_LOG_LEVEL: "silent",
+  };
+  const { requestOptions } = resolveGhidraVerifierTimeouts(environment);
+  const timeoutMs = requestOptions.timeout;
   const original = await readFile(targetPath);
   const workspace = await mkdtemp(join(tmpdir(), "rea-file-offsets-"));
   const runtime = join(workspace, "runtime");
   await mkdir(runtime);
   const env = {
-    ...process.env,
+    ...environment,
     TEMP: runtime,
     TMP: runtime,
     TMPDIR: runtime,
-    REA_ANALYSIS_PROVIDER: "ghidra",
-    REA_LOG_LEVEL: "silent",
   };
   const client = new Client({ name: "rea-file-offsets", version: "1" });
   const transport = new StdioClientTransport({
@@ -45,21 +54,19 @@ export async function verifyGhidraFileOffsets(
     env,
     stderr: "pipe",
   });
+  const mcp = createGhidraVerifierMcpOperations(client, requestOptions);
   let connected = false;
   let complete = false;
   let primaryFailure;
   const call = async (name, arguments_ = {}) => {
-    const result = await client.callTool(
-      { name, arguments: arguments_ },
-      { timeout: 240_000 },
-    );
+    const result = await mcp.callTool({ name, arguments: arguments_ });
     const projected = requireMcpOperationResult(result, name);
     return ["open_binary", "binary_session", "close_binary"].includes(name)
       ? projected
       : (result.structuredContent ?? JSON.parse(mcpTextValue(result)));
   };
   try {
-    await client.connect(transport);
+    await mcp.connect(transport);
     connected = true;
     await call("open_binary", { path: targetPath, provider_id: "ghidra" });
     const session = await call("binary_session");
@@ -90,12 +97,12 @@ export async function verifyGhidraFileOffsets(
         ),
       );
     }
-    const invalid = await client.callTool({
+    const invalid = await mcp.callTool({
       name: "procedure_pseudo_code",
       arguments: { procedure: "file-offset:0x20000000000000" },
     });
     assert.equal(requireMcpToolError(invalid).code, "invalid_request");
-    const unmapped = await client.callTool({
+    const unmapped = await mcp.callTool({
       name: "procedure_pseudo_code",
       arguments: { procedure: "file-offset:0x100000" },
     });
@@ -122,7 +129,7 @@ export async function verifyGhidraFileOffsets(
     assert.equal(headerOffset.normalized_result.file_offset, 0);
     for (const selector of ["file-offset:0x0", "0x0"]) {
       const missing = requireMcpToolError(
-        await client.callTool({
+        await mcp.callTool({
           name: "procedure_pseudo_code",
           arguments: { procedure: selector },
         }),
@@ -147,7 +154,7 @@ export async function verifyGhidraFileOffsets(
             "ghidra",
             "--json",
           ],
-          { env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+          { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
         )
       ).stdout,
     );
@@ -164,7 +171,7 @@ export async function verifyGhidraFileOffsets(
         "ghidra",
         "--json",
       ],
-      { env, timeout: 240_000, maxBuffer: 16 * 1024 * 1024 },
+      { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
     ).then(
       () => {
         throw new Error(
@@ -183,13 +190,10 @@ export async function verifyGhidraFileOffsets(
       const ambiguousPath = join(workspace, "ambiguous.exe");
       await writeFile(ambiguousPath, alias);
       await call("open_binary", { path: ambiguousPath, provider_id: "ghidra" });
-      const ambiguous = await client.callTool(
-        {
-          name: "procedure_pseudo_code",
-          arguments: { procedure: `file-offset:${coordinate}` },
-        },
-        { timeout: 240_000 },
-      );
+      const ambiguous = await mcp.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { procedure: `file-offset:${coordinate}` },
+      });
       assert.ok(
         JSON.stringify(requireMcpToolError(ambiguous)).includes(
           "multiple loaded mappings",

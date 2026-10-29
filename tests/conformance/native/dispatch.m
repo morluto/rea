@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 
 @protocol ReaDispatchProtocol
+@property(nonatomic, copy) NSString *fixtureName;
 - (void)performAction:(id)sender;
 @optional
 - (int)optionalFixtureValue;

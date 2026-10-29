@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
 
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
@@ -20,6 +21,7 @@ export const hashOutputFile = async (
     readonly signal?: AbortSignal | undefined;
   },
 ): Promise<{ readonly sha256: string; readonly bytes: number }> => {
+  assertArtifactReadActive(options.signal);
   const admittedIdentity = await readFileIdentity(owner.handle, path);
   await assertFilePathIdentity(path, identity);
   if (
@@ -32,31 +34,17 @@ export const hashOutputFile = async (
     );
   const hash = createHash("sha256");
   let bytes = 0;
-  try {
-    for await (const raw of readFileHandleChunks(owner.handle, options)) {
-      if (options.signal?.aborted === true)
-        throw new ArtifactReaderFailure(
-          "cancelled",
-          "Artifact extraction cancelled",
-        );
-      const chunk = streamChunkToBuffer(raw);
-      bytes += chunk.length;
-      if (bytes > options.maximum)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          "Readback exceeded the bytes written",
-        );
-      hash.update(chunk);
-    }
-  } catch (cause: unknown) {
-    if (options.signal?.aborted === true)
+  for await (const raw of readArtifactFileChunks(owner.handle, options)) {
+    const chunk = streamChunkToBuffer(raw);
+    bytes += chunk.length;
+    if (bytes > options.maximum)
       throw new ArtifactReaderFailure(
-        "cancelled",
-        "Artifact extraction cancelled",
-        { cause },
+        "integrity",
+        "Readback exceeded the bytes written",
       );
-    throw cause;
+    hash.update(chunk);
   }
   await assertFilePathIdentity(path, identity);
+  assertArtifactReadActive(options.signal);
   return { sha256: hash.digest("hex"), bytes };
 };

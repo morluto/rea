@@ -99,9 +99,10 @@ describe("cooperative immutable Evidence", () => {
     let nested: JsonValue = 1;
     for (let index = 0; index <= MAX_JSON_DEPTH; index += 1)
       nested = { nested };
+    // Enough members before the over-deep one that validation yields first.
     const result = freezeJsonSnapshot([
-      nested,
       ...Array<JsonValue>(5000).fill(null),
+      nested,
     ]);
     const validation = jsonValueValidationSteps(result);
     expect(validation.next().done).toBe(false);

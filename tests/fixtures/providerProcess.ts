@@ -8,13 +8,26 @@ const fixturePath = fileURLToPath(
 
 /** Spawn one deterministic process-lifecycle fixture with piped diagnostics. */
 export const spawnProviderProcessFixture = (
-  mode: "burst" | "detached-child" | "exit" | "graceful" | "stubborn",
+  mode:
+    | "burst"
+    | "detached-child"
+    | "exit"
+    | "graceful"
+    | "invalid-utf8"
+    | "valid-multibyte"
+    | "late-stderr"
+    | "stubborn",
   value?: number,
 ): ChildProcess =>
   spawn(
     process.execPath,
     [fixturePath, mode, ...(value === undefined ? [] : [String(value)])],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    {
+      stdio:
+        mode === "late-stderr"
+          ? ["ignore", "pipe", "pipe", "pipe"]
+          : ["ignore", "pipe", "pipe"],
+    },
   );
 
 /** Wait until a long-lived fixture has installed its signal behavior. */

@@ -33,6 +33,16 @@ export const completeVerifierRun = async (run) => {
   };
 };
 
+/** Require positive process-lineage evidence before claiming cleanup complete. */
+export const assertVerifierCleanupComplete = (processLineage) => {
+  if (processLineage.status !== "verified")
+    throw new Error(
+      `Verifier cleanup could not be verified: ${processLineage.reason}`,
+    );
+  if (processLineage.descendants.length !== 0)
+    throw new Error("Owned descendants survived verifier cleanup");
+};
+
 const observeVerifierLineage = async (run, observedAt) => {
   if (process.platform === "win32")
     return unavailableLineage(

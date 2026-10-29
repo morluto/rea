@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { analysisViewCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { WebNetworkApiSurfaceAccumulator } from "./WebNetworkApiSurfaceAccumulator.js";
@@ -26,6 +26,36 @@ const add = (
   if (!result.ok) throw result.error;
 };
 
+it("bounds query parser expansion before publishing or merging observed names", () => {
+  const accumulator = new WebNetworkApiSurfaceAccumulator(64 * 1024, true);
+  add(accumulator, record(0, "/products?kept=1"));
+  const before = accumulator.page(0, 1);
+  expect(
+    accumulator.add(record(1, `/products?${"x=1&".repeat(200)}`)),
+  ).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError" },
+  });
+  expect(accumulator.page(0, 1)).toEqual(before);
+  add(accumulator, record(2, "/products?after=2"));
+  expect(accumulator.page(0, 1).groups[0]?.query_parameter_names).toEqual([
+    { name: "after", record_ordinals: [2] },
+    { name: "kept", record_ordinals: [0] },
+  ]);
+});
+
+it("charges each retained name once and each name's ordinal once per request", () => {
+  const accumulator = new WebNetworkApiSurfaceAccumulator(1024 * 1024, true);
+  for (let ordinal = 0; ordinal < 1000; ordinal += 1)
+    add(accumulator, record(ordinal, "/products?category=one&category=two"));
+  expect(accumulator.page(0, 1).groups[0]?.query_parameter_names).toEqual([
+    {
+      name: "category",
+      record_ordinals: Array.from({ length: 1000 }, (_, index) => index),
+    },
+  ]);
+});
+
 it("admits the capture schema clone and grouping against the same budget", () => {
   const sample = record(0, `/${"a".repeat(1200)}`);
   const isolated = new WebNetworkApiSurfaceAccumulator(64 * 1024);
@@ -42,6 +72,43 @@ it("admits the capture schema clone and grouping against the same budget", () =>
   });
   expect(accumulator.page(0, 1).groups).toEqual([]);
 });
+
+it.each(["admitCaptureClone", "admitInlineEvidence"] as const)(
+  "%s refuses dense array expansion without enumerating its keys",
+  (method) => {
+    const array = Array.from({ length: 100_000 }, () => null);
+    let enumerated = false;
+    let inspected = 0;
+    const ownNames = Object.getOwnPropertyNames;
+    const ownDescriptor = Object.getOwnPropertyDescriptor;
+    const keys = vi
+      .spyOn(Object, "getOwnPropertyNames")
+      .mockImplementation((value) => {
+        if (value === array) enumerated = true;
+        return ownNames(value);
+      });
+    const descriptors = vi
+      .spyOn(Object, "getOwnPropertyDescriptor")
+      .mockImplementation((value, key) => {
+        if (value === array) inspected += 1;
+        return ownDescriptor(value, key);
+      });
+    try {
+      expect(
+        new WebNetworkApiSurfaceAccumulator(4096)[method](array),
+      ).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisResourceConstraintError", resource: "memory" },
+      });
+      expect(enumerated).toBe(false);
+      expect(inspected).toBeGreaterThan(0);
+      expect(inspected).toBeLessThan(16);
+    } finally {
+      keys.mockRestore();
+      descriptors.mockRestore();
+    }
+  },
+);
 
 it("charges non-enumerable fields that the capture schema would clone", () => {
   const value = Object.defineProperty({}, "records", {

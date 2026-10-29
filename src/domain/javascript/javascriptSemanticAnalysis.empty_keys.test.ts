@@ -1,6 +1,22 @@
 import { expect, it } from "vitest";
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
+it("resolves void keys while retaining their calls and binding writes", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import {spawn} from "node:child_process";
+    const routes = {[void sideEffect()]: "HOME"};
+    const root = routes[void 0];
+    let argv=[]; const changed = {[void (argv={})]: 1};
+    spawn("changed",argv,{stdio:"inherit"});
+  `);
+  expect(ir.bindings.find(({ name }) => name === "root")?.value).toEqual({
+    status: "literal",
+    value: "HOME",
+  });
+  expect(ir.references.some(({ name }) => name === "sideEffect")).toBe(true);
+  expect(ir.childProcessSpawns[0]?.stdioMode).toBe("dynamic");
+});
+
 it.each([
   "const routes = {'': 'HOME'}; const root = routes[''];",
   "const routes = {['']: 'HOME'}; const root = routes[''];",
@@ -114,4 +130,19 @@ it("retains exact empty request field names without dynamic fields", () => {
       fields.map(({ name }) => name),
     ),
   ).toEqual(["", "body"]);
+});
+
+it("retains the exact empty CommonJS export name", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    exports[''] = 1;
+    module.exports[''] = 2;
+    exports['ok'] = 3;
+    exports[key] = 4;
+  `);
+  expect(ir.moduleLinks.map(({ exportedName }) => exportedName)).toEqual([
+    "",
+    "",
+    "ok",
+    "*",
+  ]);
 });

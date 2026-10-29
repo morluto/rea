@@ -13,6 +13,8 @@ import type { Result } from "../../domain/result.js";
 
 /** Provider-neutral boundary for passive Node/Electron Inspector observation. */
 export interface JavaScriptRuntimeObservationPort {
+  /** Retry retained Inspector and associated file cleanup during shutdown. */
+  close?(): Promise<void>;
   identity(): ProviderIdentity;
   listTargets(
     input: ListJavaScriptRuntimeTargetsInput,

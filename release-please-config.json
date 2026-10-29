@@ -49,13 +49,23 @@
         },
         {
           "type": "json",
-          "path": ".codex-plugin/plugin.json",
+          "path": ".cursor-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/mcp.json",
           "jsonpath": "$.mcpServers.rea.args[1]"
         },
         {
           "type": "json",
-          "path": ".cursor-plugin/plugin.json",
-          "jsonpath": "$.version"
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
+        },
+        {
+          "type": "json",
+          "path": ".agents/plugins/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
         },
         {
           "type": "json",

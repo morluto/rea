@@ -5,14 +5,12 @@ import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 import { projectAndroidApplicationEvidence } from "../../application/android/AndroidApplicationService.js";
 import { projectAppleApplicationEvidence } from "../../application/apple/AppleApplicationService.js";
 import { projectHarmonyApplicationEvidence } from "../../application/harmony/HarmonyApplicationService.js";
-import {
-  APPLICATION_TOOL_CONTRACTS,
-  applicationToolContract,
-} from "../../contracts/applicationToolContracts.js";
+import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import type { Evidence } from "../../domain/evidence.js";
 import type { Result } from "../../domain/result.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import type { InventoryProjectionEvidenceResult } from "../../application/InventoryProjectionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
@@ -26,19 +24,19 @@ export const registerProjectMobileApplicationGraphTools = (
   registerProjection({
     server,
     options,
-    contract: applicationToolContract("project_android_application_graph"),
+    contract: toolContract("project_android_application_graph"),
     project: projectAndroidApplicationEvidence,
   });
   registerProjection({
     server,
     options,
-    contract: applicationToolContract("project_apple_application_graph"),
+    contract: toolContract("project_apple_application_graph"),
     project: projectAppleApplicationEvidence,
   });
   registerProjection({
     server,
     options,
-    contract: applicationToolContract("project_harmony_application_graph"),
+    contract: toolContract("project_harmony_application_graph"),
     project: projectHarmonyApplicationEvidence,
   });
 };
@@ -47,7 +45,9 @@ const registerProjection = (context: {
   readonly server: EvidenceMcpServer;
   readonly options: ApplicationToolRegistration;
   readonly contract: (typeof APPLICATION_TOOL_CONTRACTS)[number];
-  readonly project: (input: unknown) => Result<Evidence, AnalysisError>;
+  readonly project: (
+    input: unknown,
+  ) => Result<InventoryProjectionEvidenceResult, AnalysisError>;
 }): void => {
   const { server, options, contract, project } = context;
   server.registerTool(
@@ -67,29 +67,18 @@ const registerProjection = (context: {
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);
-          const recordedSources = recordSessionEvidenceSources(
+          const recordedSources = recordEvidenceSources(
             options.recordEvidence,
-            inventoryEvidenceSources(input),
+            result.value.sources,
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(recordedSources, contract);
           return recordResult(
             { ...options, delivery: server.delivery },
             contract,
-            result.value,
+            result.value.evidence,
           );
         },
       ),
   );
-};
-
-const inventoryEvidenceSources = (input: unknown): readonly Evidence[] => {
-  if (
-    typeof input !== "object" ||
-    input === null ||
-    !("inventory_evidence" in input) ||
-    !Array.isArray(input.inventory_evidence)
-  )
-    return [];
-  return input.inventory_evidence as readonly Evidence[];
 };

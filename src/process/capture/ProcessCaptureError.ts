@@ -12,7 +12,6 @@ interface ProcessCaptureErrorOptions extends AnalysisErrorOptions {
   readonly userMessage?: string;
   readonly userCategory?: "cancelled";
   readonly reason?: "capture_failed" | "cleanup_incomplete" | "cancelled";
-  readonly cleanupResources?: readonly string[];
   readonly executionFailure?: string;
   readonly partialObservation?: PartialProcessCaptureObservation;
   readonly cleanupReport?: ProcessCaptureCleanupReport;
@@ -25,8 +24,6 @@ export class ProcessCaptureError extends AnalysisError {
   override readonly userMessage: string | undefined;
   override readonly userCategory: "cancelled" | undefined;
   readonly reason: NonNullable<ProcessCaptureErrorOptions["reason"]>;
-  override readonly cleanupIncomplete: boolean;
-  override readonly cleanupResources: readonly string[];
   override readonly executionFailure: string | undefined;
   override readonly partialObservation:
     | PartialProcessCaptureObservation
@@ -40,11 +37,57 @@ export class ProcessCaptureError extends AnalysisError {
     this.reason =
       options?.reason ??
       (options?.userCategory === "cancelled" ? "cancelled" : "capture_failed");
-    this.cleanupIncomplete = this.reason === "cleanup_incomplete";
-    this.cleanupResources = options?.cleanupResources ?? [];
+    this.cleanupIncomplete ||= this.reason === "cleanup_incomplete";
     this.executionFailure = options?.executionFailure ?? message;
     this.partialObservation = options?.partialObservation;
     this.cleanupReport = options?.cleanupReport;
+  }
+
+  /** Add final capture observations while preserving primary facts and cleanup ownership. */
+  withFinalization(
+    options: Pick<
+      ProcessCaptureErrorOptions,
+      "executionFailure" | "partialObservation" | "cleanupReport"
+    > & { readonly cleanupFailure?: AnalysisError },
+  ): ProcessCaptureError {
+    const secondary = options.cleanupFailure;
+    const resources = [
+      ...new Set([
+        ...this.cleanupResources,
+        ...(secondary?.cleanupResources ?? []),
+      ]),
+    ];
+    const executionFailure = this.executionFailure ?? options.executionFailure;
+    const partialObservation =
+      this.partialObservation ?? options.partialObservation;
+    const cleanupReport = this.cleanupReport ?? options.cleanupReport;
+    const finalized = new ProcessCaptureError(this.message, {
+      cleanupPrimary: this,
+      ...(Object.hasOwn(this, "cause") ? { cause: this.cause } : {}),
+      ...(this.userMessage === undefined
+        ? {}
+        : { userMessage: this.userMessage }),
+      ...(this.userCategory === undefined
+        ? {}
+        : { userCategory: this.userCategory }),
+      reason: this.reason,
+      ...(this.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: this.capturedOutput }),
+      ...(secondary === undefined
+        ? this.cleanup === undefined
+          ? {}
+          : { cleanup: this.cleanup }
+        : { cleanup: { reason: secondary.message, resources } }),
+      ...(executionFailure === undefined ? {} : { executionFailure }),
+      ...(partialObservation === undefined ? {} : { partialObservation }),
+      ...(cleanupReport === undefined ? {} : { cleanupReport }),
+    }).bindCleanupDependencies([
+      this,
+      ...(secondary === undefined ? [] : [secondary]),
+    ]);
+    if (secondary !== undefined) finalized.retainSecondaryFailure(secondary);
+    return finalized;
   }
 }
 
@@ -59,8 +102,11 @@ export const describeProcessCaptureExecutionFailure = (
 };
 
 /** Caller-visible cancellation without exposing capture implementation state. */
-export const processCaptureCancelled = (): ProcessCaptureError =>
+export const processCaptureCancelled = (
+  reason?: unknown,
+): ProcessCaptureError =>
   new ProcessCaptureError("process capture was cancelled", {
+    cause: reason,
     userCategory: "cancelled",
     reason: "cancelled",
     userMessage: "Process capture was cancelled. Start it again when ready.",
@@ -73,32 +119,32 @@ export const normalizeCaptureFailure = (
 ): unknown => {
   if (cause instanceof ProcessCaptureError) return cause;
   if (cause instanceof DarwinProcessOwnershipInspectionError) {
-    const compiler = cause.compilerOutcome;
-    return new ProcessCaptureError(cause.message, {
+    const normalized = new ProcessCaptureError(cause.message, {
       cause,
-      ...(compiler === undefined
+      ...(cause.cancellation === undefined
+        ? {}
+        : { userCategory: "cancelled" as const, reason: "cancelled" as const }),
+      ...(cause.cleanupFailure === undefined
         ? {}
         : {
-            capturedOutput: {
-              stdout: "",
-              stderr: compiler.stderr,
-              truncated: compiler.stderrTruncated || compiler.outputTruncated,
-              stderr_bytes: compiler.stderrBytes,
-              exit_code:
-                compiler.outcome === "exited" &&
-                typeof compiler.code === "number"
-                  ? compiler.code
-                  : null,
-              signal: compiler.signal,
+            cleanup: {
+              reason: cause.cleanupFailure.message,
+              resources: cause.cleanupFailure.cleanupResources,
             },
           }),
+      ...(cause.capturedOutput === undefined
+        ? {}
+        : { capturedOutput: cause.capturedOutput }),
     });
+    return cause.cleanupFailure === undefined
+      ? normalized
+      : normalized.bindCleanupDependencies([cause.cleanupFailure]);
   }
   if (
     signal?.aborted === true &&
     (cause === signal.reason ||
       (cause instanceof Error && cause.name === "AbortError"))
   )
-    return processCaptureCancelled();
+    return processCaptureCancelled(signal.reason);
   return cause;
 };

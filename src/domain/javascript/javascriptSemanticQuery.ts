@@ -2,11 +2,10 @@ import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
 import type {
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
+  JavaScriptSemanticGraphUnknown,
 } from "./javascriptSemanticGraphSchemas.js";
-import type { JavaScriptSemanticGraphUnknown } from "./javascriptSemanticGraphSchemas.js";
 import { isJavaScriptSemanticOwnershipRelation as ownershipRelation } from "./javascriptSemanticQueryRelations.js";
 import {
-  javaScriptSemanticQueryInputSchema,
   javaScriptSemanticQueryResultSchema,
   type JavaScriptSemanticQueryInput,
   type JavaScriptSemanticQueryResult,
@@ -34,12 +33,11 @@ interface QueryResult {
   readonly retainedRelations: JavaScriptSemanticGraphRelation[];
 }
 
-/** Run one deterministic traversal over a verified semantic graph. */
+/** Run a query already parsed by its owning request boundary. */
 export const queryJavaScriptSemanticGraph = (
   graph: JavaScriptSemanticGraph,
-  rawInput: unknown,
+  input: JavaScriptSemanticQueryInput,
 ): JavaScriptSemanticQueryResult => {
-  const input = javaScriptSemanticQueryInputSchema.parse(rawInput);
   const queryId = queryIdentifier(graph, input);
   const seeds = resolveSeeds(graph, input);
   const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
@@ -250,10 +248,23 @@ const relevantUnknownFrontiers = (
   return graph.unknowns.filter(
     (unknown) =>
       (unknown.node_id === null || nodeIds.has(unknown.node_id)) &&
-      (allowed === null ||
-        unknown.relation_kinds.some((relation) => allowed.has(relation))),
+      unknown.relation_kinds.some(
+        (relation) =>
+          directionAllowsRelation(input.direction, relation) &&
+          (allowed === null || allowed.has(relation)),
+      ),
   );
 };
+
+const directionAllowsRelation = (
+  direction: JavaScriptSemanticQueryInput["direction"],
+  relation: JavaScriptSemanticGraphRelation["relation"],
+): boolean =>
+  direction === "callers"
+    ? relation === "calls"
+    : direction === "ownership"
+      ? ownershipRelation(relation)
+      : true;
 
 const relevantCandidateRelationCount = (
   graph: JavaScriptSemanticGraph,

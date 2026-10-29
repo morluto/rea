@@ -4,6 +4,10 @@ import type * as t from "@babel/types";
 export interface SymbolicEnvironment {
   readonly values: ReadonlyMap<string, SymbolicValue>;
   readonly parent?: SymbolicEnvironment;
+  /** Stable activation identity, shared by its completed views. */
+  readonly activation?: object;
+  /** Known synchronous caller, distinct from lexical capture. */
+  readonly caller?: SymbolicEnvironment;
   /** Source point at which the current function is being symbolically executed. */
   readonly point?: t.Node;
   /** Lexical function scope for point-sensitive local initializer checks. */
@@ -12,6 +16,8 @@ export interface SymbolicEnvironment {
   readonly scopeNode?: t.Function;
   /** Completion boundary proven for this captured activation. */
   readonly completedAt?: t.Node;
+  /** Shared completion facts must remain unchanged through this later exit. */
+  readonly commonThrough?: t.Node;
 }
 
 export interface SymbolicCondition {
@@ -51,6 +57,8 @@ export type SymbolicValue = (
       readonly kind: "namespace";
       readonly bindingId: string;
       readonly environment: SymbolicEnvironment;
+      /** Namespace identity does not establish the mutable root's runtime value. */
+      readonly runtimeValueUnknown?: true;
     }
   | {
       readonly kind: "loader";
@@ -62,6 +70,12 @@ export type SymbolicValue = (
       readonly values: ReadonlyMap<string, SymbolicValue>;
     }
   | { readonly kind: "union"; readonly values: readonly SymbolicValue[] }
+  | { readonly kind: "iterator" }
+  | {
+      readonly kind: "promise";
+      readonly value: SymbolicValue;
+      readonly returnPoint?: t.Node;
+    }
   | SymbolicFunction
 ) &
   SymbolicMetadata;
@@ -81,6 +95,7 @@ export const symbolicUnion = (
   return unique.length === 1 ? unique[0]! : { kind: "union", values: unique };
 };
 export const symbolicTruth = (value: SymbolicValue): boolean | undefined => {
+  if (value.kind === "namespace" && value.runtimeValueUnknown) return undefined;
   if (value.kind === "union") {
     const choices = value.values.map(symbolicTruth);
     return choices.length > 0 &&
@@ -90,9 +105,16 @@ export const symbolicTruth = (value: SymbolicValue): boolean | undefined => {
   }
   return value.kind === "literal"
     ? Boolean(value.value)
-    : ["function", "object", "namespace", "array", "record", "loader"].includes(
-          value.kind,
-        )
+    : [
+          "function",
+          "object",
+          "namespace",
+          "array",
+          "record",
+          "loader",
+          "promise",
+          "iterator",
+        ].includes(value.kind)
       ? true
       : undefined;
 };

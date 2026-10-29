@@ -1,13 +1,13 @@
+import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { flutterResultSchemas } from "../flutter/flutterBuildAnalysis.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
-import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import type {
+  AnalysisViewParent,
+  AnalysisViewRequest,
+  UnsignedAnalysisView,
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
@@ -22,9 +22,9 @@ export const dartAotSummarySchema = aotSchema.extend({
     .omit({ package_uris: true, dart_uris: true, class_like_tokens: true })
     .extend({
       returned_counts: z.strictObject({
-        package_uris: z.number().int().nonnegative(),
-        dart_uris: z.number().int().nonnegative(),
-        class_like_tokens: z.number().int().nonnegative(),
+        package_uris: z.int().nonnegative(),
+        dart_uris: z.int().nonnegative(),
+        class_like_tokens: z.int().nonnegative(),
       }),
     }),
 });
@@ -33,8 +33,8 @@ export const dartAotSummarySchema = aotSchema.extend({
 export const dartAotViewRequestSchema = z.strictObject({
   kind: z.literal("dart-aot"),
   collection: z.enum(["package_uris", "dart_uris", "class_like_tokens"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const dartAotViewContextSchema = z.strictObject({
@@ -59,20 +59,9 @@ export const projectDartAotView = (
         },
       ]),
     );
-  const parsed = aotSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  const parsed = parseAnalysisViewResult(aotSchema, parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
   const { package_uris, dart_uris, class_like_tokens, ...pool } =
     report.string_pool;
   const string_pool = {

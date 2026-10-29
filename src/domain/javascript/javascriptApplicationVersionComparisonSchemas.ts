@@ -70,7 +70,9 @@ export const compareApplicationVersionsInputSchema = z
   })
   .superRefine(validateApplicationVersionIdentities);
 
-const candidateNodesSchema = z.tuple([nodeIdSchema]).rest(nodeIdSchema);
+const candidateNodesSchema = z
+  .tuple([nodeIdSchema], nodeIdSchema)
+  .check(z.minLength(1));
 const exactMatchSchema = z.strictObject({
   status: z.literal("matched"),
   basis: z.enum([
@@ -181,8 +183,8 @@ const comparisonItemSchema = z.union([
 const comparisonCoverageSchema = z.strictObject({
   left_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
   right_graph_status: z.enum(["complete", "partial", "unknown", "unavailable"]),
-  left_graph_omitted_count: z.number().int().min(0).nullable(),
-  right_graph_omitted_count: z.number().int().min(0).nullable(),
+  left_graph_omitted_count: z.int().min(0).nullable(),
+  right_graph_omitted_count: z.int().min(0).nullable(),
   status: z.enum(["complete-within-inputs", "partial", "truncated"]),
 });
 
@@ -201,21 +203,21 @@ export const applicationVersionComparisonResultSchema = z
       root_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     }),
     summary: z.strictObject({
-      unchanged: z.number().int().min(0),
-      added: z.number().int().min(0),
-      removed: z.number().int().min(0),
-      changed: z.number().int().min(0),
-      unknown: z.number().int().min(0),
+      unchanged: z.int().min(0),
+      added: z.int().min(0),
+      removed: z.int().min(0),
+      changed: z.int().min(0),
+      unknown: z.int().min(0),
     }),
     matching: z.strictObject({
-      exact_node_identity: z.number().int().min(0),
-      exact_content_digest: z.number().int().min(0),
-      exact_module_source_digest: z.number().int().min(0),
-      source_map_identity: z.number().int().min(0),
-      structural_fingerprint: z.number().int().min(0),
-      semantic_key: z.number().int().min(0),
-      ambiguous: z.number().int().min(0),
-      unmatched: z.number().int().min(0),
+      exact_node_identity: z.int().min(0),
+      exact_content_digest: z.int().min(0),
+      exact_module_source_digest: z.int().min(0),
+      source_map_identity: z.int().min(0),
+      structural_fingerprint: z.int().min(0),
+      semantic_key: z.int().min(0),
+      ambiguous: z.int().min(0),
+      unmatched: z.int().min(0),
     }),
     items: z.array(comparisonItemSchema),
     graph: javascriptApplicationGraphSchema,

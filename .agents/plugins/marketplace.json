@@ -7,8 +7,9 @@
     {
       "name": "rea",
       "source": {
-        "source": "local",
-        "path": "./"
+        "source": "npm",
+        "package": "rea-agents",
+        "version": "6.8.0"
       },
       "policy": {
         "installation": "AVAILABLE",

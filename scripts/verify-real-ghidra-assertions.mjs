@@ -3,7 +3,7 @@ import { hasTypedSwitchEvidence } from "./verify-real-ghidra-switch-assertions.m
 import { access } from "node:fs/promises";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
-import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraInstallationPolicy.js";
+import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 
 export function assertLocalProcedureInfo(info, expectedAddress) {
@@ -245,11 +245,7 @@ export function dossierSummary(dossier) {
   };
 }
 
-export async function assertSession(
-  session,
-  expectedDigest,
-  expectedTargetSha256,
-) {
+export function assertSession(session, expectedDigest, expectedTargetSha256) {
   if (
     session.provider.id !== "ghidra" ||
     session.provider.version !== SUPPORTED_GHIDRA_VERSION ||

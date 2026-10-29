@@ -8,7 +8,7 @@ volatile int rea_c_global = 7;
 /* Keep the full-size literal even when a loader does not type it as a string. */
 __attribute__((used)) const char rea_long_literal[] =
     "REA_LONG_LITERAL_" REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 REA_LONG_1024 "needle";
-/* Linux Hopper 6.4.2 recognizes this extent and splits it into native objects. */
+/* Verified Hopper loaders recognize this extent and split it into native objects. */
 __attribute__((used)) const char rea_fragmented_literal[] =
     "REA_FRAGMENTED_LITERAL_" REA_LONG_256 REA_LONG_256 "fragment_tail";
 __attribute__((used)) const char rea_utf8_literal[] = "REA_UTF8_é_😀";

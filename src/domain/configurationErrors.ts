@@ -12,14 +12,18 @@ export interface ConfigurationSettingIssue {
 /** Rejected settings retained for diagnostics; their values are not. */
 export interface ConfigurationErrorOptions extends AnalysisErrorOptions {
   readonly settings?: readonly ConfigurationSettingIssue[];
+  /** Producer-owned recovery when this setting can be repaired in a running session. */
+  readonly remediationAction?: string;
 }
 
 /** Runtime configuration could not be parsed safely. */
 export class ConfigurationError extends AnalysisError {
   readonly _tag = "ConfigurationError";
   readonly settings: readonly ConfigurationSettingIssue[];
+  readonly remediationAction: string | undefined;
   constructor(message: string, options?: ConfigurationErrorOptions) {
     super(message, options);
+    this.remediationAction = options?.remediationAction;
     this.settings = (options?.settings ?? []).map(
       ({ setting, constraint }) => ({ setting, constraint }),
     );

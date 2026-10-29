@@ -20,7 +20,10 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
@@ -35,11 +38,27 @@ if (
   !isAbsolute(strace ?? "")
 )
   throw new Error(
-    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld and strip must be available. No target is executed.",
+    "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
 const execute = promisify(execFile);
-for (const command of ["gcc", "ld", "strip", "/usr/bin/prlimit", strace]) {
+const ELF32_TOOLCHAINS = [
+  ["i686-linux-gnu", "EM_386", "little"],
+  ["arm-linux-gnueabi", "EM_ARM", "little"],
+  ["mips-linux-gnu", "EM_MIPS", "big"],
+  ["mipsel-linux-gnu", "EM_MIPS", "little"],
+];
+for (const command of [
+  "gcc",
+  "ld",
+  "strip",
+  "/usr/bin/prlimit",
+  strace,
+  ...ELF32_TOOLCHAINS.flatMap(([prefix]) => [
+    `${prefix}-gcc`,
+    `${prefix}-readelf`,
+  ]),
+]) {
   try {
     await execute(command, [command === strace ? "-V" : "--version"], {
       timeout: 10_000,
@@ -328,7 +347,206 @@ try {
       cases++;
     }
   }
+  // ELF32 profiles: cross-compiled, never executed, checked against GNU readelf.
+  for (const [
+    prefix,
+    machine,
+    byteOrder,
+    kind,
+    flags,
+  ] of ELF32_TOOLCHAINS.flatMap((toolchain) => [
+    [...toolchain, "executable", ["-fPIE", "-pie"]],
+    [...toolchain, "relocatable", ["-c", "-fPIC"]],
+  ])) {
+    const path = join(root.path, `${prefix}-${kind}`);
+    await execute(`${prefix}-gcc`, ["-O1", ...flags, source, "-o", path], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    const { stdout } = await execute(`${prefix}-readelf`, ["-SWsr", path], {
+      timeout: 10_000,
+      maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, LC_ALL: "C" },
+    });
+    const expectedSections = [
+      ...stdout.matchAll(
+        /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+[A-Za-z]*\s+(\d+)\s+\d+\s+\d+\s*$/gm,
+      ),
+    ]
+      .filter(([, index]) => index !== "0")
+      .map(([, index, name, address, offset, size, link]) => ({
+        index: Number(index),
+        name,
+        address: BigInt(`0x${address}`),
+        offset: BigInt(`0x${offset}`),
+        size: BigInt(`0x${size}`),
+        link: Number(link),
+      }));
+    assert.ok(
+      expectedSections.length > 0,
+      `readelf listed no sections for ${path}`,
+    );
+    const expectedSymbols = [];
+    for (const [, name, count, body] of stdout.matchAll(
+      /^Symbol table '([^']+)' contains (\d+) entr(?:y|ies):\n((?:[^\n]+\n?)*)/gm,
+    )) {
+      const table = expectedSections.find((section) => section.name === name);
+      assert.notEqual(table, undefined, `readelf symbol table absent: ${name}`);
+      const rows = [...body.matchAll(/^\s*(\d+):\s+([0-9a-f]+)\s+(\d+)\s/gm)];
+      assert.equal(rows.length, Number(count), `readelf symbol count: ${name}`);
+      for (const [, index, value, size] of rows)
+        expectedSymbols.push({
+          table_index: table.index,
+          entry_index: Number(index),
+          value: BigInt(`0x${value}`),
+          size: BigInt(size),
+        });
+    }
+    assert.ok(
+      expectedSymbols.length > 0,
+      `readelf listed no symbols for ${path}`,
+    );
+    const expectedRelocations = [];
+    for (const [, name, count, body] of stdout.matchAll(
+      /^Relocation section '([^']+)' at offset 0x[0-9a-f]+ contains (\d+) entr(?:y|ies):\n((?:[^\n]+\n?)*)/gm,
+    )) {
+      const section = expectedSections.find((section) => section.name === name);
+      assert.notEqual(
+        section,
+        undefined,
+        `readelf relocation section absent: ${name}`,
+      );
+      const rows = [...body.matchAll(/^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+\S+/gm)];
+      assert.equal(
+        rows.length,
+        Number(count),
+        `readelf relocation count: ${name}`,
+      );
+      for (const [entryIndex, [, offset, info]] of rows.entries()) {
+        // ELF32 r_info uses the low byte for type and the upper 24 bits for
+        // the symbol index. readelf has already decoded the file's byte order.
+        const decodedInfo = BigInt(`0x${info}`);
+        expectedRelocations.push({
+          section_index: section.index,
+          entry_index: entryIndex,
+          reported_offset: BigInt(`0x${offset}`),
+          type: Number(decodedInfo & 0xffn),
+          symbol_table_index: section.link,
+          symbol_index: Number(decodedInfo >> 8n),
+        });
+      }
+    }
+    assert.ok(
+      expectedRelocations.length > 0,
+      `readelf listed no relocations for ${path}`,
+    );
+    const bytes = await readFile(path);
+    for (const mode of ["cli", "mcp"]) {
+      const value = await inspect(mode, path);
+      assert.deepEqual(value.architecture, {
+        machine,
+        bits: 32,
+        byte_order: byteOrder,
+      });
+      assert.equal(
+        value.image_type,
+        kind === "executable" ? "ET_DYN" : "ET_REL",
+      );
+      for (const section of expectedSections) {
+        const reported = value.sections[section.index];
+        assert.equal(reported.name.display, section.name);
+        assert.equal(BigInt(reported.address), section.address);
+        assert.equal(BigInt(reported.offset), section.offset);
+        assert.equal(BigInt(reported.size), section.size);
+      }
+      assert.equal(value.sections.length, expectedSections.length + 1);
+      assert.deepEqual(
+        value.symbols.map(({ table_index, entry_index, value, size }) => ({
+          table_index,
+          entry_index,
+          value: BigInt(value),
+          size: BigInt(size),
+        })),
+        expectedSymbols,
+        `${mode} symbol values differ from readelf for ${path}`,
+      );
+      assert.deepEqual(
+        value.relocations.map(
+          ({
+            section_index,
+            entry_index,
+            reported_offset,
+            type,
+            symbol_table_index,
+            symbol_index,
+          }) => ({
+            section_index,
+            entry_index,
+            reported_offset: BigInt(reported_offset),
+            type,
+            symbol_table_index,
+            symbol_index,
+          }),
+        ),
+        expectedRelocations,
+        `${mode} relocations differ from readelf for ${path}`,
+      );
+      if (kind === "executable") {
+        assert.ok(value.segments.length > 0);
+        assert.equal(value.linkage.interpreters.length, 1);
+        assert.ok(
+          value.linkage.needed_libraries.some(
+            (library) => library.display === "libc.so.6",
+          ),
+        );
+      }
+      assert.deepEqual(await readFile(path), bytes);
+      cases++;
+    }
+  }
   const protectedReport = reports.get("protected");
+  // Ordinary data markers are not a request to discover/decompress a kernel config.
+  const markerBytes = Buffer.from(await readFile(join(root.path, "protected")));
+  const markerOffset = markerBytes.indexOf(Buffer.from("source-owned"));
+  assert.ok(markerOffset >= 0);
+  markerBytes.write("IKCFG_ST", markerOffset, "ascii");
+  const markerPath = join(root.path, "ordinary-kernel-marker");
+  await writeFile(markerPath, markerBytes);
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, markerPath);
+    for (const field of [
+      "sections",
+      "segments",
+      "symbols",
+      "relocations",
+      "linkage",
+      "mitigations",
+    ])
+      assert.deepEqual(value[field], protectedReport[field]);
+    assert.equal(
+      value.artifact.sha256,
+      createHash("sha256").update(markerBytes).digest("hex"),
+    );
+    cases++;
+  }
+  assert.deepEqual(await readFile(markerPath), markerBytes);
+  // File-table offsets are validated before narrower dependency seek APIs.
+  const overflowingTable = Buffer.from(markerBytes);
+  overflowingTable.writeBigUInt64LE(0x8000000000000040n, 32);
+  const overflowingTablePath = join(root.path, "overflowing-program-table");
+  await writeFile(overflowingTablePath, overflowingTable);
+  for (const mode of ["cli", "mcp"]) {
+    const error = await inspect(mode, overflowingTablePath, "invalid_input");
+    assert.equal(error.code, "invalid_request");
+    assert.ok(
+      error.details.issues.some(
+        ({ path, reason }) => path[0] === "path" && reason === "invalid_format",
+      ),
+    );
+    cases++;
+  }
+  assert.deepEqual(await readFile(overflowingTablePath), overflowingTable);
+
   const fileSymbols = protectedReport.symbols.filter(
     (symbol) => symbol.type === "STT_FILE",
   );
@@ -927,9 +1145,8 @@ try {
   sectionHeavy.writeUInt16LE(sectionCount, 60);
   const sectionHeavyPath = join(root.path, "section-heavy.o");
   await writeFile(sectionHeavyPath, sectionHeavy);
-  // pwntools materializes each PT_LOAD zero-filled tail during inspection.
-  // One allocation larger than the whole address-space budget fails promptly;
-  // a large section count instead races CPU work against the command deadline.
+  // A structural report must retain a large virtual zero tail without allocating it.
+  // Bootstrap controls above retain genuine MemoryError/ENOMEM classification.
   const memoryHeavy = Buffer.from(await readFile(join(root.path, "protected")));
   const memoryPhOffset = Number(memoryHeavy.readBigUInt64LE(32));
   const memoryPhSize = memoryHeavy.readUInt16LE(54);
@@ -944,11 +1161,15 @@ try {
   assert.notEqual(lastLoadIndex, undefined);
   const memorySizeOffset = memoryPhOffset + lastLoadIndex * memoryPhSize + 40;
   memoryHeavy.writeBigUInt64LE(
-    memoryHeavy.readBigUInt64LE(memorySizeOffset) + 128n * 1024n * 1024n,
+    memoryHeavy.readBigUInt64LE(memorySizeOffset) +
+      3n * 1024n * 1024n * 1024n +
+      1n,
     memorySizeOffset,
   );
   const memoryHeavyPath = join(root.path, "memory-zero-tail");
   await writeFile(memoryHeavyPath, memoryHeavy);
+  // Resource limits are result-affecting inputs: upstream PLT emulation may be
+  // incomplete under this address-space budget. Compare adapters at that budget.
   const memoryEnvironment = limitedEnvironment("--as=100663296");
   const memoryClient = new Client({
     name: "memory-layout-verifier",
@@ -962,22 +1183,39 @@ try {
   });
   try {
     await memoryClient.connect(memoryTransport);
+    let boundedMemoryReference;
     for (const mode of ["cli", "mcp"]) {
-      const error = await inspect(
+      const value = await inspect(
         mode,
         memoryHeavyPath,
-        "resource_constraint",
+        undefined,
         memoryEnvironment,
         memoryClient,
       );
-      assert.equal(error.code, "resource_constraint");
-      assert.equal(error.details.resource, "memory");
+      const original = protectedReport.segments[lastLoadIndex];
+      assert.deepEqual(value.segments[lastLoadIndex], {
+        ...original,
+        memory_size: `0x${memoryHeavy.readBigUInt64LE(memorySizeOffset).toString(16)}`,
+      });
+      assert.deepEqual(value.sections, protectedReport.sections);
+      assert.deepEqual(value.symbols, protectedReport.symbols);
+      assert.deepEqual(value.relocations, protectedReport.relocations);
+      if (mode === "cli") boundedMemoryReference = value;
+      else assert.deepEqual(value, boundedMemoryReference);
       assert.ok(
-        error.details.reported_limits === null ||
-          error.details.reported_limits.address_space_bytes === 100663296,
+        value.limitations.some((item) =>
+          item.includes('"address_space_bytes": 100663296'),
+        ),
       );
-      assert.equal(error.details.captured_output.truncated, false);
-      assert.ok(error.remediation.action.includes("memory"));
+      assert.equal(value.linkage.convenience_maps_completeness, "unknown");
+      const { plt: _originalPlt, ...originalLinkage } = protectedReport.linkage;
+      const { plt: _mutatedPlt, ...mutatedLinkage } = value.linkage;
+      assert.deepEqual(mutatedLinkage, originalLinkage);
+      assert.deepEqual(value.mitigations, protectedReport.mitigations);
+      assert.equal(
+        value.artifact.sha256,
+        createHash("sha256").update(memoryHeavy).digest("hex"),
+      );
       cases++;
     }
     assert.deepEqual(await readFile(memoryHeavyPath), memoryHeavy);
@@ -1314,14 +1552,12 @@ async function inspect(
       },
       { timeout: 300_000 },
     );
-    const value = JSON.parse(mcpTextValue(response));
     if (category !== undefined) {
-      assert.equal(response.isError, true);
-      assert.equal(value.error.category, category, JSON.stringify(value.error));
-      return value.error;
+      const error = requireMcpToolError(response);
+      assert.equal(error.category, category, JSON.stringify(error));
+      return error;
     }
-    assert.notEqual(response.isError, true, mcpTextValue(response));
-    envelope = value;
+    envelope = requireMcpOutput(response, "inspect_binary_layout");
   } else {
     let response;
     try {

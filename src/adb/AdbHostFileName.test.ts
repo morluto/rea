@@ -19,7 +19,10 @@ describe("adbHostFileName", () => {
     ["/data/local/tmp/a*b.txt", "a*b.txt"],
     ["/data/local/tmp/re\u007fport", "re\u007fport"],
   ])("accepts the POSIX device path %s", (devicePath, fileName) => {
-    expect(adbHostFileName(devicePath)).toEqual({ ok: true, fileName });
+    expect(adbHostFileName(devicePath, "linux")).toEqual({
+      ok: true,
+      fileName,
+    });
   });
 
   it.each([

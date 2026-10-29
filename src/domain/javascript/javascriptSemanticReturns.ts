@@ -28,6 +28,7 @@ import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import { semanticReturnCoverage } from "./javascriptSemanticCoverage.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 
 interface ReturnExpression {
   readonly node: t.Node | null;
@@ -53,6 +54,10 @@ export const collectSemanticReturns = (
     const expressions = directReturnExpressions(node);
     const sites: JavaScriptSemanticReturnSite[] = [];
     for (const expression of expressions) {
+      const returned =
+        expression.node === null
+          ? null
+          : unwrapJavaScriptExpression(expression.node).node;
       sites.push({
         returnSiteId: semanticReturnSiteId(
           callable.callableId,
@@ -60,9 +65,10 @@ export const collectSemanticReturns = (
         ),
         location: expression.location,
         identityReferenceLocation:
-          expression.node !== null && t.isIdentifier(expression.node)
-            ? range(expression.node)
+          returned !== null && t.isIdentifier(returned)
+            ? range(returned)
             : null,
+        valueExpressionLocation: returned === null ? null : range(returned),
         value:
           expression.node === null
             ? { status: "unknown", reason: "Return has no value." }
@@ -104,15 +110,18 @@ export const resolveSemanticModuleCallables = (
     if (link.kind === "type-import") return { ...link, callableId: null };
     // Named exports follow their lexical binding, including every assignment.
     // A declaration's ID or a callable's display name cannot prove that link.
-    if (link.localName === null)
+    const captured = state.defaultExportExpressions.get(link);
+    if (link.localName === null && captured === undefined)
       return link.callableId !== null && callableIds.has(link.callableId)
         ? link
         : { ...link, callableId: null };
     const binding = state.moduleLinkBindings.get(link);
     const resolved =
-      binding === undefined
-        ? []
-        : callableIdsForBinding(binding, state, callableIds, new Set());
+      captured !== undefined
+        ? callableIdsForNode(captured, state, callableIds, new Set(), true)
+        : binding === undefined
+          ? []
+          : callableIdsForBinding(binding, state, callableIds, new Set());
     const provenance =
       binding === undefined || link.specifier !== null
         ? undefined
@@ -139,23 +148,31 @@ const callableIdsForBinding = (
   state: JavaScriptSemanticAnalysisState,
   admitted: ReadonlySet<string>,
   seen: ReadonlySet<string>,
+  read?: t.Node,
 ): string[] => {
   // A single initializer does not prove an assignment executes or replace
   // the unknown incoming value of a parameter/catch binding.
   if (
     seen.has(binding.bindingId) ||
-    binding.initializers.length !== 1 ||
+    (read === undefined && binding.initializers.length !== 1) ||
     binding.definitions.some(
       ({ kind }) =>
-        kind === "assignment" || kind === "parameter" || kind === "catch",
+        (read === undefined && kind === "assignment") ||
+        kind === "parameter" ||
+        kind === "catch",
     )
   )
     return [];
-  const initializer = binding.initializers[0];
+  const selected =
+    read === undefined
+      ? binding
+      : semanticBindingAtRead(binding, read, state.parentsByNode).binding;
+  const initializer = selected.initializers[0];
   if (
     initializer === undefined ||
+    selected.initializers.length !== 1 ||
     initializer.projection.length > 0 ||
-    state.conditionalInitializers.has(initializer.node)
+    state.conditionallySkippedExpressions.has(initializer.node)
   )
     return [];
   return callableIdsForNode(
@@ -163,6 +180,7 @@ const callableIdsForBinding = (
     state,
     admitted,
     new Set([...seen, binding.bindingId]),
+    read !== undefined,
   );
 };
 
@@ -171,17 +189,24 @@ const callableIdsForNode = (
   state: JavaScriptSemanticAnalysisState,
   admitted: ReadonlySet<string>,
   seen: ReadonlySet<string>,
+  snapshot = false,
 ): string[] => {
   const unwrapped = unwrapJavaScriptExpression(node).node;
   if (unwrapped !== node)
-    return callableIdsForNode(unwrapped, state, admitted, seen);
+    return callableIdsForNode(unwrapped, state, admitted, seen, snapshot);
   const direct = semanticCallableIdForNode(node);
   if (direct !== null && admitted.has(direct)) return [direct];
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(state, node, node.name);
     return binding === undefined
       ? []
-      : callableIdsForBinding(binding, state, admitted, seen);
+      : callableIdsForBinding(
+          binding,
+          state,
+          admitted,
+          seen,
+          snapshot ? node : undefined,
+        );
   }
   return [];
 };

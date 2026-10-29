@@ -5,6 +5,20 @@ import { lstat, open, stat, type FileHandle } from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
+/** Cancellation observed at a file operation's explicit checkpoint. */
+export class RegularFileOperationCancelled extends Error {
+  readonly _tag = "RegularFileOperationCancelled";
+  constructor(readonly reason: unknown) {
+    super("Regular file operation cancelled", { cause: reason });
+    this.name = this._tag;
+  }
+}
+
+export const assertRegularFileActive = (signal?: AbortSignal): void => {
+  if (signal?.aborted === true)
+    throw new RegularFileOperationCancelled(signal.reason);
+};
+
 /** Identifies a selected path that cannot be read as one regular file. */
 export class NonRegularFileReadError extends Error {
   readonly code: "EISDIR" | "ENOTFILE";
@@ -40,11 +54,35 @@ export class RegularFileAdmissionFailure extends Error {
 /** A regular input no longer matches the extent or identity admitted for reading. */
 export class RegularFileChangedError extends Error {
   readonly code = "ESTALE";
-  constructor(readonly path: string) {
-    super(`Selected input changed while being read: ${path}`);
+  constructor(
+    readonly path: string,
+    options?: ErrorOptions,
+  ) {
+    super(`Selected input changed while being read: ${path}`, options);
     this.name = "RegularFileChangedError";
   }
 }
+
+const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+  "ENOENT",
+  "ENOTDIR",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "EISDIR",
+  "ENOTFILE",
+  "ESTALE",
+]);
+
+/** Whether an errno identifies the selected path or file itself. */
+export const isSelectedRegularFileError = (
+  cause: unknown,
+): cause is Error & { readonly code: string } => {
+  if (!(cause instanceof Error)) return false;
+  const code: unknown = Reflect.get(cause, "code");
+  return (
+    typeof code === "string" && SELECTED_REGULAR_FILE_ERROR_CODES.has(code)
+  );
+};
 
 /** One admitted file descriptor and the metadata that identified its contents. */
 export interface StableRegularFileDescriptor {
@@ -52,15 +90,15 @@ export interface StableRegularFileDescriptor {
   readonly initial: Stats;
 }
 
-/** Open and verify the selected file descriptor without blocking on pipes. */
+/** Admit a non-blocking regular-file descriptor with its validated initial facts. */
 export const openRegularFile = async (
   path: string,
   options: {
     readonly symlinks: "follow" | "reject";
     readonly signal?: AbortSignal | undefined;
   },
-): Promise<FileHandle> => {
-  options.signal?.throwIfAborted();
+): Promise<StableRegularFileDescriptor> => {
+  assertRegularFileActive(options.signal);
   const handle = await open(
     path,
     constants.O_RDONLY |
@@ -74,28 +112,26 @@ export const openRegularFile = async (
       cause,
     );
     if (nonRegular === undefined) throw cause;
-    // Cancellation during the metadata probe outranks the reclassification.
-    options.signal?.throwIfAborted();
     throw nonRegular;
   });
   const owner = new OwnedFileHandle(handle);
   try {
-    options.signal?.throwIfAborted();
+    assertRegularFileActive(options.signal);
     const metadata = await handle.stat();
-    options.signal?.throwIfAborted();
     if (!metadata.isFile())
       throw new NonRegularFileReadError(path, metadata.isDirectory());
+    assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.
     if (options.symlinks === "reject" && (constants.O_NOFOLLOW ?? 0) === 0) {
       const named = await lstat(path);
-      options.signal?.throwIfAborted();
       if (named.isSymbolicLink())
         throw new NonRegularFileReadError(path, false);
       if (!sameRegularFileState(metadata, named))
         throw new RegularFileChangedError(path);
+      assertRegularFileActive(options.signal);
     }
-    return handle;
+    return { handle, initial: metadata };
   } catch (cause: unknown) {
     try {
       await owner.close();
@@ -141,9 +177,24 @@ const isUnopenableFileTypeError = (cause: unknown): boolean =>
   typeof cause.errno === "number" &&
   UNOPENABLE_FILE_TYPE_ERRNOS.has(cause.errno);
 
+/** Stable content identity; access times are deliberately excluded. */
+export type RegularFileState = Pick<
+  Stats,
+  "dev" | "ino" | "size" | "mode" | "mtimeMs" | "ctimeMs"
+>;
+
+export const regularFileState = (stats: Stats): RegularFileState => ({
+  dev: stats.dev,
+  ino: stats.ino,
+  size: stats.size,
+  mode: stats.mode,
+  mtimeMs: stats.mtimeMs,
+  ctimeMs: stats.ctimeMs,
+});
+
 /** Compare one regular file's identity and mutable metadata across a read. */
 export const sameRegularFileState = (
-  expected: Stats | BigIntStats,
+  expected: RegularFileState | BigIntStats,
   observed: Stats | BigIntStats,
 ): boolean =>
   observed.isFile() &&
@@ -156,3 +207,33 @@ export const sameRegularFileState = (
       expected.ctimeNs === observed.ctimeNs
     : expected.mtimeMs === observed.mtimeMs &&
       expected.ctimeMs === observed.ctimeMs);
+
+/** Validate an admitted descriptor and selected name at the same precision as admission. */
+export const assertStableRegularFileIdentity = async (
+  file: FileHandle,
+  path: string,
+  before: Stats | BigIntStats,
+  options: {
+    readonly symlinks: "follow" | "reject";
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> => {
+  assertRegularFileActive(options.signal);
+  const bigint = typeof before.dev === "bigint";
+  const named = async () => {
+    try {
+      const lookup = options.symlinks === "follow" ? stat : lstat;
+      return bigint ? await lookup(path, { bigint: true }) : await lookup(path);
+    } catch (cause: unknown) {
+      if (isSelectedRegularFileError(cause))
+        throw new RegularFileChangedError(path, { cause });
+      throw cause;
+    }
+  };
+  if (
+    !sameRegularFileState(before, await file.stat({ bigint })) ||
+    !sameRegularFileState(before, await named())
+  )
+    throw new RegularFileChangedError(path);
+  assertRegularFileActive(options.signal);
+};

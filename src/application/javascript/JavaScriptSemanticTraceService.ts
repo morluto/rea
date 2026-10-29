@@ -1,20 +1,16 @@
 import { z } from "zod";
 
-import {
-  AnalysisInputError,
-  AnalysisProtocolError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   applicationGraphEvidenceInputError,
   parseApplicationGraphEvidence,
 } from "./JavaScriptApplicationEvidenceGraph.js";
 import type { Evidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 import {
-  javaScriptSemanticTraceResultSchema,
   traceJavaScriptSemanticsInputSchema,
+  type JavaScriptSemanticTraceResult,
 } from "../../domain/javascript/javascriptSemanticTraceSchemas.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { createJavaScriptSemanticTraceEvidence } from "./JavaScriptApplicationWorkflowEvidence.js";
@@ -44,28 +40,23 @@ export const traceJavaScriptSemanticsEvidenceValidated = (
         },
       ]),
     );
-  try {
-    const query = queryJavaScriptSemanticGraph(
-      source.semanticGraph,
-      input.query,
-    );
-    const result = javaScriptSemanticTraceResultSchema.parse({
-      ...query,
-      source_evidence_id: source.evidence.evidence_id,
-      evidence_links: [source.evidence.evidence_id],
-    });
-    return ok(
-      createJavaScriptSemanticTraceEvidence(
-        {
-          application_evidence_id: source.evidence.evidence_id,
-          query: jsonValueSchema.parse(input.query),
-        },
-        result,
-      ),
-    );
-  } catch (cause: unknown) {
-    return err(
-      new AnalysisProtocolError("JavaScript semantic trace failed", { cause }),
-    );
-  }
+  const query = queryJavaScriptSemanticGraph(source.semanticGraph, input.query);
+  const result: JavaScriptSemanticTraceResult = {
+    ...query,
+    source_evidence_id: source.evidence.evidence_id,
+    evidence_links: [source.evidence.evidence_id],
+  };
+  const { allowed_relations, ...queryParameters } = input.query;
+  return ok(
+    createJavaScriptSemanticTraceEvidence(
+      {
+        application_evidence_id: source.evidence.evidence_id,
+        query:
+          allowed_relations === undefined
+            ? queryParameters
+            : { ...queryParameters, allowed_relations },
+      },
+      result,
+    ),
+  );
 };

@@ -3,7 +3,10 @@ import type {
   DylibTreeView,
   MachoSlice,
 } from "./dylibResolution.js";
-import { machoCpuSubtypeBase } from "./machoCpuIdentity.js";
+import {
+  machoArchitectureFamily,
+  machoCpuSubtypeBase,
+} from "./machoCpuIdentity.js";
 
 const MAX_SYMLINK_HOPS = 32;
 
@@ -68,7 +71,13 @@ export const joinPath = (directory: string, rest: string): string =>
   directory === "" ? rest : rest === "" ? directory : `${directory}/${rest}`;
 
 export type Expansion =
-  | { readonly scope: "target"; readonly path: string }
+  | {
+      readonly scope: "target";
+      /** Source-facing expansion retained in candidate Evidence. */
+      readonly path: string;
+      /** Root-relative lookup identity when `path` is an absolute source path. */
+      readonly lookupPath?: string;
+    }
   | { readonly scope: "outside"; readonly path: string }
   | { readonly scope: "undetermined"; readonly path: string };
 
@@ -78,9 +87,11 @@ export const expandPrefix = (
   context: {
     readonly ownerDirectory: string;
     readonly executable: string | null;
+    readonly rootRelativePath: (absolutePath: string) => string | undefined;
   },
 ): Expansion => {
-  const variable = /^@(executable_path|loader_path)(?:\/(.*))?$/u.exec(raw);
+  // Load-command paths can contain line terminators; the suffix is not a text line.
+  const variable = /^@(executable_path|loader_path)(?:\/(.*))?$/su.exec(raw);
   if (variable !== null) {
     const rest = variable[2] ?? "";
     if (variable[1] === "loader_path")
@@ -92,7 +103,12 @@ export const expandPrefix = (
           path: joinPath(directoryOf(context.executable), rest),
         };
   }
-  if (raw.startsWith("/")) return { scope: "outside", path: raw };
+  if (raw.startsWith("/")) {
+    const lookupPath = context.rootRelativePath(raw);
+    return lookupPath === undefined
+      ? { scope: "outside", path: raw }
+      : { scope: "target", path: raw, lookupPath };
+  }
   return { scope: "undetermined", path: raw };
 };
 
@@ -104,22 +120,57 @@ const COMPATIBLE_ARCHITECTURES: Readonly<Record<string, readonly string[]>> = {
   x86_64h: ["x86_64h", "x86_64"],
 };
 
+/** ARM32 subtype preference rows from dyld's CPU_SUBTYPE_ARM compatibility table. */
+const ARM32_CPU_TYPE = 12;
+const ARM32_SUBTYPE_PREFERENCES: Readonly<Record<number, readonly number[]>> = {
+  0: [0],
+  5: [5, 0],
+  6: [6, 7, 5, 0],
+  7: [7, 5, 0],
+  8: [8, 7, 5, 0],
+  9: [9, 6, 7, 5, 0],
+  10: [10, 9, 6, 7, 5, 0],
+  11: [11, 9, 10, 6, 7, 5, 0],
+  12: [12],
+};
+
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
   process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
-): MachoSlice | undefined => {
-  for (const architecture of COMPATIBLE_ARCHITECTURES[process.architecture] ?? [
-    process.architecture,
+):
+  | { readonly kind: "selected"; readonly slice: MachoSlice }
+  | { readonly kind: "missing" }
+  | { readonly kind: "unknown" } => {
+  if (process.cpu_type === ARM32_CPU_TYPE) {
+    const subtype = machoCpuSubtypeBase(process.cpu_subtype);
+    const preferences = ARM32_SUBTYPE_PREFERENCES[subtype];
+    if (preferences === undefined)
+      return slices.some((item) => item.cpu_type === ARM32_CPU_TYPE)
+        ? { kind: "unknown" }
+        : { kind: "missing" };
+    for (const preferredSubtype of preferences) {
+      const slice = slices.find(
+        (item) =>
+          item.cpu_type === ARM32_CPU_TYPE &&
+          machoCpuSubtypeBase(item.cpu_subtype) === preferredSubtype,
+      );
+      if (slice !== undefined) return { kind: "selected", slice };
+    }
+    return { kind: "missing" };
+  }
+  const processFamily = machoArchitectureFamily(process.architecture);
+  for (const architecture of COMPATIBLE_ARCHITECTURES[processFamily] ?? [
+    processFamily,
   ]) {
     const slice = slices.find(
       (item) =>
-        item.architecture === architecture &&
-        (process.architecture !== "arm64e" ||
+        machoArchitectureFamily(item.architecture) === architecture &&
+        (processFamily !== "arm64e" ||
           (item.cpu_type === process.cpu_type &&
             machoCpuSubtypeBase(item.cpu_subtype) ===
               machoCpuSubtypeBase(process.cpu_subtype))),
     );
-    if (slice !== undefined) return slice;
+    if (slice !== undefined) return { kind: "selected", slice };
   }
-  return undefined;
+  return { kind: "missing" };
 };

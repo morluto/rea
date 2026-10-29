@@ -41,9 +41,10 @@ export const verifyJavaScriptReturnShapes = async (
   cli: TestCli,
   source: string,
   check: (fields: JavaScriptReturnFields) => void,
+  fileName = "app.js",
 ): Promise<void> => {
   const root = await createTestTempDirectory("rea-return-shapes-");
-  await writeFile(join(root, "app.js"), source);
+  await writeFile(join(root, fileName), source);
   const cliResponse = await cli.run({
     arguments: [
       "analyze-javascript-application",

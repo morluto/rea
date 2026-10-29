@@ -11,10 +11,7 @@ import {
   MANAGED_MEMBER_COMPARISON_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
 } from "./managed/managedWorkflowExamples.js";
-import {
-  compareManagedMembersReferenceInputSchema,
-  managedApplicationGraphReferenceInputSchema,
-} from "./managed/managedWorkflowToolContracts.js";
+import { managedApplicationGraphReferenceInputSchema } from "./managed/managedWorkflowToolContracts.js";
 
 describe("workflow input contracts", () => {
   it("rejects application Evidence ID references and duplicate inline records", () => {
@@ -38,7 +35,7 @@ describe("workflow input contracts", () => {
 
   it("rejects duplicate inline managed Evidence records", () => {
     expect(
-      compareManagedMembersReferenceInputSchema.safeParse({
+      toolContract("compare_managed_members").inputSchema.safeParse({
         left: MANAGED_MEMBER_COMPARISON_EXAMPLE.left,
         right: MANAGED_MEMBER_COMPARISON_EXAMPLE.left,
       }).success,

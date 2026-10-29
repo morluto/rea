@@ -1,3 +1,4 @@
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
 import { promisify } from "node:util";
@@ -19,7 +20,10 @@ import {
 } from "./GhidraExtensions.js";
 
 const roots: string[] = [];
+let resources = new ArtifactResourceScope();
 afterEach(async () => {
+  await resources.close();
+  resources = new ArtifactResourceScope();
   await Promise.all(
     roots.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   );
@@ -49,7 +53,12 @@ const artifact = async () => {
   const path = join(directory, "fixture.jar");
   const bytes = Buffer.from([0x50, 0x4b, 3, 4, 0, 1, 2, 3]);
   await writeFile(path, bytes);
-  const resolved = await resolveGhidraExtensions(config(path), target, "linux");
+  const resolved = await resolveGhidraExtensions(
+    config(path),
+    target,
+    "linux",
+    resources,
+  );
   if (!resolved.ok || resolved.value[0] === undefined)
     throw new Error("expected fixture artifact");
   return { extension: resolved.value[0], bytes, path };
@@ -77,6 +86,7 @@ describe("optional Ghidra extension refusals", () => {
       config("/absent.jar"),
       target,
       "darwin",
+      resources,
     );
     expect(host.ok).toBe(false);
     if (!host.ok)
@@ -101,6 +111,7 @@ describe("optional Ghidra extension refusals", () => {
         availableArchitectures: ["arm64"],
       },
       "linux",
+      resources,
     );
     expect(architecture.ok).toBe(false);
     if (!architecture.ok)
@@ -120,7 +131,9 @@ describe("optional Ghidra extension refusals", () => {
 
 describe("optional Ghidra extension boundary", () => {
   it("keeps ordinary profiles free of unconfigured extensions", async () => {
-    expect(await resolveGhidraExtensions(config(), target, "linux")).toEqual({
+    expect(
+      await resolveGhidraExtensions(config(), target, "linux", resources),
+    ).toEqual({
       ok: true,
       value: [],
     });
@@ -142,21 +155,34 @@ describe("optional Ghidra extension boundary", () => {
   it("snapshots identical bytes exclusively into the private runtime", async () => {
     const { extension, bytes } = await artifact();
     const runtime = await root();
-    const snapshots = await snapshotGhidraExtensions([extension], runtime);
-    expect(snapshots[0]?.path).toBe(join(runtime, "extensions/nativeaot.jar"));
-    expect(await readFile(join(runtime, "extensions/nativeaot.jar"))).toEqual(
-      bytes,
+    const snapshots = await snapshotGhidraExtensions(
+      [extension],
+      runtime,
+      resources,
     );
+    expect(snapshots[0]?.path).toBe(join(runtime, "extensions/nativeaot.jar"));
+    expect(
+      Buffer.compare(
+        await readFile(join(runtime, "extensions/nativeaot.jar")),
+        bytes,
+      ),
+    ).toBe(0);
     await expect(
-      snapshotGhidraExtensions([extension], runtime),
-    ).rejects.toMatchObject({ code: "EEXIST" });
+      snapshotGhidraExtensions([extension], runtime, resources),
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      cause: { code: "EEXIST" },
+    });
   });
   it("rejects artifact changes after the profile commitment", async () => {
     const { extension, path } = await artifact();
     await writeFile(path, Buffer.from([0x50, 0x4b, 3, 4, 9, 9, 9, 9]));
     await expect(
-      snapshotGhidraExtensions([extension], await root()),
-    ).rejects.toThrow("digest differs");
+      snapshotGhidraExtensions([extension], await root(), resources),
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: { reason: expect.stringContaining("digest differs") },
+    });
   });
   it("rejects nonexistent, empty and non-JAR artifacts with useful reasons", async () => {
     const directory = await root();
@@ -167,6 +193,7 @@ describe("optional Ghidra extension boundary", () => {
         config(path),
         target,
         "linux",
+        resources,
       );
       expect(resolved.ok).toBe(false);
       if (!resolved.ok)
@@ -179,6 +206,7 @@ describe("optional Ghidra extension boundary", () => {
       config(absentPath),
       target,
       "linux",
+      resources,
     );
     expect(absent.ok).toBe(false);
     if (!absent.ok)
@@ -212,11 +240,12 @@ describe("optional Ghidra extension boundary", () => {
           config(path),
           target,
           "linux",
+          resources,
         );
         expect(resolved.ok).toBe(false);
         if (!resolved.ok)
           expect(resolved.error).toMatchObject({
-            diagnostics: { reason: expect.stringContaining("regular JAR") },
+            diagnostics: { reason: expect.stringContaining("regular file") },
           });
         expect(writerRequired).toBe(false);
       } finally {
@@ -232,6 +261,7 @@ describe("optional Ghidra extension boundary", () => {
       config("/absent.jar"),
       target,
       "linux",
+      resources,
       controller.signal,
     );
     expect(resolved.ok).toBe(false);
@@ -332,6 +362,7 @@ describe("Ghidra extension profile and producer validation", () => {
       config("/absent.jar"),
       { ...target, format: "pe", managed: true, executableRole: "application" },
       "linux",
+      resources,
     );
     expect(resolved.ok).toBe(false);
     if (!resolved.ok)
@@ -349,15 +380,26 @@ describe("Ghidra extension profile and producer validation", () => {
       snapshotGhidraExtensions(
         [{ ...second.extension, configured_path: first.path }],
         await root(),
+        resources,
       ),
-    ).rejects.toThrow("resolved path differs");
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: { reason: expect.stringContaining("resolved path differs") },
+    });
   });
   it("rejects unregistered descriptors before snapshot filesystem writes", async () => {
     const { extension } = await artifact();
     const runtime = await root();
     await expect(
-      snapshotGhidraExtensions([{ ...extension, id: "unknown" }], runtime),
-    ).rejects.toThrow("Unregistered");
+      snapshotGhidraExtensions(
+        [{ ...extension, id: "unknown" }],
+        runtime,
+        resources,
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: { reason: expect.stringContaining("Unregistered") },
+    });
   });
 });
 

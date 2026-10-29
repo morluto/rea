@@ -1,13 +1,25 @@
 import { execFile } from "node:child_process";
-import { access, rm } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { spawn } from "@lydell/node-pty";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { parse as parseToml } from "smol-toml";
 
+import type { SetupResult } from "../../../src/application/SetupTypes.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const decisionMarker = "REA_SETUP_DECISION:";
@@ -74,48 +86,53 @@ const clientStates = [
 
 const agentActions = actions.filter(({ kind }) => kind !== "install_hopper");
 
+const runSetupDryRunInTty = async (
+  home: string,
+  arguments_: readonly string[],
+): Promise<{ readonly exitCode: number; readonly output: string }> => {
+  const terminal = spawn(
+    process.execPath,
+    ["scripts/rea.mjs", "setup", "--dry-run", ...arguments_],
+    {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: join(home, ".config"),
+        REA_LOG_LEVEL: "silent",
+        NO_COLOR: "1",
+      },
+      name: "xterm-256color",
+      cols: 120,
+      rows: 40,
+    },
+  );
+  let output = "";
+  terminal.onData((data) => {
+    output += data;
+  });
+  const exitCode = await new Promise<number>((resolvePromise, reject) => {
+    const timeout = setTimeout(() => {
+      terminal.kill();
+      reject(new Error(`TTY dry run timed out after output:\n${output}`));
+    }, 15_000);
+    terminal.onExit(({ exitCode: code }) => {
+      clearTimeout(timeout);
+      resolvePromise(code);
+    });
+  });
+  return { exitCode, output };
+};
+
 describe("TTY setup dry run", () => {
   it("prints the plan and no-mutation notice for a TTY dry run", async () => {
     const home = await createTestTempDirectory("rea-cli-setup-dry-run-");
-    const terminal = spawn(
-      process.execPath,
-      [
-        "scripts/rea.mjs",
-        "setup",
-        "--dry-run",
-        "--client",
-        "codex",
-        "--skill=false",
-      ],
-      {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, ".config"),
-          REA_LOG_LEVEL: "silent",
-          NO_COLOR: "1",
-        },
-        name: "xterm-256color",
-        cols: 120,
-        rows: 40,
-      },
-    );
-    let output = "";
-    terminal.onData((data) => {
-      output += data;
-    });
-    const exitCode = await new Promise<number>((resolvePromise, reject) => {
-      const timeout = setTimeout(() => {
-        terminal.kill();
-        reject(new Error(`TTY dry run timed out after output:\n${output}`));
-      }, 15_000);
-      terminal.onExit(({ exitCode: code }) => {
-        clearTimeout(timeout);
-        resolvePromise(code);
-      });
-    });
+    const { exitCode, output } = await runSetupDryRunInTty(home, [
+      "--client",
+      "codex",
+      "--skill=false",
+    ]);
 
     expect(exitCode, output).toBe(0);
     expect(output).toContain("CREATE  Codex");
@@ -127,12 +144,149 @@ describe("TTY setup dry run", () => {
       code: "ENOENT",
     });
   });
+
+  it("shows the refusal instead of a blocked skill plan for a TTY dry run", async () => {
+    const home = await createTestTempDirectory("rea-cli-setup-linked-dry-run-");
+    const managed = join(home, "managed-skill");
+    const linked = join(home, ".claude/skills/reverse-engineer-anything");
+    const original = "user-managed skill bytes\n";
+    await mkdir(managed);
+    await writeFile(join(managed, "SKILL.md"), original);
+    await mkdir(dirname(linked), { recursive: true });
+    await symlink(
+      managed,
+      linked,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const { exitCode, output } = await runSetupDryRunInTty(home, [
+      "--client",
+      "claude_code",
+    ]);
+
+    expect(exitCode, output).toBe(1);
+    expect(output).toContain("Skill directory is a symbolic link.");
+    expect(output).toContain(linked);
+    expect(output).toContain("--skill=false");
+    expect(output).not.toContain("REA setup plan");
+    expect(output).not.toContain("Install or update the REA skill");
+    expect((await lstat(linked)).isSymbolicLink()).toBe(true);
+    expect(await readFile(join(managed, "SKILL.md"), "utf8")).toBe(original);
+    expect(await readdir(managed)).toEqual(["SKILL.md"]);
+    await expect(access(join(home, ".claude.json"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });
+
+cliTest.skipIf(process.platform === "win32")(
+  "repairs a Codex timeout without replacing an equivalent caller-selected launcher",
+  async ({ cli }) => {
+    const home = await createTestTempDirectory("rea-codex-alias-repair-");
+    const codexHome = join(home, ".codex");
+    const config = join(codexHome, "config.toml");
+    const backup = `${config}.rea.backup`;
+    const alias = join(home, "rea-launcher-alias.mjs");
+    await mkdir(codexHome);
+    await symlink(resolve("scripts/rea.mjs"), alias, "file");
+    const original = [
+      "# Caller-owned Codex approval policy",
+      'approval_policy = "on-request"',
+      'sandbox_mode = "read-only"',
+      "",
+      "[mcp_servers.rea]",
+      `command = ${JSON.stringify(process.execPath)}`,
+      `args = ${JSON.stringify([alias, "mcp"])}`,
+      "startup_timeout_sec = 0",
+      "tool_timeout_sec = 900",
+      'default_tools_approval_mode = "prompt"',
+      "",
+      "[mcp_servers.rea.tools.open_binary]",
+      'approval_mode = "approve"',
+      "output_token_limit = 2048",
+      "",
+    ].join("\n");
+    await writeFile(config, original);
+    const setup = (approval: "--dry-run" | "--yes") =>
+      cli.run({
+        arguments: [
+          "setup",
+          "--client",
+          "codex",
+          "--no-skill",
+          approval,
+          "--json",
+        ],
+        cwd: home,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          CODEX_HOME: codexHome,
+          XDG_CONFIG_HOME: join(home, ".config"),
+          XDG_DATA_HOME: join(home, ".local", "share"),
+          XDG_CACHE_HOME: join(home, ".cache"),
+        },
+        timeoutMs: 20_000,
+      });
+
+    const planned = await setup("--dry-run");
+    expect(planned.exitCode, planned.stderr).toBe(0);
+    expect(planned.json).toMatchObject({
+      status: "planned",
+      plannedActions: [
+        expect.objectContaining({
+          id: "configure_client:codex",
+          operation: "update",
+          target: config,
+          backupPath: backup,
+        }),
+      ],
+    });
+    expect(await readFile(config, "utf8")).toBe(original);
+    await expect(access(backup)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const applied = await setup("--yes");
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(applied.json).toMatchObject({ status: "ready" });
+    const repaired = await readFile(config, "utf8");
+    expect(parseToml(repaired)).toMatchObject({
+      approval_policy: "on-request",
+      sandbox_mode: "read-only",
+      mcp_servers: {
+        rea: {
+          command: process.execPath,
+          args: [alias, "mcp"],
+          startup_timeout_sec: 30,
+          tool_timeout_sec: 900,
+          default_tools_approval_mode: "prompt",
+          tools: {
+            open_binary: { approval_mode: "approve", output_token_limit: 2048 },
+          },
+        },
+      },
+    });
+    expect(await readFile(backup, "utf8")).toBe(original);
+    expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+
+    const repeated = await setup("--yes");
+    expect(repeated.exitCode, repeated.stderr).toBe(0);
+    expect(repeated.json).toMatchObject({
+      status: "ready",
+      plannedActions: [],
+      appliedActions: [],
+    });
+    expect(await readFile(config, "utf8")).toBe(repaired);
+    expect(await readFile(backup, "utf8")).toBe(original);
+  },
+);
 
 describe("interactive setup journey", () => {
   it("shows detected and absent clients without preselecting detected clients", async () => {
     const result = await runJourney(
-      [step("Which agents should use REA?", "\u001b[B\r")],
+      [
+        step("Which agents should use REA?", "\u001b[B"),
+        step("Not detected · configuration is still available", "\r"),
+      ],
       false,
       [actions[0]],
     );
@@ -312,7 +466,14 @@ describe("interactive setup completion", () => {
         {
           cwd: process.cwd(),
           env: {
-            ...process.env,
+            ...Object.fromEntries(
+              Object.entries(process.env).filter(
+                ([key]) =>
+                  !["npm_command", "npm_config_user_agent"].includes(
+                    key.toLowerCase(),
+                  ),
+              ),
+            ),
             npm_command: npmCommand,
             npm_config_user_agent: userAgent,
             NO_COLOR: "1",
@@ -332,6 +493,43 @@ describe("interactive setup completion", () => {
       );
     },
   );
+  it("prints retained cleanup resources without relying on paths in remediation", async () => {
+    const resources = ["/fixture/owned backup", "/fixture/临时目录"];
+    const result: SetupResult = {
+      status: "needs_human",
+      code: "cleanup_failed",
+      plannedActions: [],
+      appliedActions: [],
+      clients: {},
+      clientStates: [],
+      doctor: {
+        healthy: true,
+        environment_healthy: true,
+        availableProviders: [],
+        scope: {
+          mode: "explicit",
+          clients: [],
+          providers: [],
+          skill: false,
+          target: null,
+        },
+      },
+      remediation: "Owned descriptor remains busy",
+      cleanup: { reason: "Owned descriptor remains busy", resources },
+    };
+    const { stderr } = await execute(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        'import { renderInteractiveSetupResult } from "./dist/cli/interactiveSetup.js";\n' +
+          `renderInteractiveSetupResult(${JSON.stringify(result)}, {});`,
+      ],
+      { cwd: process.cwd(), env: { ...process.env, NO_COLOR: "1" } },
+    );
+    expect(stderr).toContain(result.remediation);
+    for (const resource of resources) expect(stderr).toContain(resource);
+  });
 });
 
 interface JourneyStep {
@@ -380,6 +578,7 @@ const runJourney = async (
         env: {
           ...process.env,
           HOME: isolatedHome,
+          USERPROFILE: isolatedHome,
           NO_COLOR: "1",
           TERM: "xterm-256color",
         },
@@ -417,9 +616,13 @@ const runJourney = async (
         finish(new Error(`Setup journey returned no decision:\n${output}`));
         return;
       }
-      const serialized = output
-        .slice(markerIndex + decisionMarker.length)
-        .split(/\r?\n/u, 1)[0];
+      const raw = output.slice(markerIndex + decisionMarker.length);
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      const serialized =
+        jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart
+          ? raw.slice(jsonStart, jsonEnd + 1)
+          : raw.split(/\r?\n/u, 1)[0];
       if (serialized === undefined) {
         finish(
           new Error(`Setup journey returned an empty decision:\n${output}`),

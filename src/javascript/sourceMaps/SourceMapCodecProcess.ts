@@ -50,7 +50,11 @@ const execute = async (): Promise<string> => {
       throw cause;
     return JSON.stringify({
       state: "failure",
-      reason: cause instanceof SourceMapFormatFailure ? cause.reason : "format",
+      reason:
+        cause instanceof SourceMapFormatFailure &&
+        cause.reason !== "section-overlap"
+          ? cause.reason
+          : "format",
       message: cause.message,
     });
   }

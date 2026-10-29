@@ -47,86 +47,108 @@ const runner: NativeCommandRunner = {
     }),
 };
 
-const readers = [
-  ["ZIP", (path: string) => new ZipArtifactReader(path, "zip")],
-  [
-    "Mach-O slice",
-    (path: string) => new MachOSliceArtifactReader(path, {}, runner),
-  ],
+const scenarios = [
+  {
+    reader: "ZIP",
+    createReader: (path: string) => new ZipArtifactReader(path, "zip"),
+    stage: "admission",
+    failOnStat: 1,
+  },
+  {
+    reader: "Mach-O slice",
+    createReader: (path: string) =>
+      new MachOSliceArtifactReader(path, {}, runner),
+    stage: "admission",
+    failOnStat: 1,
+  },
+  {
+    reader: "Mach-O slice",
+    createReader: (path: string) =>
+      new MachOSliceArtifactReader(path, {}, runner),
+    stage: "post-admission-verification",
+    failOnStat: 2,
+  },
 ] as const;
 
-it.each(readers)(
-  "retains %s reader admission and stat owners",
-  async (_, createReader) => {
+it.each(scenarios)(
+  "retains $reader reader $stage owner",
+  async ({ createReader, stage, failOnStat: initialFailOnStat }) => {
     const root = await createTestTempDirectory("rea-owned-reader-cleanup-");
     const path = join(root, "source");
     await writeFile(path, "fixture source");
 
-    for (const stage of ["admission", "post-open-stat"] as const) {
-      const statFailure = Object.assign(
-        new Error(`primary ${stage} stat failure`),
-        { code: "EIO", errno: -5, syscall: "fstat" },
-      );
-      const closeFailure = new Error(
-        `close failed after invalidation during ${stage}`,
-      );
-      let descriptor: FileHandle | undefined;
-      let statCalls = 0;
-      let closeAttempts = 0;
-      let failOnStat = stage === "admission" ? 1 : 2;
-      injected.opened = (openedPath, handle) => {
-        if (openedPath !== path || descriptor !== undefined) return;
-        descriptor = handle;
-        const stat = handle.stat.bind(handle);
-        const close = handle.close.bind(handle);
-        vi.spyOn(handle, "stat").mockImplementation(async (...args) => {
-          statCalls += 1;
-          if (statCalls === failOnStat) {
-            failOnStat = -1;
-            throw statFailure;
-          }
-          return stat(...args);
-        });
-        vi.spyOn(handle, "close").mockImplementation(async () => {
-          closeAttempts += 1;
-          await close();
-          throw closeFailure;
-        });
-      };
-
-      const reader = createReader(path);
-      const scope = new ArtifactResourceScope();
-      const owner = { kind: "reader" as const, resource: path, reader };
-      onTestFinished(async () => {
-        injected.opened = undefined;
-        await scope.close().catch(() => undefined);
-        vi.restoreAllMocks();
-      });
-
-      const primary = await (async () => {
-        try {
-          for await (const _entry of reader.entries()) {
-            // Both injected failures happen before the reader can yield an entry.
-          }
-        } catch (cause: unknown) {
-          return cause;
+    const statFailure = Object.assign(
+      new Error(`primary ${stage} stat failure`),
+      { code: "EIO", errno: -5, syscall: "fstat" },
+    );
+    const closeFailure = new Error(
+      `close failed after invalidation during ${stage}`,
+    );
+    let descriptor: FileHandle | undefined;
+    let statCalls = 0;
+    let closeAttempts = 0;
+    let failOnStat: number = initialFailOnStat;
+    injected.opened = (openedPath, handle) => {
+      if (openedPath !== path || descriptor !== undefined) return;
+      descriptor = handle;
+      const stat = handle.stat.bind(handle);
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "stat").mockImplementation(async (...args) => {
+        statCalls += 1;
+        if (statCalls === failOnStat) {
+          failOnStat = -1;
+          throw statFailure;
         }
-        throw new Error("Expected reader initialization to fail");
-      })();
-      expect(primary).toBeInstanceOf(Error);
-      expect(causeChainContains(primary, statFailure)).toBe(true);
-
-      const release = await scope.release(owner);
-      expect(release).toEqual({ kind: "failed", cause: closeFailure });
-      expect(descriptor?.fd).toBe(-1);
-      await expect(scope.close()).rejects.toMatchObject({
-        reason: "unavailable",
-        cleanup: { reason: closeFailure.message, resources: [path] },
+        return stat(...args);
       });
-      // Native close invalidated the fd before rejecting. Retrying the same owner
-      // must remain failed without another syscall or a false successful release.
-      expect(closeAttempts).toBe(1);
-    }
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closeAttempts += 1;
+        await close();
+        throw closeFailure;
+      });
+    };
+
+    const reader = createReader(path);
+    const scope = new ArtifactResourceScope();
+    const owner = { kind: "reader" as const, resource: path, reader };
+    onTestFinished(async () => {
+      injected.opened = undefined;
+      await scope.close().catch(() => undefined);
+      vi.restoreAllMocks();
+    });
+
+    const primary = await (async () => {
+      try {
+        for await (const _entry of reader.entries()) {
+          // Admission or its first fresh verification fails before any entry.
+        }
+      } catch (cause: unknown) {
+        return cause;
+      }
+      throw new Error("Expected reader initialization to fail");
+    })();
+    expect(primary).toBeInstanceOf(Error);
+    expect(causeChainContains(primary, statFailure)).toBe(true);
+
+    const release = await scope.release(owner);
+    expect(release).toMatchObject({
+      kind: "failed",
+      cause: closeFailure,
+      owner,
+    });
+    if (release.kind !== "failed")
+      throw new Error("Expected owned cleanup failure");
+    expect(release.cause).toBe(closeFailure);
+    expect(release.lease.released).toBe(false);
+    expect(descriptor?.fd).toBe(-1);
+    await expect(scope.close()).rejects.toMatchObject({
+      reason: "unavailable",
+      cleanup: { reason: closeFailure.message, resources: [path] },
+      cleanupLeases: [release.lease],
+    });
+    // Native close invalidated the fd before rejecting. Retrying the same owner
+    // must remain failed without another syscall or a false successful release.
+    expect(closeAttempts).toBe(1);
   },
 );
 

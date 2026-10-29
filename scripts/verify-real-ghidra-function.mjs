@@ -49,7 +49,7 @@ async function inventoryCall(client, operation, parameters) {
     );
   const parsed = parseGhidraInventoryResult(operation, called.value);
   if (!parsed.ok) throw parsed.error;
-  return parsed.value;
+  return parsed.value.value;
 }
 
 export async function verifyDebugFunctionOperations(

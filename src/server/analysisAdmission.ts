@@ -25,5 +25,9 @@ export const withAdmittedAnalysis = (
         source.session.withAdmittedAnalysis(operationName, signal, operation)
     : async (operationName, signal, operation) =>
         signal?.aborted === true
-          ? err(new AnalysisCancelledError(operationName))
+          ? err(
+              new AnalysisCancelledError(operationName, {
+                cause: signal.reason,
+              }),
+            )
           : ok(await operation(source.analysis));

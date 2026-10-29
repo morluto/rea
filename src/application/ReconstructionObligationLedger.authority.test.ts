@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reconstructionProofApplicabilityCases } from "../../tests/fixtures/reconstructionProofApplicability.js";
 
 import {
   boundProofEvidence,
@@ -12,7 +13,127 @@ import {
 import { createEvidence } from "../domain/evidence.js";
 import type { ReviewedReconstructionObligation } from "../domain/reconstructionObligationLedgerSchemas.js";
 
+describe("selected reconstruction fixture outcomes", () => {
+  it.each(reconstructionProofApplicabilityCases())(
+    "$name",
+    ({ input, status, codes }) => {
+      const ledger = build(input);
+      expect(ledger.status).toBe(status);
+      expect(ledger.obligations[0]?.status).toBe(
+        status === "ready" ? "verified" : "implemented",
+      );
+      expect(
+        ledger.obligations[0]?.diagnostics.map(({ code }) => code).sort(),
+      ).toEqual([...codes].sort());
+      for (const fixture of input.manifest.bindings[0]!.fixtures)
+        for (const evidenceId of fixture.evidence_ids)
+          expect(ledger.evidence_links).toContain(evidenceId);
+      expect(ledger.summary.required_open).toBe(status === "ready" ? 0 : 1);
+    },
+  );
+});
+
+const registerOriginalProcessAuthorityCases = (): void => {
+  it.each([
+    {
+      kind: "controlled capture",
+      defect: null,
+      state: "observed",
+      qualifies: true,
+    },
+    {
+      kind: "static authority",
+      defect: "authority",
+      state: "candidate",
+      qualifies: false,
+    },
+    {
+      kind: "foreign provider",
+      defect: "provider",
+      state: "reviewed",
+      qualifies: false,
+    },
+    {
+      kind: "malformed capture",
+      defect: "payload",
+      state: "reviewed",
+      qualifies: false,
+    },
+  ] as const)(
+    "qualifies original process authority for $kind",
+    ({ defect, state, qualifies }) => {
+      const capture = processEvidence();
+      const original = createEvidence(
+        undefined,
+        defect === "provider"
+          ? { id: "foreign", name: "Foreign observer", version: "1" }
+          : capture.provider,
+        {
+          predicateType: capture.predicate_type,
+          operation: capture.operation,
+          parameters: {},
+          result: defect === "payload" ? {} : capture.normalized_result,
+          confidence: "observed",
+          authority:
+            defect === "authority" ? "shipped-artifact" : "controlled-replay",
+        },
+      );
+      const reviewed = {
+        ...reviewedObligation("obl.reviewed.process", original.evidence_id),
+        required_original_authority: "process" as const,
+      };
+      const result = build(
+        request([original], {
+          reviewed_obligations: [reviewed],
+          manifest: {
+            bindings: [
+              {
+                obligation_id: reviewed.obligation_id,
+                owner: {
+                  module_path: "src/processOwner.ts",
+                  symbol: "runProcess",
+                  owner_sha256: "5".repeat(64),
+                },
+                parser_type: null,
+                original_cases: [
+                  {
+                    kind: "positive",
+                    evidence_id: original.evidence_id,
+                    location: "/normalized_result/exit",
+                  },
+                ],
+                fixtures: [],
+                verifier: null,
+              },
+            ],
+            contradictions: [],
+          },
+        }),
+      );
+      const obligation = result.obligations.find(
+        ({ obligation_id }) => obligation_id === reviewed.obligation_id,
+      );
+      expect(obligation).toBeDefined();
+      const diagnostics = new Set(
+        obligation?.diagnostics.map(({ code }) => code),
+      );
+      expect(diagnostics.has("static-only")).toBe(!qualifies);
+      expect(diagnostics.has("weak-original-case-authority")).toBe(!qualifies);
+      expect(obligation?.authority_references).toEqual([
+        {
+          evidence_id: original.evidence_id,
+          authority: original.authority,
+          state,
+          location: `/evidence/${original.evidence_id}`,
+        },
+      ]);
+    },
+  );
+};
+
 describe("reconstruction obligation ledger", () => {
+  registerOriginalProcessAuthorityCases();
+
   it("does not authenticate packaged-process proof with generic replay evidence", () => {
     const capture = processEvidence();
     const proof = proofEvidence("generic-packaged");
@@ -61,8 +182,8 @@ describe("reconstruction obligation ledger", () => {
 
     expect(result.obligations[0]?.diagnostics.map(({ code }) => code)).toEqual(
       expect.arrayContaining([
-        "weak-fixture-authority",
-        "weak-verifier-authority",
+        "inapplicable-fixture-proof",
+        "inapplicable-verifier-proof",
       ]),
     );
   });
@@ -72,11 +193,25 @@ describe("reconstruction obligation ledger", () => {
     const evidence = boundProofEvidence(
       "fixture-chain",
       {
-        obligation_ids: ids,
-        fixture_ids: ids.map((id) => `fixture.${id}`),
-        case_kinds: ["positive"],
-        verifier_ids: ids.map((id) => `verifier.${id}`),
-        claim_ids: ids.map((id) => `claim.${id}`),
+        bindings: ids.map((id) => ({
+          obligation_id: id,
+          obligation_version: 1,
+          owner_sha256: "6".repeat(64),
+          fixtures: [
+            {
+              fixture_id: `fixture.${id}`,
+              case_kind: "positive" as const,
+              passed: true,
+            },
+          ],
+          verifiers: [
+            {
+              verifier_id: `verifier.${id}`,
+              claim_id: `claim.${id}`,
+              passed: true,
+            },
+          ],
+        })),
       },
       "shipped-artifact",
     );

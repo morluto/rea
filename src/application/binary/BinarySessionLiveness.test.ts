@@ -1,3 +1,7 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { elf } from "../../domain/binaryTarget.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,6 +19,7 @@ import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { err, ok } from "../../domain/result.js";
+import { buildCapabilityInventory } from "../CapabilityInventory.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
 import { BinarySession } from "./BinarySession.js";
@@ -35,7 +40,132 @@ import { SessionProviderRouter } from "./SessionProviderRouter.js";
  * `operationHealthSnapshot`, the way `HopperClient.operationHealth` reports a
  * recorded process exit.
  */
+it("binds omitted provider subjects to the selected target", async () => {
+  const { session } = openSession();
+  try {
+    const opened = await session.open(process.execPath);
+    expect(opened.ok).toBe(true);
+    const execution = await session.execute("address_name", {});
+    expect(execution.ok).toBe(true);
+    if (!execution.ok || !opened.ok) return;
+    expect(execution.value.subject).toEqual({
+      path: opened.value.path,
+      sha256: opened.value.sha256,
+      format: opened.value.format,
+      ...(opened.value.architecture === undefined
+        ? {}
+        : { architecture: opened.value.architecture }),
+    });
+  } finally {
+    await session.close();
+  }
+});
+
+it("preserves an explicitly unbound provider observation", async () => {
+  const { session } = openSession({ explicitNullSubject: true });
+  try {
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    const execution = await session.execute("address_name", {});
+    expect(execution.ok).toBe(true);
+    if (execution.ok) expect(execution.value.subject).toBeNull();
+  } finally {
+    await session.close();
+  }
+});
+
+it("keeps unbound observations out of persisted target snapshots", async () => {
+  const { session, deep } = openSession();
+  const directory = await createTestTempDirectory("rea-unbound-snapshot-");
+  const path = join(directory, "snapshot.json");
+  const parameters = { document: "0", address: "0x1000" };
+  try {
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    const bound = await session.execute("address_name", parameters);
+    expect(bound.ok).toBe(true);
+    const child = deep.created[0];
+    if (child === undefined || !bound.ok)
+      throw new Error("Expected bound read");
+    child.execute = () =>
+      Promise.resolve(
+        ok(
+          createAnalysisExecution("unbound observation", deepIdentity, {
+            subject: null,
+          }),
+        ),
+      );
+    const execution = await session.execute("address_name", {
+      ...parameters,
+      address: "0x2000",
+    });
+    expect(execution.ok).toBe(true);
+    if (!execution.ok) return;
+    expect(execution.value.subject).toBeNull();
+    expect(session.exportEvidenceBundle().records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject: null,
+          normalized_result: "unbound observation",
+        }),
+      ]),
+    );
+    const snapshot = session.exportAnalysisSnapshot();
+    expect(snapshot.ok, snapshot.ok ? undefined : snapshot.error.message).toBe(
+      true,
+    );
+    if (!snapshot.ok) return;
+    expect(snapshot.value.entries).toHaveLength(1);
+    expect(snapshot.value.entries[0]?.parameters).toEqual(parameters);
+    const unboundReplay = await session.execute("address_name", {
+      ...parameters,
+      address: "0x2000",
+    });
+    expect(unboundReplay.ok).toBe(true);
+    if (unboundReplay.ok) {
+      expect(unboundReplay.value.subject).toBeNull();
+      expect(unboundReplay.value.evidenceId).toBe(execution.value.evidenceId);
+    }
+    expect(
+      (await session.writeAnalysisSnapshot(snapshot.value, path, false)).ok,
+    ).toBe(true);
+    expect((await session.close()).ok).toBe(true);
+    expect(
+      (
+        await session.open(process.execPath, {
+          loadSnapshot: () => session.readAnalysisSnapshot(path),
+        })
+      ).ok,
+    ).toBe(true);
+    const replay = await session.execute("address_name", parameters);
+    expect(replay.ok).toBe(true);
+    if (replay.ok) {
+      expect(replay.value.evidenceId).toBe(bound.value.evidenceId);
+      expect(replay.value.limitations).toContain(
+        "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+      );
+    }
+  } finally {
+    await session.close();
+  }
+});
+
 describe("BinarySession open liveness", () => {
+  it("retires a locally blocked owner even when its native health is idle", async () => {
+    const { session, deep } = openSession();
+    try {
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      const retained = deep.created[0];
+      if (retained === undefined) throw new Error("Expected an acquired child");
+      retained.reuseReadiness = () => "blocked";
+      expect(retained.operationHealthSnapshot?.()?.state).toBe("idle");
+      expect((await session.open(process.execPath)).ok).toBe(true);
+      expect(retained.closeCalled).toBe(true);
+      expect((await session.execute("address_name", {})).ok).toBe(true);
+      expect(deep.created).toHaveLength(2);
+    } finally {
+      await session.close();
+    }
+  });
   it("reuses the retained client while the child stays live", async () => {
     const { session, deep } = openSession();
     expect((await session.open(process.execPath)).ok).toBe(true);
@@ -116,9 +246,7 @@ describe("BinarySession open liveness", () => {
     expect(deep.created).toHaveLength(2);
   });
 
-  it("falls back to the health probe when the child reports no operation health", async () => {
-    // Without an operation-health hook there is no child-liveness signal,
-    // so the probe keeps the previous `health` admission behavior.
+  it("probes instantiated children through health when snapshots are absent", async () => {
     const { session, deep } = openSession({ operationHealth: false });
     expect((await session.open(process.execPath)).ok).toBe(true);
     expect((await session.execute("address_name", {})).ok).toBe(true);
@@ -126,9 +254,33 @@ describe("BinarySession open liveness", () => {
 
     const second = await session.open(process.execPath);
     expect(second.ok).toBe(true);
-    // The composite's `health` answers ok, so the live client is reused.
+    // The composite probes this already-instantiated child rather than
+    // answering health without contacting it.
     expect(deep.created).toHaveLength(1);
     expect(deep.created[0]?.closeCalled).toBe(false);
+    expect(deep.created[0]?.healthCalls).toBe(1);
+  });
+
+  it("retires a dead no-snapshot child after its health probe fails", async () => {
+    const { session, deep } = openSession({ operationHealth: false });
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    const dead = deep.created[0];
+    dead?.kill();
+
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect(dead?.healthCalls).toBe(1);
+    expect(dead?.closeCalled).toBe(true);
+    expect(deep.created).toHaveLength(1);
+    expect((await session.execute("address_name", {})).ok).toBe(true);
+    expect(deep.created).toHaveLength(2);
+  });
+
+  it("does not instantiate a child to answer health before first use", async () => {
+    const { session, deep } = openSession({ operationHealth: false });
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect((await session.open(process.execPath)).ok).toBe(true);
+    expect(deep.created).toEqual([]);
   });
 
   it("reports cancellation without touching the session when aborted mid-probe", async () => {
@@ -164,9 +316,108 @@ describe("BinarySession open liveness", () => {
   });
 });
 
+it("clears retired runtime availability after cancelled-switch restoration", async () => {
+  let closeStarted!: () => void;
+  const closing = new Promise<void>((resolve) => {
+    closeStarted = resolve;
+  });
+  let releaseClose!: () => void;
+  const closeGate = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  const { session, deep } = openSession({
+    failOperationInitially: true,
+    beforeFirstClose: async () => {
+      closeStarted();
+      await closeGate;
+    },
+  });
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  expect((await session.execute("address_name", {})).ok).toBe(false);
+  const availability = async () =>
+    buildCapabilityInventory(await session.status(), {
+      processCaptureEnabled: false,
+    }).find(({ name }) => name === "address_name");
+  const initialAvailability = await availability();
+  expect(initialAvailability).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+  });
+  const originalTarget = session.activeTarget();
+  const initialRunId = sessionRunId(await session.status());
+
+  const controller = new AbortController();
+  const alternate = join(
+    await createTestTempDirectory("rea-liveness-switch-"),
+    "alternate.elf",
+  );
+  await writeFile(alternate, elf(2, 1, 62));
+  const switching = session.open(alternate, { signal: controller.signal });
+  await closing;
+  controller.abort();
+  releaseClose();
+
+  const cancelled = await switching;
+  expect(cancelled).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  expect(session.activeTarget()).toEqual(originalTarget);
+  expect(deep.created).toHaveLength(1);
+  expect(deep.created[0]?.closeCalled).toBe(true);
+  const restoredStatus = await session.status();
+  expect(sessionRunId(restoredStatus)).not.toBe(initialRunId);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  // Cancellation remains the caller-visible outcome after cleanup and
+  // restoration, while the new restored client is healthy and usable.
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(deep.created).toHaveLength(2);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  deep.created[1]?.setOperationFailure(true);
+  expect((await session.execute("address_name", {})).ok).toBe(false);
+  expect(await availability()).toMatchObject({
+    available: false,
+    reason: "provider_unavailable",
+  });
+  deep.created[1]?.setOperationFailure(false);
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  expect(await availability()).toMatchObject({
+    available: true,
+    reason: "available",
+    remediation: null,
+  });
+  await session.close();
+});
+
+const sessionRunId = (
+  status: Awaited<ReturnType<BinarySession["status"]>>,
+): string => {
+  if (typeof status !== "object" || status === null || Array.isArray(status))
+    throw new Error("Expected a binary session status object");
+  const analysisRun = status.analysis_run;
+  if (
+    typeof analysisRun !== "object" ||
+    analysisRun === null ||
+    Array.isArray(analysisRun) ||
+    typeof analysisRun.run_id !== "string"
+  )
+    throw new Error("Expected an active analysis run");
+  return analysisRun.run_id;
+};
+
 interface KillableChild extends AnalysisClient {
   kill(state?: "exited" | "unreachable" | "unknown" | "not_started"): void;
+  setOperationFailure(value: boolean): void;
   closeCalled: boolean;
+  healthCalls: number;
 }
 
 const deepIdentity: ProviderIdentity = {
@@ -202,7 +453,12 @@ const capability = (
 });
 
 const openSession = (
-  options: { operationHealth?: boolean } = {},
+  options: {
+    operationHealth?: boolean;
+    failOperationInitially?: boolean;
+    beforeFirstClose?: () => Promise<void>;
+    explicitNullSubject?: boolean;
+  } = {},
 ): {
   session: BinarySession;
   deep: { created: KillableChild[] };
@@ -234,6 +490,9 @@ const openSession = (
 
 const killableDeepProvider = (options: {
   operationHealth?: boolean;
+  failOperationInitially?: boolean;
+  beforeFirstClose?: () => Promise<void>;
+  explicitNullSubject?: boolean;
 }): {
   provider: AnalysisProviderCandidate;
   created: KillableChild[];
@@ -267,18 +526,27 @@ const killableDeepProvider = (options: {
         }),
       ),
     createClient: (): KillableChild => {
+      const firstClient = created.length === 0;
       let alive = true;
+      let failOperation =
+        firstClient && options.failOperationInitially === true;
       let closeCalled = false;
+      let healthCalls = 0;
       let deadState: "exited" | "unreachable" | "unknown" | "not_started" =
         "exited";
       const client: KillableChild = {
         execute: (operation) => {
-          return alive
+          if (operation === "health") healthCalls += 1;
+          return alive && !(operation !== "health" && failOperation)
             ? Promise.resolve(
                 ok(
                   createAnalysisExecution(
                     operation === "health" ? null : `liveness:${operation}`,
                     deepIdentity,
+                    operation !== "health" &&
+                      options.explicitNullSubject === true
+                      ? { subject: null }
+                      : {},
                   ),
                 ),
               )
@@ -306,12 +574,17 @@ const killableDeepProvider = (options: {
               },
             }
           : {}),
-        close: () => {
+        close: async () => {
           closeCalled = true;
-          return Promise.resolve(ok(null));
+          if (firstClient && options.beforeFirstClose !== undefined)
+            await options.beforeFirstClose();
+          return ok(null);
         },
         get closeCalled() {
           return closeCalled;
+        },
+        get healthCalls() {
+          return healthCalls;
         },
         kill: (
           state:
@@ -322,6 +595,9 @@ const killableDeepProvider = (options: {
         ) => {
           alive = false;
           deadState = state;
+        },
+        setOperationFailure: (value: boolean) => {
+          failOperation = value;
         },
       };
       created.push(client);

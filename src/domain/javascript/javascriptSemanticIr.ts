@@ -1,5 +1,8 @@
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
-import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type {
+  JavaScriptSemanticResourceLimit,
+  JavaScriptSemanticValue,
+} from "./javascriptSemanticValueTypes.js";
 import type {
   JavaScriptSemanticCoverage,
   JavaScriptSemanticReturnCoverage,
@@ -77,6 +80,8 @@ export interface JavaScriptSemanticBinding {
   readonly mutable: boolean;
   readonly definitions: readonly JavaScriptSemanticDefinition[];
   readonly value: JavaScriptSemanticValue;
+  /** Value at the single initializer, before later member effects. */
+  readonly initializerValue?: JavaScriptSemanticValue;
   readonly provenance: JavaScriptBindingProvenance;
 }
 
@@ -97,6 +102,8 @@ export interface JavaScriptSemanticCallable {
   readonly containerScopeId: string;
   readonly bodyScopeId: string | null;
   readonly location: JavaScriptSourceRange;
+  /** Evaluated by the enclosing callable, before this method is invoked. */
+  readonly computedKeyLocation: JavaScriptSourceRange | null;
   readonly returnSites: readonly JavaScriptSemanticReturnSite[];
   readonly returnCoverage: JavaScriptSemanticReturnCoverage;
 }
@@ -106,6 +113,11 @@ export interface JavaScriptSemanticReturnSite {
   readonly returnSiteId: string;
   readonly location: JavaScriptSourceRange;
   readonly identityReferenceLocation: JavaScriptSourceRange | null;
+  /**
+   * Range of the unwrapped returned expression. Null when the return has no
+   * value. This is the value's syntax, which may be wider than an identifier.
+   */
+  readonly valueExpressionLocation: JavaScriptSourceRange | null;
   readonly value: JavaScriptSemanticValue;
 }
 
@@ -125,7 +137,13 @@ export interface JavaScriptSemanticCallSite {
 export interface JavaScriptSemanticCallArgument {
   readonly index: number;
   readonly location: JavaScriptSourceRange;
+  /** Unwrapped value expression; null for a spread or non-expression slot. */
+  readonly valueExpressionLocation: JavaScriptSourceRange | null;
   readonly spread: boolean;
+  /** Direct scalar syntax, before runtime evaluation; omitted for other expressions. */
+  readonly literal?: string | number | boolean | null;
+  /** A direct literal was omitted under a semantic resource bound. */
+  readonly literalResourceLimit?: "primitive-bytes";
 }
 
 /** One positional argument that may initialize one local parameter binding. */
@@ -302,6 +320,7 @@ export interface JavaScriptSemanticConfigurationOperation {
   readonly key: string | null;
   readonly sourceConfigId: string | null;
   readonly value: string | number | boolean | null;
+  readonly valueResourceLimit?: JavaScriptSemanticResourceLimit;
   readonly resolution: "complete" | "partial";
 }
 
@@ -413,6 +432,15 @@ export interface JavaScriptSemanticModuleLink {
   readonly location: JavaScriptSourceRange;
 }
 
+/** Syntactic influence into one simple assignment target; no value evaluation. */
+export interface JavaScriptSemanticAssignmentFlow {
+  readonly target: JavaScriptSourceRange;
+  readonly source: JavaScriptSourceRange;
+  readonly sourceIsReference: boolean;
+  readonly operator: string;
+  readonly ownerCallableId: string | null;
+}
+
 /** Provider-neutral JavaScript semantic IR. */
 export interface JavaScriptSemanticIr {
   readonly schema: "JavaScriptSemanticIR";
@@ -435,6 +463,7 @@ export interface JavaScriptSemanticIr {
   readonly requestOperations: readonly JavaScriptSemanticRequestOperation[];
   readonly boundaryOperations: readonly JavaScriptSemanticBoundaryOperation[];
   readonly resourceOperations: readonly JavaScriptSemanticResourceOperation[];
+  readonly assignmentFlows: readonly JavaScriptSemanticAssignmentFlow[];
   readonly objectOperations: readonly JavaScriptSemanticObjectOperation[];
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
@@ -464,6 +493,7 @@ export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   requestOperations: [],
   boundaryOperations: [],
   resourceOperations: [],
+  assignmentFlows: [],
   objectOperations: [],
   functionFingerprints: [],
   frontiers: [],

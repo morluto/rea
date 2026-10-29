@@ -1,0 +1,149 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import {
+  peCertificateFixture,
+  pkcs7SignedDataFixture,
+} from "../../../src/native/pe/PeCertificates.fixture.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { mcpTest, type TestMcp } from "../../support/mcp/mcpFixture.js";
+import { repeatedCertificateSignedData } from "../../fixtures/peCertificateAllowance.js";
+
+const connect = async (mcp: TestMcp) => {
+  const session = createTestBinarySession(() => {
+    throw new Error("PE certificate inspection must not start a deep provider");
+  });
+  const client = await mcp.connect(createServer({ kind: "session", session }));
+  return { client, session };
+};
+
+mcpTest(
+  "advertised output schema accepts partial unsigned-attribute evidence",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const advertised = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_pe_certificates",
+      );
+      if (advertised?.outputSchema === undefined)
+        throw new Error("PE certificates output schema is missing");
+      const schema = advertised.outputSchema as AnySchema;
+      const ajv = new Ajv2020({ strict: false, validateFormats: false });
+      expect(ajv.validateSchema(schema)).toBe(true);
+      const validate = ajv.compile(schema);
+      const root = await createTestTempDirectory("rea-pe-cert-schema-");
+      const path = join(root, "timestamped.exe");
+      await writeFile(
+        path,
+        peCertificateFixture(
+          false,
+          pkcs7SignedDataFixture(undefined, undefined, undefined, [
+            [1, 3, 6, 1, 4, 1, 311, 3, 3, 1],
+          ]),
+        ),
+      );
+      const result = await client.callTool({
+        name: "inspect_pe_certificates",
+        arguments: { path },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(
+        validate(result.structuredContent),
+        JSON.stringify(validate.errors),
+      ).toBe(true);
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "advertises inspect_pe_certificates and reads PKCS#7 signer identity",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const advertised = (await client.listTools()).tools.find(
+        (tool) => tool.name === "inspect_pe_certificates",
+      );
+      expect(advertised?.annotations).toMatchObject({
+        readOnlyHint: false,
+        idempotentHint: true,
+      });
+      const root = await createTestTempDirectory("rea-pe-cert-mcp-");
+      const path = join(root, "signed.exe");
+      await writeFile(path, peCertificateFixture(true));
+      const response = await client.callTool({
+        name: "inspect_pe_certificates",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+      const evidence = toolContract(
+        "inspect_pe_certificates",
+      ).outputSchema.parse(response.structuredContent);
+      expect(evidence.normalized_result.format).toBe("pe32-plus");
+      expect(
+        evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]
+          ?.serial_hex,
+      ).toBe("11223344");
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest(
+  "requires an absolute path for inspect_pe_certificates",
+  async ({ mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const response = await client.callTool({
+        name: "inspect_pe_certificates",
+        arguments: { path: "signed.exe" },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "invalid_request",
+        details: { operation: "inspect_pe_certificates" },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);
+
+mcpTest.for([
+  { count: 350, reported_limits: { max_decoded_text_bytes: 65_536 } },
+  { count: 600, reported_limits: { max_asn1_values: 16_384 } },
+])(
+  "reports decoder capacity as a nonretryable resource failure for $count certificates",
+  async ({ count, reported_limits }, { mcp }) => {
+    const { client, session } = await connect(mcp);
+    try {
+      const root = await createTestTempDirectory("rea-pe-cert-mcp-budget-");
+      const path = join(root, "large.exe");
+      await writeFile(
+        path,
+        peCertificateFixture(false, repeatedCertificateSignedData(count)),
+      );
+      const response = await client.callTool({
+        name: "inspect_pe_certificates",
+        arguments: { path },
+      });
+      expect(response.isError).toBe(true);
+      expect(parseMcpToolError(response).error).toMatchObject({
+        code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        details: { operation: "inspect_pe_certificates", reported_limits },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);

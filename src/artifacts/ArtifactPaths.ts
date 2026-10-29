@@ -2,9 +2,24 @@ import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
 
-const DRIVE_OR_UNC = /^(?:[A-Za-z]:|\\|\/\/)/u;
+const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
+
+// Bound diagnostic JSON expansion to 768 characters before formatting. This is
+// a presentation budget, never a limit on accepted paths or retained facts.
+const PATH_DIAGNOSTIC_CODE_UNITS = 128;
+const pathDiagnostic = (path: string): string =>
+  path.length <= PATH_DIAGNOSTIC_CODE_UNITS
+    ? JSON.stringify(path)
+    : `${JSON.stringify(path.slice(0, PATH_DIAGNOSTIC_CODE_UNITS))}… (${String(path.length)} UTF-16 code units)`;
+
+type DestinationEntryKind = Exclude<ArtifactEntry["kind"], "metadata">;
+
+/** Declarations have query identities, but never claim a destination path. */
+export const hasDestinationPath = (
+  kind: ArtifactEntry["kind"],
+): kind is DestinationEntryKind => kind !== "metadata";
 
 /**
  * English Unicode case folding used only to describe logical names a
@@ -16,21 +31,47 @@ const ENGLISH_UNICODE_CASE_NOTE =
 /** Inventory limitation when logical names collide under English Unicode case folding. */
 export const ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION = `Logical archive names collide under English (en-US) Unicode case folding; a case-insensitive destination cannot store both spellings. ${ENGLISH_UNICODE_CASE_NOTE}`;
 
-/** User-facing prefix for a destination that cannot keep two logical spellings. */
-export const DESTINATION_CASE_COLLISION_PREFIX =
-  "Destination filesystem cannot store both ";
+/** A rejected destination create whose directory listing identifies another spelling. */
+export class DestinationCaseCollisionFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    readonly existingPath: string,
+    options?: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot store both ${requestedPath} and ${existingPath}; inventory retains both logical names.`,
+      options,
+    );
+    this.name = "DestinationCaseCollisionFailure";
+  }
+}
 
-/** Normalize an untrusted logical archive path without touching filesystem. */
+/** The destination rejected a name before a file or directory was acquired. */
+export class DestinationPathUnrepresentableFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot represent ${pathDiagnostic(requestedPath)}.`,
+      options,
+    );
+    this.name = "DestinationPathUnrepresentableFailure";
+  }
+}
+
+/** Normalize slash-separated logical names; backslashes are literal components. */
 export const normalizeArtifactPath = (input: string): string => {
   if (
     input.includes("\0") ||
-    input.includes("\\") ||
     input.startsWith("/") ||
-    DRIVE_OR_UNC.test(input)
+    ABSOLUTE_DRIVE_PATH.test(input)
   )
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is absolute or unsafe: ${JSON.stringify(input)}`,
+      `Artifact path is absolute or unsafe: ${pathDiagnostic(input)}`,
     );
   const normalized = logicalPathNfc(input).replace(/\/+$/u, "");
   const parts = normalized.split("/");
@@ -41,7 +82,7 @@ export const normalizeArtifactPath = (input: string): string => {
   )
     throw new ArtifactReaderFailure(
       "path",
-      `Artifact path is not normalized: ${JSON.stringify(input)}`,
+      `Artifact path is not normalized: ${pathDiagnostic(input)}`,
     );
   return normalized;
 };
@@ -50,14 +91,15 @@ export const normalizeArtifactPath = (input: string): string => {
 export class ArtifactPathRegistry {
   readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
 
-  add(path: string, kind: "file" | "directory" | "symlink" | "slice"): void {
+  add(path: string, kind: ArtifactEntry["kind"]): void {
+    if (!hasDestinationPath(kind)) return;
     const parts = path.split("/");
     let node = this.#root;
     for (const [index, part] of parts.entries()) {
       if (node.kind !== undefined && node.kind !== "directory")
         throw new ArtifactReaderFailure(
           "path",
-          `Artifact prefix conflict: ${path}`,
+          `Artifact prefix conflict: ${pathDiagnostic(path)}`,
         );
       let child = node.children.get(part);
       if (child === undefined) {
@@ -66,15 +108,15 @@ export class ArtifactPathRegistry {
       }
       node = child;
       if (index === parts.length - 1) {
-        if (node.kind !== undefined)
+        if (node.kind !== undefined && node.kind !== kind)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact path collision: ${path}`,
+            `Artifact path collision: ${pathDiagnostic(path)}`,
           );
         if (kind !== "directory" && node.children.size > 0)
           throw new ArtifactReaderFailure(
             "path",
-            `Artifact prefix conflict: ${path}`,
+            `Artifact prefix conflict: ${pathDiagnostic(path)}`,
           );
       }
     }
@@ -83,7 +125,7 @@ export class ArtifactPathRegistry {
 }
 
 interface PathTrieNode {
-  kind: "file" | "directory" | "symlink" | "slice" | undefined;
+  kind: DestinationEntryKind | undefined;
   readonly children: Map<string, PathTrieNode>;
 }
 
@@ -108,15 +150,19 @@ const englishCaseFold = (part: string): string =>
  */
 export const annotateEnglishUnicodeCaseCollisions = (
   occurrences: readonly {
+    readonly entry_kind: ArtifactEntry["kind"];
     readonly logical_path: string;
     limitations: string[];
   }[],
 ): string | undefined => {
+  const destinations = occurrences.filter(({ entry_kind }) =>
+    hasDestinationPath(entry_kind),
+  );
   const collisions = englishUnicodeCaseCollisions(
-    occurrences.map(({ logical_path }) => logical_path),
+    destinations.map(({ logical_path }) => logical_path),
   );
   if (collisions.size === 0) return undefined;
-  for (const occurrence of occurrences)
+  for (const occurrence of destinations)
     for (const collision of collisions.get(occurrence.logical_path) ?? [])
       occurrence.limitations.push(
         caseCollisionLimitation(occurrence.logical_path, collision),
@@ -153,10 +199,11 @@ const caseCollisionLimitation = (
  * Name the directory-listing spelling that differs from the requested segment
  * only by English (en-US) Unicode case. Exact matches are the same logical name.
  */
-export const destinationCaseCollisionMessage = (
+export const destinationCaseCollision = (
   requestedPath: string,
   existingNames: readonly string[],
-): string | undefined => {
+  options?: ErrorOptions,
+): DestinationCaseCollisionFailure | undefined => {
   const slash = requestedPath.lastIndexOf("/");
   const segment = slash < 0 ? requestedPath : requestedPath.slice(slash + 1);
   if (existingNames.includes(segment)) return undefined;
@@ -166,7 +213,11 @@ export const destinationCaseCollisionMessage = (
     .sort(compareUnicodeCodePoints)[0];
   if (existing === undefined) return undefined;
   const parent = slash < 0 ? "" : requestedPath.slice(0, slash + 1);
-  return `${DESTINATION_CASE_COLLISION_PREFIX}${requestedPath} and ${parent}${existing}; inventory retains both logical names.`;
+  return new DestinationCaseCollisionFailure(
+    requestedPath,
+    `${parent}${existing}`,
+    options,
+  );
 };
 
 const englishUnicodeCaseCollisions = (

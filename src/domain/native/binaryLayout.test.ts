@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { binaryLayoutSchema, type BinaryLayout } from "./binaryLayout.js";
+import {
+  binaryLayoutSchema,
+  safeParseOwnedBinaryLayout,
+  type BinaryLayout,
+} from "./binaryLayout.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 
 const report = () => ({
   artifact: { path: "/fixture.elf", sha256: "a".repeat(64), bytes: 128 },
@@ -60,11 +65,75 @@ const report = () => ({
   limitations: [],
 });
 
+it("reuses an exact validated immutable layout without a second retained copy", () => {
+  const value = freezeJsonSnapshot(report());
+  const parsed = safeParseOwnedBinaryLayout(value);
+  expect(parsed.success).toBe(true);
+  if (!parsed.success) throw parsed.error;
+  expect(parsed.data).toBe(value);
+  expect(safeParseOwnedBinaryLayout(value)).toEqual(parsed);
+  expect(parsed.data).toEqual(binaryLayoutSchema.parse(value));
+  expect(Reflect.set(value.sections[0]!, "index", 5)).toBe(false);
+});
+
+it.each(["mutable", "shallow-frozen"])(
+  "revalidates a changed %s layout instead of caching its former validity",
+  (kind) => {
+    const value = report();
+    if (kind === "shallow-frozen") Object.freeze(value);
+    const first = safeParseOwnedBinaryLayout(value);
+    if (!first.success) throw first.error;
+    expect(first.data).not.toBe(value);
+    value.sections[0]!.header_location.offset = "0x80";
+    const invalid = safeParseOwnedBinaryLayout(value);
+    expect(invalid.success).toBe(false);
+    expect(invalid).toEqual(binaryLayoutSchema.safeParse(value));
+  },
+);
+
+it("never treats sealing as format validity or caches a refused layout", () => {
+  const value = report();
+  value.sections[0]!.index = 10;
+  freezeJsonSnapshot(value);
+  expect(safeParseOwnedBinaryLayout(value).success).toBe(false);
+  expect(safeParseOwnedBinaryLayout(value).success).toBe(false);
+});
+
+it("does not borrow hidden fields that the format parser removed", () => {
+  const value = report();
+  Object.defineProperty(value, "not_in_parsed_result", {
+    value: { unvalidated: true },
+    enumerable: false,
+  });
+  freezeJsonSnapshot(value);
+  for (let repeat = 0; repeat < 2; repeat += 1) {
+    const parsed = safeParseOwnedBinaryLayout(value);
+    if (!parsed.success) throw parsed.error;
+    expect(parsed.data).not.toBe(value);
+    expect(Object.hasOwn(parsed.data, "not_in_parsed_result")).toBe(false);
+  }
+});
+
 it("retains high linked values and NOBITS without inventing file backing", () => {
   const value = binaryLayoutSchema.parse(report());
   expect(value.entry_point.reported_value).toBe("0x20000000000001");
   expect(value.sections[0]?.offset).toBe("0xffffffffffffffff");
   expect(value.runtime_load_base).toBeNull();
+});
+
+it.each([
+  [{ machine: "EM_386", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "big" }, true],
+  [{ machine: "EM_X86_64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "big" }, false],
+  [{ machine: "EM_386", bits: 64, byte_order: "little" }, false],
+  [{ machine: "EM_MIPS", bits: 64, byte_order: "big" }, false],
+])("admits only profiled architecture %j: %s", (architecture, admitted) => {
+  expect(
+    binaryLayoutSchema.safeParse({ ...report(), architecture }).success,
+  ).toBe(admitted);
 });
 
 it.each([
@@ -222,6 +291,9 @@ it.each([
   "wrong-unknown-target",
   "missing-string-table",
   "wrong-string-table-kind",
+  "elf32-symbol-entry",
+  "elf32-undersized-symbol-entry",
+  "elf64-elf32-sized-symbol-entry",
 ])("validates relocation symbol reference semantics: %s", (problem) => {
   const value = binaryLayoutSchema.parse(report());
   value.artifact.bytes = 512;
@@ -305,6 +377,17 @@ it.each([
   if (problem === "owner-link-mismatch") owner.link = 0;
   if (problem === "wrong-meaning")
     relocation.symbol_reference_meaning = "zero-symbol-value";
+  // Elf32_Sym is 16 bytes and Elf64_Sym 24; the minimum follows the ELF class.
+  if (problem.includes("elf32")) {
+    if (problem.startsWith("elf32"))
+      value.architecture = {
+        machine: "EM_386",
+        bits: 32,
+        byte_order: "little",
+      };
+    table.size = "0x20";
+    table.entry_size = problem.includes("undersized") ? "0xc" : "0x10";
+  }
   if (problem.includes("target")) {
     value.image_type = "ET_REL";
     value.entry_point.meaning = "not-applicable";
@@ -357,6 +440,7 @@ it.each([
       "valid-section-target",
       "undefined-target",
       "inactive-target",
+      "elf32-symbol-entry",
     ].includes(problem),
   );
 });

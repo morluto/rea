@@ -4,7 +4,17 @@ import { AnalysisTimeoutError } from "../../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
-import { sanitizeBrowserUrl } from "../../domain/browserObservation.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  cdpCleanupGraceExpired,
+  cdpCommandDeadlineRecovery,
+  selectedCdpCommandTimeoutMs,
+} from "../../domain/browserDeadline.js";
+import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
+import {
+  classifyCdpFrameUrl,
+  observeMainFrameUrl,
+} from "../CdpCaptureDocuments.js";
 import {
   WEB_RUNTIME_LIMITS,
   type webRuntimeTargetSchema,
@@ -12,6 +22,7 @@ import {
 import type { z } from "zod";
 import { authorizeCdpTarget } from "../CdpAuthorizedTarget.js";
 import { authorizedMainFrame } from "../CdpAuthorizedMainFrame.js";
+import { cdpOriginScopeRefusal } from "../CdpOriginScopeError.js";
 import {
   discoverCdpEndpoint,
   type CdpEndpointDiscovery,
@@ -26,6 +37,7 @@ type Scope = {
   readonly cdp_endpoint: string;
   readonly target_id: string;
   readonly allowed_origins: readonly string[];
+  readonly command_timeout_ms?: number | undefined;
 };
 
 /** Owned transport and instrumentation; the selected browser/page remain externally owned. */
@@ -41,6 +53,8 @@ export class CdpRuntimeSession {
     readonly allowedOrigins: ReadonlySet<string>,
     readonly operation: BrowserObservationOperation,
     readonly options: ExecutionOptions,
+    readonly owner: CdpTargetSessionOwner,
+    readonly commandTimeoutMs: number,
   ) {}
 
   /** Acquire a validated target; failed setup releases its owned socket. */
@@ -48,57 +62,87 @@ export class CdpRuntimeSession {
     input: Scope,
     operation: BrowserObservationOperation,
     options: ExecutionOptions,
+    owner: CdpTargetSessionOwner,
   ): Promise<CdpRuntimeSession> {
-    return runtimeDeadline(operation, options.signal, async (signal) => {
-      const discovery = await discoverCdpEndpoint(
-        input.cdp_endpoint,
-        operation,
-        signal,
-      );
-      const { target, allowedOrigins } = authorizeCdpTarget(
-        discovery,
-        input,
-        operation,
-      );
-      const transport = await openCdpTargetSession(
-        discovery,
-        target,
-        operation,
-        signal,
-        { maxPayloadBytes: WEB_RUNTIME_LIMITS.protocolBytes },
-      );
-      try {
-        const tree = runtimeFrameTreeSchema.parse(
-          await authorizedMainFrame({
-            ...transport,
-            allowedOrigins,
-            signal,
-            operation,
-          }),
-        );
-        const frame = tree.frameTree.frame;
-        const url = sanitizeBrowserUrl(frame.url);
-        if (url.origin === null)
-          throw new BrowserObservationError(operation, "target_not_allowed");
-        return new CdpRuntimeSession(
-          transport,
-          discovery,
-          {
-            target_id: target.id,
-            initial_url: url.url,
-            origin: url.origin,
-            frame_id: frame.id,
-            loader_id: frame.loaderId ?? null,
-          },
-          allowedOrigins,
+    const commandTimeoutMs = selectedCdpCommandTimeoutMs(
+      input.command_timeout_ms,
+    );
+    // HTTP discovery keeps its own fixed deadline. The WebSocket handshake
+    // and a browser-level Target.attachToTarget each get commandTimeoutMs.
+    // One deadline around both would expire a valid attach after a slow handshake.
+    const discovery = await discoverCdpEndpoint(
+      input.cdp_endpoint,
+      operation,
+      options.signal,
+    );
+    const { target, allowedOrigins } = authorizeCdpTarget(
+      discovery,
+      input,
+      operation,
+    );
+    const transport = await openCdpTargetSession(
+      discovery,
+      target,
+      operation,
+      options.signal,
+      {
+        maxPayloadBytes: WEB_RUNTIME_LIMITS.protocolBytes,
+        commandTimeoutMs,
+      },
+      owner,
+    );
+    try {
+      const frame = runtimeMainFrame(
+        await runtimeDeadline(
           operation,
-          options,
+          options.signal,
+          (signal) =>
+            authorizedMainFrame({
+              ...transport,
+              allowedOrigins,
+              signal,
+              operation,
+            }),
+          commandTimeoutMs,
+          "command",
+          "Page.getFrameTree",
+        ),
+        allowedOrigins,
+      );
+      const url = runtimeFrameUrl(frame, operation);
+      return new CdpRuntimeSession(
+        transport,
+        discovery,
+        {
+          target_id: target.id,
+          initial_url: url.url,
+          origin: url.origin,
+          frame_id: frame.id,
+          loader_id: frame.loaderId ?? null,
+        },
+        allowedOrigins,
+        operation,
+        options,
+        owner,
+        commandTimeoutMs,
+      );
+    } catch (cause: unknown) {
+      try {
+        await owner.finish(transport.connection);
+      } catch (cleanupCause: unknown) {
+        if (
+          cause instanceof AnalysisError &&
+          cleanupCause instanceof AnalysisError
+        )
+          throw analysisErrorWithCleanupFailure(cause, cleanupCause, operation);
+        throw new AggregateError(
+          [cause, cleanupCause],
+          `CDP runtime setup ${operation} failed and cleanup remains incomplete.`,
+          { cause },
         );
-      } catch (cause: unknown) {
-        await transport.connection.close();
-        throw cause;
       }
-    });
+      throw cause;
+    }
   }
 
   /** Bound each command separately from the caller-selected observation duration. */
@@ -120,13 +164,22 @@ export class CdpRuntimeSession {
             this.transport.sessionId,
             signal,
           ),
+        this.commandTimeoutMs,
+        "command",
+        method,
       );
     } catch (cause: unknown) {
-      if (this.#completion?.signal.aborted && !this.options.signal?.aborted)
+      if (this.#completion?.signal.aborted && !this.options.signal?.aborted) {
+        const recovery = cdpCommandDeadlineRecovery(
+          this.commandTimeoutMs,
+          "source-join",
+        );
         throw new AnalysisTimeoutError(
           this.operation,
-          WEB_RUNTIME_LIMITS.commandTimeoutMs,
+          this.commandTimeoutMs,
+          recovery,
         );
+      }
       throw cause;
     }
   }
@@ -137,7 +190,7 @@ export class CdpRuntimeSession {
     this.#completion = new AbortController();
     this.#completionTimer = setTimeout(
       () => this.#completion?.abort(),
-      WEB_RUNTIME_LIMITS.commandTimeoutMs,
+      this.commandTimeoutMs,
     );
   }
 
@@ -149,22 +202,26 @@ export class CdpRuntimeSession {
 
   /** Check document identity before joining any live node or final coverage evidence. */
   async assertDocument(): Promise<void> {
-    const frame = runtimeFrameTreeSchema.parse(
+    const frame = runtimeMainFrame(
       await this.command("Page.getFrameTree"),
-    ).frameTree.frame;
-    const url = sanitizeBrowserUrl(frame.url);
+      this.allowedOrigins,
+    );
     if (
       frame.id !== this.target.frame_id ||
       (frame.loaderId ?? null) !== this.target.loader_id ||
-      (this.target.loader_id === null && url.url !== this.target.initial_url)
+      (this.target.loader_id === null &&
+        ((frame.url !== undefined && frame.url !== this.target.initial_url) ||
+          frame.scope === "outside_policy" ||
+          frame.scope === "unsupported"))
     )
       throw new BrowserObservationError(this.operation, "target_changed", {
         detail: `Selected target ${this.target.target_id} changed document during ${this.operation}.`,
       });
-    if (url.origin === null || !this.allowedOrigins.has(url.origin))
-      throw new BrowserObservationError(this.operation, "target_not_allowed", {
-        detail: `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
-      });
+    runtimeFrameUrl(
+      frame,
+      this.operation,
+      `Selected target ${this.target.target_id} moved to an unselected origin during ${this.operation}.`,
+    );
   }
 
   /** Cleanup uses its own deadline after caller cancellation, then closes REA's transport. */
@@ -179,7 +236,13 @@ export class CdpRuntimeSession {
       () => controller.abort(),
       WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
     );
+    // Switch before the first restoration send. A short command_timeout_ms
+    // would otherwise expire the connection timer and report cleanup_failed.
+    this.transport.connection.beginCleanupGrace(
+      WEB_RUNTIME_LIMITS.cleanupTimeoutMs,
+    );
     const failures: string[] = [];
+    let transportFailure: AnalysisError | undefined;
     const send = async (
       method: string,
       params: Readonly<Record<string, unknown>> = {},
@@ -220,7 +283,26 @@ export class CdpRuntimeSession {
       }
     } finally {
       clearTimeout(timer);
-      await this.transport.connection.close();
+      if (controller.signal.aborted) failures.push(cdpCleanupGraceExpired());
+      try {
+        await this.owner.finish(this.transport.connection);
+      } catch (cause: unknown) {
+        transportFailure =
+          cause instanceof AnalysisError
+            ? cause
+            : new ProviderCleanupError(
+                "rea-cdp-browser",
+                [this.target.target_id],
+                {
+                  reason:
+                    cause instanceof Error ? cause.message : String(cause),
+                },
+                { operation: this.operation, cause },
+              );
+        failures.push(
+          `CDP WebSocket close: ${transportFailure.userMessage ?? transportFailure.message}`,
+        );
+      }
     }
     return failures.length === 0
       ? undefined
@@ -233,22 +315,51 @@ export class CdpRuntimeSession {
             previous_error:
               previousError?.userMessage ?? previousError?.message ?? null,
           },
-          { operation: this.operation },
+          {
+            operation: this.operation,
+            ...(transportFailure === undefined
+              ? {}
+              : { cause: transportFailure }),
+          },
         );
   }
 }
+
+/** Runtime validates document IDs; CDP owns URL and scope interpretation. */
+const runtimeMainFrame = (
+  result: unknown,
+  allowedOrigins: ReadonlySet<string>,
+) => ({
+  ...runtimeFrameTreeSchema.parse(result).frameTree.frame,
+  ...classifyCdpFrameUrl(observeMainFrameUrl(result), allowedOrigins),
+});
+
+const runtimeFrameUrl = (
+  frame: ReturnType<typeof runtimeMainFrame>,
+  operation: BrowserObservationOperation,
+  detail?: string,
+) => {
+  if (frame.scope === "outside_policy" || frame.scope === "unsupported")
+    throw cdpOriginScopeRefusal(
+      operation,
+      detail === undefined ? {} : { detail },
+    );
+  if (frame.url === undefined || frame.origin === null)
+    throw new BrowserObservationError(operation, "protocol_error");
+  return { url: frame.url, origin: frame.origin };
+};
 
 /** Apply a disposable command deadline without turning timeout into caller cancellation. */
 export const runtimeDeadline = async <T>(
   operation: BrowserObservationOperation,
   signal: AbortSignal | undefined,
   run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number = selectedCdpCommandTimeoutMs(undefined),
+  phase: "handshake" | "command" = "command",
+  method?: string,
 ): Promise<T> => {
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    WEB_RUNTIME_LIMITS.commandTimeoutMs,
-  );
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await run(
       signal === undefined
@@ -256,11 +367,16 @@ export const runtimeDeadline = async <T>(
         : AbortSignal.any([signal, controller.signal]),
     );
   } catch (cause: unknown) {
-    if (controller.signal.aborted && signal?.aborted !== true)
-      throw new AnalysisTimeoutError(
-        operation,
-        WEB_RUNTIME_LIMITS.commandTimeoutMs,
+    if (controller.signal.aborted && signal?.aborted !== true) {
+      if (cause instanceof AnalysisError && cause.userMessage !== undefined)
+        throw cause;
+      const recovery = cdpCommandDeadlineRecovery(
+        timeoutMs,
+        phase,
+        method ?? (phase === "handshake" ? undefined : "session setup"),
       );
+      throw new AnalysisTimeoutError(operation, timeoutMs, recovery);
+    }
     throw cause;
   } finally {
     clearTimeout(timer);

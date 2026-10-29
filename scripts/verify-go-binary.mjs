@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { isUtf8 } from "node:buffer";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -12,7 +12,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 
 const execute = promisify(execFile);
@@ -24,6 +24,8 @@ if (process.env.REA_VERIFY_GO_COMMAND !== undefined && !isAbsolute(compiler))
 let compilerVersion = null;
 const run = createVerifierRun();
 const root = await PrivateRuntimeRoot.create({ prefix: "rea-go-verifier-" });
+// Keep Go's directory enumeration below the private root's Windows ownership lease.
+const sourceRoot = join(root.path, "source");
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const environment = Object.fromEntries(
   Object.entries(process.env).filter(([, value]) => typeof value === "string"),
@@ -115,14 +117,54 @@ try {
       ],
       { GOOS: os, GOARCH: arch },
     );
-    await verify(path, target, oracle, null, "stripped");
+    const strippedInfo = await verify(path, target, oracle, null, "stripped");
     if (os === "linux" && arch === "amd64") {
       const sectionless = join(root.path, "linux-amd64-sectionless");
       const bytes = Buffer.from(await readFile(path));
       bytes.fill(0, 40, 48); // ELF64 e_shoff.
       bytes.fill(0, 58, 64); // e_shentsize, e_shnum and e_shstrndx.
       await writeFile(sectionless, bytes);
-      await verify(sectionless, target, oracle, null, "sectionless");
+      const sectionlessInfo = await verify(
+        sectionless,
+        target,
+        oracle,
+        null,
+        "sectionless",
+        path,
+      );
+      assert.deepEqual(sectionlessInfo, strippedInfo);
+
+      const pie = join(root.path, "linux-amd64-pie");
+      await go(
+        [
+          "build",
+          "-trimpath",
+          "-buildvcs=false",
+          "-ldflags=-s -w",
+          "-buildmode=pie",
+          "-o",
+          pie,
+          ".",
+        ],
+        { GOOS: os, GOARCH: arch },
+      );
+      const originalInfo = await verify(pie, target, oracle, null, "pie");
+      const pieBytes = Buffer.from(await readFile(pie));
+      pieBytes.fill(0, 40, 48);
+      pieBytes.fill(0, 58, 64);
+      const pieSectionless = `${pie}-sectionless`;
+      await writeFile(pieSectionless, pieBytes);
+      // Keep the producer image as the independent oracle. Removing section
+      // headers must preserve every metadata field and original source span.
+      const retainedInfo = await verify(
+        pieSectionless,
+        target,
+        oracle,
+        null,
+        "sectionless-pie",
+        pie,
+      );
+      assert.deepEqual(retainedInfo, originalInfo);
     }
   }
   for (const target of targets.filter(([os]) => os === "darwin")) {
@@ -143,7 +185,7 @@ try {
     const expected = JSON.parse(
       (
         await execute(oracle, ["--build-byte-fixture", compiler, path], {
-          cwd: root.path,
+          cwd: sourceRoot,
           env: { ...goEnvironment, GOOS: "linux", GOARCH: "amd64" },
           timeout: 120_000,
           maxBuffer: 1024 * 1024,
@@ -169,7 +211,7 @@ try {
 }
 const verifier = await completeVerifierRun(run);
 try {
-  await assert.rejects(readFile(join(root.path, "go.mod")), { code: "ENOENT" });
+  await assert.rejects(lstat(root.path), { code: "ENOENT" });
   if (verifier.process_lineage.status === "verified")
     assert.deepEqual(verifier.process_lineage.descendants, []);
 } catch (cause) {
@@ -214,7 +256,7 @@ console.log(
 
 async function go(args, overrides = {}) {
   return execute(compiler, args, {
-    cwd: root.path,
+    cwd: sourceRoot,
     env: { ...goEnvironment, ...overrides },
     timeout: 120_000,
     maxBuffer: 1024 * 1024,
@@ -222,29 +264,30 @@ async function go(args, overrides = {}) {
 }
 
 async function prepareFixture() {
+  await mkdir(sourceRoot);
   await mkdir(join(root.path, "tmp"));
   await mkdir(join(root.path, "telemetry"));
   await writeFile(join(root.path, "telemetry", "mode"), "off\n");
-  await mkdir(join(root.path, "dependency"));
-  await mkdir(join(root.path, "oracle"));
+  await mkdir(join(sourceRoot, "dependency"));
+  await mkdir(join(sourceRoot, "oracle"));
   await writeFile(
-    join(root.path, "go.mod"),
+    join(sourceRoot, "go.mod"),
     "module example.test/rea-go-fixture\n\ngo 1.20\n\nrequire example.test/dependency v1.2.3\nreplace example.test/dependency => ./dependency\n",
   );
   await writeFile(
-    join(root.path, "dependency", "go.mod"),
+    join(sourceRoot, "dependency", "go.mod"),
     "module example.test/dependency\n\ngo 1.20\n",
   );
   await writeFile(
-    join(root.path, "dependency", "dependency.go"),
+    join(sourceRoot, "dependency", "dependency.go"),
     'package dependency\nfunc Value() string { return "REA fixture" }\n',
   );
   await writeFile(
-    join(root.path, "main.go"),
+    join(sourceRoot, "main.go"),
     'package main\nimport ("fmt"; "example.test/dependency")\nfunc main() { fmt.Println(dependency.Value()) }\n',
   );
   await writeFile(
-    join(root.path, "oracle", "main.go"),
+    join(sourceRoot, "oracle", "main.go"),
     String.raw`package main
 
 import (
@@ -316,8 +359,7 @@ async function inspect(mode, path) {
       { name: "inspect_go_binary", arguments: { path } },
       { timeout: 30_000 },
     );
-    assert.notEqual(response.isError, true, mcpTextValue(response));
-    envelope = JSON.parse(mcpTextValue(response));
+    envelope = requireMcpOutput(response, "inspect_go_binary");
   }
   const evidence = parseEvidence(envelope);
   assert.equal(evidence.subject.local_path, path);
@@ -332,13 +374,14 @@ async function verify(
   oracle,
   byteExpected = null,
   fileKind = "stripped",
+  oraclePath = path,
 ) {
   const bytes = await readFile(path);
   const expected =
     byteExpected ??
     JSON.parse(
       (
-        await execute(oracle, [path], {
+        await execute(oracle, [oraclePath], {
           timeout: 10_000,
           maxBuffer: 1024 * 1024,
         })
@@ -408,6 +451,7 @@ async function verify(
       ? {}
       : { go_version_bytes_base64: expected.GoVersionBytesBase64 }),
   });
+  return reports[0].build_info;
 }
 
 function verifyByteStrings(info, expected) {

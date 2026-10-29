@@ -12,7 +12,7 @@ describe("inline MCP Evidence composition", () => {
     try {
       const response = await mcp.callTool({
         name: "analyze_function",
-        arguments: { procedure: "fixture_main" },
+        arguments: { procedure: "fixture_main", detail: "complete" },
       });
       expect(response.isError).not.toBe(true);
       const analyzed = toolContract("analyze_function").outputSchema.parse(

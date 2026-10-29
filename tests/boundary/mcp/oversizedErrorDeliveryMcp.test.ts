@@ -13,15 +13,19 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
 };
 
-const failureWithName = (nameBytes: number, targetContent = false) =>
-  delivery.toErrorToolResult(
+const failureWithName = (
+  nameBytes: number,
+  targetContent = false,
+  selectedDelivery = delivery,
+) =>
+  selectedDelivery.toErrorToolResult(
     new AnalysisInputError("procedure_address", undefined, [
       {
         path: ["procedure"],
@@ -260,10 +264,15 @@ it("keeps the untrusted target-content marker on an oversized error's replacemen
 
 // The delivered error wire omits only the private structured carrier; its
 // `isError` flag and any provenance marker count against the result budget.
-const deliveredErrorBytes = (nameBytes: number, targetContent: boolean) => {
+const deliveredErrorBytes = (
+  nameBytes: number,
+  targetContent: boolean,
+  selectedDelivery = delivery,
+) => {
   const { structuredContent: _carrier, ...wire } = failureWithName(
     nameBytes,
     targetContent,
+    selectedDelivery,
   );
   return Buffer.byteLength(JSON.stringify(wire));
 };
@@ -271,26 +280,28 @@ const deliveredErrorBytes = (nameBytes: number, targetContent: boolean) => {
 it.each([false, true])(
   "applies the result budget to the complete delivered error (target content: %s)",
   async (targetContent) => {
+    const boundaryDelivery = createToolResultDelivery(4096);
     const fittingName =
-      delivery.resultBudgetBytes - deliveredErrorBytes(0, targetContent);
-    expect(deliveredErrorBytes(fittingName, targetContent)).toBe(
-      delivery.resultBudgetBytes,
-    );
+      boundaryDelivery.resultBudgetBytes -
+      deliveredErrorBytes(0, targetContent, boundaryDelivery);
+    expect(
+      deliveredErrorBytes(fittingName, targetContent, boundaryDelivery),
+    ).toBe(boundaryDelivery.resultBudgetBytes);
+    const toolName = targetContent ? "procedure_pseudo_code" : "record_unknown";
     const server = new EvidenceMcpServer(
       { name: "error-budget-test", version: "1" },
       { capabilities: {} },
       undefined,
-      delivery,
+      boundaryDelivery,
+    );
+    server.registerTool(toolName, { inputSchema: z.object({}) }, async () =>
+      failureWithName(fittingName, targetContent, boundaryDelivery),
     );
     server.registerTool(
-      "fitting_failure",
+      targetContent ? "inspect_artifact" : "export_evidence_bundle",
       { inputSchema: z.object({}) },
-      async () => failureWithName(fittingName, targetContent),
-    );
-    server.registerTool(
-      "one_byte_over_failure",
-      { inputSchema: z.object({}) },
-      async () => failureWithName(fittingName + 1, targetContent),
+      async () =>
+        failureWithName(fittingName + 1, targetContent, boundaryDelivery),
     );
     const client = new Client({ name: "error-budget-client", version: "1" });
     const [clientTransport, serverTransport] =
@@ -299,15 +310,19 @@ it.each([false, true])(
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       const fitting = await client.callTool({
-        name: "fitting_failure",
+        name: toolName,
         arguments: {},
       });
       expect(fitting.isError).toBe(true);
+      expect(fitting._meta).toEqual(
+        targetContent ? UNTRUSTED_TARGET_CONTENT : undefined,
+      );
       expect(parseMcpToolError(fitting)).toEqual(
-        failureWithName(fittingName, targetContent).structuredContent,
+        failureWithName(fittingName, targetContent, boundaryDelivery)
+          .structuredContent,
       );
       const over = await client.callTool({
-        name: "one_byte_over_failure",
+        name: targetContent ? "inspect_artifact" : "export_evidence_bundle",
         arguments: {},
       });
       expect(over.isError).toBe(true);

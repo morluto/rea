@@ -8,7 +8,7 @@ import { afterEach, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import {
-  parseRuntimeReconciliationInput,
+  readRuntimeReconciliationInput,
   reconcileJavaScriptRuntime,
 } from "../../../src/domain/javascript/javascriptRuntimeReconciliation.js";
 import { reconcileJavaScriptRuntimeInputSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
@@ -20,12 +20,13 @@ import {
   electronRuntimeEvidence,
 } from "../../fixtures/javascriptRuntimeReconciliation.js";
 
-const reconcileInput = (input: unknown) =>
-  reconcileJavaScriptRuntime(
-    parseRuntimeReconciliationInput(
-      reconcileJavaScriptRuntimeInputSchema.parse(input),
-    ),
+const reconcileInput = (input: unknown) => {
+  const result = readRuntimeReconciliationInput(
+    reconcileJavaScriptRuntimeInputSchema.parse(input),
   );
+  if (!result.ok) throw result.error;
+  return reconcileJavaScriptRuntime(result.value);
+};
 
 const execute = promisify(execFile);
 
@@ -133,12 +134,32 @@ it("rejects runtime source bytes whose Evidence omits source-capture approval", 
     sourceIncluded: false,
   });
 
-  expect(() =>
-    reconcileInput({
+  const result = readRuntimeReconciliationInput(
+    reconcileJavaScriptRuntimeInputSchema.parse({
       static_layers: [{ role: "application", analysis: staticEvidence }],
       runtime_observations: [contradictoryRuntime],
     }),
-  ).toThrow(/source-capture selection/u);
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisInputError",
+      operation: "reconcile_javascript_runtime",
+      issues: [
+        {
+          path: [
+            "runtime_observations",
+            0,
+            "parameters",
+            "include_script_sources",
+          ],
+          reason: "invalid_value",
+          message:
+            "Runtime Evidence contains source without source-capture selection",
+        },
+      ],
+    },
+  });
 });
 
 it("keeps graph omission counts unknown when a runtime section is unavailable", async () => {

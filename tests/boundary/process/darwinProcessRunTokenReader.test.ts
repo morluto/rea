@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -27,6 +27,7 @@ import {
   createDarwinProcessRunTokenReader,
   DarwinProcessOwnershipInspectionError,
   SWIFTC_INTERRUPT,
+  swiftcCompileTimeoutRecovery,
 } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import {
@@ -40,12 +41,22 @@ import { electronActiveObservationInputSchema } from "../../../src/domain/javasc
 const execFileAsync = promisify(execFile);
 const onDarwin = process.platform === "darwin";
 
+// Readiness files are polled by another process; expose only complete JSON.
+const publishFixtureStateSource = `
+const publishFixtureState = (file, value) => {
+  const pending = file + "." + process.pid + ".pending";
+  fs.writeFileSync(pending, JSON.stringify(value));
+  fs.renameSync(pending, file);
+};
+`;
+
 const writeBlockingCompiler = async (directory: string) => {
   const executable = join(directory, "fake-xcrun");
   const statePath = join(directory, "compile-state.json");
   const releasePath = join(directory, "release-compiler");
   const source = `#!/usr/bin/env node
 const fs = process.getBuiltinModule("node:fs");
+${publishFixtureStateSource}
 const path = process.getBuiltinModule("node:path");
 const statePath = ${JSON.stringify(statePath)};
 const releasePath = ${JSON.stringify(releasePath)};
@@ -58,7 +69,7 @@ state.output = process.argv[outputIndex + 1];
 state.root = path.dirname(state.output);
 state.arguments = process.argv.slice(2);
 state.releasePath = releasePath;
-fs.writeFileSync(statePath, JSON.stringify(state));
+publishFixtureState(statePath, state);
 if (state.calls === 1) {
   const timer = setInterval(() => {
     if (!fs.existsSync(releasePath)) return;
@@ -79,9 +90,10 @@ const writeBlockingIdentityCompiler = async (directory: string) => {
   const statePath = join(directory, "identity-helper-state.json");
   const helperSource = `#!/usr/bin/env node
 const fs = process.getBuiltinModule("node:fs");
-fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({
+${publishFixtureStateSource}
+publishFixtureState(${JSON.stringify(statePath)}, {
   root: process.getBuiltinModule("node:path").dirname(fs.realpathSync(process.argv[1])),
-}));
+});
 setInterval(() => {}, 1000);
 `;
   const compilerSource = `#!/usr/bin/env node
@@ -219,7 +231,9 @@ it.skipIf(process.platform === "win32")(
       expect(failure.message).toContain(
         "(compiler result: exit code 1): module cache is not writable",
       );
-      expect(failure.message).toContain("[diagnostics truncated]");
+      expect(failure.message).toContain(
+        "[diagnostics truncated at 512 bytes; this release has no runtime override]",
+      );
       const normalized = normalizeCaptureFailure(failure, undefined);
       if (!(normalized instanceof ProcessCaptureError))
         throw new Error("Expected a normalized process capture error");
@@ -260,14 +274,18 @@ it.skipIf(process.platform === "win32")(
       compileTimeoutMs: 3_000,
     });
     try {
-      await expect(preparationFailure(reader)).resolves.toMatchObject({
-        message:
-          "macOS process ownership helper compilation failed via xcrun (compiler result: timed out after 3000 ms): error: PCH was compiled with module cache path that differs",
-        compilerOutcome: {
-          outcome: "timed_out",
-          code: "ETIMEDOUT",
-          timeoutMs: 3_000,
-        },
+      const failure = await preparationFailure(reader);
+      expect(failure.message).toContain(
+        "macOS process ownership helper compilation failed via xcrun (compiler result: timed out after 3000 ms.",
+      );
+      expect(failure.message).toContain(swiftcCompileTimeoutRecovery(3_000));
+      expect(failure.message).toContain(
+        "error: PCH was compiled with module cache path that differs",
+      );
+      expect(failure.compilerOutcome).toMatchObject({
+        outcome: "timed_out",
+        code: "ETIMEDOUT",
+        timeoutMs: 3_000,
       });
     } finally {
       await reader.close();
@@ -329,7 +347,7 @@ it.skipIf(process.platform === "win32")(
       expect(outcome.stderrBytes).toBe(601);
       expect(outcome.stderrTruncated).toBe(false);
       expect(failure.message).toContain(
-        `: ${"x".repeat(512)}… [diagnostics truncated]`,
+        `: ${"x".repeat(512)}… [diagnostics truncated at 512 bytes; this release has no runtime override]`,
       );
       const excerpt = failure.message.split("): ")[1]?.split("…")[0];
       expect(excerpt).toBe("x".repeat(512));
@@ -406,13 +424,14 @@ const writeCacheRecordingCompiler = async (directory: string) => {
   const statePath = join(directory, "cache-compile-state.json");
   const source = `#!/usr/bin/env node
 const fs = process.getBuiltinModule("node:fs");
+${publishFixtureStateSource}
 const path = process.getBuiltinModule("node:path");
 const flagIndex = process.argv.indexOf("-module-cache-path");
 const cache = flagIndex === -1 ? undefined : process.argv[flagIndex + 1];
-fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({
+publishFixtureState(${JSON.stringify(statePath)}, {
   arguments: process.argv.slice(2),
   moduleCacheEnvironment: process.env.CLANG_MODULE_CACHE_PATH ?? null,
-}));
+});
 if (cache !== undefined) {
   fs.mkdirSync(cache, { recursive: true });
   fs.writeFileSync(path.join(cache, "written-into-cache"), "kept");
@@ -437,6 +456,84 @@ const existsPath = async (target: string) =>
     () => true,
     () => false,
   );
+
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "selected environment",
+    "selected environment and deadline",
+    "default environment",
+  ] as const)(
+  "captures the compiler and helper environment from %s",
+  async (selection) => {
+    const directory = await createTestTempDirectory(
+      "rea-process-token-selected-environment-",
+    );
+    const developerDirectory = join(directory, "selected Xcode.app");
+    const compileState = join(directory, "compile-environment.json");
+    const executable = join(directory, "fixture-xcrun");
+    const helper = `#!${process.execPath}
+console.log(JSON.stringify({ results: process.argv.slice(2).map(pid => ({
+  pid: Number(pid), state: "readable", run_id: process.env.DEVELOPER_DIR,
+})) }));
+`;
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+const fs = process.getBuiltinModule("node:fs");
+fs.writeFileSync(${JSON.stringify(compileState)}, JSON.stringify({
+  developerDirectory: process.env.DEVELOPER_DIR ?? null,
+}));
+const output = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(output, ${JSON.stringify(helper)});
+fs.chmodSync(output, 0o755);
+`,
+      { mode: 0o755 },
+    );
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    vi.stubEnv("DEVELOPER_DIR", developerDirectory);
+    const environment = { ...process.env };
+    const compiler = { kind: "xcrun" as const, executable };
+    const reader =
+      selection === "default environment"
+        ? createDarwinProcessRunTokenReader({ compiler })
+        : createSystemProcessOwnershipHost("darwin", environment, {
+            darwinCompiler: compiler,
+            ...(selection === "selected environment and deadline"
+              ? { compileTimeoutMs: 15_000 }
+              : {}),
+          });
+    environment.DEVELOPER_DIR = join(directory, "later caller selection");
+    vi.stubEnv("DEVELOPER_DIR", join(directory, "later ambient selection"));
+    try {
+      await reader.prepare?.(AbortSignal.timeout(15_000));
+      expect(JSON.parse(await readFile(compileState, "utf8"))).toEqual({
+        developerDirectory,
+      });
+      const processes = [
+        {
+          pid: 123,
+          parentPid: 1,
+          processGroupId: 123,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const observations =
+        "read" in reader
+          ? await reader.read(processes)
+          : await reader.runTokens?.(processes);
+      expect(observations?.get(123)).toEqual({
+        state: "readable",
+        runId: developerDirectory,
+      });
+    } finally {
+      await reader.close?.();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "forwards a caller-owned module cache and keeps it after the helper root is removed",
@@ -621,6 +718,33 @@ it.skipIf(!onDarwin)(
     });
     try {
       await host.prepare?.(AbortSignal.timeout(180_000));
+      const current = (await host.listProcesses()).find(
+        ({ pid }) => pid === process.pid,
+      );
+      if (current === undefined)
+        throw new Error("Current process missing from host snapshot");
+      if (host.processIdentities === undefined)
+        throw new Error("Darwin host omitted native identity inspection");
+      const identity = (await host.processIdentities([current])).get(
+        process.pid,
+      );
+      expect(identity).toMatchObject({
+        state: "readable",
+        relation: {
+          state: "observed",
+          parentPid: process.ppid,
+          processGroupId: current.processGroupId,
+        },
+      });
+      if (identity?.state !== "readable")
+        throw new Error("Current native identity unavailable");
+      expect(identity.identity).not.toBe("");
+      expect(
+        (await host.processIdentities([current])).get(process.pid),
+      ).toMatchObject({
+        state: "readable",
+        identity: identity.identity,
+      });
       const entries = await readdir(cachePath);
       expect(
         entries.some(
@@ -689,32 +813,32 @@ const temporaryStateSchema = z.object({
 });
 
 /**
- * A compiler that behaves like swift-driver: a job in its own process group
- * writes an object under TMPDIR, SIGINT stops the job and deletes the object,
- * and any other signal leaves the job writing after the driver exits.
+ * A compiler whose detached job closes standard streams but retains fd 3,
+ * writes an object after the SIGINT-stopped driver exits, then closes fd 3.
  */
 const writeTemporaryObjectCompiler = async (directory: string) => {
   const executable = join(directory, "fake-temporary-xcrun");
   const statePath = join(directory, "temporary-state.json");
   const source = `#!/usr/bin/env node
 const fs = process.getBuiltinModule("node:fs");
+${publishFixtureStateSource}
 const os = process.getBuiltinModule("node:os");
 const path = process.getBuiltinModule("node:path");
 const { spawn } = process.getBuiltinModule("node:child_process");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "TemporaryDirectory."));
 const object = path.join(temporary, "ProcessRunTokenReader-1.o");
+let lifetime = "ignore";
+try { if (fs.fstatSync(3).isSocket()) lifetime = 3; } catch {}
 const job = spawn(process.execPath, ["-e",
   "setTimeout(() => { const fs = process.getBuiltinModule('node:fs'); fs.mkdirSync(" + JSON.stringify(temporary) +
   ", { recursive: true }); fs.writeFileSync(" + JSON.stringify(object) + ", 'object'); }, 300)"],
-  { detached: true, stdio: "ignore" });
+  { detached: true, stdio: ["ignore", "ignore", "ignore", lifetime] });
 job.unref();
 process.on("SIGINT", () => {
-  job.kill("SIGKILL");
-  fs.rmSync(object, { force: true });
   process.exit(130);
 });
 const output = process.argv[process.argv.indexOf("-o") + 1];
-fs.writeFileSync(${JSON.stringify(statePath)}, JSON.stringify({ root: path.dirname(output), temporary }));
+publishFixtureState(${JSON.stringify(statePath)}, { root: path.dirname(output), temporary });
 setInterval(() => {}, 1000);
 `;
   await writeFile(executable, source);
@@ -829,9 +953,11 @@ it.skipIf(process.platform === "win32").each(["first", "second"] as const)(
   },
 );
 
-it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
-  "retains a failed compilation cleanup for a later close retry",
-  async () => {
+it
+  .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+  .each(["reader-close", "exact-root"] as const)(
+  "retains a failed compilation cleanup for a later %s retry",
+  async (retry) => {
     const directory = await mkdtemp(
       join(tmpdir(), "rea-process-token-cleanup-retry-test-"),
     );
@@ -854,10 +980,31 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       );
       await chmod(state.root, 0o000);
       controller.abort();
-      expect((await preparation).state).toBe("rejected");
-      await expect(reader.close()).rejects.toThrow();
-      await chmod(state.root, 0o700);
-      await reader.close();
+      const outcome = await preparation;
+      expect(outcome.state).toBe("rejected");
+      if (retry === "reader-close") {
+        await expect(reader.close()).rejects.toThrow();
+        await chmod(state.root, 0o700);
+        await reader.close();
+      } else {
+        if (
+          outcome.state !== "rejected" ||
+          !(outcome.cause instanceof DarwinProcessOwnershipInspectionError)
+        )
+          throw new Error("Expected owned compilation cleanup failure");
+        const failure = outcome.cause;
+        expect(failure.cleanupOwner).toBeDefined();
+        expect(failure.cleanupFailure?.cleanupIncomplete).toBe(true);
+        await expect(failure.cleanupOwner?.close()).rejects.toThrow();
+        await chmod(state.root, 0o700);
+        await failure.cleanupOwner?.close();
+        expect(failure.cleanupFailure?.cleanupIncomplete).toBe(false);
+        // Releasing the failed root does not close the shared reader itself.
+        const stopped = new AbortController();
+        const reason = { request: "probe reader remains open" };
+        stopped.abort(reason);
+        await expect(reader.prepare(stopped.signal)).rejects.toBe(reason);
+      }
       await expect(access(state.root)).rejects.toThrow();
     } finally {
       if (!controller.signal.aborted) controller.abort();
@@ -1207,6 +1354,12 @@ it.skipIf(!onDarwin)(
       expect(JSON.parse(stdout)).toEqual({
         preservedOtherErrno: true,
         retriedAfterFreshSize: true,
+        successfulSnapshotMissingPidIsAbsent: true,
+        failedSnapshotMissingPidIsUnavailable: true,
+        invalidPidIsUnavailable: true,
+        zombieLifecycleIsSeparateFromIdentity: true,
+        effectiveUidComesFromNativeIdentity: true,
+        nativeRelationIsSeparateFromIdentity: true,
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -1351,3 +1504,55 @@ const stopNodeChild = async (child: ChildProcess) => {
   child.kill("SIGKILL");
   await exited;
 };
+
+it.skipIf(process.platform === "win32").each([
+  {
+    name: "invalid UTF-8",
+    stdout: "owned compiler stdout",
+    stderrHex: "ff",
+    stderrBytes: 1,
+    truncated: false,
+  },
+  {
+    name: "bounded stdout",
+    stdout: "x".repeat(12000),
+    stderrHex: "61",
+    stderrBytes: 1,
+    truncated: true,
+  },
+])(
+  "retains original output facts for $name compiler failures",
+  async ({ stdout, stderrHex, stderrBytes, truncated }) => {
+    const directory = await createTestTempDirectory(
+      "rea-compiler-output-facts-",
+    );
+    const executable = join(directory, "compiler");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(Buffer.from(${JSON.stringify(stderrHex)}, "hex")); process.exitCode=7;\n`,
+      { mode: 0o755 },
+    );
+    const reader = createDarwinProcessRunTokenReader({
+      compiler: { kind: "xcrun", executable },
+    });
+    try {
+      const failure = await preparationFailure(reader);
+      expect(failure.compilerOutcome?.stderrBytes).toBe(stderrBytes);
+      expect(failure.capturedOutput).toEqual({
+        stdout: stdout.slice(0, 8192),
+        stderr: Buffer.from(stderrHex, "hex").toString("utf8"),
+        stdout_bytes: Buffer.byteLength(stdout),
+        stderr_bytes: stderrBytes,
+        truncated,
+        exit_code: 7,
+        signal: null,
+      });
+      const normalized = normalizeCaptureFailure(failure, undefined);
+      if (!(normalized instanceof ProcessCaptureError))
+        throw new Error("Expected capture failure");
+      expect(normalized.capturedOutput).toEqual(failure.capturedOutput);
+    } finally {
+      await reader.close();
+    }
+  },
+);

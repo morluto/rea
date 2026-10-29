@@ -12,6 +12,8 @@ import type {
 
 /** Provider-neutral live source attribution operations with distinct instrumentation authority. */
 export interface WebRuntimePort {
+  /** Release provider-owned transports during command or server shutdown. */
+  close?(): Promise<void>;
   identity(): ProviderIdentity;
   observeExecution(
     input: ObserveWebExecutionInput,

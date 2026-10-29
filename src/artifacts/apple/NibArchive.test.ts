@@ -36,6 +36,33 @@ const archiveWithOverlappingObjectRanges = (objectCount: number): Buffer => {
 };
 
 describe("NIBArchive decoder", () => {
+  it("preserves non-finite and negative-zero real values for typed projection", () => {
+    const values = decodeNibArchive(
+      encodeArchive({
+        classes: ["NSObject"],
+        objects: [
+          {
+            classIndex: 0,
+            values: {
+              nan: { float32: Number.NaN },
+              positive: { float32: Number.POSITIVE_INFINITY },
+              negative: { float64: Number.NEGATIVE_INFINITY },
+              negativeZero32: { float32: -0 },
+              negativeZero64: { float64: -0 },
+              nil: null,
+            },
+          },
+        ],
+      }),
+    ).objects[0]?.values;
+    expect(Number.isNaN(values?.nan)).toBe(true);
+    expect(values?.positive).toBe(Number.POSITIVE_INFINITY);
+    expect(values?.negative).toBe(Number.NEGATIVE_INFINITY);
+    expect(Object.is(values?.negativeZero32, -0)).toBe(true);
+    expect(Object.is(values?.negativeZero64, -0)).toBe(true);
+    expect(values?.nil).toBeNull();
+  });
+
   it("keeps leading U+FEFF in length-prefixed keys and class names", () => {
     const archive = encodeArchive({
       classes: ["\uFEFFWidget"],
@@ -77,6 +104,54 @@ describe("NIBArchive decoder", () => {
     expect(decoded.coder_version).toBe(10);
   });
 
+  it("reads boolean value tags with AppKit's polarity", () => {
+    // Raw tags, independent of the fixture encoder's boolean encoding: AppKit's
+    // decodeBoolForKey: returns NO for tag 4 and YES for tag 5 in compiled nibs.
+    const archive = encodeArchive({
+      classes: ["NSButton"],
+      objects: [
+        {
+          classIndex: 0,
+          values: {
+            NSControlContinuous: null,
+            NSControlRefusesFirstResponder: null,
+            NSEnabled: 0,
+          },
+        },
+      ],
+    });
+    const values = archive.readUInt32LE(38);
+    // Value records: key varint, then type tag; both fields start as nil (9).
+    expect([...archive.subarray(values, values + 4)]).toEqual([
+      0x80, 9, 0x81, 9,
+    ]);
+    const tagged = Buffer.from(archive);
+    tagged[values + 1] = 4;
+    tagged[values + 3] = 5;
+    expect(decodeNibArchive(tagged).objects[0]?.values).toEqual({
+      NSControlContinuous: false,
+      NSControlRefusesFirstResponder: true,
+      NSEnabled: 0,
+    });
+  });
+
+  it("counts AppKit outlet, action, and binding connector objects", () => {
+    const archive = encodeArchive({
+      classes: [
+        "NSNibOutletConnector",
+        "NSNibControlConnector",
+        "NSNibBindingConnector",
+      ],
+      objects: [
+        { classIndex: 0, values: {} },
+        { classIndex: 1, values: {} },
+        { classIndex: 2, values: {} },
+      ],
+    });
+
+    expect(decodeNibArchive(archive).connection_object_count).toBe(3);
+  });
+
   it("rejects malformed references and unsupported format versions", () => {
     const valid = encodeArchive({
       classes: ["NSObject"],
@@ -107,5 +182,28 @@ describe("NIBArchive decoder", () => {
       "message",
       expect.stringMatching(/projected field ranges/u),
     );
+  });
+});
+
+it("retains repeated serialized collection fields in source order", () => {
+  const decoded = decodeNibArchive(
+    encodeArchive({
+      classes: ["NSArray", "NSButton"],
+      objects: [
+        {
+          classIndex: 0,
+          values: [
+            ["UINibEncoderEmptyKey", { ref: 2 }],
+            ["UINibEncoderEmptyKey", { ref: 1 }],
+          ],
+        },
+        { classIndex: 1, values: {} },
+        { classIndex: 1, values: {} },
+      ],
+    }),
+  );
+  expect(decoded.objects[0]?.values).toEqual({});
+  expect(decoded.objects[0]?.repeated_values).toEqual({
+    UINibEncoderEmptyKey: [{ $nib_object_ref: 2 }, { $nib_object_ref: 1 }],
   });
 });

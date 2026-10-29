@@ -1,3 +1,5 @@
+import { z } from "incur";
+
 import {
   executableFormatHintSchema,
   type ExecutableFormatHint,
@@ -7,9 +9,16 @@ import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
 } from "../domain/rawBinary.js";
-import { analysisProviderSelectorSchema } from "../contracts/providerSelection.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { Logger } from "pino";
+
+/** Parse decimal integer tokens before Number coercion can erase their syntax. */
+export const cliIntegerArgument = (min: number) =>
+  z
+    .string()
+    .regex(/^[0-9]+$/u, "Expected a decimal integer")
+    .pipe(z.coerce.number<string>().safe().min(min));
 
 export const providerSelectionOption = analysisProviderSelectorSchema
   .optional()
@@ -17,23 +26,30 @@ export const providerSelectionOption = analysisProviderSelectorSchema
     "Bind deep analysis to a provider ID or use deterministic auto selection",
   );
 
+/** Optional path to the local analysis snapshot loaded or updated by a command. */
+export const snapshotSelectionOption = z
+  .string()
+  .min(1)
+  .optional()
+  .describe("Load and update a local analysis snapshot");
+
 /** Explicit interpretation for headerless native executable formats. */
 export const formatSelectionOption = executableFormatHintSchema
   .optional()
   .describe(
-    "Explicit headerless interpretation (dos-com or raw-binary); omission preserves header-based detection",
+    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema
   .optional()
   .describe(
-    "Caller-supplied CPU family; required with --target-format raw-binary",
+    "Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol",
   );
 
 export const entryPointSelectionOption = rawBinaryEntryPointSchema
   .optional()
   .describe(
-    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary",
+    "Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)",
   );
 
 /** Shared CLI flags that bind a native target interpretation. */
@@ -53,32 +69,21 @@ export interface NativeOpenCliFlags {
   readonly "entry-point"?: string | undefined;
 }
 
-export const directAnalysisOptions = (
-  logger: Logger,
-  snapshotPath: string | undefined,
-  providerId: AnalysisProviderSelector | undefined,
-  formatHint?: ExecutableFormatHint,
-  architecture?: BinaryArchitecture,
-  entryPoint?: string,
-) => ({
-  logger,
-  snapshotPath,
-  ...(formatHint === undefined ? {} : { formatHint }),
-  ...(architecture === undefined ? {} : { architecture }),
-  ...(entryPoint === undefined ? {} : { entryPoint }),
-  ...(providerId === undefined ? {} : { providerId }),
-});
-
 /** Map native CLI flags onto the shared one-shot analysis options. */
 export const directAnalysisOptionsFromCli = (
   logger: Logger,
   options: NativeOpenCliFlags,
-) =>
-  directAnalysisOptions(
-    logger,
-    options.snapshot,
-    options.provider,
-    options["target-format"],
-    options.architecture,
-    options["entry-point"],
-  );
+) => ({
+  logger,
+  snapshotPath: options.snapshot,
+  ...(options["target-format"] === undefined
+    ? {}
+    : { formatHint: options["target-format"] }),
+  ...(options.architecture === undefined
+    ? {}
+    : { architecture: options.architecture }),
+  ...(options["entry-point"] === undefined
+    ? {}
+    : { entryPoint: options["entry-point"] }),
+  ...(options.provider === undefined ? {} : { providerId: options.provider }),
+});

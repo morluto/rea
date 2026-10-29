@@ -1,14 +1,14 @@
+import { analysisViewInputError } from "./analysisViewErrors.js";
 import { analysisTextPage } from "./analysisViewText.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
-import type { FunctionDossier } from "../hopperValues.js";
+import type { FunctionDossier } from "../native/functionDossier.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
+import type {
+  AnalysisViewParent,
+  AnalysisViewRequest,
+  UnsignedAnalysisView,
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
@@ -89,14 +89,139 @@ const nativeRows = (
   }[facet];
 };
 
+type FacetAvailability = NonNullable<FunctionDossier["facet_availability"]>;
+type FacetAvailabilityKey = keyof FacetAvailability;
+
+/** Row facets whose provider availability is declared under another key. */
+const facetAvailabilityKeys: Readonly<
+  Partial<Record<string, FacetAvailabilityKey>>
+> = {
+  incoming_references: "references",
+  outgoing_references: "references",
+  referenced_strings: "strings_names",
+  referenced_names: "strings_names",
+  basic_blocks: "cfg",
+};
+
+const facetAvailability = (
+  dossier: FunctionDossier,
+  facet: string,
+): FacetAvailability[FacetAvailabilityKey] | undefined =>
+  dossier.facet_availability?.[
+    facetAvailabilityKeys[facet] ?? (facet as FacetAvailabilityKey)
+  ];
+
+/** Reasons the provider declared row facets unavailable; empty rows there are not observations. */
+const unavailableFacetUnknowns = (dossier: FunctionDossier): string[] => {
+  const availability = dossier.facet_availability;
+  if (availability === undefined) return [];
+  return Object.entries(availability).flatMap(([facet, status]) =>
+    status.available ? [] : [`${facet} unavailable: ${status.reason}`],
+  );
+};
+
+/** Optional dossier records; the native facet path reports them "not recorded" when omitted. */
+const optionalFacets = [
+  "unresolved_calls",
+  "swift_string_literals",
+  "swift_string_literal_omissions",
+] as const;
+
+/** Omitted optional records are unknown, not empty, so the summary names them. */
+const unrecordedFacetUnknowns = (dossier: FunctionDossier): string[] =>
+  optionalFacets.flatMap((facet) =>
+    dossier[facet] === undefined ? [`${facet} not recorded`] : [],
+  );
+
+/** Compact dossier summary: identity, pseudocode size, facet counts and value-flow availability. */
+const summarizeDossier = (dossier: FunctionDossier) => {
+  const sourceFlow = dossier.native_value_flow;
+  const flow = sourceFlow?.available ? sourceFlow : undefined;
+  // A count is unknown, not zero, when the provider declared its facet unavailable.
+  const count = (facet: string, rows: readonly unknown[]): number | null =>
+    facetAvailability(dossier, facet)?.available === false ? null : rows.length;
+  // An omitted optional record is unknown, not zero.
+  const recorded = (rows: readonly unknown[] | undefined): number | null =>
+    rows === undefined ? null : rows.length;
+  return {
+    procedure: {
+      name: dossier.procedure.name,
+      address: dossier.procedure.address,
+    },
+    pseudocode: {
+      available:
+        dossier.facet_availability?.pseudocode?.available ??
+        dossier.pseudocode.length > 0,
+      code_units: dossier.pseudocode.length,
+    },
+    value_flow: {
+      available: flow !== undefined,
+      truncated: flow?.truncated ?? false,
+    },
+    facet_availability: dossier.facet_availability ?? null,
+    counts: {
+      assembly: count("assembly", dossier.assembly),
+      basic_blocks: count("basic_blocks", dossier.basic_blocks),
+      comments: count("comments", dossier.comments),
+      callers: count("callers", dossier.callers),
+      callees: count("callees", dossier.callees),
+      incoming_references: count(
+        "incoming_references",
+        dossier.incoming_references,
+      ),
+      outgoing_references: count(
+        "outgoing_references",
+        dossier.outgoing_references,
+      ),
+      unresolved_calls: recorded(dossier.unresolved_calls),
+      referenced_strings: count(
+        "referenced_strings",
+        dossier.referenced_strings,
+      ),
+      referenced_names: count("referenced_names", dossier.referenced_names),
+      swift_string_literals: recorded(dossier.swift_string_literals),
+      swift_string_literal_omissions: recorded(
+        dossier.swift_string_literal_omissions,
+      ),
+      // Value-flow rows are unknown, not zero, when value flow was not recorded
+      // or the provider declared it unavailable; parentFields names which.
+      value_flow_operations: flow?.operations.length ?? null,
+      value_flow_def_use: flow?.def_use.length ?? null,
+      value_flow_effects: flow?.effects.length ?? null,
+      value_flow_parameters: flow?.parameters.length ?? null,
+      value_flow_parameter_uses: flow?.parameter_uses.length ?? null,
+    },
+    limitation_count: dossier.limitations.length,
+  };
+};
+
+const summaryView = (
+  view: Extract<AnalysisViewRequest, { readonly kind: "summary" }>,
+  dossier: FunctionDossier,
+  common: ReturnType<typeof parentFields>,
+): UnsignedAnalysisView => ({
+  kind: "summary",
+  view,
+  summary: summarizeDossier(dossier),
+  coverage: completeWithinViewCoverage(1, 1),
+  ...common,
+  unknowns: uniqueSorted([
+    ...common.unknowns,
+    ...unavailableFacetUnknowns(dossier),
+    ...unrecordedFacetUnknowns(dossier),
+  ]),
+});
+
 /** Project bounded native function facets from complete retained Evidence without reanalysis. */
 export const projectNativeFunctionView = (
   parent: AnalysisViewParent,
   dossier: FunctionDossier,
   view: AnalysisViewRequest,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "native")
-    return err(viewError("analyze_function Evidence requires a native view."));
+  if (view.kind !== "native" && view.kind !== "summary")
+    return err(
+      viewError("analyze_function Evidence requires a native or summary view."),
+    );
   const artifact = parent.artifact;
   if (!artifact)
     return err(
@@ -110,20 +235,8 @@ export const projectNativeFunctionView = (
       ]),
     );
   const common = parentFields(parent, dossier, artifact);
-  const availabilityKeys: Readonly<Record<string, string>> = {
-    incoming_references: "references",
-    outgoing_references: "references",
-    referenced_strings: "strings_names",
-    referenced_names: "strings_names",
-    basic_blocks: "cfg",
-  };
-  const availabilityKey = availabilityKeys[view.facet] ?? view.facet;
-  const availability =
-    dossier.facet_availability?.[
-      availabilityKey as keyof NonNullable<
-        FunctionDossier["facet_availability"]
-      >
-    ];
+  if (view.kind === "summary") return ok(summaryView(view, dossier, common));
+  const availability = facetAvailability(dossier, view.facet);
   if (availability?.available === false)
     common.unknowns = uniqueSorted([...common.unknowns, availability.reason]);
   const singleton = (item: unknown): UnsignedAnalysisView => ({

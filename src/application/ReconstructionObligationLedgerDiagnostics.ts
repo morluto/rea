@@ -7,6 +7,7 @@ import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 type Diagnostic = ReconstructionObligation["diagnostics"][number];
 type Binding = NonNullable<ReconstructionObligation["binding"]>;
+type Contradiction = ReconstructionObligationManifest["contradictions"][number];
 
 export const groupManifestBindings = (
   manifest: ReconstructionObligationManifest,
@@ -22,12 +23,12 @@ export const groupManifestBindings = (
 
 export const groupManifestContradictions = (
   manifest: ReconstructionObligationManifest,
-): ReadonlyMap<string, readonly string[]> => {
-  const grouped = new Map<string, string[]>();
+): ReadonlyMap<string, readonly Contradiction[]> => {
+  const grouped = new Map<string, Contradiction[]>();
   for (const contradiction of manifest.contradictions)
     grouped.set(contradiction.obligation_id, [
       ...(grouped.get(contradiction.obligation_id) ?? []),
-      ...contradiction.evidence_ids,
+      contradiction,
     ]);
   return grouped;
 };
@@ -59,26 +60,33 @@ export const uniqueObligationDiagnostics = (
 
 export const contradictionDiagnostics = (
   obligationId: string,
-  contradictions: ReadonlyMap<string, readonly string[]>,
+  contradictions: ReadonlyMap<string, readonly Contradiction[]>,
   evidenceById: ReadonlyMap<string, Evidence>,
 ): Diagnostic[] => {
-  const evidenceIds = contradictions.get(obligationId) ?? [];
-  if (evidenceIds.length === 0) return [];
-  const missing = evidenceIds.filter(
-    (evidenceId) => !evidenceById.has(evidenceId),
+  // Each manifest entry is a separate claim. Absent Evidence leaves only its
+  // own entry unestablished; it must not hide a sibling whose Evidence exists.
+  const entries = contradictions.get(obligationId) ?? [];
+  const missing = new Set(
+    entries.flatMap(({ evidence_ids: ids }) =>
+      ids.filter((evidenceId) => !evidenceById.has(evidenceId)),
+    ),
   );
-  return missing.length > 0
-    ? [
-        {
-          code: "contradiction-evidence-missing",
-          detail: `Contradiction references missing Evidence: ${missing.join(", ")}.`,
-        },
-      ]
-    : [
-        {
-          code: "contradiction",
-          detail:
-            "Authenticated contradictory Evidence reopens this obligation.",
-        },
-      ];
+  const diagnostics: Diagnostic[] = [];
+  if (missing.size > 0)
+    addObligationDiagnostic(
+      diagnostics,
+      "contradiction-evidence-missing",
+      `Contradiction references missing Evidence: ${[...missing].join(", ")}.`,
+    );
+  if (
+    entries.some(({ evidence_ids: ids }) =>
+      ids.every((evidenceId) => evidenceById.has(evidenceId)),
+    )
+  )
+    addObligationDiagnostic(
+      diagnostics,
+      "contradiction",
+      "Authenticated contradictory Evidence reopens this obligation.",
+    );
+  return diagnostics;
 };

@@ -3,8 +3,11 @@ import * as t from "@babel/types";
 import {
   unwrapJavaScriptExpression,
   semanticStaticPropertyKey,
+  semanticFinalObjectStringProperty,
 } from "./javascriptAstValues.js";
 import { calleeName } from "./javascriptStaticAnalysisHelpers.js";
+import type { JavaScriptBindingIndex } from "./javascriptSemanticState.js";
+import { createJavaScriptGraphqlScan } from "./javascriptGraphqlOperations.js";
 
 /** One RPC operation or transport URL recovered from client-side syntax. */
 export interface JavaScriptRpcEndpoint {
@@ -12,9 +15,12 @@ export interface JavaScriptRpcEndpoint {
   readonly mechanism: string;
 }
 
-/** Per-source RPC recognition state; feed it every AST node in pre-order. */
+/** Feed every AST node in pre-order, then drain finish() for Source findings. */
 export interface JavaScriptRpcScan {
   inspect(node: t.Node): JavaScriptRpcEndpoint | undefined;
+  finish(): Iterable<
+    (JavaScriptRpcEndpoint & { readonly node: t.Node }) | void
+  >;
 }
 
 // tRPC proxies preserve router and procedure names as property names, so they
@@ -122,91 +128,6 @@ const objectKeys = (node: t.Node | undefined): readonly string[] =>
       })
     : [];
 
-const objectStringProperty = (
-  node: t.ObjectExpression,
-  key: string,
-): string | undefined => {
-  for (const property of node.properties)
-    if (
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) === key &&
-      t.isStringLiteral(property.value)
-    )
-      return property.value.value;
-  return undefined;
-};
-
-const objectProperty = (
-  node: t.ObjectExpression,
-  key: string,
-): t.Node | undefined => {
-  for (const property of node.properties)
-    if (
-      t.isObjectProperty(property) &&
-      semanticStaticPropertyKey(property.key, property.computed) === key
-    )
-      return property.value;
-  return undefined;
-};
-
-const GRAPHQL_OPERATION_TYPES: ReadonlySet<string> = new Set([
-  "query",
-  "mutation",
-  "subscription",
-]);
-// A named GraphQL operation header (GraphQL October 2021, OperationDefinition):
-// type, name, then variable definitions starting with `$`, a directive, or a
-// selection set starting with a field name.
-const GRAPHQL_OPERATION_HEADER =
-  /^(query|mutation|subscription)[\s,]+([_A-Za-z][_0-9A-Za-z]*)[\s,]*(?:\([\s,]*\$|@[_A-Za-z]|\{[\s,]*[_A-Za-z])/u;
-
-const isGraphqlIgnoredCharacter = (character: string): boolean =>
-  character === "," || character === "﻿" || /\s/u.test(character);
-
-/** Recover a named operation from GraphQL document text. */
-export const graphqlOperationFromText = (
-  text: string,
-): JavaScriptRpcEndpoint | undefined => {
-  // Skip GraphQL ignored tokens: whitespace, commas, BOM and # comments.
-  const limit = text.length;
-  let index = 0;
-  while (index < limit) {
-    const character = text.charAt(index);
-    if (isGraphqlIgnoredCharacter(character)) index += 1;
-    else if (character === "#") {
-      while (index < limit && !/[\n\r]/u.test(text.charAt(index))) index += 1;
-    } else break;
-  }
-  if (index >= limit) return undefined;
-  const header = GRAPHQL_OPERATION_HEADER.exec(text.slice(index));
-  const type = header?.[1];
-  const name = header?.[2];
-  return type === undefined || name === undefined
-    ? undefined
-    : { value: name, mechanism: `graphql:${type}` };
-};
-
-/** Recover a named operation from a precompiled GraphQL document object. */
-export const graphqlOperationFromDocumentNode = (
-  node: t.ObjectExpression,
-): JavaScriptRpcEndpoint | undefined => {
-  if (objectStringProperty(node, "kind") !== "OperationDefinition")
-    return undefined;
-  const type = objectStringProperty(node, "operation");
-  if (type === undefined || !GRAPHQL_OPERATION_TYPES.has(type))
-    return undefined;
-  const name = objectProperty(node, "name");
-  if (
-    !t.isObjectExpression(name) ||
-    objectStringProperty(name, "kind") !== "Name"
-  )
-    return undefined;
-  const value = objectStringProperty(name, "value");
-  return value === undefined
-    ? undefined
-    : { value, mechanism: `graphql:${type}` };
-};
-
 /** Bundlers use `(0, imported.factory)` to call an import without a receiver. */
 const rpcFactoryName = (callee: t.Node): string => {
   let current = unwrapJavaScriptExpression(callee).node;
@@ -238,7 +159,7 @@ const trpcLinkUrl = (
   if (!TRPC_URL_LINKS.has(factory)) return undefined;
   const options = node.arguments[0];
   if (!t.isObjectExpression(options)) return undefined;
-  const url = objectStringProperty(options, "url");
+  const url = semanticFinalObjectStringProperty(options, "url");
   return url === undefined
     ? undefined
     : { value: url, mechanism: `trpc:link:${factory}` };
@@ -248,34 +169,37 @@ const trpcLinkUrl = (
  * Create the per-source scan. Hook and option-factory methods are distinctive.
  * `query`/`mutate` need a root bound to a tRPC client factory, or a tRPC source
  * marker with a router path of at least two segments; `subscribe` needs the
- * marker and a tRPC observer argument. `this` roots, browser globals and RTK
- * Query `endpoints` chains are never procedures.
+ * marker and a tRPC observer argument. Unshadowed browser globals and `this`
+ * roots are excluded; RTK Query `endpoints` exclusions apply only without a
+ * recognized client binding. Router segment spelling does not supply identity.
  */
 export const createJavaScriptRpcScan = (
   source: string,
   clientRoots: ReadonlySet<t.Node>,
+  index: JavaScriptBindingIndex,
 ): JavaScriptRpcScan => {
   let marker: boolean | undefined;
   const hasMarker = (): boolean =>
     (marker ??= TRPC_SOURCE_MARKERS.some((value) => source.includes(value)));
-  // graphql-tag documents retain their source text in loc.source.body; that
-  // text repeats the OperationDefinition already recovered from the object.
-  const documentSourceBodies = new WeakSet<t.Node>();
+  const graphql = createJavaScriptGraphqlScan(index);
 
   const procedure = (
     node: t.CallExpression | t.OptionalCallExpression,
   ): JavaScriptRpcEndpoint | undefined => {
     const path = memberPath(node.callee);
     if (path === undefined || t.isThisExpression(path.root)) return undefined;
-    if (t.isIdentifier(path.root) && BROWSER_GLOBAL_NAMES.has(path.root.name))
+    const bound = clientRoots.has(path.root);
+    if (
+      t.isIdentifier(path.root) &&
+      BROWSER_GLOBAL_NAMES.has(path.root.name) &&
+      index.bindingForReferenceAt(path.root) === undefined
+    )
       return undefined;
     const method = path.properties[path.properties.length - 1];
     const segments = path.properties.slice(0, -1);
     const first = segments[0];
     if (method === undefined || first === undefined) return undefined;
-    if (BROWSER_GLOBAL_NAMES.has(first) || segments.includes("endpoints"))
-      return undefined;
-    const bound = clientRoots.has(path.root);
+    if (!bound && segments.includes("endpoints")) return undefined;
     const recognized = TRPC_HOOK_METHODS.has(method)
       ? true
       : TRPC_REQUEST_METHODS.has(method)
@@ -294,29 +218,8 @@ export const createJavaScriptRpcScan = (
     inspect: (node) => {
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node))
         return trpcLinkUrl(node) ?? procedure(node);
-      if (t.isObjectExpression(node)) {
-        const body = objectProperty(node, "body");
-        if (
-          t.isStringLiteral(body) &&
-          objectProperty(node, "locationOffset") !== undefined
-        ) {
-          documentSourceBodies.add(body);
-          return undefined;
-        }
-        return graphqlOperationFromDocumentNode(node);
-      }
-      if (t.isStringLiteral(node))
-        return documentSourceBodies.has(node)
-          ? undefined
-          : graphqlOperationFromText(node.value);
-      if (t.isTemplateLiteral(node)) {
-        // A template recovered without a cooked value stays dynamic.
-        const cooked = node.quasis[0]?.value.cooked;
-        return cooked === undefined || cooked === null
-          ? undefined
-          : graphqlOperationFromText(cooked);
-      }
-      return undefined;
+      return graphql.inspect(node);
     },
+    finish: graphql.finish,
   };
 };

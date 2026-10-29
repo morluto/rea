@@ -4,21 +4,50 @@ import { z } from "zod";
 const shaSchema = z.string().regex(/^[a-f0-9]{40}$/u);
 const versionSchema = z.object({ version: z.string() });
 const manifestSchema = z.object({ ".": z.string() });
-const PLUGIN_VERSION_PATHS = [
+const PLUGIN_MANIFEST_PATHS = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
 ];
-// Cursor reads its server entry from a separate file beside the manifest.
-const PLUGIN_LAUNCH_PATHS = [
-  ".claude-plugin/plugin.json",
-  ".codex-plugin/plugin.json",
-  ".cursor-plugin/mcp.json",
-];
-const PLUGIN_PACKAGE_NAME = "rea-agents";
-const pluginLaunchSchema = z.object({
+const inlinePluginManifestSchema = versionSchema.extend({
   mcpServers: z.object({
-    rea: z.object({ args: z.array(z.string()) }),
+    rea: z.object({
+      command: z.literal("node"),
+      args: z.tuple([
+        z.literal("${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"),
+        z.string(),
+      ]),
+    }),
+  }),
+});
+const codexPluginManifestSchema = versionSchema.extend({
+  mcpServers: z.literal("./.codex-plugin/mcp.json"),
+});
+const cursorPluginManifestSchema = versionSchema.extend({
+  mcpServers: z.literal("./.cursor-plugin/mcp.json"),
+});
+const cursorServerConfigSchema = z.object({
+  mcpServers: z.object({
+    rea: z.object({
+      command: z.literal("node"),
+      args: z.tuple([
+        z.literal("${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs"),
+        z.string(),
+      ]),
+    }),
+  }),
+});
+const codexServerConfigSchema = z.object({
+  mcpServers: z.object({
+    rea: z.object({
+      command: z.literal("node"),
+      args: z.tuple([
+        z.literal("./scripts/plugin-mcp-launcher.mjs"),
+        z.string(),
+      ]),
+      cwd: z.literal("."),
+      startup_timeout_sec: z.number().int().positive(),
+    }),
   }),
 });
 const sectionsSchema = z.object({
@@ -209,15 +238,31 @@ async function validateCandidate(git, sha, version, commits) {
   // A stale manifest keeps the previous plugin cache key or launches the
   // previous server, so both are version authority like server.json.
   const launches = [];
-  for (const path of PLUGIN_VERSION_PATHS) {
-    versions.push([
-      path,
-      (await readJson(git, sha, path, versionSchema)).version,
-    ]);
-  }
-  for (const path of PLUGIN_LAUNCH_PATHS) {
-    const launch = await readJson(git, sha, path, pluginLaunchSchema);
-    launches.push([path, launch.mcpServers.rea.args[1]]);
+  for (const path of PLUGIN_MANIFEST_PATHS) {
+    const manifest =
+      path === ".codex-plugin/plugin.json"
+        ? await readJson(git, sha, path, codexPluginManifestSchema)
+        : path === ".cursor-plugin/plugin.json"
+          ? await readJson(git, sha, path, cursorPluginManifestSchema)
+          : await readJson(git, sha, path, inlinePluginManifestSchema);
+    versions.push([path, manifest.version]);
+    const server =
+      path === ".codex-plugin/plugin.json"
+        ? await readJson(
+            git,
+            sha,
+            ".codex-plugin/mcp.json",
+            codexServerConfigSchema,
+          )
+        : path === ".cursor-plugin/plugin.json"
+          ? await readJson(
+              git,
+              sha,
+              ".cursor-plugin/mcp.json",
+              cursorServerConfigSchema,
+            )
+          : manifest;
+    launches.push([path, server.mcpServers.rea.args[1]]);
   }
   // Catalogs are generated and checked from this candidate by the release job;
   // they are not version authority stored in the immutable source tree.
@@ -240,13 +285,11 @@ async function validateCandidate(git, sha, version, commits) {
       );
     }
   }
-  // The launcher owns the fixed package name; Release Please writes only the
-  // version to this argument.
-  const requiredLaunch = version;
+  // The launcher checks the scalar pin against the runtime in its own package.
   for (const [location, launched] of launches) {
-    if (launched !== requiredLaunch) {
+    if (launched !== version) {
       throw new Error(
-        `${location}@${sha} launches ${launched ?? "no package"}; release branch requires ${requiredLaunch}.`,
+        `${location}@${sha} launches version ${launched ?? "no version"}; release branch requires ${version}.`,
       );
     }
   }

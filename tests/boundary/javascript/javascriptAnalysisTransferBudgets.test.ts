@@ -38,7 +38,7 @@ it("enforces the offered complete-file byte budget while preserving authenticate
   const ir = analyzeJavaScriptSemantics(text);
   const module = projectJavaScriptModuleSemantics(ir);
   const projection = await completeJavaScriptAnalysisSteps(
-    projectJavaScriptSemanticFileSteps(file, ir, 100),
+    projectJavaScriptSemanticFileSteps(file, ir, { nodes: 100, unknowns: 100 }),
   );
   const observed = await writeJavaScriptAnalysisTransfer(
     join(root, "observed"),
@@ -97,4 +97,42 @@ it("enforces the offered complete-file byte budget while preserving authenticate
       2 ** 31 + 1,
     ),
   ).rejects.toBeInstanceOf(RangeError);
+});
+
+it("rejects authenticated worker rows beyond the offered node or unknown capacity", async () => {
+  const root = await createTestTempDirectory("rea-js-transfer-capacity-");
+  const text = "globalThis.u.p(globalThis.v[k]);";
+  const file: JavaScriptArtifactFile = {
+    path: "app.js",
+    sha256: createHash("sha256").update(text).digest("hex"),
+    container_sha256: "a".repeat(64),
+    bytes: Buffer.byteLength(text),
+    inventory_artifact_id: "fixture-source",
+    kind: "javascript",
+    unpacked: false,
+    text: { included: true, value: text },
+  };
+  const ir = analyzeJavaScriptSemantics(text);
+  const projection = await completeJavaScriptAnalysisSteps(
+    projectJavaScriptSemanticFileSteps(file, ir, { nodes: 100, unknowns: 100 }),
+  );
+  expect(projection.unknowns.length).toBeGreaterThan(1);
+  const path = join(root, "records");
+  const descriptor = await writeJavaScriptAnalysisTransfer(
+    path,
+    projectJavaScriptModuleSemantics(ir),
+    projection,
+  );
+  await expect(
+    readJavaScriptAnalysisTransfer(path, descriptor, file, undefined, {
+      nodes: 100,
+      unknowns: 1,
+    }),
+  ).rejects.toThrow("unknowns exceed the offered capacity");
+  await expect(
+    readJavaScriptAnalysisTransfer(path, descriptor, file, undefined, {
+      nodes: 1,
+      unknowns: 100,
+    }),
+  ).rejects.toThrow("nodes exceed the offered capacity");
 });

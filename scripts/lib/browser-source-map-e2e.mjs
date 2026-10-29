@@ -12,35 +12,40 @@ import { parseEvidence } from "../../dist/domain/evidence.js";
 import { webSourceLocationResultSchema } from "../../dist/domain/webSourceLocation.js";
 import { startBrowserSourceMapSite } from "../fixtures/browser-source-map-site.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify real Chrome capture → export → original compiler point through packaged CLI/MCP. */
 export async function verifyBrowserSourceMap(
   executable,
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
 ) {
-  const site = await startBrowserSourceMapSite();
-  const root = await mkdtemp(join(tmpdir(), "rea-browser-source-map-"));
-  const env = {
-    ...process.env,
-    REA_LOG_LEVEL: "silent",
-    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
-  };
-  const cli = async (...args) => {
-    const { stdout } = await promisify(execFile)(
-      process.execPath,
-      [entrypoint, ...args, "--json"],
-      { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
-    );
-    return parseEvidence(JSON.parse(stdout));
-  };
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env,
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "source-map-real-e2e", version: "1" });
-  try {
+  let site;
+  let root;
+  let transport;
+  let client;
+  return withVerifierCleanup(async () => {
+    site = await startBrowserSourceMapSite();
+    root = await mkdtemp(join(tmpdir(), "rea-browser-source-map-"));
+    const env = {
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+    };
+    const cli = async (...args) => {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [entrypoint, ...args, "--json"],
+        { env, timeout: 45000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      return parseEvidence(JSON.parse(stdout));
+    };
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env,
+      stderr: "pipe",
+    });
+    client = new Client({ name: "source-map-real-e2e", version: "1" });
     const capture = await cli(
       "capture-browser-scenario",
       JSON.stringify({
@@ -126,12 +131,15 @@ export async function verifyBrowserSourceMap(
       selected_inert_userinfo_context_preserved: true,
       public_point_cases: 4,
     };
-  } finally {
-    await client.close();
-    await transport.close();
-    await site.close();
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 function assertPoint(evidence, { site, input, capture, identity }) {
   const result = webSourceLocationResultSchema.parse(

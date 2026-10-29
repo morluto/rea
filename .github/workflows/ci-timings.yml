@@ -12,12 +12,13 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 
 jobs:
   report:
     name: Collect recent completed workflow attempts
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       # Consume only API data and execute batch code from the trusted default branch.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -27,6 +28,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        continue-on-error: true
+        uses: ./.github/actions/npm-cache
+      - name: Diagnose missing and startup-failed PR CI
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_REPOSITORY_ID: ${{ github.repository_id }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/ci/pr-ci-health.mjs
       - name: Record queue, execution, and matched step timing
         continue-on-error: true
         env:
@@ -43,4 +56,29 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           overwrite: true
+          retention-days: 14
+      - name: Install dependencies for static failure attribution
+        id: failure-deps
+        if: ${{ !cancelled() && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
+        continue-on-error: true
+        run: npm ci
+      - name: Attribute supported static failures against main
+        if: ${{ !cancelled() && steps.failure-deps.outcome == 'success' && hashFiles('.cache/ci-job-timings/batch-manifest.json') != '' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_REPOSITORY: ${{ github.repository }}
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: node scripts/ci/failure-report.mjs
+      - name: Upload CI health and failure diagnostics
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-health-diagnostics
+          path: |
+            .cache/ci-pr-health/
+            .cache/ci-failures/
+          include-hidden-files: true
+          if-no-files-found: warn
           retention-days: 14

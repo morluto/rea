@@ -1,3 +1,4 @@
+import { nativeExportCorrespondenceKey } from "./javascriptNativeExportFacts.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import {
   compareUnicodeCodePoints,
@@ -5,6 +6,7 @@ import {
 } from "../unicodeCodePointOrder.js";
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import type { JsonValue } from "../jsonValue.js";
+import { applicationEndpointCorrespondence } from "./javascriptApplicationEndpointCorrespondence.js";
 
 /** One deterministic one-to-one match between two graph versions. */
 type ApplicationVersionPairMatch =
@@ -77,15 +79,23 @@ export const matchJavaScriptApplicationVersions = (
 ): ApplicationVersionMatchingProjection => {
   const left = new Map(leftNodes.map((node) => [node.node_id, node]));
   const right = new Map(rightNodes.map((node) => [node.node_id, node]));
-  const leftCandidates = new Map<string, Set<string>>();
-  const rightCandidates = new Map<string, Set<string>>();
   const pairs: ApplicationVersionNodePair[] = [];
+  const ambiguousGroups: AmbiguousGroup[] = [];
   for (const tier of matchTiers())
-    applyTier({ left, right, pairs, leftCandidates, rightCandidates, tier });
+    applyTier({ left, right, pairs, ambiguousGroups, tier });
   const remainingLeft = sortedNodes(left.values());
   const remainingRight = sortedNodes(right.values());
-  const leftIds = new Set(remainingLeft.map(({ node_id: id }) => id));
-  const rightIds = new Set(remainingRight.map(({ node_id: id }) => id));
+  const leftCandidates = new Map<string, Set<string>>();
+  const rightCandidates = new Map<string, Set<string>>();
+  // Later tiers can pair members of an ambiguous group. Expand only survivors,
+  // without pairing groups that became unique after those later matches.
+  for (const group of ambiguousGroups) {
+    const leftGroup = group.left.filter((node) => left.has(node.node_id));
+    if (leftGroup.length === 0) continue;
+    const rightGroup = group.right.filter((node) => right.has(node.node_id));
+    if (rightGroup.length === 0) continue;
+    recordCandidates(leftGroup, rightGroup, leftCandidates, rightCandidates);
+  }
   return {
     pairs: pairs.sort((a, b) =>
       compareUnicodeCodePoints(
@@ -95,17 +105,21 @@ export const matchJavaScriptApplicationVersions = (
     ),
     unmatchedLeft: remainingLeft,
     unmatchedRight: remainingRight,
-    candidatesForLeft: filteredCandidates(leftCandidates, rightIds),
-    candidatesForRight: filteredCandidates(rightCandidates, leftIds),
+    candidatesForLeft: sortedCandidates(leftCandidates),
+    candidatesForRight: sortedCandidates(rightCandidates),
   };
 };
+
+interface AmbiguousGroup {
+  readonly left: readonly ApplicationNode[];
+  readonly right: readonly ApplicationNode[];
+}
 
 interface TierContext {
   readonly left: Map<string, ApplicationNode>;
   readonly right: Map<string, ApplicationNode>;
   readonly pairs: ApplicationVersionNodePair[];
-  readonly leftCandidates: Map<string, Set<string>>;
-  readonly rightCandidates: Map<string, Set<string>>;
+  readonly ambiguousGroups: AmbiguousGroup[];
   readonly tier: MatchTier;
 }
 
@@ -114,15 +128,12 @@ const applyTier = (context: TierContext): void => {
   const rightByKey = nodesByKey(context.right.values(), context.tier.key);
   for (const key of [...leftByKey.keys()].sort(compareUnicodeCodePoints)) {
     const leftGroup = leftByKey.get(key) ?? [];
-    const rightGroup = rightByKey.get(key) ?? [];
-    if (rightGroup.length === 0) continue;
-    recordCandidates(
-      leftGroup,
-      rightGroup,
-      context.leftCandidates,
-      context.rightCandidates,
-    );
-    if (leftGroup.length !== 1 || rightGroup.length !== 1) continue;
+    const rightGroup = rightByKey.get(key);
+    if (rightGroup === undefined) continue;
+    if (leftGroup.length !== 1 || rightGroup.length !== 1) {
+      context.ambiguousGroups.push({ left: leftGroup, right: rightGroup });
+      continue;
+    }
     const leftNode = leftGroup[0];
     const rightNode = rightGroup[0];
     if (leftNode === undefined || rightNode === undefined) continue;
@@ -144,7 +155,9 @@ const nodesByKey = (
   for (const node of nodes) {
     const key = keyFor(node);
     if (key === null) continue;
-    output.set(key, [...(output.get(key) ?? []), node]);
+    const group = output.get(key);
+    if (group === undefined) output.set(key, [node]);
+    else group.push(node);
   }
   return output;
 };
@@ -169,17 +182,14 @@ const recordCandidates = (
   }
 };
 
-const filteredCandidates = (
+const sortedCandidates = (
   candidates: ReadonlyMap<string, ReadonlySet<string>>,
-  retained: ReadonlySet<string>,
 ): ReadonlyMap<string, readonly string[]> =>
   new Map(
-    [...candidates.entries()].flatMap(([nodeId, values]) => {
-      const filtered = [...values]
-        .filter((value) => retained.has(value))
-        .sort(compareUnicodeCodePoints);
-      return filtered.length === 0 ? [] : [[nodeId, filtered] as const];
-    }),
+    [...candidates.entries()].map(([nodeId, values]) => [
+      nodeId,
+      [...values].sort(compareUnicodeCodePoints),
+    ]),
   );
 
 const nodeIdentityKey = (node: ApplicationNode): string =>
@@ -192,6 +202,18 @@ const contentDigestKey = (node: ApplicationNode): string | null =>
 
 const moduleSourceDigestKey = (node: ApplicationNode): string | null => {
   if (node.kind !== "javascript-module") return null;
+  // An export binding is identified within its whole application root, so its
+  // id changes with any sibling file. Its own file's bytes and exported name
+  // identify it across versions, as `source_sha256` does a source module.
+  if (
+    node.identity.strategy === "artifact-local-key" &&
+    node.identity.namespace === "module-export"
+  ) {
+    const name = uniqueStringProperty(node, "exported_name");
+    return name === null
+      ? null
+      : `module-export\0${node.identity.artifact_sha256}\0${name}`;
+  }
   const value = uniqueStringProperty(node, "source_sha256");
   return value === null ? null : `module-source\0${node.kind}\0${value}`;
 };
@@ -233,11 +255,8 @@ const semanticValue = (
   node: ApplicationNode,
   properties: Readonly<Record<string, JsonValue>>,
 ): string | null => {
-  if (node.kind === "endpoint") {
-    const kind = nonEmptyString(properties.endpoint_kind);
-    const value = exactString(properties.value);
-    return kind === null || value === null ? null : `${kind}\0${value}`;
-  }
+  if (node.kind === "endpoint")
+    return applicationEndpointCorrespondence(node).semanticKey;
   if (node.kind === "storage")
     return joined(
       properties.storage_kind,
@@ -253,21 +272,7 @@ const semanticValue = (
       exactString(properties.api_key) ??
       nonEmptyString(properties.api_name)
     );
-  if (node.kind === "native-export")
-    return (
-      joined(
-        properties.specifier,
-        compositeKey([
-          stringList(properties.requested_members),
-          typeof properties.namespace_access === "boolean"
-            ? properties.namespace_access
-            : null,
-          typeof properties.dynamic_member_access === "boolean"
-            ? properties.dynamic_member_access
-            : null,
-        ]),
-      ) ?? firstLabel(node)
-    );
+  if (node.kind === "native-export") return nativeExportCorrespondenceKey(node);
   if (
     [
       "electron-main",
@@ -315,13 +320,6 @@ const nonEmptyString = (value: unknown): string | null =>
 /** A literal value such as `ipcMain.handle("")` keeps its exact empty text. */
 const exactString = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
-
-const stringList = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? value
-        .filter((item): item is string => typeof item === "string")
-        .sort(compareUnicodeCodePoints)
-    : [];
 
 const sortedNodes = (nodes: Iterable<ApplicationNode>): ApplicationNode[] =>
   [...nodes].sort((left, right) =>

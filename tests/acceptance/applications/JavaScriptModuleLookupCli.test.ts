@@ -18,6 +18,9 @@ const createModuleLookupFixture = async () => {
       type: "commonjs",
     }),
     "esm/entry.mjs": [
+      'import "./a%2eb.mjs";',
+      'import "./sub/%2e%2e/x.mjs";',
+      'import "./sub%2fx.mjs";',
       'import "./extensionless";',
       'import "./directory";',
       'import "./explicit.js";',
@@ -43,6 +46,8 @@ const createModuleLookupFixture = async () => {
     "esm/directory/index.js": "module.exports = 2;",
     "esm/explicit.js.js": "module.exports = 3;",
     "esm/exact.js": "module.exports = 4;",
+    "esm/a.b.mjs": "export default 'encoded dot';",
+    "esm/x.mjs": "export default 'confined parent';",
     "esm/actual.cjs": "module.exports = 5;",
     "esm/.hidden.js": "module.exports = 'local hidden';",
     "esm/..pkg.js": "module.exports = 'local dot package';",
@@ -51,6 +56,8 @@ const createModuleLookupFixture = async () => {
     "esm/typed.mts": 'import value from "./typed-dep.js"; void value;',
     "esm/typed-dep.ts": "export default 42;",
     "cjs/entry.cjs": [
+      'require("./lit%2eb");',
+      'require("./x%2Fy");',
       'require("./extensionless");',
       'require("./directory");',
       'require("./feature");',
@@ -76,6 +83,8 @@ const createModuleLookupFixture = async () => {
     "index.js": "module.exports = 'parent directory';",
     "cjs/.hidden.js": "module.exports = 'local hidden';",
     "cjs/extensionless.cjs": "module.exports = 1;",
+    "cjs/lit%2eb.js": "module.exports = 'literal dot bytes';",
+    "cjs/x%2Fy.js": "module.exports = 'literal slash bytes';",
     "cjs/feature.cjs": "module.exports = 2;",
     "cjs/module-only.mjs": "export default 42;",
     "cjs/valid-directory/index.js": "module.exports = 42;",
@@ -98,7 +107,7 @@ const createModuleLookupFixture = async () => {
     "node_modules/ancestor-blocked/index.js": "module.exports = 9;",
     "node_modules/ancestor-sub/parser.js": "module.exports = 10;",
     "esm/runtime-control.mjs": [
-      'const specifiers = ["./extensionless", "./directory", "./explicit.js", "./exact.js", "./actual.cjs?cache=1", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser", "./.hidden.js", "./..pkg.js", "./exact.js/.", "./exact.js/child/..", ".hidden.js", "..pkg.js", ".", ".."];',
+      'const specifiers = ["./a%2eb.mjs", "./sub/%2e%2e/x.mjs", "./sub%2fx.mjs", "./extensionless", "./directory", "./explicit.js", "./exact.js", "./actual.cjs?cache=1", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser", "./.hidden.js", "./..pkg.js", "./exact.js/.", "./exact.js/child/..", ".hidden.js", "..pkg.js", ".", ".."];',
       "const results = [];",
       "for (const specifier of specifiers) {",
       "  try { const value = (await import(specifier)).default; results.push({ specifier, ok: true, value }); }",
@@ -107,7 +116,7 @@ const createModuleLookupFixture = async () => {
       "console.log(JSON.stringify(results));",
     ].join("\n"),
     "cjs/runtime-control.cjs": [
-      'const specifiers = ["./extensionless", "./directory", "./feature", "./feature.cjs", "./module-only", "./valid-directory", "./default-js", "./default-json", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser", ".hidden.js", "./.hidden.js", ".", ".."];',
+      'const specifiers = ["./lit%2eb", "./x%2Fy", "./extensionless", "./directory", "./feature", "./feature.cjs", "./module-only", "./valid-directory", "./default-js", "./default-json", "empty-main", "nested-main", "file-only", "ancestor-empty", "ancestor-blocked", "ancestor-sub/parser", ".hidden.js", "./.hidden.js", ".", ".."];',
       "const results = [];",
       "for (const specifier of specifiers) {",
       "  try { const value = require(specifier); results.push({ specifier, ok: true, value }); }",
@@ -142,6 +151,13 @@ const expectNodeRuntimeControls = (
   const esmResults = JSON.parse(esmOutput) as RuntimeControlResult[];
   const cjsResults = JSON.parse(cjsOutput) as RuntimeControlResult[];
   expect(esmResults).toEqual([
+    { specifier: "./a%2eb.mjs", ok: true, value: "encoded dot" },
+    { specifier: "./sub/%2e%2e/x.mjs", ok: true, value: "confined parent" },
+    {
+      specifier: "./sub%2fx.mjs",
+      ok: false,
+      code: "ERR_INVALID_MODULE_SPECIFIER",
+    },
     {
       specifier: "./extensionless",
       ok: false,
@@ -199,6 +215,8 @@ const expectNodeRuntimeControls = (
     { specifier: "..", ok: false, code: "ERR_UNSUPPORTED_DIR_IMPORT" },
   ]);
   expect(cjsResults).toEqual([
+    { specifier: "./lit%2eb", ok: true, value: "literal dot bytes" },
+    { specifier: "./x%2Fy", ok: true, value: "literal slash bytes" },
     {
       specifier: "./extensionless",
       ok: false,
@@ -250,6 +268,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
     const expectations = [
+      ["import", "./a%2eb.mjs", "esm/a.b.mjs", "resolved"],
+      ["import", "./sub/%2e%2e/x.mjs", "esm/x.mjs", "resolved"],
+      ["import", "./sub%2fx.mjs", null, "rejected"],
       ["import", "./extensionless", null, "not-found"],
       ["import", "./directory", null, "not-found"],
       ["import", "./explicit.js", null, "not-found"],
@@ -271,6 +292,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["import", "./exact.js/.", null, "not-found"],
       ["import", "./exact.js/child/..", null, "not-found"],
       ["require", "./extensionless", null, "not-found"],
+      ["require", "./lit%2eb", "cjs/lit%2eb.js", "resolved"],
+      ["require", "./x%2Fy", "cjs/x%2Fy.js", "resolved"],
       ["require", "./directory", null, "not-found"],
       ["require", "./feature", null, "not-found"],
       ["require", "./feature.cjs", "cjs/feature.cjs", "resolved"],

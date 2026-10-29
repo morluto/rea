@@ -1,4 +1,13 @@
-import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -94,6 +103,7 @@ describe("Electron file scope", () => {
 
     await expect(authorizedElectronFile(value)).resolves.toBe(path);
   });
+
   it("resolves an archive beneath an ASAR-named directory and rejects oversized declared headers", async () => {
     const root = await createTestTempDirectory("rea-electron-header-");
     const source = join(root, "source");
@@ -119,4 +129,99 @@ describe("Electron file scope", () => {
       ),
     ).toBeUndefined();
   });
+  it("authorizes ASAR members only under the provider's selected header admission", async () => {
+    const root = await createTestTempDirectory("rea-electron-admission-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "index.html"), "page");
+    const archive = join(root, "app.asar");
+    await createPackageWithOptions(source, archive, {});
+    const headerBytes = (await readFile(archive)).readUInt32LE(4);
+    const page = pathToFileURL(join(archive, "index.html")).href;
+    const admission = (maximumBytes: number) =>
+      ({ maximumBytes, source: "setting" }) as const;
+    // The first read caches the header under an admission that fits it.
+    expect(
+      await authorizedElectronFile(
+        page,
+        undefined,
+        "inspect_electron_page",
+        admission(headerBytes),
+      ),
+    ).toBe(join(await realpath(archive), "index.html"));
+    // A provider with a lower admission must not reuse that cached header.
+    expect(
+      await authorizedElectronFile(
+        page,
+        undefined,
+        "inspect_electron_page",
+        admission(headerBytes - 1),
+      ),
+    ).toBeUndefined();
+  });
+});
+
+it("keeps encoded query and fragment separators outside filesystem admission", async () => {
+  const root = await createTestTempDirectory("rea-electron-url-components-");
+  const path = join(root, "index.html");
+  await writeFile(path, "allowed");
+  const base = pathToFileURL(path).href;
+  for (const suffix of [
+    "",
+    "?next=/settings",
+    "#/settings",
+    "?next=%2Fsettings",
+    "?next=%5Csettings",
+    "#%2Fsettings",
+    "#%5Csettings",
+  ])
+    await expect(authorizedElectronFile(`${base}${suffix}`)).resolves.toBe(
+      path,
+    );
+  for (const encoded of ["%2F", "%5C"])
+    await expect(
+      authorizedElectronFile(`${pathToFileURL(root).href}${encoded}index.html`),
+    ).resolves.toBeUndefined();
+});
+
+it("refreshes ASAR member admission after a same-size rewrite preserving modification time", async () => {
+  const root = await createTestTempDirectory("rea-electron-asar-rewrite-");
+  const source = join(root, "source");
+  await mkdir(source);
+  await writeFile(join(source, "old.html"), "page");
+  const archive = join(root, "app.asar");
+  await createPackageWithOptions(source, archive, {});
+  const timestamp = new Date("2024-01-01T00:00:00Z");
+  await utimes(archive, timestamp, timestamp);
+  const before = await stat(archive);
+  const oldPage = pathToFileURL(join(archive, "old.html")).href;
+  const newPage = pathToFileURL(join(archive, "new.html")).href;
+  expect(await authorizedElectronFile(oldPage)).toBe(
+    join(await realpath(archive), "old.html"),
+  );
+  expect(await authorizedElectronFile(newPage)).toBeUndefined();
+
+  await rename(join(source, "old.html"), join(source, "new.html"));
+  const replacement = join(root, "replacement.asar");
+  await createPackageWithOptions(source, replacement, {});
+  await writeFile(archive, await readFile(replacement));
+  await utimes(archive, before.atime, before.mtime);
+  const after = await stat(archive);
+  expect({
+    dev: after.dev,
+    ino: after.ino,
+    size: after.size,
+    mtime: after.mtimeMs,
+  }).toEqual({
+    dev: before.dev,
+    ino: before.ino,
+    size: before.size,
+    mtime: before.mtimeMs,
+  });
+  expect(after.ctimeMs).not.toBe(before.ctimeMs);
+
+  expect(await authorizedElectronFile(oldPage)).toBeUndefined();
+  expect(await authorizedElectronFile(newPage)).toBe(
+    join(await realpath(archive), "new.html"),
+  );
 });

@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { webScriptExportResultSchema } from "../../../src/domain/webScriptExport.js";
@@ -107,20 +108,38 @@ describe("selected captured module artifact boundary", () => {
     );
     expect(response.error.message).toContain("declared_sha256=");
   });
-  it("rejects unavailable indices and invalid UTF-8 source bytes", async () => {
-    const f = await fixture(Buffer.from([255, 254]));
-    for (const script_index of [0, 10]) {
-      const response = await new LocalWebModuleArtifacts().load({
-        manifest_path: f.manifestPath,
-        script_index,
-      });
-      expect(response.ok).toBe(false);
-      if (!response.ok)
-        expect(projectAnalysisError(response.error).code).toBe(
-          "invalid_request",
-        );
-    }
+  it("rejects an unavailable index", async () => {
+    const f = await fixture();
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: f.manifestPath,
+      script_index: 10,
+    });
+    expect(response.ok).toBe(false);
+    if (!response.ok)
+      expect(projectAnalysisError(response.error).code).toBe("invalid_request");
   });
+  it.each(["trace_web_module_imports", "trace_web_source_location"] as const)(
+    "attributes selected source UTF-8 failure to the artifact for %s",
+    async (operation) => {
+      const f = await fixture(Buffer.from([255, 254]));
+      const response = await new LocalWebScriptArtifacts(operation).load({
+        manifest_path: f.manifestPath,
+        script_index: 0,
+      });
+      if (response.ok) throw new Error("expected invalid source bytes");
+      expect(projectAnalysisError(response.error)).toMatchObject({
+        code: "artifact_operation_failed",
+        details: {
+          operation,
+          reason: "format",
+          detail: expect.stringContaining(f.sourcePath),
+        },
+      });
+      expect(projectAnalysisError(response.error).details).not.toHaveProperty(
+        "issues",
+      );
+    },
+  );
   it("rejects source symlinks even when bytes have the expected digest", async () => {
     const f = await fixture();
     const real = join(f.root, "original.js");
@@ -158,7 +177,15 @@ describe("selected captured module artifact boundary", () => {
       manifest_path: f.manifestPath,
       script_index: 0,
     });
-    expect(escaped.ok).toBe(false);
+    if (escaped.ok) throw new Error("expected malformed source path");
+    expect(projectAnalysisError(escaped.error)).toMatchObject({
+      code: "artifact_operation_failed",
+      details: {
+        operation: "trace_web_module_imports",
+        reason: "path",
+        detail: expect.stringContaining("../capture.json"),
+      },
+    });
   });
   it("reads only an explicit local map and rejects non-object JSON", async () => {
     const f = await fixture();
@@ -257,6 +284,68 @@ describe("caller-selected web module files", () => {
     expect(response.error).toMatchObject({
       _tag: "ArtifactOperationError",
       reason: "io",
+      cause: expect.objectContaining({ code: "ENOENT" }),
+    });
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      details: { detail: expect.stringContaining(`${sourcePath}:`) },
+    });
+    expect(projectAnalysisError(response.error).details?.detail).not.toMatch(
+      /^script_index:/u,
+    );
+  });
+});
+
+describe("selected captured script index", () => {
+  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
+    const f = await fixture();
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: f.manifestPath,
+      script_index: 5,
+    });
+    if (response.ok) throw new Error("expected an out-of-range index");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["script_index"],
+            reason: "out_of_range",
+            minimum: 0,
+            maximum: 0,
+          },
+        ],
+      },
+    });
+  });
+
+  it("distinguishes an empty valid manifest from a malformed manifest", async () => {
+    const f = await fixture();
+    const parsed: unknown = JSON.parse(await readFile(f.manifestPath, "utf8"));
+    const manifest = webScriptExportResultSchema
+      .omit({ manifest: true })
+      .parse(parsed);
+    manifest.scripts = [];
+    await writeFile(f.manifestPath, JSON.stringify(manifest));
+
+    const artifacts = new LocalWebModuleArtifacts();
+    const input = { manifest_path: f.manifestPath, script_index: 0 };
+    const empty = await artifacts.load(input);
+    if (empty.ok) throw new Error("expected an empty-manifest selection fault");
+    expect(projectAnalysisError(empty.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["script_index"], reason: "invalid_value" }],
+      },
+    });
+
+    await writeFile(f.manifestPath, "{");
+    const malformed = await artifacts.load(input);
+    if (malformed.ok) throw new Error("expected a malformed manifest fault");
+    expect(projectAnalysisError(malformed.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["manifest_path"], reason: "invalid_format" }],
+      },
     });
   });
 });

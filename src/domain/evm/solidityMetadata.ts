@@ -30,8 +30,8 @@ export const solidityMetadataSchema = z
   .strictObject({
     profile: z.literal("terminal-cbor-scalars-v1"),
     status: z.enum(["unavailable", "decoded", "partial", "not-decoded"]),
-    bytecode_offset: z.number().int().nonnegative().nullable(),
-    cbor_bytes: z.number().int().positive().max(65535).nullable(),
+    bytecode_offset: z.int().nonnegative().nullable(),
+    cbor_bytes: z.int().positive().max(65535).nullable(),
     entries: z
       .array(
         z.strictObject({

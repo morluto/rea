@@ -1,15 +1,18 @@
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../../src/artifacts/ArtifactResourceScope.js";
 import { onTestFinished } from "vitest";
 import { ArtifactReaderFailure } from "../../src/artifacts/ArtifactReader.js";
-import { classifyAndHashRoot as classifyAndHashRootOwned } from "../../src/artifacts/inventory/classify.js";
+import { classifyAndHashRootForInventory } from "../../src/artifacts/inventory/classify.js";
 import {
   inventoryArtifact as inventoryArtifactOwned,
-  scanArtifactInventory as scanArtifactInventoryOwned,
+  scanArtifactInventoryInScope,
 } from "../../src/artifacts/inventory/ArtifactInventory.js";
-import { scanCanonicalArtifactInventory as scanCanonicalArtifactInventoryOwned } from "../../src/artifacts/inventory/scanCanonical.js";
+import { scanCanonicalArtifactInventoryInScope } from "../../src/artifacts/inventory/scanCanonical.js";
 import type { createReader } from "../../src/artifacts/inventory/reader.js";
 import {
-  materializeArtifactInventory as materializeArtifactInventoryOwned,
+  materializeArtifactInventoryInScope,
   type ArtifactExtractionInput,
 } from "../../src/artifacts/extraction/ArtifactExtraction.js";
 import type { ArtifactInventorySnapshot } from "../../src/domain/artifactInventorySnapshot.js";
@@ -32,9 +35,27 @@ export const classifyAndHashRoot = (
   signal?: AbortSignal,
 ) =>
   withArtifactResourceScope((resourceScope) =>
-    classifyAndHashRootOwned(path, directory, expectedMetadata, {
-      resourceScope,
-      ...(signal === undefined ? {} : { signal }),
+    resourceScope.run(async () => {
+      const result = await classifyAndHashRootForInventory(
+        path,
+        directory,
+        expectedMetadata,
+        { resourceScope, ...(signal === undefined ? {} : { signal }) },
+      );
+      const rootSource = result.rootSource;
+      if (rootSource !== undefined) {
+        const owner: ArtifactResourceOwner = {
+          kind: "file-handle",
+          handle: rootSource.owner,
+          resource: `root artifact descriptor for ${path}`,
+        };
+        const cleanupAttempt = await resourceScope.release(owner);
+        if (cleanupAttempt.kind === "failed")
+          throw resourceScope.cleanupFailure({ kind: "completed" }, [
+            cleanupAttempt,
+          ]);
+      }
+      return { format: result.format, digest: result.digest };
     }),
   );
 
@@ -43,7 +64,9 @@ export const scanArtifactInventory = (
   options: InventoryOptions = {},
 ) =>
   withArtifactResourceScope((resourceScope) =>
-    scanArtifactInventoryOwned(path, { ...options, resourceScope }),
+    resourceScope.run(() =>
+      scanArtifactInventoryInScope(path, { ...options, resourceScope }),
+    ),
   );
 
 export const scanCanonicalArtifactInventory = (
@@ -52,10 +75,12 @@ export const scanCanonicalArtifactInventory = (
   readerFactory?: typeof createReader,
 ) =>
   withArtifactResourceScope((resourceScope) =>
-    scanCanonicalArtifactInventoryOwned(
-      path,
-      { ...options, resourceScope },
-      readerFactory,
+    resourceScope.run(() =>
+      scanCanonicalArtifactInventoryInScope(
+        path,
+        { ...options, resourceScope },
+        readerFactory,
+      ),
     ),
   );
 
@@ -66,11 +91,13 @@ export const materializeArtifactInventory = (
   signal?: AbortSignal,
 ) =>
   withArtifactResourceScope((resourceScope) =>
-    materializeArtifactInventoryOwned(
-      { ...input, resourceScope },
-      sourcePath,
-      snapshot,
-      signal,
+    resourceScope.run(() =>
+      materializeArtifactInventoryInScope(
+        { ...input, resourceScope },
+        sourcePath,
+        snapshot,
+        signal,
+      ),
     ),
   );
 

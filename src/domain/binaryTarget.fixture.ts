@@ -58,20 +58,67 @@ export const fat = (
   return bytes;
 };
 
-/** Build a bounded PE image with optional managed metadata. */
+export interface PeCodeViewFixture {
+  readonly type?: "RSDS" | "NB10";
+  readonly guid?: string;
+  readonly age?: number;
+  readonly pdbPath?: string;
+}
+
+/** Build a bounded PE image with optional managed metadata or CodeView debug data. */
 export const pe = (
   machine: number,
   offset = 64,
   characteristics = 0x0002,
   managed = false,
+  codeView?: PeCodeViewFixture,
 ): Buffer => {
   const optionalHeaderSize =
     machine === 0x014c || machine === 0x01c0 ? 224 : 240;
-  const bytes = Buffer.alloc(Math.max(512, offset + 24 + optionalHeaderSize));
+  const sectionTableOffset = offset + 24 + optionalHeaderSize;
+  const sectionCount = codeView !== undefined ? 1 : 0;
+  const rawDataOffset = 512;
+
+  let codeViewData: Buffer | undefined;
+  if (codeView !== undefined) {
+    const type = codeView.type ?? "RSDS";
+    const pdbPath = codeView.pdbPath ?? "app.pdb";
+    const age = codeView.age ?? 1;
+    const pathBuf = Buffer.from(`${pdbPath}\0`, "utf8");
+    if (type === "RSDS") {
+      codeViewData = Buffer.alloc(24 + pathBuf.length);
+      codeViewData.write("RSDS", 0, "ascii");
+      const guid = codeView.guid ?? "01234567-89ab-cdef-0123-456789abcdef";
+      const parts = guid.split("-");
+      if (parts.length === 5) {
+        codeViewData.writeUInt32LE(parseInt(parts[0]!, 16), 4);
+        codeViewData.writeUInt16LE(parseInt(parts[1]!, 16), 8);
+        codeViewData.writeUInt16LE(parseInt(parts[2]!, 16), 10);
+        Buffer.from(parts[3]!, "hex").copy(codeViewData, 12);
+        Buffer.from(parts[4]!, "hex").copy(codeViewData, 14);
+      }
+      codeViewData.writeUInt32LE(age, 20);
+      pathBuf.copy(codeViewData, 24);
+    } else {
+      codeViewData = Buffer.alloc(16 + pathBuf.length);
+      codeViewData.write("NB10", 0, "ascii");
+      codeViewData.writeUInt32LE(0, 4);
+      codeViewData.writeUInt32LE(0, 8);
+      codeViewData.writeUInt32LE(age, 12);
+      pathBuf.copy(codeViewData, 16);
+    }
+  }
+
+  const minSize =
+    codeViewData !== undefined
+      ? rawDataOffset + 28 + codeViewData.length + 32
+      : Math.max(512, offset + 24 + optionalHeaderSize);
+  const bytes = Buffer.alloc(minSize);
   bytes.write("MZ", 0, "ascii");
   bytes.writeUInt32LE(offset, 0x3c);
   bytes.write("PE\0\0", offset, "binary");
   bytes.writeUInt16LE(machine, offset + 4);
+  bytes.writeUInt16LE(sectionCount, offset + 6);
   bytes.writeUInt16LE(optionalHeaderSize, offset + 20);
   bytes.writeUInt16LE(characteristics, offset + 22);
   const optionalHeader = offset + 24;
@@ -82,6 +129,29 @@ export const pe = (
   if (managed) {
     bytes.writeUInt32LE(0x2000, optionalHeader + directoryOffset + 14 * 8);
     bytes.writeUInt32LE(72, optionalHeader + directoryOffset + 14 * 8 + 4);
+  }
+  if (codeViewData !== undefined) {
+    const debugDirRva = 0x1000;
+    const debugDirSize = 28;
+    bytes.writeUInt32LE(debugDirRva, optionalHeader + directoryOffset + 6 * 8);
+    bytes.writeUInt32LE(
+      debugDirSize,
+      optionalHeader + directoryOffset + 6 * 8 + 4,
+    );
+
+    bytes.write(".rdata\0\0", sectionTableOffset, "ascii");
+    bytes.writeUInt32LE(0x1000, sectionTableOffset + 8);
+    bytes.writeUInt32LE(0x1000, sectionTableOffset + 12);
+    bytes.writeUInt32LE(512, sectionTableOffset + 16);
+    bytes.writeUInt32LE(rawDataOffset, sectionTableOffset + 20);
+    bytes.writeUInt32LE(0x40000040, sectionTableOffset + 36);
+
+    bytes.writeUInt32LE(2, rawDataOffset + 12);
+    bytes.writeUInt32LE(codeViewData.length, rawDataOffset + 16);
+    bytes.writeUInt32LE(debugDirRva + 28, rawDataOffset + 20);
+    bytes.writeUInt32LE(rawDataOffset + 28, rawDataOffset + 24);
+
+    codeViewData.copy(bytes, rawDataOffset + 28);
   }
   return bytes;
 };

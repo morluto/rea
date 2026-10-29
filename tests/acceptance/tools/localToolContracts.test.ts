@@ -6,11 +6,14 @@ import { promisify } from "node:util";
 import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { itWithCaptureCapability as captureTest } from "../../boundary/process/processCaptureCapability.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliCompileCacheEnvironment } from "../../support/cli/cliFixture.js";
 
 const execute = promisify(execFile);
 const cli = fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url));
@@ -20,15 +23,115 @@ const electron = {
   application_path: "/tmp/main.js",
 };
 
+it("keeps overall replay verification unknown when capture divergence is unknown", async () => {
+  const { call } = await connectLocalToolsMcp();
+  const captureEvidence = (
+    side: "left" | "right",
+    {
+      environmentUnknown = false,
+      exitCode = 0,
+    }: {
+      readonly environmentUnknown?: boolean;
+      readonly exitCode?: number;
+    } = {},
+  ) =>
+    createEvidence(undefined, PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: { side },
+      result: {
+        ...EMPTY_PROCESS_CAPTURE_EXAMPLE,
+        exit: { ...EMPTY_PROCESS_CAPTURE_EXAMPLE.exit, code: exitCode },
+        residual_unknowns: environmentUnknown
+          ? [
+              {
+                scope: "environment",
+                reason:
+                  "Inherited host environment variables are not recorded.",
+              },
+            ]
+          : [],
+      },
+      confidence: "observed",
+      authority: "controlled-replay",
+      environment: {
+        id: "fixture-process",
+        platform: "fixture",
+        architecture: "fixture",
+        isolation: "process",
+      },
+    });
+  const compare = async (left: unknown, right: unknown) => {
+    const response = await call("compare_process_captures", { left, right });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return toolContract("compare_process_captures").outputSchema.parse(
+      response.structuredContent,
+    );
+  };
+  const verify = async (
+    comparison: { readonly evidence_id: string },
+    dimension: "overall" | "terminal",
+  ) => {
+    const response = await call("verify_reconstruction", {
+      specification: {
+        name: "Overall replay compatibility",
+        claims: [
+          {
+            kind: "behavioral",
+            claim_id: dimension,
+            title: "Replay behavior agrees",
+            comparison_evidence_id: comparison.evidence_id,
+            dimension,
+          },
+        ],
+      },
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    return toolContract("verify_reconstruction").outputSchema.parse(
+      response.structuredContent,
+    ).normalized_result;
+  };
+
+  const complete = await compare(
+    captureEvidence("left"),
+    captureEvidence("right"),
+  );
+  expect((await verify(complete, "overall")).status).toBe("pass");
+
+  const incomplete = await compare(
+    captureEvidence("left", { environmentUnknown: true }),
+    captureEvidence("right", { environmentUnknown: true }),
+  );
+  expect(incomplete.normalized_result).toMatchObject({
+    status: "unchanged",
+    first_divergence: {
+      status: "unknown",
+      reason: "Residual unknowns prevent proving that no divergence occurred.",
+    },
+  });
+  const overall = await verify(incomplete, "overall");
+  expect(overall.status).toBe("unknown");
+  expect(overall.claims.items[0]?.limitations).toContain(
+    "Residual unknowns prevent proving that no divergence occurred.",
+  );
+  expect((await verify(incomplete, "terminal")).status).toBe("pass");
+
+  const changed = await compare(
+    captureEvidence("left", { environmentUnknown: true }),
+    captureEvidence("right", { environmentUnknown: true, exitCode: 1 }),
+  );
+  expect((await verify(changed, "overall")).status).toBe("fail");
+});
+
 const runCliExpectingInputError = async (
   scenarioPath: string,
+  environment?: NodeJS.ProcessEnv,
 ): Promise<unknown> => {
-  const failure = await execute(process.execPath, [
-    cli,
-    "capture-process",
-    scenarioPath,
-    "--json",
-  ]).then(
+  const failure = await execute(
+    process.execPath,
+    [cli, "capture-process", scenarioPath, "--json"],
+    { env: environment },
+  ).then(
     () => undefined,
     (cause: unknown) => cause,
   );
@@ -53,11 +156,26 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     "inspect_android_method",
     { path: nul, class_name: "probe.Class", method_name: "run" },
   ],
+  [
+    "inspect_android_class",
+    { path: "/tmp/probe.apk", class_name: "probe.Class", mapping_path: nul },
+  ],
+  [
+    "inspect_android_method",
+    {
+      path: "/tmp/probe.apk",
+      class_name: "probe.Class",
+      method_name: "run",
+      mapping_path: nul,
+    },
+  ],
   ["trace_android_references", { path: nul, class_name: "probe.Class" }],
   ["inspect_firmware_regions", { path: nul }],
   ["extract_firmware", { path: nul, output_directory: "/tmp/out" }],
   ["extract_firmware", { path: "/tmp/firmware.bin", output_directory: nul }],
   ["inspect_plist", { path: nul }],
+  ["inspect_with_objdump", { path: nul, operation: "file_headers" }],
+  ["execute_rizin_command", { path: nul, command: "iI" }],
   ...[
     { kind: "function", name: "main\0suffix" },
     { kind: "function", name: "main", module: "lib.dylib\0suffix" },
@@ -116,6 +234,16 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     { capture_path: nul, output_directory: "/tmp/exported-scripts" },
   ],
   ["inspect_pe_resources", { path: nul }],
+  ["inspect_pe_certificates", { path: nul }],
+  ["inspect_pe_imports", { path: nul }],
+  ["inspect_native_exports", { path: nul }],
+  ["inspect_elf_notes", { path: nul }],
+  ["inspect_apple_ips", { path: nul }],
+  ["inspect_devicetree", { path: nul }],
+  ["inspect_kernel_module", { path: nul }],
+  ["inspect_pe_load_config", { path: nul }],
+  ["inspect_python_pyc", { path: nul }],
+  ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
   ["inspect_recorded_crash", { path: nul }],
   ["inspect_wasm_artifact", { path: nul }],
@@ -156,6 +284,38 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
       import_map: { path: nul, base_url: "http://127.0.0.1/a" },
     },
   ],
+  ["start_frida_session", { mode: "spawn", device_id: "local", program: nul }],
+  [
+    "load_frida_script",
+    {
+      session_id: "00000000-0000-4000-8000-000000000001",
+      source_kind: "file",
+      path: nul,
+    },
+  ],
+  [
+    "instrument_with_frida",
+    {
+      mode: "spawn",
+      device_id: "local",
+      program: nul,
+      source_kind: "inline",
+      source: "send(1);",
+    },
+  ],
+  [
+    "instrument_with_frida",
+    {
+      mode: "spawn",
+      device_id: "local",
+      program: "/bin/true",
+      source_kind: "file",
+      path: nul,
+    },
+  ],
+  ["start_rizin_debug_session", { path: nul, inferior_tty: "/dev/pts/7" }],
+  ["start_rizin_debug_session", { path: "/tmp/program", inferior_tty: nul }],
+  ["start_gdb_session", { inferior_tty: nul }],
 ];
 
 it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
@@ -193,6 +353,10 @@ captureTest(
   "rejects malformed process choices through CLI and MCP before launching the command",
   async () => {
     const root = await createTestTempDirectory("rea-local-contracts-");
+    const environment = cliCompileCacheEnvironment(
+      process.env,
+      join(root, "node-compile-cache"),
+    );
     const marker = join(root, "launched");
     const scenario = {
       executable: process.execPath,
@@ -239,7 +403,13 @@ captureTest(
           const path = join(root, `scenario-${String(start + offset)}.json`);
           await writeFile(path, JSON.stringify(request));
           await expect(
-            execute(process.execPath, [cli, "capture-process", path, "--json"]),
+            execute(
+              process.execPath,
+              [cli, "capture-process", path, "--json"],
+              {
+                env: environment,
+              },
+            ),
             JSON.stringify(options),
           ).rejects.toMatchObject({
             code: 1,
@@ -272,6 +442,7 @@ captureTest(
     );
     const executableCliFailure = await runCliExpectingInputError(
       join(root, "scenario.json"),
+      environment,
     );
     expect(executableCliFailure).toMatchObject({
       code: "invalid_request",
@@ -315,7 +486,9 @@ captureTest(
         working_directory: missingWorkingDirectory,
       }),
     );
-    expect(await runCliExpectingInputError(cwdScenario)).toMatchObject({
+    expect(
+      await runCliExpectingInputError(cwdScenario, environment),
+    ).toMatchObject({
       code: "invalid_request",
       details: {
         operation: "capture_process_scenario",
@@ -330,7 +503,9 @@ captureTest(
       },
     });
   },
-  60_000,
+  // 22 malformed requests plus two filesystem errors each start a fresh CLI.
+  // Cache compilation, but allow for startup at the bounded fanout of two.
+  120_000,
 );
 
 captureTest.each(["untruncated", "truncated"] as const)(

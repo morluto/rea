@@ -8,6 +8,10 @@ let shutdownSignal;
 const supervisor = spawn(
   process.execPath,
   [
+    // SQLite and Windows source transforms are internal supervisor APIs. This
+    // process-only flag keeps their notices out of command stderr without
+    // changing the command's arguments, environment, or warning behavior.
+    "--disable-warning=ExperimentalWarning",
     fileURLToPath(new URL("./run-exclusive-command.mjs", import.meta.url)),
     ...process.argv.slice(2),
   ],

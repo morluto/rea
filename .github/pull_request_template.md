@@ -17,14 +17,17 @@ describe the use case and observable outcome. -->
 ## Change and scope
 
 <!-- Explain the chosen approach, why it fits REA's architecture, and what is
-intentionally not included. -->
+intentionally not included. If adding complexity for a speculative or vanishingly
+unlikely race or security edge case, record the concrete failure mode, likelihood,
+complexity cost, and the user's buy-in obtained before implementation. Do not
+silently expand scope for theoretical robustness. -->
 
 Follow the [contribution scope](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#contribution-scope).
 Unresolved scope, authority, side effects, or required verification block
 integration. Link the required maintainer scope decision for new providers or
 capabilities involving target execution, injection, mutation, or protection
 recovery; ordinary fixes within existing boundaries may state "not applicable".
-Draft PRs may leave the scope decision pending and the final review checklist
+Draft PRs may leave the scope decision pending and the readiness and merge checklists
 unchecked. Maintainers can help resolve open questions.
 
 ## Contract and boundary impact
@@ -33,6 +36,9 @@ unchecked. Maintainers can help resolve open questions.
 Use "none" or "not applicable" only when established. -->
 
 - Semantic owner and earliest changed stage:
+  <!-- Name the producer of parsed facts or resources and its affected consumers.
+  Summarize superseded paths removed and any distinct policy, lifecycle,
+  lazy-loading, or compatibility responsibility retained. -->
 - Contribution scope fit and linked maintainer decision:
 - CLI and MCP/tool-catalog contract:
 - Provider, bridge, target-format, or platform compatibility:
@@ -55,12 +61,19 @@ Unchecked items do not establish absence; leave uncertainties visible.
 ## Evidence and regression coverage
 
 <!-- State whether evidence is executed, source-derived, or proposed. For fixes,
-explain how the regression would fail on the affected base revision when practical. -->
+show the original failure and explain how the regression would fail on the affected
+base revision when practical. Include the most useful proof inline; link long logs
+or artifacts, or put them in optional details. Documentation-only changes can use
+source, link, or rendered-document checks. -->
 
 - Tests added or updated:
 - Base reproduction or other evidence:
 - User-visible CLI/MCP output (if applicable):
 - Remaining proof gaps:
+
+For boundary fixes, identify the applicable [boundary regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#boundary-regressions)
+and [lifecycle regressions](https://github.com/morluto/rea/blob/main/docs/testing.md#lifecycle-regressions)
+covered by the evidence above, and explain relevant gaps.
 
 For evidence-bearing changes:
 
@@ -71,7 +84,8 @@ For evidence-bearing changes:
 ## Validation performed
 
 <!-- List only commands that actually ran, with observed results. Include the
-relevant real-provider or platform workflow, or explain why it was unavailable. -->
+relevant real-provider or platform workflow, or explain why it was unavailable.
+Keep these results current after changes; a command without its result is incomplete. -->
 
 - `command` — result
 
@@ -89,6 +103,23 @@ limits, security/privacy/containment implications, and meaningful proof gaps. --
 - Real Hopper/Ghidra, browser, or OS coverage:
 - Package or release metadata impact:
 - Security, privacy, process, or containment review:
+
+## Author readiness
+
+<!-- The human owner completes these declarations before requesting review.
+The PR author is the owner by default. A different owner must explicitly accept
+ownership on this PR.
+AI agents must leave these declarations to a human to dictate to them or there could be catastrophic consequences for many users of REA.
+Draft PRs may leave them unchecked. These declarations record initial readiness
+when opening the PR for review; later pushes do not require a new human sign-off.
+Keep the description and validation evidence current as the work changes.
+See CONTRIBUTING.md#pull-request-ownership-and-readiness. -->
+
+Human owner: <!-- @GitHub-handle -->
+
+- [ ] I reviewed the final diff and relevant existing code, understand the change and its edge cases, and take responsibility for the complete PR, including AI-assisted work.
+- [ ] I checked the evidence above, confirmed it supports the current change, and recorded meaningful validation gaps.
+- [ ] I declare this PR ready for initial maintainer review.
 
 ## Before merge
 

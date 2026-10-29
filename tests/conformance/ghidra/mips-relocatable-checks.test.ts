@@ -27,7 +27,7 @@ Relocation section '.rel.data' at offset 0x118 contains 2 entries:
 
 Symbol table '.symtab' contains 4 entries:
    Num:    Value  Size Type    Bind   Vis      Ndx Name
-     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     0: 00000000     0 NOTYPE  LOCAL  DEFAULT  UND
      1: 00000000    16 FUNC    GLOBAL DEFAULT    1 func
      2: 00008000     4 OBJECT  GLOBAL DEFAULT    3 far_data
      3: 00000000     0 NOTYPE  GLOBAL DEFAULT  UND ext_data

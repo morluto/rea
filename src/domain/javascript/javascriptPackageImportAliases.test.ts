@@ -75,6 +75,48 @@ describe("exact package import lookup", () => {
     });
   });
 
+  it.each([
+    ["#bar/*", "#foo", "missing-key"],
+    ["#internal/*.js", "#internal/file.cjs", "missing-key"],
+    ["#internal/*.js", "#internal/.js", "missing-key"],
+    ["#internal/*end", "#internal/end", "missing-key"],
+    ["#internal/*/*", "#internal/a/b", "missing-key"],
+    ["#internal/", "#internal/a", "missing-key"],
+    ["#internal/*.js", "#internal/a.js", "pattern-unresolved"],
+    ["#internal/*.js", "#internal/deep/a.js", "pattern-unresolved"],
+    ["#internal/*end", "#internal/aend", "pattern-unresolved"],
+  ] as const)(
+    "matches only a single nonempty wildcard between its prefix and suffix: %s, %s",
+    (pattern, specifier, kind) => {
+      expect(
+        lookupExactPackageImport(
+          { [pattern]: "./unsupported/*.js" },
+          specifier,
+        ),
+      ).toEqual({ kind, declared: [pattern] });
+    },
+  );
+
+  it.each(
+    [null, { require: "./config.cjs" }, ["./config.cjs"]].map((target) => ({
+      target,
+    })),
+  )(
+    "preserves an exact target $target ahead of a matching wildcard",
+    ({ target }) => {
+      expect(
+        lookupExactPackageImport(
+          { "#config": target, "#*": "./unsupported/*.js" },
+          "#config",
+        ),
+      ).toEqual({
+        kind: "found",
+        target,
+        declared: ["#config", "#*"],
+      });
+    },
+  );
+
   it("still selects an exact key when the same map also has patterns", () => {
     expect(
       lookupExactPackageImport(

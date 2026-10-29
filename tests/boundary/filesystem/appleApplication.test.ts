@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -6,6 +7,7 @@ import {
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipWriter,
+  type ZipWriterAddDataOptions,
 } from "@zip.js/zip.js";
 import { describe, expect, it } from "vitest";
 
@@ -57,7 +59,9 @@ async function createCompleteAppleProjection() {
   await writeFile(path, await writer.close());
 
   const inventory = parseEvidence(
-    await runProviderAnalysis(path, "inventory_artifact", {}),
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
   );
   const fragments = fragmentInventoryEvidence(inventory, 3);
   const result = projectAppleApplicationEvidence({
@@ -65,8 +69,11 @@ async function createCompleteAppleProjection() {
   });
 
   if (!result.ok) throw new TypeError("Could not project fixture inventory");
+  expect(result.value.sources.map(({ evidence_id }) => evidence_id)).toEqual(
+    fragments.map(({ evidence_id }) => evidence_id),
+  );
   const projection = appleApplicationProjectionResultSchema.parse(
-    result.value.normalized_result,
+    result.value.evidence.normalized_result,
   );
   expect([...projection.source_evidence_ids].sort()).toEqual(
     fragments.map(({ evidence_id }) => evidence_id).sort(),
@@ -75,7 +82,7 @@ async function createCompleteAppleProjection() {
 }
 
 describe("Apple application projection", () => {
-  it("keeps a case-colliding real IPA inventory partial", async () => {
+  it("retains complete traversal and case-collision limits for a real IPA", async () => {
     const root = await createTestTempDirectory("rea-apple-case-collision-");
     const path = join(root, "CaseCollision.ipa");
     const writer = new ZipWriter(new Uint8ArrayWriter());
@@ -90,10 +97,12 @@ describe("Apple application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(inventory.normalized_result).toMatchObject({
-      coverage_status: "partial",
+      coverage: { scope: "container-entries", status: "complete" },
     });
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -103,11 +112,11 @@ describe("Apple application projection", () => {
     );
 
     expect(projection.coverage).toEqual({
-      status: "partial",
+      status: "complete-within-inventory",
       inventory_complete: true,
     });
-    expect(projection.limitations).toContain(
-      "Source inventory coverage is partial; absence is unknown.",
+    expect(projection.limitations.join(" ")).toContain(
+      "case-insensitive destination",
     );
   });
 
@@ -143,7 +152,9 @@ describe("Apple application projection", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const first = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -212,7 +223,9 @@ describe("Apple application projection", () => {
     await writer.add("AndroidManifest.xml", new TextReader("<manifest/>"));
     await writeFile(path, await writer.close());
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(
       projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
@@ -223,7 +236,155 @@ describe("Apple application projection", () => {
   });
 });
 
+const ENCRYPTED = { password: "fixture-only" };
+// A Unix symlink entry, which ZIP inventory reports without content identity.
+const SYMLINK = {
+  msDosCompatible: false,
+  versionMadeBy: 0x0314,
+  externalFileAttributes: 0o120777 * 0x10000,
+};
+
+async function projectArchive(
+  name: string,
+  members: readonly (readonly [string, ZipWriterAddDataOptions?])[],
+) {
+  const root = await createTestTempDirectory("rea-apple-unread-");
+  const path = join(root, name);
+  const writer = new ZipWriter(new Uint8ArrayWriter());
+  for (const [member, options = {}] of members)
+    await writer.add(
+      member,
+      options.directory ? undefined : new TextReader("fixture"),
+      options,
+    );
+  await writeFile(path, await writer.close());
+  const inventory = parseEvidence(
+    await runProviderAnalysis(path, "inventory_artifact", {}).then(
+      projectCliAnalysisResult,
+    ),
+  );
+  return appleApplicationProjectionResultSchema.parse(
+    requireSuccessfulProjection(
+      projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
+    ).normalized_result,
+  );
+}
+
+it("retains an encrypted IPA native library as unknown component evidence", async () => {
+  const projection = await projectArchive("Encrypted.ipa", [
+    ["Payload/Fixture.app/Info.plist"],
+    ["Payload/Fixture.app/libentry.dylib", ENCRYPTED],
+  ]);
+
+  expect(projection.components.native_libraries).toEqual([]);
+  expect(projection.unavailable_components).toEqual([
+    expect.objectContaining({
+      path: "Payload/Fixture.app/libentry.dylib",
+      artifact_id: null,
+      sha256: null,
+      encrypted: true,
+    }),
+  ]);
+  expect(projection.coverage).toEqual({
+    status: "partial",
+    inventory_complete: true,
+  });
+  expect(projection.limitations).toContainEqual(
+    expect.stringContaining("component absence is unknown"),
+  );
+});
+
+it("keeps symlinks out of unavailable components", async () => {
+  const projection = await projectArchive("Linked.zip", [
+    ["Fixture.app/Contents/Info.plist"],
+    [
+      "Fixture.app/Contents/Frameworks/Core.framework/Versions/Current",
+      SYMLINK,
+    ],
+  ]);
+
+  expect(projection.symlinks).toEqual([
+    "Fixture.app/Contents/Frameworks/Core.framework/Versions/Current",
+  ]);
+  expect(projection.unavailable_components).toEqual([]);
+  expect(projection.coverage.status).toBe("complete-within-inventory");
+});
+
+it("applies application-root and sidecar rules to unread entries", async () => {
+  const projection = await projectArchive("Unread.zip", [
+    ["Fixture.app/Contents/Info.plist"],
+    ["Fixture.app/Contents/MacOS/Fixture", ENCRYPTED],
+    ["Fixture.app/Contents/._Info.plist", ENCRYPTED],
+    ["Installer/setup.pkg", ENCRYPTED],
+  ]);
+
+  expect(projection.application_roots).toEqual(["Fixture.app"]);
+  expect(projection.unavailable_components.map(({ path }) => path)).toEqual([
+    "Fixture.app/Contents/MacOS/Fixture",
+  ]);
+  expect(projection.limitations).toContain(
+    "1 inventoried entries outside every application root are not attributed to the application.",
+  );
+  expect(projection.coverage).toEqual({
+    status: "partial",
+    inventory_complete: true,
+  });
+});
+
 describe("macOS application projection", () => {
+  it("classifies launchd plists by their owning directory instead of unrelated ancestors", async () => {
+    const root = await createTestTempDirectory("rea-apple-launchd-domain-");
+    const path = join(root, "Launchd.zip");
+    const expected = [
+      [
+        "LaunchDaemons/Sample.app/Contents/Library/LaunchAgents/agent.plist",
+        "agent",
+      ],
+      [
+        "LaunchDaemons/Sample.app/Contents/Resources/LaunchDaemons/Nested.app/Contents/Library/LaunchAgents/nested.plist",
+        "agent",
+      ],
+      [
+        "LaunchAgents/Other.app/Contents/Library/LaunchDaemons/daemon.plist",
+        "daemon",
+      ],
+      [
+        "launchdaemons/Case.app/contents/library/launchagents/mixed.plist",
+        "agent",
+      ],
+    ] as const;
+    const writer = new ZipWriter(new Uint8ArrayWriter());
+    for (const [entry] of expected)
+      await writer.add(entry, new TextReader("<plist><dict/></plist>"));
+    await writer.add(
+      "LaunchDaemons/Sample.app/Contents/Library/LaunchAgents/nested/ignored.plist",
+      new TextReader("<plist><dict/></plist>"),
+    );
+    await writeFile(path, await writer.close());
+
+    const inventory = parseEvidence(
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
+    );
+    const projection = appleApplicationProjectionResultSchema.parse(
+      requireSuccessfulProjection(
+        projectAppleApplicationEvidence({ inventory_evidence: [inventory] }),
+      ).normalized_result,
+    );
+    expect(
+      projection.components.launchd_plists.map(({ path, domain }) => [
+        path,
+        domain,
+      ]),
+    ).toEqual(expect.arrayContaining([...expected]));
+    expect(projection.components.launchd_plists).toHaveLength(expected.length);
+    expect(projection.coverage).toEqual({
+      status: "complete-within-inventory",
+      inventory_complete: true,
+    });
+  });
+
   it("projects a macOS .app directory inventory with nested bundle roles", async () => {
     const root = await createTestTempDirectory("rea-apple-macos-");
     const app = join(root, "Fixture.app");
@@ -255,7 +416,9 @@ describe("macOS application projection", () => {
     );
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(app, "inventory_artifact", {}),
+      await runProviderAnalysis(app, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -328,7 +491,9 @@ describe("Apple application projection completeness", () => {
     await writeFile(path, await writer.close());
 
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const result = projectAppleApplicationEvidence({
       inventory_evidence: [inventory],
@@ -336,11 +501,23 @@ describe("Apple application projection completeness", () => {
     if (!result.ok) throw result.error;
     expect(
       appleApplicationProjectionResultSchema.parse(
-        result.value.normalized_result,
+        result.value.evidence.normalized_result,
       ),
     ).toMatchObject({
       application_roots: [applicationRoot],
       components: { executables: [expect.any(Object)] },
     });
+  });
+});
+
+it("keeps explicit directories out of unavailable file components", async () => {
+  const projection = await projectArchive("Directories.ipa", [
+    ["Payload/Fixture.app/", { directory: true }],
+    ["Payload/Fixture.app/Info.plist"],
+  ]);
+  expect(projection.unavailable_components).toEqual([]);
+  expect(projection.coverage).toEqual({
+    status: "complete-within-inventory",
+    inventory_complete: true,
   });
 });

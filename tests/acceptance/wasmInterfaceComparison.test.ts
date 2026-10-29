@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 cliTest(
   "compares portable Evidence identically through CLI and retained MCP with schema/provenance",
   async ({ cli }) => {
-    const sources = (["i32", "i64"] as const).map((parameter) => {
+    const sources = (["i32", "i64"] as const).map((parameter, index) => {
       const report = wasmArtifactFixture();
       report.interface = {
         state: "complete",
@@ -33,6 +33,18 @@ cliTest(
           },
         ],
       };
+      // The left source predates optional-metadata coverage fields and the
+      // tolerant custom-section profile. Portable Evidence remains readable.
+      const {
+        debug_name_metadata: _debugNames,
+        custom_section_warnings: _warnings,
+        ...legacyReport
+      } = report;
+      if (index === 0)
+        for (const command of legacyReport.tool_profile.commands)
+          command.arguments = command.arguments.filter(
+            (argument) => argument !== "--ignore-custom-section-errors",
+          );
       return createEvidence(
         {
           path: report.artifact.path,
@@ -43,7 +55,7 @@ cliTest(
         {
           operation: "inspect_wasm_artifact",
           parameters: { path: report.artifact.path },
-          result: report,
+          result: index === 0 ? legacyReport : report,
           confidence: "observed",
         },
       );
@@ -91,7 +103,10 @@ cliTest(
       const ajv = new Ajv2020({ strict: false, validateFormats: false });
       expect(ajv.validate(tool.inputSchema, input)).toBe(true);
       expect(ajv.validate(tool.inputSchema, { left, right })).toBe(false);
-      const mcp = await client.callTool({ name: tool.name, arguments: input });
+      const mcp = await client.callTool(
+        { name: tool.name, arguments: input },
+        { toolDefinition: tool },
+      );
       expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
       expect(
         ajv.validate(outputSchema, mcp.structuredContent),
@@ -104,22 +119,31 @@ cliTest(
         left.evidence_id,
         right.evidence_id,
       ]);
-      const retained = await client.callTool({
-        name: tool.name,
-        arguments: {
-          scope: "both",
-          left: { kind: "retained-evidence", evidence_id: left.evidence_id },
-          right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+      const retained = await client.callTool(
+        {
+          name: tool.name,
+          arguments: {
+            scope: "both",
+            left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+            right: {
+              kind: "retained-evidence",
+              evidence_id: right.evidence_id,
+            },
+          },
         },
-      });
+        { toolDefinition: tool },
+      );
       expect(retained.isError).not.toBe(true);
       expect(parseEvidence(retained.structuredContent).evidence_id).toBe(
         mcpEvidence.evidence_id,
       );
-      const invalid = await client.callTool({
-        name: tool.name,
-        arguments: { ...input, scope: "all" },
-      });
+      const invalid = await client.callTool(
+        {
+          name: tool.name,
+          arguments: { ...input, scope: "all" },
+        },
+        { toolDefinition: tool },
+      );
       expect(invalid.isError).toBe(true);
     } finally {
       await client.close();

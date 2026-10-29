@@ -2,18 +2,27 @@ import { createHash } from "node:crypto";
 import { lstat, opendir, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
-import {
-  openRegularFile,
-  sameRegularFileState,
-} from "../filesystem/RegularFile.js";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import { parseGhidraJavaProperties } from "./GhidraJavaProperties.js";
+
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
+import {
+  assertArtifactReadActive,
+  artifactFileCancellationCause,
+  artifactFilePrimaryFacts,
+  bindArtifactFileCleanup,
+  withArtifactRegularFile,
+} from "../artifacts/ArtifactFileOperation.js";
 
 /** Installed processor code and data, distinct from REA's analysis-extension ABI. */
 export const ghidraPspExtensionSchema = z.strictObject({
@@ -41,9 +50,25 @@ const REQUIRED = [
 export const inspectGhidraPspExtension = async (
   root: string,
   ghidraVersion: string,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<GhidraPspExtension> => {
-  signal?.throwIfAborted();
+  try {
+    return await resources.run(() =>
+      fingerprint(root, ghidraVersion, resources, signal),
+    );
+  } catch (cause: unknown) {
+    throw ghidraPspInspectionError(cause);
+  }
+};
+
+const fingerprint = async (
+  root: string,
+  ghidraVersion: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<GhidraPspExtension> => {
+  assertArtifactReadActive(signal);
   if (!isAbsolute(root) || (await realpath(root)) !== root)
     throw new Error(
       "The installed Allegrex directory must be a canonical non-symlink path.",
@@ -51,7 +76,7 @@ export const inspectGhidraPspExtension = async (
   const files: string[] = [];
   let entries = 1; // The root itself consumes one inventory entry.
   const visit = async (relative: string, depth: number): Promise<void> => {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     if (depth > MAX_DEPTH)
       throw new Error(
         "Allegrex extension directory nesting exceeds the inspection limit.",
@@ -59,15 +84,13 @@ export const inspectGhidraPspExtension = async (
     const path = join(root, relative);
     const metadata = await lstat(path);
     if (metadata.isDirectory()) {
-      const children: string[] = [];
-      for await (const child of await opendir(path)) {
-        signal?.throwIfAborted();
-        if (++entries > MAX_ENTRIES)
-          throw new Error(
-            "Allegrex extension inventory exceeds the inspection limit.",
-          );
-        children.push(child.name);
-      }
+      const children = await readChildren(
+        path,
+        MAX_ENTRIES - entries,
+        resources,
+        signal,
+      );
+      entries += children.length;
       children.sort();
       for (const child of children)
         await visit(
@@ -91,55 +114,64 @@ export const inspectGhidraPspExtension = async (
   let bytesRead = 0;
   let properties = Buffer.alloc(0);
   for (const relative of files) {
-    signal?.throwIfAborted();
+    assertArtifactReadActive(signal);
     const path = join(root, relative);
-    const handle = await openRegularFile(path, { symlinks: "reject", signal });
-    try {
-      const before = await handle.stat();
-      if (
-        !Number.isSafeInteger(before.size) ||
-        before.size > MAX_BYTES - bytesRead
-      )
-        throw new Error(
-          "Allegrex extension bytes exceed the inspection limit.",
-        );
-      if (relative === "extension.properties" && before.size > 65536)
-        throw new Error(
-          "Allegrex extension properties exceed the inspection limit.",
-        );
-      hash.update(JSON.stringify([relative, before.size]));
-      const buffer = Buffer.alloc(Math.min(65536, before.size + 1));
-      let offset = 0;
-      const chunks: Buffer[] = [];
-      while (offset < before.size) {
-        signal?.throwIfAborted();
-        const read = await handle.read(
-          buffer,
-          0,
-          Math.min(buffer.length, before.size - offset),
-          offset,
-        );
-        if (read.bytesRead === 0)
+    await withArtifactRegularFile(
+      path,
+      resources,
+      signal,
+      async ({ handle, initial: before }) => {
+        if (
+          !Number.isSafeInteger(before.size) ||
+          before.size > MAX_BYTES - bytesRead
+        )
+          throw new Error(
+            "Allegrex extension bytes exceed the inspection limit.",
+          );
+        if (relative === "extension.properties" && before.size > 65536)
+          throw new Error(
+            "Allegrex extension properties exceed the inspection limit.",
+          );
+        hash.update(JSON.stringify([relative, before.size]));
+        const buffer = Buffer.alloc(Math.min(65536, before.size + 1));
+        let offset = 0;
+        const chunks: Buffer[] = [];
+        // Serial reads keep final close behind every native read. One extra byte
+        // detects growth without a stream's read-ahead or unbounded allocation.
+        while (offset <= before.size) {
+          assertArtifactReadActive(signal);
+          const { bytesRead } = await handle.read(
+            buffer,
+            0,
+            Math.min(buffer.length, before.size - offset + 1),
+            offset,
+          );
+          assertArtifactReadActive(signal);
+          if (bytesRead === 0) break;
+          offset += bytesRead;
+          if (offset > before.size)
+            throw new Error(
+              `Allegrex component changed during inspection: ${relative}`,
+            );
+          const chunk = buffer.subarray(0, bytesRead);
+          hash.update(chunk);
+          if (relative === "extension.properties")
+            chunks.push(Buffer.from(chunk));
+        }
+        if (offset !== before.size)
           throw new Error(`Truncated Allegrex component: ${relative}`);
-        const chunk = buffer.subarray(0, read.bytesRead);
-        hash.update(chunk);
+        if (
+          !sameRegularFileState(before, await handle.stat()) ||
+          !sameRegularFileState(before, await lstat(path))
+        )
+          throw new Error(
+            `Allegrex component changed during inspection: ${relative}`,
+          );
+        bytesRead += before.size;
         if (relative === "extension.properties")
-          chunks.push(Buffer.from(chunk));
-        offset += read.bytesRead;
-      }
-      if (
-        !sameRegularFileState(before, await handle.stat()) ||
-        !sameRegularFileState(before, await lstat(path))
-      )
-        throw new Error(
-          `Allegrex component changed during inspection: ${relative}`,
-        );
-      bytesRead += before.size;
-      if (relative === "extension.properties")
-        properties = Buffer.concat(chunks);
-    } finally {
-      await handle.close();
-    }
+          properties = Buffer.concat(chunks);
+      },
+    );
   }
   // Ghidra's extension.properties version is the compatible Ghidra version,
   // not the extension release (e.g. v21.4); content identity supplies the latter.
@@ -159,7 +191,7 @@ export const inspectGhidraPspExtension = async (
     throw new Error(
       `Allegrex extension metadata does not match the selected Ghidra ${ghidraVersion}; install or rebuild a compatible extension.`,
     );
-  signal?.throwIfAborted();
+  assertArtifactReadActive(signal);
   return {
     id: "ghidra-allegrex",
     root,
@@ -171,11 +203,11 @@ export const inspectGhidraPspExtension = async (
 /** Resolve prerequisites before opening or admitting cached PSP analysis. */
 export const resolveGhidraPspExtension = async (
   installation: GhidraInstallationInspection,
+  resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<Result<GhidraPspExtension, AnalysisError>> => {
-  if (signal?.aborted)
-    return err(new AnalysisCancelledError("resolve_analysis_profile"));
   try {
+    assertArtifactReadActive(signal);
     if (
       installation.status !== "available" ||
       installation.platform !== "linux" ||
@@ -194,20 +226,98 @@ export const resolveGhidraPspExtension = async (
       await inspectGhidraPspExtension(
         root,
         installation.providerVersion,
+        resources,
         signal,
       ),
     );
   } catch (cause: unknown) {
-    if (signal?.aborted)
-      return err(new AnalysisCancelledError("resolve_analysis_profile"));
-    const reason = `PSP_EXTENSION_UNAVAILABLE: ${cause instanceof Error ? cause.message : String(cause)} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
-    return err(
-      new AnalysisCapabilityUnavailableError(
-        "ghidra",
-        "resolve_analysis_profile",
-        reason,
-        { cause, userMessage: reason },
+    return err(ghidraPspInspectionError(cause));
+  }
+};
+
+/** Preserve the producer's primary failure and its live cleanup dependencies. */
+const ghidraPspInspectionError = (cause: unknown): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  const cleanup =
+    cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
+  const { cause: primary } = artifactFilePrimaryFacts(cause);
+  const reason = `PSP_EXTENSION_UNAVAILABLE: ${primary instanceof Error ? primary.message : String(primary)} Use a compatible caller-installed ghidra-allegrex under GHIDRA_INSTALL_DIR/Ghidra/Extensions; REA does not install it.`;
+  const error =
+    cause instanceof ArtifactReaderFailure && cause.reason === "cancelled"
+      ? new AnalysisCancelledError("resolve_analysis_profile", {
+          cause: artifactFileCancellationCause(cause),
+          cleanup,
+        })
+      : new AnalysisCapabilityUnavailableError(
+          "ghidra",
+          "resolve_analysis_profile",
+          reason,
+          {
+            cause,
+            userMessage: reason,
+            cleanup,
+          },
+        );
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
+/** Close before descending, retaining the exact directory owner on uncertainty. */
+const readChildren = async (
+  path: string,
+  remainingEntries: number,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string[]> => {
+  assertArtifactReadActive(signal);
+  const owner = new OwnedDirectoryHandle(await opendir(path));
+  let outcome:
+    | { readonly kind: "completed"; readonly names: string[] }
+    | { readonly kind: "failed"; readonly cause: unknown };
+  try {
+    const names: string[] = [];
+    for (;;) {
+      assertArtifactReadActive(signal);
+      const child = await owner.handle.read();
+      assertArtifactReadActive(signal);
+      if (child === null) break;
+      if (names.length >= remainingEntries)
+        throw new Error(
+          "Allegrex extension inventory exceeds the inspection limit.",
+        );
+      names.push(child.name);
+    }
+    outcome = { kind: "completed", names };
+  } catch (cause: unknown) {
+    outcome = { kind: "failed", cause };
+  }
+  const lease = new AnalysisCleanupLease(() => owner.close(), [path]);
+  const attempt = await resources.release({
+    kind: "lease",
+    resource: path,
+    lease,
+  });
+  if (attempt.kind === "failed") {
+    const primary =
+      outcome.kind === "failed"
+        ? outcome.cause
+        : signal?.aborted
+          ? new ArtifactReaderFailure(
+              "cancelled",
+              "PSP inspection cancelled during directory close",
+              { cause: signal.reason },
+            )
+          : attempt.cause;
+    const error = ghidraPspInspectionError(
+      ArtifactReaderFailure.withCleanup(
+        primary,
+        ArtifactReaderFailure.cleanupObservation(attempt.cause, path),
       ),
     );
+    lease.bindCleanupError(error);
+    throw error;
   }
+  if (outcome.kind === "failed") throw outcome.cause;
+  assertArtifactReadActive(signal);
+  return outcome.names;
 };

@@ -1,12 +1,8 @@
-import { isAbsolute } from "node:path";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { SqliteDatabasePort } from "./SqliteDatabasePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisInputError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   createEvidence,
   type Evidence,
@@ -18,14 +14,29 @@ import {
   type InspectSqliteDatabaseInput,
   type SqliteDatabase,
   SQLITE_ROW_LIMIT_DEFAULT,
+  DEFAULT_SQLITE_WORKER_TIMEOUT_MS,
+  sqliteSchemaHasObjectDeclaration,
   sqliteSchemaScope,
   sqliteInspectionParameters,
 } from "../../domain/sqlite/sqliteDatabase.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 
 const OPERATION = "inspect_sqlite_database";
+
+const matchesSelectedSchema = (
+  schema: SqliteDatabase["schema"],
+  table: string,
+): boolean =>
+  sqliteSchemaHasObjectDeclaration(table)
+    ? schema.tables.length === 1 &&
+      schema.tables[0]?.name === table &&
+      schema.indexes.every((index) => index.table === table) &&
+      schema.triggers.every((trigger) => trigger.table === table) &&
+      schema.views.length === 0
+    : schema.tables.length === 0 &&
+      schema.indexes.length === 0 &&
+      schema.views.length === 0 &&
+      schema.triggers.length === 0;
 
 const matchesSelectedDatabase = (
   report: SqliteDatabase,
@@ -36,16 +47,14 @@ const matchesSelectedDatabase = (
   subject.path === input.path &&
   subject.sha256 === report.artifact.sha256 &&
   subject.format === "file" &&
+  // Fresh executions must report known settings; only historical parsing permits omission.
+  report.worker_timeout_ms ===
+    (input.worker_timeout_ms ?? DEFAULT_SQLITE_WORKER_TIMEOUT_MS) &&
   (report.wal === null || report.wal.path === `${input.path}-wal`) &&
   report.schema.scope === sqliteSchemaScope(input) &&
   (report.schema.scope !== "selected_table" ||
-    (report.schema.tables.length === 1 &&
-      report.schema.tables[0]?.name === input.table &&
-      report.schema.indexes.every((index) => index.table === input.table) &&
-      report.schema.triggers.every(
-        (trigger) => trigger.table === input.table,
-      ) &&
-      report.schema.views.length === 0)) &&
+    (input.table !== undefined &&
+      matchesSelectedSchema(report.schema, input.table))) &&
   (input.table === undefined
     ? report.rows === null
     : report.rows?.table === input.table &&
@@ -70,45 +79,33 @@ export class SqliteDatabaseService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(new AnalysisCancelledError(OPERATION));
-    const input = inspectSqliteDatabaseInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: "Expected an absolute filesystem path on this host.",
-          },
-        ]),
-      );
-    const inspected = await this.provider.inspect(input.data, options);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectSqliteDatabaseInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const inspected = await this.provider.inspect(input.value, options);
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const report = sqliteDatabaseSchema.safeParse(execution.result);
     if (
       !report.success ||
-      execution.subject === null ||
-      !matchesSelectedDatabase(report.data, input.data, execution.subject)
+      execution.subject == null ||
+      !matchesSelectedDatabase(report.data, input.value, execution.subject)
     )
       return err(
         new AnalysisOutputError(
           OPERATION,
-          "SQLite adapter returned malformed data or changed the selected database identity/table/row limit.",
+          "SQLite adapter returned malformed data or changed the selected database identity/table/row limit/worker budget.",
         ),
       );
     return ok(
       createEvidence(execution.subject, execution.provider, {
         operation: OPERATION,
-        parameters: sqliteInspectionParameters(input.data),
-        result: jsonValueSchema.parse(report.data),
+        parameters: sqliteInspectionParameters(input.value),
+        result: report.data,
         ...(execution.rawResult === null
           ? {}
           : { rawResult: execution.rawResult }),

@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
-import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { inspectModuleBoundaries } from "../../scripts/lib/module-boundaries.mjs";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { writeRepositoryOxlintConfiguration } from "../fixtures/oxlintConfiguration.js";
 
 describe("process capture implementation ownership", () => {
   it.each([
@@ -275,6 +276,47 @@ describe("module import syntax and source discovery", () => {
     expect(result.stderr).toContain("src/domain/probe.ts:1: pure-layer");
     expect(result.stderr).not.toContain("old.ts");
   });
+
+  it("discovers forbidden nested sources without a Git worktree", async () => {
+    const temporary = await createTestTempDirectory("rea-module-no-git-");
+    await mkdir(join(temporary, "src", "domain", "nested"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(temporary, "src/domain/nested/probe.ts"),
+      'import { createServer } from "../../server/createServer.js";\n',
+    );
+    const result = spawnSync(process.execPath, [verifier], {
+      cwd: temporary,
+      encoding: "utf8",
+    });
+    if (result.error !== undefined) throw result.error;
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/domain/nested/probe.ts");
+    expect(result.stderr).toContain("src/server/createServer.js");
+  });
+
+  it("discovers sources in an ignored archive nested under an ancestor Git worktree", async () => {
+    const outer = await createTestTempDirectory("rea-module-ancestor-git-");
+    const archive = join(outer, "archive");
+    await writeFile(join(outer, ".gitignore"), "archive/\n");
+    await execute("git", ["init", "--quiet"], { cwd: outer });
+    await execute("git", ["add", "--", ".gitignore"], { cwd: outer });
+    await mkdir(join(archive, "src", "domain"), { recursive: true });
+    await writeFile(
+      join(archive, "src/domain/probe.ts"),
+      'import { createServer } from "../server/createServer.js";\n',
+    );
+
+    const result = spawnSync(process.execPath, [verifier], {
+      cwd: archive,
+      encoding: "utf8",
+    });
+    if (result.error !== undefined) throw result.error;
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("src/domain/probe.ts:1: pure-layer");
+    expect(result.stderr).toContain("src/server/createServer.js");
+  });
 });
 
 describe("test lane import boundaries", () => {
@@ -288,8 +330,7 @@ describe("test lane import boundaries", () => {
 
   it("checks the test-lane import matrix in one lint invocation", async () => {
     const temporary = await createTestTempDirectory("rea-test-lane-");
-    const config = join(temporary, ".oxlintrc.json");
-    await copyFile(resolve(".oxlintrc.json"), config);
+    const config = await writeRepositoryOxlintConfiguration(temporary);
     for (const [file, dependency] of cases) {
       await mkdir(dirname(join(temporary, file)), { recursive: true });
       await writeFile(
@@ -303,6 +344,8 @@ describe("test lane import boundaries", () => {
         resolve("node_modules/oxlint/bin/oxlint"),
         "-c",
         config,
+        "--threads",
+        "1",
         "--format",
         "json",
         ...cases.map(([file]) => file),
@@ -310,6 +353,10 @@ describe("test lane import boundaries", () => {
       { cwd: temporary, encoding: "utf8" },
     );
     if (result.error !== undefined) throw result.error;
+    expect(
+      result.stdout.trimStart().startsWith("{"),
+      `oxlint exited ${String(result.status)} (${String(result.signal)}): ${result.stdout}\n${result.stderr}`,
+    ).toBe(true);
     const report = JSON.parse(result.stdout) as {
       diagnostics: Array<{ filename: string; code: string }>;
     };

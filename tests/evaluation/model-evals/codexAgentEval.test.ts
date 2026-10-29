@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
 
 const observation = (
   operation = "inspect_managed_artifact",
@@ -218,7 +218,23 @@ describe("Codex completed tool call parsing", () => {
     },
   );
 
-  it("preserves legacy completed calls with no server field", () => {
+  it.each([
+    {
+      label: "missing server identity",
+      identity: {},
+      routed: false,
+    },
+    {
+      label: "another server",
+      identity: { server: "other" },
+      routed: false,
+    },
+    {
+      label: "verified REA alias",
+      identity: { server_name: "rea" },
+      routed: true,
+    },
+  ])("routes only $label calls", ({ identity, routed }) => {
     const metrics = evaluateCodexEvents(
       [
         {
@@ -228,16 +244,20 @@ describe("Codex completed tool call parsing", () => {
             status: "completed",
             tool: "inspect_managed_artifact",
             arguments: {},
+            ...identity,
           },
         },
       ],
       "inspect_managed_artifact",
+      { requiredToolSubsequence: ["inspect_managed_artifact"] },
     );
 
     expect(metrics).toMatchObject({
-      naturalUse: true,
-      correctFirstTool: true,
-      reaCalls: [{ server: null }],
+      naturalUse: routed,
+      correctFirstTool: routed,
+      firstTool: routed ? "inspect_managed_artifact" : null,
+      requiredToolSubsequenceMet: routed,
+      reaCalls: routed ? [{ server: "rea" }] : [],
     });
   });
 });
@@ -452,6 +472,46 @@ describe("Codex agent routing and error evaluation", () => {
     expect(metrics.reaCalls[0]).toMatchObject({ error: true, errorCode: null });
     expect(metrics.requiredToolSubsequenceMet).toBe(false);
   });
+
+  it.each(["failed", undefined])(
+    "preserves failure without choosing duplicate JSON error codes with status %s",
+    (status) => {
+      const texts = [
+        '{"error":{"code":"bridge_timeout","code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request","code":"bridge_timeout"}}',
+        '{"error":{"code":"bridge_timeout"},"error":{"code":"invalid_request"}}',
+        '{"error":{"code":"invalid_request"}}',
+      ];
+      const metrics = evaluateCodexEvents(
+        texts.map((text, index) => ({
+          type: "item.completed",
+          item: {
+            id: `failure-${String(index)}`,
+            type: "mcp_tool_call",
+            server: "rea",
+            tool: "close_binary",
+            arguments: {},
+            ...(status === undefined ? {} : { status }),
+            result: { content: [{ type: "text", text }] },
+          },
+        })),
+        "close_binary",
+      );
+      expect(
+        metrics.reaCalls.map(({ error, errorCode, evidenceIds }) => ({
+          error,
+          errorCode,
+          evidenceIds,
+        })),
+      ).toEqual([
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: null, evidenceIds: [] },
+        { error: true, errorCode: "invalid_request", evidenceIds: [] },
+      ]);
+      expect(metrics.inputValidationFailureCount).toBe(1);
+    },
+  );
 
   it("requires no REA call when target selection is missing", () => {
     const events = [

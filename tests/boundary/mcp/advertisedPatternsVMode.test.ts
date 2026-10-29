@@ -1,7 +1,14 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
 import { expect, it, onTestFinished } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
+import {
+  BASE64_QUARTET_LENGTH_PATTERN,
+  INVALID_BASE64_CHARACTER_PATTERN,
+  INVALID_BASE64_PADDING_PATTERN,
+  INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
+} from "../../../src/domain/stringPatterns.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 
 interface AdvertisedPattern {
@@ -9,6 +16,33 @@ interface AdvertisedPattern {
   readonly where: string;
   readonly pattern: string;
 }
+
+const collectCanonicalBase64Leaves = (
+  value: unknown,
+  leaves: Record<string, unknown>[],
+): void => {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectCanonicalBase64Leaves(entry, leaves));
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  const allOf = record.allOf;
+  if (
+    Array.isArray(allOf) &&
+    allOf.some(
+      (entry) =>
+        entry !== null &&
+        typeof entry === "object" &&
+        "pattern" in entry &&
+        entry.pattern === BASE64_QUARTET_LENGTH_PATTERN.source,
+    )
+  )
+    leaves.push(record);
+  Object.values(record).forEach((entry) =>
+    collectCanonicalBase64Leaves(entry, leaves),
+  );
+};
 
 const collectPatterns = (
   value: unknown,
@@ -48,11 +82,28 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
 
   const advertised = (await client.listTools()).tools;
   const patterns: AdvertisedPattern[] = [];
+  const canonicalBase64Leaves: Record<string, unknown>[] = [];
   for (const tool of advertised) {
     collectPatterns(tool.inputSchema, "inputSchema", tool.name, patterns);
+    collectCanonicalBase64Leaves(tool.inputSchema, canonicalBase64Leaves);
     if (tool.outputSchema !== undefined)
       collectPatterns(tool.outputSchema, "outputSchema", tool.name, patterns);
+    if (tool.outputSchema !== undefined)
+      collectCanonicalBase64Leaves(tool.outputSchema, canonicalBase64Leaves);
   }
+
+  for (const pattern of [
+    BASE64_QUARTET_LENGTH_PATTERN,
+    INVALID_BASE64_CHARACTER_PATTERN,
+    INVALID_BASE64_PADDING_PATTERN,
+    INVALID_CANONICAL_BASE64_PAD_BITS_PATTERN,
+  ])
+    expect(
+      patterns.some(({ pattern: advertisedPattern }) =>
+        advertisedPattern.includes(pattern.source),
+      ),
+      pattern.source,
+    ).toBe(true);
 
   // Annex B and `u` mode accept an unescaped `-`, `/` or `[` inside a character
   // class, so REA's own schema validation cannot observe the defect. `v` mode
@@ -87,4 +138,19 @@ it("advertises portable NUL escapes and patterns that compile in all JS modes", 
     ),
   ).toEqual([]);
   expect(patterns.some(({ pattern }) => pattern.includes("\\x00"))).toBe(true);
+
+  expect(canonicalBase64Leaves.length).toBeGreaterThan(0);
+  const sdkValidator = new AjvJsonSchemaValidator();
+  const validators = canonicalBase64Leaves.map((schema) =>
+    sdkValidator.getValidator(schema),
+  );
+  for (const value of ["", "AA==", "AQID", "AB==", "AAA", "AA$=", "AA\n=="])
+    expect(
+      validators.map((validate) => validate(value).valid),
+      JSON.stringify(value),
+    ).toEqual(
+      canonicalBase64Leaves.map(
+        () => value === "" || value === "AA==" || value === "AQID",
+      ),
+    );
 });

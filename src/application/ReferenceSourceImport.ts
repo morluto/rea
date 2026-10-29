@@ -1,9 +1,11 @@
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceInventoryHasPartialFacts,
   historicalSourceLanguages,
   historicalSourceManifests,
   historicalSourceParseFailureKey,
+  historicalSourceRelationshipKey,
   type HistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
@@ -12,7 +14,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
 import type {
-  ReferenceSourceEntryKind,
+  ReferenceSourceExclusionKind,
   ReferenceSourceRead,
   ReferenceSourceReaderError,
 } from "../reference/ReferenceSourceReaderTypes.js";
@@ -45,18 +47,13 @@ const cancelled = (
 
 const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 
-const relationshipKey = (
-  relationship: HistoricalSourceGraphInput["relationships"][number],
-): string =>
-  `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
-
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],
 ): HistoricalSourceGraphInput["relationships"] => {
   const seen = new Set<string>();
   const result: HistoricalSourceGraphInput["relationships"] = [];
   for (const relationship of relationships) {
-    const key = relationshipKey(relationship);
+    const key = historicalSourceRelationshipKey(relationship);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(relationship);
@@ -93,36 +90,6 @@ const buildProvenance = (
   caller: options.caller,
 });
 
-const deriveInventoryState = (
-  input: Pick<
-    HistoricalSourceGraphInput,
-    | "entries"
-    | "relationships"
-    | "parse_failures"
-    | "exclusions"
-    | "limitations"
-  >,
-): "complete" | "partial" | "unknown" => {
-  if (input.limitations.length > 0) return "partial";
-  if (input.exclusions.length > 0) return "partial";
-  if (input.parse_failures.length > 0) return "partial";
-  const partialEntry = input.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal"),
-  );
-  if (partialEntry) return "partial";
-  const partialRelationship = input.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
-  if (partialRelationship) return "partial";
-  return "complete";
-};
-
 const sortExclusions = (
   exclusions: HistoricalSourceGraphInput["exclusions"],
 ): HistoricalSourceGraphInput["exclusions"] =>
@@ -142,22 +109,36 @@ const createShouldExclude =
     exclusions: HistoricalSourceGraphInput["exclusions"],
     secrets: PreparedReferenceSourceImport["secrets"],
     ignored: PreparedReferenceSourceImport["ignored"],
-  ): ((path: string, kind: ReferenceSourceEntryKind) => boolean) =>
+  ): ((path: string, kind: ReferenceSourceExclusionKind) => boolean) =>
   (path, kind) => {
-    const patternPath = kind === "directory" ? `${path}/` : path;
-    const secretMatch = secrets.test(patternPath);
-    if (secretMatch.ignored) {
+    // An entry of unknown kind may be a directory, so directory-only rules
+    // must still exclude it; this fails closed for caller-marked secrets.
+    const patternPaths =
+      kind === "directory"
+        ? [`${path}/`]
+        : kind === "unknown"
+          ? [path, `${path}/`]
+          : [path];
+    const firstMatch = (matcher: Pick<typeof secrets, "test">) => {
+      const results = patternPaths.map((patternPath) =>
+        matcher.test(patternPath),
+      );
+      return results.find(({ ignored }) => ignored) ?? results[0];
+    };
+    const secretMatch = firstMatch(secrets);
+    if (secretMatch?.ignored === true) {
       if (!secretMatch.rule)
         throw new Error(`Ignored secret path has no matching rule: ${path}`);
       exclusions.push({
         path,
+        entry_kind: kind,
         reason: "configured-secret",
         pattern: secretMatch.rule.pattern,
       });
       return true;
     }
-    const match = ignored.test(patternPath);
-    if (!match.ignored) return false;
+    const match = firstMatch(ignored);
+    if (match?.ignored !== true) return false;
     if (!match.rule)
       throw new Error(`Ignored path has no matching rule: ${path}`);
     const reason = match.rule.mark;
@@ -167,7 +148,12 @@ const createShouldExclude =
       reason !== "caller-excluded"
     )
       throw new Error(`Ignored path has unknown rule origin: ${path}`);
-    exclusions.push({ path, reason, pattern: match.rule.pattern });
+    exclusions.push({
+      path,
+      entry_kind: kind,
+      reason,
+      pattern: match.rule.pattern,
+    });
     return true;
   };
 
@@ -195,6 +181,7 @@ export const importReferenceSource = async (
     readReferenceSource(root, resources, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       shouldExclude,
+      beforeDirectory: prepared.value.beforeDirectory,
     }),
     readReferenceSourceVcs(root, resources, options.signal),
   ]);
@@ -217,14 +204,8 @@ export const importReferenceSource = async (
   if (isAborted(options.signal)) return err(cancelled(readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, options.signal);
+    parseReferenceSourceEntries(read, exclusions, options.signal);
 
   if (isAborted(options.signal)) return err(cancelled(read));
 
@@ -241,16 +222,21 @@ export const importReferenceSource = async (
     schema: "HistoricalSourceGraph",
     authority: "historical-reference",
     root_alias: "$REFERENCE_ROOT",
-    inventory_state: deriveInventoryState({
+    inventory_state: historicalSourceInventoryHasPartialFacts({
       entries: sortedEntries,
       relationships: uniqueRelationships,
       parse_failures: uniqueFailures,
       exclusions: sortedExclusions,
       limitations: sortedLimitations,
-    }),
+    })
+      ? "partial"
+      : "complete",
     entries: sortedEntries,
     relationships: uniqueRelationships.sort((left, right) =>
-      compareUnicodeCodePoints(relationshipKey(left), relationshipKey(right)),
+      compareUnicodeCodePoints(
+        historicalSourceRelationshipKey(left),
+        historicalSourceRelationshipKey(right),
+      ),
     ),
     parse_failures: uniqueFailures,
     exclusions: sortedExclusions,
@@ -297,6 +283,9 @@ const combineReadFailures = (
         );
   return {
     ...failure(code, message),
+    ...(primary.remediationAction === undefined || code !== primary.code
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),

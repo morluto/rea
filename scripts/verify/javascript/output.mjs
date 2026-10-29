@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { createInterface } from "node:readline";
+import { Writable } from "node:stream";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdtemp, rm, stat, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +11,9 @@ import { join } from "node:path";
 import { finished } from "node:stream/promises";
 
 import { Cli } from "incur";
+import { estimateTokenCount } from "tokenx";
 
+import { parseCliOutputArguments } from "../../../dist/cliOutput.js";
 import { createCliResultOutput } from "../../../dist/cli/cliResultOutput.js";
 import { createEvidence } from "../../../dist/domain/evidence.js";
 
@@ -43,26 +47,47 @@ try {
     {
       operation: "inspect_fixture",
       parameters: {},
-      result: { payload: Array.from({ length: count }, () => leaf) },
+      result: { rows: Array.from({ length: count }, () => leaf) },
     },
   );
   sampleRss();
   const metadata = { command: "inspect-output-fixture", duration: "0ms" };
   const marker = "__REA_OUTPUT_ENCODING_MARKER__";
-  const template = {
-    ok: true,
-    data: { ...evidence, normalized_result: { payload: [marker] } },
-    meta: metadata,
-  };
-  // The destination is a redirected file, so both formats are compact.
-  const skeleton = JSON.stringify(template);
-  const encodedMarker = JSON.stringify(marker);
-  const markerIndex = skeleton.indexOf(encodedMarker);
-  assert.ok(markerIndex >= 0);
-  assert.equal(markerIndex, skeleton.lastIndexOf(encodedMarker));
-  const prefix = skeleton.slice(0, markerIndex);
-  const suffix = `${skeleton.slice(markerIndex + encodedMarker.length)}\n`;
-  const separator = ",";
+  let prefix;
+  let suffix;
+  if (format === "json") {
+    const template = {
+      ok: true,
+      data: { ...evidence, normalized_result: { rows: [marker] } },
+      meta: metadata,
+    };
+    const skeleton = JSON.stringify(template);
+    const encodedMarker = JSON.stringify(marker);
+    const markerIndex = skeleton.indexOf(encodedMarker);
+    assert.ok(markerIndex >= 0);
+    assert.equal(markerIndex, skeleton.lastIndexOf(encodedMarker));
+    prefix = skeleton.slice(0, markerIndex);
+    suffix = `${skeleton.slice(markerIndex + encodedMarker.length)}\n`;
+  } else {
+    // Independent protocol golden: rows are lines; the final record retains
+    // every non-row fact and the caller's full-output envelope.
+    prefix = "";
+    suffix = `\n${JSON.stringify({
+      $rea: "jsonl/v1",
+      type: "metadata",
+      records: {
+        path: ["data", "normalized_result", "rows"],
+        emitted: count,
+        source: count,
+      },
+      context: {
+        ok: true,
+        data: { ...evidence, normalized_result: {} },
+        meta: metadata,
+      },
+    })}\n`;
+  }
+  const separator = format === "jsonl" ? "\n" : ",";
   const expectedHash = createHash("sha256");
   expectedHash.update(prefix);
   for (let index = 0; index < count; index += 1) {
@@ -79,7 +104,10 @@ try {
 
   destination = createWriteStream(path, { flags: "wx", mode: 0o600 });
   const argv = [metadata.command, "--format", format, "--full-output"];
-  const output = createCliResultOutput(argv, destination);
+  const output = createCliResultOutput(
+    parseCliOutputArguments(argv),
+    destination,
+  );
   assert.ok(output);
   let unexpectedOutputBytes = 0;
   let exitCode = 0;
@@ -105,6 +133,7 @@ try {
   assert.equal(exitCode, 0);
   assert.equal(output.handled, true);
   assert.equal(output.failed, false);
+  assert.equal(output.error, undefined);
   assert.equal(unexpectedOutputBytes, 0);
 
   const actualHash = createHash("sha256");
@@ -112,12 +141,50 @@ try {
   const digest = actualHash.digest("hex");
   assert.equal(digest, expectedHash.digest("hex"));
   assert.equal((await stat(path)).size, expectedBytes);
+  let verifiedTokenCount;
+  if (format === "jsonl") {
+    let expectedTokens = 0;
+    for await (const line of createInterface({
+      input: createReadStream(path),
+      crlfDelay: Infinity,
+    }))
+      expectedTokens += estimateTokenCount(line);
+    let tokenText = "";
+    const counterDestination = new Writable({
+      write(chunk, _encoding, callback) {
+        // The numeric count is tiny; never retain a mistakenly emitted report.
+        if (tokenText.length + chunk.length > 64) {
+          callback(
+            new Error("Token counter emitted more than a numeric count"),
+          );
+          return;
+        }
+        tokenText += chunk.toString("utf8");
+        callback();
+      },
+    });
+    const counter = createCliResultOutput(
+      parseCliOutputArguments([...argv, "--token-count"]),
+      counterDestination,
+    );
+    assert.ok(counter);
+    assert.equal(await counter.write(evidence, { ...metadata, format }), true);
+    assert.equal(counter.error, undefined);
+    assert.equal(counter.failed, false);
+    counterDestination.end();
+    await finished(counterDestination);
+    assert.equal(tokenText, `${expectedTokens}\n`);
+    verifiedTokenCount = expectedTokens;
+  }
   sampleRss();
   finalReport = {
     json_output_verified: true,
     format,
     output_bytes: expectedBytes,
     engine_string_limit: constants.MAX_STRING_LENGTH,
+    ...(verifiedTokenCount === undefined
+      ? {}
+      : { verified_token_count: verifiedTokenCount }),
     output_sha256: digest,
     evidence_id: evidence.evidence_id,
     rss: { method: "node-memoryUsage-rss-sampled", peak_bytes: peakRss },

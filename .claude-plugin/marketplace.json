@@ -9,8 +9,12 @@
   "plugins": [
     {
       "name": "rea",
-      "description": "Reverse engineer anything from your terminal or agent with one CLI and MCP server.",
-      "source": "./",
+      "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+      "source": {
+        "source": "npm",
+        "package": "rea-agents",
+        "version": "6.8.0"
+      },
       "category": "development"
     }
   ]

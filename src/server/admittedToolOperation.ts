@@ -13,7 +13,7 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
  * that tool's target-content provenance like any other of its results.
  */
 export const runAdmittedToolOperation = async (
-  server: EvidenceMcpServer,
+  server: Pick<EvidenceMcpServer, "delivery">,
   admission: WithAdmittedAnalysis | undefined,
   operationName: string,
   signal: ServerContext["mcpReq"]["signal"],

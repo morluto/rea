@@ -29,6 +29,10 @@ export const MACHO_ARCHITECTURE_POLICIES: Readonly<
     ],
     variantName: /^arm64e\.[A-Za-z0-9_]+$/u,
   },
+  arm64_32: {
+    cpuType: 0x0200000c,
+    subtypes: [{ subtype: 1, name: "arm64_32" }],
+  },
 };
 
 /** Unlisted subtypes follow the preferred slices in FAT table order. */
@@ -42,12 +46,12 @@ export const machoSubtypeRank = (
   return rank < 0 ? policy.subtypes.length : rank;
 };
 
-/** Select a tool spelling using the same preference order as FAT selection. */
-export const selectMachoArchitectureName = (
+/** Keep the selected lipo record, including its container coordinates. */
+export const selectMachoArchitecture = (
   policy: MachoArchitecturePolicy,
   available: readonly LipoArchitecture[],
-): string | undefined => {
-  let selected: string | undefined;
+): LipoArchitecture | undefined => {
+  let selected: LipoArchitecture | undefined;
   let bestRank = Number.POSITIVE_INFINITY;
   for (const architecture of available) {
     if (
@@ -73,8 +77,22 @@ export const selectMachoArchitectureName = (
         ? policy.subtypes.length
         : machoSubtypeRank(policy, subtype);
     if (rank >= bestRank) continue;
-    selected = architecture.name;
+    selected = architecture;
     bestRank = rank;
   }
   return selected;
+};
+
+/** lipo may label ARM64 V8 as arm64 even though tools select it as arm64v8. */
+export const machoToolArchitectureName = (
+  policy: MachoArchitecturePolicy,
+  architecture: LipoArchitecture,
+): string => {
+  const named = policy.subtypes.find(({ name }) => name === architecture.name);
+  const actual = policy.subtypes.find(
+    ({ subtype }) => subtype === architecture.cpu_subtype_base,
+  );
+  return named !== undefined && actual !== undefined && named !== actual
+    ? actual.name
+    : architecture.name;
 };

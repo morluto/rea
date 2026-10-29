@@ -29,11 +29,14 @@ export const parseCaptureJson = (
       ? parent.pointer
       : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
   };
-  const checkDepth = (): void => {
-    if (frames.length > WEB_NETWORK_CAPTURE_LIMITS.depth)
+  // The document root is container level 1. Admit a container only while
+  // its own level stays within the budget; values inside an admitted
+  // container add no level, so empty and scalar-bearing containers agree.
+  const admitContainer = (): void => {
+    if (frames.length >= WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        `${format} exceeds the 64-level complete-evidence nesting budget.`,
+        `${format} exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.`,
         valuePointer(),
       );
   };
@@ -54,7 +57,7 @@ export const parseCaptureJson = (
     text,
     {
       onObjectBegin: () => {
-        checkDepth();
+        admitContainer();
         frames.push({
           kind: "object",
           pointer: valuePointer(),
@@ -84,7 +87,7 @@ export const parseCaptureJson = (
         append(Object.fromEntries(frame.members));
       },
       onArrayBegin: () => {
-        checkDepth();
+        admitContainer();
         frames.push({ kind: "array", pointer: valuePointer(), items: [] });
       },
       onArrayEnd: () => {
@@ -94,7 +97,6 @@ export const parseCaptureJson = (
         append(frame.items);
       },
       onLiteralValue: (value: unknown, offset, length) => {
-        checkDepth();
         if (typeof value === "number")
           append(new LosslessNumber(text.slice(offset, offset + length)));
         else if (

@@ -1,4 +1,6 @@
+import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { createHash } from "node:crypto";
+import { err, ok, type Result } from "../domain/result.js";
 
 import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
 
@@ -7,21 +9,6 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { managedFailure } from "./ManagedReaderFailure.js";
-
-const requireRange = (
-  bytes: Buffer,
-  offset: number,
-  length: number,
-  scope: string,
-): void => {
-  if (offset < 0 || length < 0 || offset > bytes.length - length)
-    throw managedFailure(
-      "invalid-row",
-      scope,
-      `${scope} leaves the artifact byte range`,
-      offset >= 0 ? offset : null,
-    );
-};
 
 /** Cursor for checked fixed-width metadata row decoding. */
 export class MetadataRowCursor {
@@ -69,38 +56,72 @@ export class MetadataRowCursor {
   }
 }
 
+interface ManagedCompressedUnsigned {
+  readonly value: number;
+  readonly width: 1 | 2 | 4;
+  readonly minimal: boolean;
+}
+
+type ManagedCompressedUnsignedFailure =
+  | { readonly kind: "truncated"; readonly width: 1 | 2 | 4 }
+  | { readonly kind: "reserved" };
+
+/** ECMA-335 unsigned encoding facts, without heap or signature admission policy. */
+export const readManagedCompressedUnsigned = (
+  bytes: Buffer,
+  offset: number,
+): Result<ManagedCompressedUnsigned, ManagedCompressedUnsignedFailure> => {
+  const first = bytes[offset];
+  if (first === undefined) return err({ kind: "truncated", width: 1 });
+  if ((first & 0x80) === 0)
+    return ok({ value: first, width: 1, minimal: true });
+  const width =
+    (first & 0xc0) === 0x80 ? 2 : (first & 0xe0) === 0xc0 ? 4 : null;
+  if (width === null) return err({ kind: "reserved" });
+  if (offset > bytes.length - width) return err({ kind: "truncated", width });
+  const value =
+    width === 2
+      ? ((first & 0x3f) << 8) | (bytes[offset + 1] ?? 0)
+      : (first & 0x1f) * 0x01_00_00_00 +
+        (bytes[offset + 1] ?? 0) * 0x01_00_00 +
+        (bytes[offset + 2] ?? 0) * 0x0100 +
+        (bytes[offset + 3] ?? 0);
+  return ok({ value, width, minimal: value >= (width === 2 ? 0x80 : 0x4000) });
+};
+
+// Issue code and label for the heap item a compressed length prefixes.
+const PREFIXED_ITEMS = {
+  blob: { code: "invalid-blob", label: "Metadata blob" },
+  userString: { code: "invalid-string", label: "User string" },
+} as const;
+
 const compressedLength = (
   bytes: Buffer,
   offset: number,
   scope: string,
-): { readonly length: number; readonly prefix: number } => {
-  requireRange(bytes, offset, 1, scope);
-  const first = bytes[offset] ?? 0;
-  if ((first & 0x80) === 0) return { length: first, prefix: 1 };
-  if ((first & 0xc0) === 0x80) {
-    requireRange(bytes, offset, 2, scope);
-    return {
-      length: ((first & 0x3f) << 8) | (bytes[offset + 1] ?? 0),
-      prefix: 2,
-    };
-  }
-  if ((first & 0xe0) === 0xc0) {
-    requireRange(bytes, offset, 4, scope);
-    return {
-      length:
-        (first & 0x1f) * 0x01_00_00_00 +
-        (bytes[offset + 1] ?? 0) * 0x01_00_00 +
-        (bytes[offset + 2] ?? 0) * 0x0100 +
-        (bytes[offset + 3] ?? 0),
-      prefix: 4,
-    };
-  }
-  throw managedFailure(
-    "invalid-blob",
-    scope,
-    "Metadata blob uses a reserved compressed-length prefix",
-    offset,
-  );
+  item: keyof typeof PREFIXED_ITEMS,
+): {
+  readonly length: number;
+  readonly prefix: number;
+  /** Whether ECMA-335 II.23.2 assigns this width to the value. */
+  readonly minimal: boolean;
+} => {
+  const { code, label } = PREFIXED_ITEMS[item];
+  const decoded = readManagedCompressedUnsigned(bytes, offset);
+  if (!decoded.ok)
+    throw managedFailure(
+      code,
+      scope,
+      decoded.error.kind === "truncated"
+        ? `${label} length prefix leaves the artifact byte range`
+        : `${label} uses a reserved compressed-length prefix`,
+      offset >= 0 ? offset : null,
+    );
+  return {
+    length: decoded.value.value,
+    prefix: decoded.value.width,
+    minimal: decoded.value.minimal,
+  };
 };
 
 /** Read one UTF-8 value from #Strings within its PE/CLI stream extent. */
@@ -121,7 +142,6 @@ export const readMetadataString = (
   const start = layout.strings.offset + index;
   const cached = managedDecodeBudget(layout).cachedString(index);
   if (cached !== undefined && cached.encodedBytes <= heapExtent) {
-    managedDecodeBudget(layout).reserveString(cached.encodedBytes, start);
     return cached.value;
   }
   const maximum = Math.min(
@@ -164,15 +184,30 @@ export const readMetadataBlob = (
   heapExtent: number,
 ): Buffer => {
   if (index === 0) return Buffer.alloc(0);
-  if (index < 0 || index >= layout.blob.size)
+  if (index < 0)
+    throw managedFailure(
+      "invalid-heap-index",
+      "metadata.#Blob",
+      "Blob heap index is negative",
+      null,
+    );
+  const heap = layout.blob;
+  if (heap === null)
+    throw managedFailure(
+      "missing-stream",
+      "metadata.#Blob",
+      `Blob index ${String(index)} references an absent #Blob stream`,
+      null,
+    );
+  if (index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
       "metadata.#Blob",
       "Blob heap index is outside #Blob",
-      layout.blob.offset + Math.max(index, 0),
+      heap.offset + Math.max(index, 0),
     );
-  const start = layout.blob.offset + index;
-  const decoded = compressedLength(bytes, start, "metadata.#Blob");
+  const start = heap.offset + index;
+  const decoded = compressedLength(bytes, start, "metadata.#Blob", "blob");
   if (decoded.length > heapExtent)
     throw managedFailure(
       "invalid-blob",
@@ -181,7 +216,7 @@ export const readMetadataBlob = (
       start,
     );
   const content = start + decoded.prefix;
-  if (content > layout.blob.offset + layout.blob.size - decoded.length)
+  if (content > heap.offset + heap.size - decoded.length)
     throw managedFailure(
       "invalid-blob",
       "metadata.#Blob",
@@ -189,6 +224,124 @@ export const readMetadataBlob = (
       start,
     );
   return bytes.subarray(content, content + decoded.length);
+};
+
+/**
+ * Read the #US literal named by a `0x70` user-string token: a compressed byte
+ * length, UTF-16LE code units, then one ECMA-335 terminal flag byte. Code units
+ * are kept as stored, including unpaired surrogates. `parseUserStrings` owns
+ * which `ldstr` operands are user-string tokens.
+ */
+export const readMetadataUserString = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  reference: Pick<MetadataTokenFact, "token" | "row">,
+): {
+  readonly offset: number;
+  readonly value: string;
+  /** Conformance differences observed beside the readable literal. */
+  readonly issues: readonly ManagedParseIssue[];
+} => {
+  const { token, row: index } = reference;
+  const heap = layout.userStrings;
+  const scope = `metadata.#US:${token}`;
+  if (heap === null)
+    throw managedFailure(
+      "missing-stream",
+      scope,
+      "ldstr references #US, but the metadata has no #US stream",
+    );
+  if (index >= heap.size)
+    throw managedFailure(
+      "invalid-heap-index",
+      scope,
+      "ldstr operand does not name an item inside #US",
+      heap.offset + index,
+    );
+  const start = heap.offset + index;
+  const decoded = compressedLength(bytes, start, scope, "userString");
+  const content = start + decoded.prefix;
+  if (content > heap.offset + heap.size - decoded.length)
+    throw managedFailure(
+      "invalid-string",
+      scope,
+      "User string leaves #US",
+      start,
+    );
+  const budget = managedDecodeBudget(layout);
+  // A wider length prefix than the value needs still reads unambiguously, so
+  // it is reported like the flag rather than discarding the literal. It is
+  // admitted only on paths that return the literal, so a fatal item leaves
+  // no budget behind.
+  const conformance = (): ManagedParseIssue[] => {
+    if (decoded.minimal) return [];
+    budget.reserve(512, start);
+    return [
+      {
+        code: "invalid-string",
+        scope,
+        offset: start,
+        detail: `User string length ${String(decoded.length)} uses a ${String(decoded.prefix)}-byte prefix wider than ECMA-335 II.23.2 assigns; readable UTF-16 is preserved and runtime acceptance is not assessed`,
+      },
+    ];
+  };
+  // ECMA-335 II.24.2.4: offset 0 is the heap's empty entry, a zero length
+  // with no terminal flag byte; every other item carries the flag.
+  if (index === 0) {
+    if (decoded.length === 0)
+      return { offset: start, value: "", issues: conformance() };
+    throw managedFailure(
+      "invalid-string",
+      scope,
+      `#US offset 0 is the reserved empty entry, but it encodes ${String(decoded.length)} byte(s)`,
+      start,
+    );
+  }
+  if (decoded.length % 2 !== 1)
+    throw managedFailure(
+      "invalid-string",
+      scope,
+      "User string length is not UTF-16 code units plus one terminal flag byte",
+      start,
+    );
+  const units = (decoded.length - 1) / 2;
+  // Admit the literal before scanning it: JSON spends at most six bytes per
+  // UTF-16 code unit.
+  budget.reserveString(units, start);
+  // Check the serialized flag independently of literal decoding. A difference
+  // from ECMA-335 is observable metadata, not proof of runtime rejection.
+  let expectedFlag = 0;
+  for (let unitIndex = 0; unitIndex < units; unitIndex++) {
+    const unit = bytes.readUInt16LE(content + unitIndex * 2);
+    if (
+      unit > 0xff ||
+      (unit >= 0x01 && unit <= 0x08) ||
+      (unit >= 0x0e && unit <= 0x1f) ||
+      unit === 0x27 ||
+      unit === 0x2d ||
+      unit === 0x7f
+    ) {
+      expectedFlag = 1;
+      break;
+    }
+  }
+  const flagOffset = content + units * 2;
+  const actualFlag = bytes[flagOffset];
+  const issues = conformance();
+  if (actualFlag !== expectedFlag) {
+    budget.reserve(512, flagOffset);
+    issues.push({
+      code: "invalid-string",
+      scope,
+      offset: flagOffset,
+      detail: `User string terminal flag ${String(actualFlag)} differs from ECMA-335 II.24.2.4 value ${String(expectedFlag)}; readable UTF-16 is preserved and runtime acceptance is not assessed`,
+    });
+  }
+  return {
+    offset: start,
+    value: bytes.subarray(content, flagOffset).toString("utf16le"),
+    issues,
+  };
 };
 
 /** Read one conventional GUID value from the one-based #GUID heap. */
@@ -225,6 +378,20 @@ export const readMetadataGuid = (
 export const metadataToken = (table: number, row: number): string =>
   `0x${(table * 0x01_00_00_00 + row).toString(16).padStart(8, "0")}`;
 
+/** Full-token coordinates do not establish that a table row or heap item exists. */
+export interface MetadataTokenFact {
+  readonly raw: number;
+  readonly table: number;
+  readonly row: number;
+  readonly token: string;
+}
+
+export const metadataTokenFact = (raw: number): MetadataTokenFact => {
+  const table = raw >>> 24;
+  const row = raw & 0x00ff_ffff;
+  return { raw, table, row, token: metadataToken(table, row) };
+};
+
 /** Hash bytes without exposing their contents. */
 export const sha256Bytes = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -256,37 +423,66 @@ export const metadataRowCursor = (
   );
 };
 
-/** Decode a metadata coded index without signed 32-bit coercion. */
-export const metadataCodedToken = (
+/** Format coordinates do not establish that the selected metadata row exists. */
+export interface MetadataCodedIndexCoordinate {
+  readonly table: number | undefined;
+  readonly row: number;
+}
+
+export const metadataCodedIndexCoordinate = (
   raw: number,
   bits: number,
   tables: readonly (number | undefined)[],
-  rowCounts: readonly number[],
-): string | null => {
-  if (raw === 0) return null;
+): MetadataCodedIndexCoordinate & { readonly tag: number } => {
   const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
-  return table === undefined || row === 0 || row > (rowCounts[table] ?? 0)
-    ? null
-    : metadataToken(table, row);
+  return { tag, table: tables[tag], row: Math.floor(raw / 2 ** bits) };
 };
 
-/** Explain why a non-null coded index cannot name an admitted metadata row. */
-export const metadataCodedTokenInvalidReason = (
+export type ManagedCodedIndex =
+  | { readonly kind: "null" }
+  | {
+      readonly kind: "valid";
+      readonly token: string;
+      readonly table: number;
+      readonly row: number;
+    }
+  | {
+      readonly kind: "invalid";
+      readonly reason: string;
+      readonly table: number | undefined;
+      readonly row: number;
+    };
+
+/** Decode and validate a metadata coded index without signed row coercion. */
+export const decodeMetadataCodedIndex = (
   raw: number,
   bits: number,
   tables: readonly (number | undefined)[],
   rowCounts: readonly number[],
-): string | null => {
-  if (raw === 0) return null;
-  const tag = raw & (2 ** bits - 1);
-  const row = Math.floor(raw / 2 ** bits);
-  const table = tables[tag];
-  if (table === undefined) return `coded index tag ${tag} is not defined`;
-  if (row === 0) return `coded index selects row zero in table ${table}`;
+): ManagedCodedIndex => {
+  if (raw === 0) return { kind: "null" };
+  const { tag, table, row } = metadataCodedIndexCoordinate(raw, bits, tables);
+  if (table === undefined)
+    return {
+      kind: "invalid",
+      reason: `coded index tag ${tag} is not defined`,
+      table,
+      row,
+    };
+  if (row === 0)
+    return {
+      kind: "invalid",
+      reason: `coded index selects row zero in table ${table}`,
+      table,
+      row,
+    };
   const count = rowCounts[table] ?? 0;
-  return row > count
-    ? `coded index selects row ${row} in table ${table}, which has ${count} rows`
-    : null;
+  if (row > count)
+    return {
+      kind: "invalid",
+      reason: `coded index selects row ${row} in table ${table}, which has ${count} rows`,
+      table,
+      row,
+    };
+  return { kind: "valid", token: metadataToken(table, row), table, row };
 };

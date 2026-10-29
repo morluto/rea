@@ -60,9 +60,9 @@ export class InvestigationRecords
     return this.#evidence.export();
   }
 
-  /** Borrow a sealed bundle snapshot for complete JSON serialization. */
-  evidenceBundleForSerialization(): EvidenceBundle {
-    return this.#evidence.forSerialization();
+  /** Borrow an authenticated immutable bundle snapshot without copying its records. */
+  immutableEvidenceBundle(): EvidenceBundle {
+    return this.#evidence.immutableBundle();
   }
 
   /** Atomically merge a bundle and report changes for the owner's post-commit observers. */

@@ -115,4 +115,51 @@ describe("Mach-O slice reader with system lipo", () => {
       ).toEqual(await fatSlices("/bin/ls"));
     },
   );
+
+  it.skipIf(process.platform !== "darwin")(
+    "inventories a universal binary whose big-endian slice cannot be indexed",
+    async () => {
+      const directory = await createTestTempDirectory("rea-lipo-ppc-");
+      const path = join(directory, "mixed");
+      const bytes = Buffer.alloc(8224);
+      bytes.writeUInt32BE(0xca_fe_ba_be, 0);
+      bytes.writeUInt32BE(2, 4);
+      const slices = [
+        { cpu: 0x0100_000c, offset: 4096, bigEndian: false },
+        { cpu: 18, offset: 8192, bigEndian: true },
+      ];
+      slices.forEach(({ cpu, offset, bigEndian }, index) => {
+        const entry = 8 + index * 20;
+        bytes.writeUInt32BE(cpu, entry);
+        bytes.writeUInt32BE(offset, entry + 8);
+        bytes.writeUInt32BE(32, entry + 12);
+        bytes.writeUInt32BE(12, entry + 16);
+        const write = (value: number, at: number) =>
+          bigEndian
+            ? bytes.writeUInt32BE(value, at)
+            : bytes.writeUInt32LE(value, at);
+        write(cpu === 18 ? 0xfeed_face : 0xfeed_facf, offset);
+        write(cpu, offset + 4);
+        write(1, offset + 12);
+      });
+      await writeFile(path, bytes);
+      const reader = new MachOSliceArtifactReader(path, {});
+      onTestFinished(() => reader.close());
+      const entries = [];
+      for await (const entry of reader.entries()) entries.push(entry);
+      expect(
+        entries.map(({ path, byteOffset, declaredSize }) => [
+          path,
+          byteOffset,
+          declaredSize,
+        ]),
+      ).toEqual([
+        ["slices/arm64", 4096, 32],
+        ["slices/ppc", 8192, 32],
+      ]);
+      expect(entries[1]?.limitations).toContain(
+        "Structural Mach-O facts were unsupported (big-endian Mach-O slices are not supported); slice range is based on lipo output.",
+      );
+    },
+  );
 });

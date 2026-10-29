@@ -30,9 +30,12 @@ cliTest(
       surrogate,
       replacement,
     ];
-    const source = values
+    const requests = values
       .map((value) => `fetch(${JSON.stringify(value)});`)
       .join("\n");
+    // The primitive lattice is bounded; exact endpoint lookup identities stay
+    // available for feature/semantic tracing and version comparison.
+    const source = `${requests}\nexport const oversized = ${JSON.stringify(endpoint)};`;
     const sourcePath = join(root, "main.js");
     await writeFile(sourcePath, source);
     const cliResponse = await cli.run({
@@ -79,6 +82,17 @@ cliTest(
       const result = javascriptApplicationAnalysisResultSchema.parse(
         evidence.normalized_result,
       );
+      expect(result.graph.coverage.limits).toContainEqual(
+        expect.objectContaining({
+          name: "javascript_semantic_primitive_bytes",
+        }),
+      );
+      expect(
+        result.semantic_graph.nodes.some(
+          ({ kind, properties }) =>
+            kind === "literal" && properties.value === endpoint,
+        ),
+      ).toBe(false);
       const endpoints = result.graph.nodes.filter(
         (node) => node.kind === "endpoint",
       );
@@ -108,7 +122,9 @@ cliTest(
         ),
       ).toHaveLength(1);
       expect(repeatedNode.observations).toHaveLength(2);
-      expect(repeatedNode.identity).toMatchObject({ key: "/ok" });
+      expect(repeatedNode.identity).toMatchObject({
+        key: JSON.stringify(["literal", "/ok"]),
+      });
       expect(
         repeatedNode.observations.every(({ label }) => label === "/ok"),
       ).toBe(true);
@@ -119,18 +135,18 @@ cliTest(
         available: true,
         value: { kind: "source-range", source: "main.js" },
       });
-      const requests = result.semantic_graph.nodes.filter(
+      const requestNodes = result.semantic_graph.nodes.filter(
         (node) =>
           node.kind === "request" && node.properties.endpoint === endpoint,
       );
-      expect(requests).toHaveLength(1);
+      expect(requestNodes).toHaveLength(1);
 
       await verifyEndpointWorkflows({
         client,
         evidenceId: evidence.evidence_id,
         endpoint,
         endpointNodeId: endpointNode.node_id,
-        requestNodeIds: requests.map(({ node_id }) => node_id),
+        requestNodeIds: requestNodes.map(({ node_id }) => node_id),
         root,
         source,
         sourcePath,

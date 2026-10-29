@@ -1,11 +1,11 @@
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
-import {
-  hasWindowsNativeAuthority,
-  windowsNativeAuthorityUnavailableReason,
-} from "../process/WindowsAuthority.js";
+import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
@@ -16,10 +16,11 @@ import {
 export const projectGhidraDoctorInspection = (
   inspection: GhidraInstallationInspection,
 ): DoctorProviderInspection => {
-  const windowsAuthorityUnavailable =
-    inspection.status === "available" &&
-    inspection.platform === "win32" &&
-    !hasWindowsNativeAuthority(inspection.platform);
+  const readiness =
+    inspection.status === "available" && inspection.platform === "win32"
+      ? inspectWindowsNativeReadiness(inspection.platform)
+      : undefined;
+  const windowsAuthorityUnavailable = readiness?.available === false;
   return {
     id: "ghidra",
     configured: inspection.installDir !== null,
@@ -35,21 +36,29 @@ export const projectGhidraDoctorInspection = (
         : {},
     checks: [
       ...selectedChecks(inspection).map((check) =>
-        projectCheck(check, inspection.installDir !== null),
+        projectCheck(
+          check,
+          inspection.installDir !== null,
+          inspection.javaProbeFailure,
+          inspection.nativeDecompilerHeaderFailure,
+        ),
       ),
-      ...(inspection.status === "available" && inspection.platform === "win32"
+      ...(readiness !== undefined
         ? [
             {
               name: "native_authority",
               ok: !windowsAuthorityUnavailable,
-              code: windowsAuthorityUnavailable ? "unsupported_host" : null,
-              detail: windowsAuthorityUnavailable
-                ? windowsNativeAuthorityUnavailableReason(inspection.platform)
+              code: !readiness.available ? readiness.code : null,
+              detail: !readiness.available
+                ? readiness.reason
                 : "Verified Windows native Job Object, private DACL, and reparse-safe handle controls; local NTFS only.",
-              remediation: windowsAuthorityUnavailable
-                ? "Use the matching Windows x64 REA package with its bundled native addon and a writable local NTFS temporary directory. The native failure above identifies the failed constraint; Ghidra installation or registration changes cannot enable a missing native backend."
-                : null,
-              classification: "unsupported_host" as const,
+              remediation: !readiness.available ? readiness.remediation : null,
+              classification:
+                !readiness.available && readiness.code === "runtime_unavailable"
+                  ? ("runtime_failure" as const)
+                  : !readiness.available && readiness.code === "runtime_missing"
+                    ? ("missing_dependency" as const)
+                    : ("unsupported_host" as const),
             },
           ]
         : []),
@@ -58,13 +67,17 @@ export const projectGhidraDoctorInspection = (
 };
 
 /** Inspect the process-configured BYO Ghidra installation for `rea doctor`. */
-export const inspectSystemGhidraProvider = (
+export const inspectSystemGhidraProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
-): Promise<DoctorProviderInspection> =>
-  Promise.resolve(
-    projectGhidraDoctorInspection(
-      inspectGhidraInstallation({
+  resourceOwner: RetainedResourceScope,
+  signal?: AbortSignal,
+): Promise<DoctorProviderInspection> => {
+  try {
+    return projectGhidraDoctorInspection(
+      await inspectGhidraInstallation({
         environment,
+        resourceOwner,
+        ...(signal === undefined ? {} : { signal }),
         ...(environment.GHIDRA_INSTALL_DIR === undefined
           ? {}
           : { installDir: environment.GHIDRA_INSTALL_DIR }),
@@ -72,8 +85,11 @@ export const inspectSystemGhidraProvider = (
           ? {}
           : { javaHome: environment.JAVA_HOME }),
       }),
-    ),
-  );
+    );
+  } catch (cause: unknown) {
+    throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
+  }
+};
 
 const selectedChecks = (
   inspection: GhidraInstallationInspection,
@@ -106,11 +122,29 @@ const selectedChecks = (
 const projectCheck = (
   check: GhidraInstallationCheck,
   configured: boolean,
+  javaFailure: GhidraInstallationInspection["javaProbeFailure"],
+  headerFailure: GhidraInstallationInspection["nativeDecompilerHeaderFailure"],
 ): DoctorProviderCheck => ({
   name: check.name,
   ok: check.status === "passed",
   code: check.status === "failed" ? check.code : null,
   detail: check.detail,
+  ...(check.name === "java" && javaFailure?.output !== undefined
+    ? {
+        details: {
+          output: { ...javaFailure.output },
+          ...(javaFailure.processErrorCode === undefined
+            ? {}
+            : { process_error_code: javaFailure.processErrorCode }),
+          ...(javaFailure.properties === undefined
+            ? {}
+            : { properties: { ...javaFailure.properties } }),
+        },
+      }
+    : {}),
+  ...(check.name === "native_decompiler" && headerFailure !== undefined
+    ? { details: { header_failure: projectAnalysisError(headerFailure) } }
+    : {}),
   remediation: check.status === "failed" ? check.remediation : null,
   classification:
     check.name === "platform" || check.name === "architecture"
@@ -119,7 +153,11 @@ const projectCheck = (
           check.status === "failed" &&
           check.code === "runtime_missing"
         ? "missing_dependency"
-        : configured
-          ? "config_drift"
-          : "missing_analysis_engine",
+        : check.name === "java" &&
+            check.status === "failed" &&
+            check.code === "runtime_unavailable"
+          ? "runtime_failure"
+          : configured
+            ? "config_drift"
+            : "missing_analysis_engine",
 });

@@ -131,8 +131,14 @@ describe("browser and Inspector CLI input diagnostics", () => {
         category: "invalid_input",
         message:
           "Analysis input is invalid. Check the arguments and try again.",
-        retryable: true,
-        remediation: { action: "Correct the listed arguments and retry." },
+        retryable: false,
+        remediation: {
+          action: `Read the declared input schema or CLI usage for ${input.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`,
+        },
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: input.operation,
+        },
         details: {
           operation: input.operation,
           issues: expect.arrayContaining([input.issue]),

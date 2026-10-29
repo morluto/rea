@@ -97,6 +97,23 @@ int wmain(int count, wchar_t** args) {
         ? "true" : "false", observed);
     return 0;
   }
+  if (count == 3 && std::wstring(args[1]) == L"volume-root-append-lease") {
+    // A real directory append right participates in Windows' write-share
+    // check. The lease performs no mutation; it stays open while the native
+    // admission probe requests the same volume root for directory listing.
+    HANDLE root = CreateFileW(args[2], FILE_ADD_SUBDIRECTORY,
+      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (root == INVALID_HANDLE_VALUE) {
+      std::printf("{\"writeAccessGranted\":false,\"win32Code\":%lu}\n", GetLastError());
+      return 0;
+    }
+    std::puts("{\"writeAccessGranted\":true}");
+    std::fflush(stdout);
+    const int release = std::getchar();
+    CloseHandle(root);
+    return release == 'x' || release == EOF ? 0 : 10;
+  }
   if (count > 1 && std::wstring(args[1]) == L"breakaway") {
     wchar_t executable[32768]; GetModuleFileNameW(nullptr, executable, 32768);
     std::wstring line = L"\"" + std::wstring(executable) + L"\" exit";

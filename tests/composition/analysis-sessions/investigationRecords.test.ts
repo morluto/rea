@@ -138,12 +138,20 @@ it("notifies an Unknown-only bundle change even when no new Evidence is added", 
   });
   expect(recipient.importEvidenceBundle(bundle)).toEqual({
     ok: true,
-    value: 0,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 1,
+      totalRecords: bundle.records.length,
+    },
   });
   expect(revisions).toEqual([1]);
   expect(recipient.importEvidenceBundle(bundle)).toEqual({
     ok: true,
-    value: 0,
+    value: {
+      recordsAdded: 0,
+      unknownsAdded: 0,
+      totalRecords: bundle.records.length,
+    },
   });
   expect(revisions).toEqual([1]);
 });

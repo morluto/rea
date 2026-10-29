@@ -1,3 +1,4 @@
+import { dnsResponseLayers } from "../../fixtures/pcap/pcapTestTools.js";
 import { createHash } from "node:crypto";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +30,15 @@ const createPcapToolFixture = async (root: string) => {
         "dns.qry.name": ["many.example"],
         "dns.flags.response": ["True"],
         "dns.a": [`198.51.100.${index}`],
+        "dns.qry.type": ["1"],
+        "dns.qry.class": ["0x0001"],
+        "dns.count.queries": ["1"],
+        "dns.count.answers": ["1"],
+        "dns.count.auth_rr": ["0"],
+        "dns.count.add_rr": ["0"],
+        "dns.resp.name": ["many.example"],
+        "dns.resp.type": ["1"],
+        "dns.resp.class": ["0x0001"],
         "tls.handshake.extensions_server_name": [`host${index}.example`],
         "http.request.full_uri": [
           "http://user:password@example.invalid/p?q=keep",
@@ -36,14 +46,22 @@ const createPcapToolFixture = async (root: string) => {
       },
     },
   }));
+  const dnsFrames = Array.from({ length: 132 }, (_, index) => ({
+    _source: {
+      layers: {
+        frame: { "frame.number": String(index + 1) },
+        ...dnsResponseLayers("many.example", `198.51.100.${index}`),
+      },
+    },
+  }));
   await writeFile(
     tshark,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'TShark (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf 'read\\n' >> ${quote(marker)}\nprintf '%s' ${quote(JSON.stringify(frames))}\nprintf 'retained warning' >&2\n`,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'TShark (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf 'read\\n' >> ${quote(marker)}\ncase " $* " in *" -x "*) printf '%s' ${quote(JSON.stringify(dnsFrames))}; exit 0 ;; esac\nprintf '%s' ${quote(JSON.stringify(frames))}\nprintf 'retained warning' >&2\n`,
     { mode: 0o755 },
   );
   await writeFile(
     capinfos,
-    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'Capinfos (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf '%s\\n' ${quote(`File type: pcap\nFile encapsulation: Ethernet\nNumber of packets: 132\nSHA256: ${sha}`)}\n`,
+    `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'Capinfos (Wireshark) 4.6.6-emulated\\n'; exit 0; fi\nprintf '%s\\n' ${quote(`File type: pcap\nFile encapsulation: Ethernet\nPacket size limit: file hdr: 262144 bytes\nPacket size limit: inferred: 128 bytes\nNumber of packets: 132\nSHA256: ${sha}`)}\n`,
     { mode: 0o755 },
   );
   const environment = {
@@ -72,6 +90,7 @@ it.runIf(process.platform === "linux")(
     );
     const parent = parseEvidence(JSON.parse(complete.stdout));
     expect(parent.normalized_result).toMatchObject({
+      snapshot_length: 262144,
       tls_sni_count: 132,
       tls_sni_values: expect.arrayContaining(["host131.example"]),
       dns_queries: [{ query: "many.example", response_address_count: 132 }],
@@ -87,6 +106,7 @@ it.runIf(process.platform === "linux")(
     expect(summary).toMatchObject({
       parent_evidence_id: parent.evidence_id,
       summary: {
+        snapshot_length: 262144,
         tls_sni_count: 132,
         dns_query_count: 1,
         retained_counts: { tls_sni_values: 132 },

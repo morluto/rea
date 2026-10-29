@@ -5,12 +5,12 @@ import { err, ok, type Result } from "../domain/result.js";
 
 const responseSchema = z.discriminatedUnion("ok", [
   z.strictObject({
-    id: z.number().int().positive(),
+    id: z.int().positive(),
     ok: z.literal(true),
     result: jsonValueSchema,
   }),
   z.strictObject({
-    id: z.number().int().positive(),
+    id: z.int().positive(),
     ok: z.literal(false),
     error: z
       .object({

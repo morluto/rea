@@ -16,6 +16,13 @@ export const emitEvents = (
   emitCaptureNavigation(socket, command, port, options);
 };
 
+const webMcpToolAnnotations = {
+  readOnly: true,
+  untrustedContent: true,
+  consequential: true,
+  autosubmit: false,
+};
+
 const emitWebMcpEvents = (
   socket: WebSocket,
   command: FakeCdpCommand,
@@ -29,142 +36,163 @@ const emitWebMcpEvents = (
     emitSameUrlWebMcpRegistrations(socket, command, options);
     return;
   }
-  if (command.method === "WebMCP.enable" && options.webMcpTools === true) {
-    const inputSchemaProperties =
-      options.webMcpSchemaPropertyCount === undefined
-        ? {
-            orderId: { type: "string", example: "schema-secret" },
-            includeItems: { type: "boolean", default: true },
-          }
-        : Object.fromEntries(
-            Array.from(
-              { length: options.webMcpSchemaPropertyCount },
-              (_value, index) => [`field_${String(index)}`, { type: "string" }],
-            ),
-          );
+  if (command.method !== "WebMCP.enable" || options.webMcpTools !== true)
+    return;
+  emitMainWebMcpTools(socket, command, port, options);
+  emitChildWebMcpNavigations(socket, command, port, options);
+};
+
+const emitMainWebMcpTools = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
+  const inputSchemaProperties =
+    options.webMcpSchemaPropertyCount === undefined
+      ? {
+          orderId: { type: "string", example: "schema-secret" },
+          includeItems: { type: "boolean", default: true },
+        }
+      : Object.fromEntries(
+          Array.from(
+            { length: options.webMcpSchemaPropertyCount },
+            (_value, index) => [`field_${String(index)}`, { type: "string" }],
+          ),
+        );
+  event(socket, "WebMCP.toolsAdded", command.sessionId, {
+    tools: [
+      {
+        name: "search_orders",
+        description: "Search orders; authorization=Bearer tool-secret",
+        frameId: "frame-main",
+        backendNodeId: 42,
+        inputSchema: options.webMcpInputSchema ?? {
+          type: "object",
+          properties: inputSchemaProperties,
+          required: ["orderId"],
+        },
+        annotations: {
+          ...webMcpToolAnnotations,
+          consequential: Object.hasOwn(options, "webMcpConsequential")
+            ? options.webMcpConsequential
+            : true,
+        },
+        stackTrace:
+          options.webMcpStackTrace !== undefined
+            ? options.webMcpStackTrace(`http://127.0.0.1:${String(port)}`)
+            : {
+                callFrames: [
+                  {
+                    url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
+                    lineNumber: 12,
+                    columnNumber: 4,
+                  },
+                ],
+              },
+      },
+      {
+        name: "private_tool",
+        description: "private-tool-secret",
+        frameId: "frame-private",
+      },
+      ...(options.extraCollections === true
+        ? [
+            {
+              name: "update_order",
+              description: "Update an order",
+              frameId: "frame-main",
+              inputSchema: {
+                type: "object",
+                properties: { orderId: { type: "string" } },
+              },
+            },
+          ]
+        : []),
+      ...(options.webMcpFrameCount !== undefined && options.webMcpFrameCount > 0
+        ? [
+            {
+              name: "beyond_frame_limit_tool",
+              description: "Registered in an in-scope frame after index 999",
+              frameId: `webmcp-frame-${String(options.webMcpFrameCount - 1)}`,
+            },
+          ]
+        : []),
+      ...(options.webMcpChildLeavesScope === true ||
+      options.webMcpChildTransientBlank === true
+        ? [
+            {
+              name: "child_tool",
+              description: "Must be removed after child navigation",
+              frameId: "frame-child",
+            },
+          ]
+        : []),
+    ],
+  });
+};
+
+const emitChildWebMcpNavigations = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  port: number,
+  options: FakeOptions,
+): void => {
+  if (options.webMcpChildLeavesScope === true) {
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-child",
+        parentId: "frame-main",
+        url: "https://private.example.test/escaped",
+      },
+    });
     event(socket, "WebMCP.toolsAdded", command.sessionId, {
       tools: [
         {
-          name: "search_orders",
-          description: "Search orders; authorization=Bearer tool-secret",
-          frameId: "frame-main",
-          backendNodeId: 42,
-          inputSchema: options.webMcpInputSchema ?? {
-            type: "object",
-            properties: inputSchemaProperties,
-            required: ["orderId"],
-          },
-          annotations: {
-            readOnly: true,
-            untrustedContent: true,
-            autosubmit: false,
-          },
-          stackTrace: {
-            callFrames: [
-              {
-                url: `http://127.0.0.1:${String(port)}/app.js?token=tool-source-secret`,
-                lineNumber: 12,
-                columnNumber: 4,
-              },
-            ],
-          },
+          name: "escaped_child_tool",
+          description: "cross-origin-child-secret",
+          frameId: "frame-child",
         },
-        {
-          name: "private_tool",
-          description: "private-tool-secret",
-          frameId: "frame-private",
-        },
-        ...(options.extraCollections === true
-          ? [
-              {
-                name: "update_order",
-                description: "Update an order",
-                frameId: "frame-main",
-                inputSchema: {
-                  type: "object",
-                  properties: { orderId: { type: "string" } },
-                },
-              },
-            ]
-          : []),
-        ...(options.webMcpFrameCount !== undefined &&
-        options.webMcpFrameCount > 0
-          ? [
-              {
-                name: "beyond_frame_limit_tool",
-                description: "Registered in an in-scope frame after index 999",
-                frameId: `webmcp-frame-${String(options.webMcpFrameCount - 1)}`,
-              },
-            ]
-          : []),
-        ...(options.webMcpChildLeavesScope === true ||
-        options.webMcpChildTransientBlank === true
-          ? [
-              {
-                name: "child_tool",
-                description: "Must be removed after child navigation",
-                frameId: "frame-child",
-              },
-            ]
-          : []),
       ],
     });
-    if (options.webMcpChildLeavesScope === true) {
-      event(socket, "Page.frameNavigated", command.sessionId, {
-        frame: {
-          id: "frame-child",
-          parentId: "frame-main",
-          url: "https://private.example.test/escaped",
-        },
-      });
-      event(socket, "WebMCP.toolsAdded", command.sessionId, {
-        tools: [
-          {
-            name: "escaped_child_tool",
-            description: "cross-origin-child-secret",
-            frameId: "frame-child",
-          },
-        ],
-      });
-    }
-    if (options.webMcpChildTransientBlank === true)
-      event(socket, "Page.frameNavigated", command.sessionId, {
-        frame: {
-          id: "frame-child",
-          parentId: "frame-main",
-          loaderId: "loader-transient",
-          url: "about:blank",
-        },
-      });
-    if (options.webMcpChildRecoversAfterTransient === true) {
-      event(socket, "Page.frameNavigated", command.sessionId, {
-        frame: {
-          id: "frame-child",
-          parentId: "frame-main",
-          loaderId: "loader-child-recovered",
-          url: `http://127.0.0.1:${String(port)}/child-recovered`,
-        },
-      });
-      event(socket, "WebMCP.toolsAdded", command.sessionId, {
-        tools: [
-          {
-            name: "child_tool",
-            description: "Replayed from the current child document",
-            frameId: "frame-child",
-          },
-        ],
-      });
-    }
-    if (options.webMcpChildNavigatesAllowed === true)
-      event(socket, "Page.frameNavigated", command.sessionId, {
-        frame: {
-          id: "frame-child",
-          parentId: "frame-main",
-          loaderId: "loader-child-replacement",
-          url: `http://127.0.0.1:${String(port)}/child-replacement`,
-        },
-      });
   }
+  if (options.webMcpChildTransientBlank === true)
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-child",
+        parentId: "frame-main",
+        loaderId: "loader-transient",
+        url: "about:blank",
+      },
+    });
+  if (options.webMcpChildRecoversAfterTransient === true) {
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-child",
+        parentId: "frame-main",
+        loaderId: "loader-child-recovered",
+        url: `http://127.0.0.1:${String(port)}/child-recovered`,
+      },
+    });
+    event(socket, "WebMCP.toolsAdded", command.sessionId, {
+      tools: [
+        {
+          name: "child_tool",
+          description: "Replayed from the current child document",
+          frameId: "frame-child",
+        },
+      ],
+    });
+  }
+  if (options.webMcpChildNavigatesAllowed === true)
+    event(socket, "Page.frameNavigated", command.sessionId, {
+      frame: {
+        id: "frame-child",
+        parentId: "frame-main",
+        loaderId: "loader-child-replacement",
+        url: `http://127.0.0.1:${String(port)}/child-replacement`,
+      },
+    });
 };
 
 const emitSameUrlWebMcpRegistrations = (
@@ -248,13 +276,21 @@ const emitSessionTimeline = (
       loaderId: "loader-redirect",
       request: { url: redirectUrl, method: "GET" },
       initiator: { type: "other" },
-      redirectResponse: { status: 302 },
+      redirectResponse: { url: allowed, status: 302 },
       timestamp: 13,
+    });
+    event(socket, "Network.requestWillBeSent", command.sessionId, {
+      requestId: "failed-request",
+      type: "Document",
+      frameId: "frame-main",
+      loaderId: "loader-reload",
+      request: { url: allowed, method: "GET" },
+      initiator: { type: "other" },
+      timestamp: 13.5,
     });
     event(socket, "Network.loadingFailed", command.sessionId, {
       requestId: "failed-request",
-      frameId: "frame-main",
-      loaderId: "loader-reload",
+      type: "Document",
       errorText: "net::ERR_CONNECTION_REFUSED",
       timestamp: 14,
     });
@@ -280,6 +316,8 @@ const emitSessionTimeline = (
         sessionId: command.sessionId,
         targetId: "allowed-page",
       });
+    if (options.sessionTimeline === "target_crashed")
+      event(socket, "Inspector.targetCrashed", command.sessionId, {});
   }
 };
 
@@ -643,6 +681,9 @@ const emitRuntimeEvents = (
               description: "object-secret",
             },
           ]
+        : []),
+      ...(options.nullConsoleArgument === true
+        ? [{ type: "object", subtype: "null", value: null }]
         : []),
     ],
     stackTrace: {

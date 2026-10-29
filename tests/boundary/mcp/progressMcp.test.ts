@@ -2,9 +2,13 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import {
+  createAnalysisExecution,
+  type AnalysisOperationPort,
+} from "../../../src/application/AnalysisProvider.js";
+import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 
@@ -55,6 +59,46 @@ describe("ordinary MCP progress and cancellation", () => {
           progress[index - 1]?.progress ?? 0,
         );
         expect(update.total).toBeUndefined();
+      });
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+    }
+  });
+
+  it("keeps analyze_function progress strictly increasing from start to completion", async () => {
+    const analysis: AnalysisOperationPort = {
+      execute: (operation) =>
+        Promise.resolve(
+          ok(
+            createAnalysisExecution(
+              operation === "analyze_function"
+                ? FUNCTION_COMPARISON_EXAMPLE.left.normalized_result
+                : "0x1000",
+              { id: "fixture", name: "Fixture", version: "1" },
+            ),
+          ),
+        ),
+    };
+    const server = createServer({ kind: "fixed", analysis });
+    const client = new Client({ name: "function-progress-test", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const progress: number[] = [];
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool(
+        {
+          name: "analyze_function",
+          arguments: { procedure: "main", detail: "complete" },
+        },
+        { onprogress: (update) => progress.push(update.progress) },
+      );
+
+      expect(result.isError).not.toBe(true);
+      expect(progress.length).toBeGreaterThanOrEqual(2);
+      progress.forEach((value, index) => {
+        expect(value).toBeGreaterThan(progress[index - 1] ?? 0);
       });
     } finally {
       await Promise.allSettled([client.close(), server.close()]);

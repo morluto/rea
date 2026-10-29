@@ -10,17 +10,17 @@ export const nativeMetadataRecoverySchema = z.strictObject({
   source: z.enum(["analysis-database", "read-only-derived-overlay"]).optional(),
   status: z.enum(["complete", "partial"]),
   header_address: address,
-  format_major: z.number().int().nonnegative(),
-  format_minor: z.number().int().nonnegative(),
+  format_major: z.int().nonnegative(),
+  format_minor: z.int().nonnegative(),
   method_table_address: address,
   name_origin: z.enum(["generated", "inferred"]),
   original_name: z.null(),
-  base_size_bytes: z.number().int().nonnegative(),
+  base_size_bytes: z.int().nonnegative(),
   related_type: relatedType.nullable(),
   interfaces: z.array(relatedType),
   virtual_slots: z.array(
     z.strictObject({
-      slot: z.number().int().nonnegative(),
+      slot: z.int().nonnegative(),
       slot_address: address,
       target_address: address.nullable(),
       procedure_name: z.string().nullable(),
@@ -30,15 +30,15 @@ export const nativeMetadataRecoverySchema = z.strictObject({
   derived_memory: z
     .strictObject({
       address,
-      size_bytes: z.number().int().nonnegative(),
+      size_bytes: z.int().nonnegative(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
       file_offset: z.null(),
     })
     .nullable(),
   truncated: z.boolean().optional(),
-  virtual_slots_omitted: z.number().int().nonnegative().optional(),
-  interfaces_omitted: z.number().int().nonnegative().optional(),
-  output_budget_bytes: z.number().int().nonnegative().optional(),
+  virtual_slots_omitted: z.int().nonnegative().optional(),
+  interfaces_omitted: z.int().nonnegative().optional(),
+  output_budget_bytes: z.int().nonnegative().optional(),
   diagnostics: z.array(z.string()),
   limitations: z.array(z.string()),
 });
@@ -55,21 +55,21 @@ export const nativeMetadataRecoverySummarySchema = z.strictObject({
   analysis_artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
   header_address: address.nullable(),
   discovery: z.enum(["symbol", "signature-heuristic"]).nullable(),
-  format_major: z.number().int().nonnegative().nullable(),
-  format_minor: z.number().int().nonnegative().nullable(),
-  method_tables: z.number().int().nonnegative(),
+  format_major: z.int().nonnegative().nullable(),
+  format_minor: z.int().nonnegative().nullable(),
+  method_tables: z.int().nonnegative(),
   types: z.array(relatedType),
   frozen_strings: z
     .array(z.strictObject({ address, value: z.string() }))
     .optional(),
   truncated: z.boolean().optional(),
-  types_omitted: z.number().int().nonnegative().optional(),
-  frozen_strings_omitted: z.number().int().nonnegative().optional(),
-  output_budget_bytes: z.number().int().nonnegative().optional(),
+  types_omitted: z.int().nonnegative().optional(),
+  frozen_strings_omitted: z.int().nonnegative().optional(),
+  output_budget_bytes: z.int().nonnegative().optional(),
   derived_overlay: z
     .strictObject({
       address,
-      size_bytes: z.number().int().nonnegative(),
+      size_bytes: z.int().nonnegative(),
       sha256: z.string().regex(/^[a-f0-9]{64}$/u),
     })
     .nullable()
@@ -77,43 +77,27 @@ export const nativeMetadataRecoverySummarySchema = z.strictObject({
   derived_memory: nativeMetadataRecoverySchema.shape.derived_memory,
   coverage: z
     .strictObject({
-      frozen_object_candidates: z.number().int().nonnegative().optional(),
-      frozen_objects_annotated: z.number().int().nonnegative().optional(),
-      pointer_candidates_examined: z.number().int().nonnegative().optional(),
-      pointer_slots_examined: z.number().int().nonnegative().optional(),
-      scan_bytes_examined: z.number().int().nonnegative().optional(),
-      scan_bytes_omitted: z.number().int().nonnegative().optional(),
-      rtr_signature_scan_bytes_examined: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional(),
-      rtr_signature_scan_bytes_omitted: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional(),
-      method_table_validation_items_examined: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional(),
-      work_units_examined: z.number().int().nonnegative().optional(),
-      method_tables_recovered: z.number().int().nonnegative().optional(),
-      frozen_string_candidates: z.number().int().nonnegative().optional(),
-      frozen_scan_bytes_examined: z.number().int().nonnegative().optional(),
-      frozen_scan_bytes_omitted: z.number().int().nonnegative().optional(),
-      frozen_string_data_bytes_examined: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional(),
-      source_bytes_examined: z.number().int().nonnegative().optional(),
-      source_bytes_omitted: z.number().int().nonnegative().optional(),
-      source_byte_budget_bytes: z.number().int().nonnegative().optional(),
-      work_budget_units: z.number().int().nonnegative().optional(),
-      working_memory_budget_bytes: z.number().int().nonnegative().optional(),
-      working_memory_bytes_peak: z.number().int().nonnegative().optional(),
+      frozen_object_candidates: z.int().nonnegative().optional(),
+      frozen_objects_annotated: z.int().nonnegative().optional(),
+      pointer_candidates_examined: z.int().nonnegative().optional(),
+      pointer_slots_examined: z.int().nonnegative().optional(),
+      scan_bytes_examined: z.int().nonnegative().optional(),
+      scan_bytes_omitted: z.int().nonnegative().optional(),
+      rtr_signature_scan_bytes_examined: z.int().nonnegative().optional(),
+      rtr_signature_scan_bytes_omitted: z.int().nonnegative().optional(),
+      method_table_validation_items_examined: z.int().nonnegative().optional(),
+      work_units_examined: z.int().nonnegative().optional(),
+      method_tables_recovered: z.int().nonnegative().optional(),
+      frozen_string_candidates: z.int().nonnegative().optional(),
+      frozen_scan_bytes_examined: z.int().nonnegative().optional(),
+      frozen_scan_bytes_omitted: z.int().nonnegative().optional(),
+      frozen_string_data_bytes_examined: z.int().nonnegative().optional(),
+      source_bytes_examined: z.int().nonnegative().optional(),
+      source_bytes_omitted: z.int().nonnegative().optional(),
+      source_byte_budget_bytes: z.int().nonnegative().optional(),
+      work_budget_units: z.int().nonnegative().optional(),
+      working_memory_budget_bytes: z.int().nonnegative().optional(),
+      working_memory_bytes_peak: z.int().nonnegative().optional(),
       truncation_reason: z
         .enum([
           "source-byte-budget",

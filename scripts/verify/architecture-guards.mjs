@@ -59,6 +59,13 @@ const check = (label, selected, pattern, allow = []) => {
     );
 };
 
+// Prerequisite inspection lifetime is an application contract shared by adapters.
+check(
+  "provider-owned inspection lifetime (use src/application/ProviderInspectionScope)",
+  files,
+  /providers\/ProviderInspectionScope\.js/,
+);
+
 check(
   "src/domain uses localeCompare (use compareUnicodeCodePoints)",
   inDir("src/domain/"),
@@ -89,23 +96,49 @@ check(
   ["src/domain/javascript/javascriptSemanticTraversal.ts"],
 );
 
-// A producer that pins both the soft and hard ceiling of every resource must take
-// the vector from one owner. Audited 2026-10-13 against the other prlimit lanes:
-// src/pcap/PcapNativeBound.ts pairs soft and hard but budgets 300 CPU seconds and
-// has no resident-input ceiling; src/evm/EvmoleInterfaceProvider.ts,
-// src/firmware/FirmwareCommand.ts and src/javascript/recovery/WakaruCommand.ts
-// spell soft-only forms (`--core=0:`, `--core=0`). Those four stay as they are;
-// a new paired producer calls prlimitArgumentVector instead of spelling options.
+// A producer that pins both the soft and hard ceiling of every resource takes
+// the vector from one owner. prlimitCeilingArguments is the command-less prefix
+// of prlimitArgumentVector; both live in src/process/LinuxResourceLimits.ts.
+// Re-audited 2026-10-22 with util-linux 2.39.3: a bare value sets both soft and
+// hard, the same as soft:hard when the numbers are equal. `soft:` leaves the
+// inherited hard ceiling unchanged.
+// FirmwareCommand and WakaruCommand call prlimitArgumentVector and keep their
+// own file-size and CPU budgets (120 CPU seconds; firmware file size is the
+// call output budget or the 8 MiB report allowance; Wakaru file size is the
+// 128 MiB output allowance). Their 1 GiB address space is
+// BOUNDED_PRODUCER_LIMITS.address_space_bytes. PcapNativeBound calls
+// prlimitCeilingArguments because PcapCommand appends the producer command.
+// Its CPU ceiling stays 300 seconds and it has no resident-input budget;
+// address space and file size use those shared fields.
+// selectEvmWorkerLimits stays a separate selector: Result failures, unit
+// checks, and a refusal when soft exceeds hard. It must not call
+// clampLinuxResourceLimits.
 check(
   "inline paired prlimit ceilings (use prlimitArgumentVector from src/process/LinuxResourceLimits)",
   files,
   /--core=0:0/,
-  ["src/process/LinuxResourceLimits.ts", "src/pcap/PcapNativeBound.ts"],
+  ["src/process/LinuxResourceLimits.ts"],
 );
 
-// Census is spelling-shaped, like the rules above: a lane that expresses the same
-// ceilings differently (`1024 ** 3`, camelCase fields) is not caught here, which is
-// why the four lanes above are listed rather than left to a future reader.
+check(
+  "bare prlimit value (a bare value sets both ceilings; use prlimitArgumentVector)",
+  files,
+  /--core=0(?!:)/,
+);
+
+// 2026-10-22: soft-only `resource:` options retain the inherited hard ceiling.
+// EVMole budgets differ (3 GiB address space, 16 MiB file, 30 CPU seconds), so
+// this lane must not call prlimitArgumentVector.
+check(
+  "soft-only prlimit ceilings (paired producers use prlimitArgumentVector)",
+  files,
+  /--core=0:(?!0)/,
+  ["src/evm/EvmoleInterfaceProvider.ts"],
+);
+
+// Resident input is the input_bytes field of BOUNDED_PRODUCER_LIMITS. CamelCase
+// inputBytes values with a different policy (an overridable pwntools admission,
+// historical capture intake) are not this budget.
 check(
   "inline resident-input budget (use BOUNDED_PRODUCER_LIMITS from src/process/LinuxResourceLimits)",
   files,

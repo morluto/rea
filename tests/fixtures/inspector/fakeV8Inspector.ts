@@ -10,7 +10,7 @@ interface InspectorCommand {
 
 interface FakeV8InspectorOptions {
   readonly targetUrl: string;
-  readonly attached?: boolean | null;
+  readonly attached?: unknown;
   readonly targetType?: "node" | "page";
   readonly runtimeProduct?: string;
   readonly scriptUrls?: readonly string[];
@@ -28,6 +28,7 @@ interface FakeV8InspectorOptions {
   readonly additionalTargetUrl?: string;
   readonly additionalTargetCount?: number;
   readonly closeOnMethod?: string;
+  readonly hangOnMethod?: string;
 }
 
 export interface FakeV8Inspector {
@@ -147,8 +148,9 @@ const registerInspectorSocket = (
       socket.close();
       return;
     }
-    socket.send(JSON.stringify({ id: command.id, result: {} }));
+    if (options.hangOnMethod === command.method) return;
     respondToInspectorCommand(socket, command, options);
+    socket.send(JSON.stringify({ id: command.id, result: {} }));
   });
 };
 
@@ -225,7 +227,7 @@ const target = (
   options: {
     readonly type: "node" | "page";
     readonly port: number;
-    readonly attached: boolean | null | undefined;
+    readonly attached: unknown;
   },
 ) => ({
   id,

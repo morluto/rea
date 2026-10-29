@@ -20,7 +20,7 @@ export const parseUtf8Json = (
   operation: string,
   path: string,
   boundary = "json-input",
-): SafeJsonParseResult => {
+): SafeJsonParseResult & { readonly userMessage?: string } => {
   const stringLimitFailure = (
     cause?: unknown,
     decodedUnits?: number,
@@ -81,10 +81,16 @@ export const parseUtf8Json = (
     return {
       ok: false,
       error: "JSON input is not valid UTF-8",
+      userMessage: "JSON input is not valid UTF-8",
       cause,
     };
   }
   if (text.startsWith("\uFEFF"))
-    return { ok: false, error: JSON_BYTE_ORDER_MARK_MESSAGE, cause: undefined };
+    return {
+      ok: false,
+      error: JSON_BYTE_ORDER_MARK_MESSAGE,
+      cause: undefined,
+      userMessage: JSON_BYTE_ORDER_MARK_MESSAGE,
+    };
   return safeParseJson(text);
 };

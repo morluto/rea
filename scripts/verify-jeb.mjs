@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { JebAnalysisService } from "../dist/application/jeb/JebAnalysisService.js";
 import { createJebAnalysisProvider } from "../dist/composition/jeb.js";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 const run = promisify(execFile);
 
@@ -25,74 +26,83 @@ if (options.help) {
 
 const provider = createJebAnalysisProvider(process.env);
 const service = new JebAnalysisService(provider);
-const fixtureDirectory = await mkdtemp(join(tmpdir(), "rea-jeb-"));
+let fixtureDirectory;
 try {
-  const client = await service.execute("inspect_jeb_client", {});
-  if (!client.ok) throw new Error(client.error.message);
-  const engine = client.value.normalized_result.engine;
-  if (engine.version === null)
-    throw new Error("The JEB client did not report its version");
+  const report = await withVerifierCleanup(async () => {
+    fixtureDirectory = await mkdtemp(join(tmpdir(), "rea-jeb-"));
+    const client = await service.execute("inspect_jeb_client", {});
+    if (!client.ok) throw new Error(client.error.message);
+    const engine = client.value.normalized_result.engine;
+    if (engine.version === null)
+      throw new Error("The JEB client did not report its version");
 
-  // JEB 5.48 headless clients do not advertise open_project; a project opened
-  // at engine start is the supported target-selection route there. Attempt the
-  // tool and record the engine's exact refusal when it is unavailable.
-  let openRefusal = null;
-  const target = await resolveTarget(options, fixtureDirectory);
-  const opened = await service.execute("open_jeb_project", {
-    path: target.path,
-  });
-  if (opened.ok) {
-    const artifact = opened.value.normalized_result.input_files.find(
-      (file) => typeof file === "object" && file !== null,
-    );
-    if (
-      artifact === undefined ||
-      !/^[0-9a-f]{64}$/u.test(artifact.contents_sha256_hash)
-    )
-      throw new Error("The engine did not report an input artifact digest");
-  } else {
-    openRefusal = opened.error.message;
-  }
+    // JEB 5.48 headless clients do not advertise open_project; a project opened
+    // at engine start is the supported target-selection route there. Attempt the
+    // tool and record the engine's exact refusal when it is unavailable.
+    let openRefusal = null;
+    const target = await resolveTarget(options, fixtureDirectory);
+    const opened = await service.execute("open_jeb_project", {
+      path: target.path,
+    });
+    if (opened.ok) {
+      const artifact = opened.value.normalized_result.input_files.find(
+        (file) => typeof file === "object" && file !== null,
+      );
+      if (
+        artifact === undefined ||
+        !/^[0-9a-f]{64}$/u.test(artifact.contents_sha256_hash)
+      )
+        throw new Error("The engine did not report an input artifact digest");
+    } else {
+      openRefusal = opened.error.message;
+    }
 
-  const units = await service.execute("list_jeb_units", { count: 100 });
-  if (!units.ok) throw new Error(units.error.message);
-  if (units.value.normalized_result.units.length === 0)
-    throw new Error("The engine reported no project units");
+    const units = await service.execute("list_jeb_units", { count: 100 });
+    if (!units.ok) throw new Error(units.error.message);
+    if (units.value.normalized_result.units.length === 0)
+      throw new Error("The engine reported no project units");
 
-  const decompiled = await service.execute("decompile_jeb_item", {
-    item_address: target.itemAddress,
-    item_kind: "method",
-  });
-  if (!decompiled.ok) throw new Error(decompiled.error.message);
-  const text = decompiled.value.normalized_result.text;
-  if (!text.includes(target.marker))
-    throw new Error(
-      "Decompiled pseudo-code did not contain the fixture marker",
-    );
+    const decompiled = await service.execute("decompile_jeb_item", {
+      item_address: target.itemAddress,
+      item_kind: "method",
+    });
+    if (!decompiled.ok) throw new Error(decompiled.error.message);
+    const text = decompiled.value.normalized_result.text;
+    if (!text.includes(target.marker))
+      throw new Error(
+        "Decompiled pseudo-code did not contain the fixture marker",
+      );
 
-  const report = {
-    ok: true,
-    provider: "jeb",
-    host_platform: process.platform,
-    engine_version: engine.version,
-    engine_gui: engine.gui_client,
-    endpoint: engine.endpoint,
-    open_project_observed: openRefusal === null,
-    ...(openRefusal === null ? {} : { open_project_refusal: openRefusal }),
-    unit_count: units.value.normalized_result.units.length,
-    decompiled_marker_observed: true,
-  };
+    return {
+      ok: true,
+      provider: "jeb",
+      host_platform: process.platform,
+      engine_version: engine.version,
+      engine_gui: engine.gui_client,
+      endpoint: engine.endpoint,
+      open_project_observed: openRefusal === null,
+      ...(openRefusal === null ? {} : { open_project_refusal: openRefusal }),
+      unit_count: units.value.normalized_result.units.length,
+      decompiled_marker_observed: true,
+    };
+  }, [
+    async () => {
+      await provider.close();
+      if (fixtureDirectory !== undefined) {
+        await rm(fixtureDirectory, { recursive: true, force: true });
+        fixtureDirectory = undefined;
+      }
+    },
+  ]);
   process.stdout.write(`${JSON.stringify(report)}\n`);
 } catch (cause) {
+  if (fixtureDirectory !== undefined)
+    process.stderr.write(`JEB fixture retained at ${fixtureDirectory}\n`);
+  const causes = cause instanceof AggregateError ? cause.errors : [cause];
   process.stderr.write(
-    `JEB real-provider verification failed: ${cause instanceof Error ? cause.message : String(cause)}\n`,
+    `JEB real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
   );
   process.exitCode = 1;
-} finally {
-  await provider.close().catch(() => undefined);
-  await rm(fixtureDirectory, { recursive: true, force: true }).catch(
-    () => undefined,
-  );
 }
 
 async function resolveTarget(selected, directory) {

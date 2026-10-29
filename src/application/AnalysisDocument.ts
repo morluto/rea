@@ -1,11 +1,15 @@
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import { permitsCapabilityFallback } from "./CapabilityFallback.js";
+import type {
+  AnalysisExecution,
+  AnalysisOperationPort,
+} from "./AnalysisProvider.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   AnalysisCancelledError,
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { parseDocuments } from "../domain/hopperValues.js";
+import { parseDocuments } from "../domain/native/nativeDocument.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 const executionOptions = (signal: AbortSignal | undefined) =>
@@ -19,15 +23,22 @@ export const resolveAnalysisDocument = async (
 ): Promise<Result<string, AnalysisError>> => {
   if (document !== undefined) return ok(document);
   if (signal?.aborted === true)
-    return err(new AnalysisCancelledError("current_document"));
+    return err(
+      new AnalysisCancelledError("current_document", { cause: signal.reason }),
+    );
   const current = await analysis.execute(
     "current_document",
     {},
     executionOptions(signal),
   );
   if (!current.ok) {
-    if (!(current.error instanceof AnalysisCapabilityUnavailableError))
-      return current;
+    if (!permitsCapabilityFallback(current.error)) return current;
+    if (signal?.aborted)
+      return err(
+        new AnalysisCancelledError("current_document", {
+          cause: signal.reason,
+        }),
+      );
     const listed = await analysis.execute(
       "list_documents",
       {},
@@ -58,15 +69,47 @@ export const resolveAnalysisDocument = async (
           "provider returned no document identity",
         ),
       );
-    return ok(documentName);
+    return completeSelection(
+      documentName,
+      "list_documents",
+      listed.value,
+      signal,
+    );
   }
   return typeof current.value.result === "string" &&
     current.value.result.length > 0
-    ? ok(current.value.result)
+    ? completeSelection(
+        current.value.result,
+        "current_document",
+        current.value,
+        signal,
+      )
     : err(
         new AnalysisOutputError(
           "current_document",
           "expected a nonempty document identity string",
         ),
       );
+};
+
+/** Preserve the completed provider observation after validating document identity. */
+const completeSelection = (
+  document: string,
+  operation: "current_document" | "list_documents",
+  execution: AnalysisExecution,
+  signal: AbortSignal | undefined,
+): Result<string, AnalysisError> => {
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError(operation, {
+        cause: signal.reason,
+        partialObservation: createAnalysisExecutionEvidence(
+          operation,
+          {},
+          execution,
+          "observed",
+        ),
+      }),
+    );
+  return ok(document);
 };

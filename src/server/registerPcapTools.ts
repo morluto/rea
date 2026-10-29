@@ -6,19 +6,13 @@ import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import type { Logger } from "pino";
 import {
   createContractToolHandler,
-  createEvidenceToolHandler,
+  createRetainedSummaryToolHandler,
 } from "./contractToolHandler.js";
 import {
   toolRegistrationOptions,
-  applicationValidatedInputSchema,
+  applicationToolRegistrationOptions,
 } from "./toolRegistrationOptions.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
-import {
-  requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
-} from "../application/analysisView/AnalysisViewService.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { err } from "../domain/result.js";
 
 /** Bind pcap handlers to their exact named contracts through admission. */
 export const registerPcapTools = (
@@ -43,41 +37,17 @@ export const registerPcapTools = (
     handler(clientContract),
   );
   const contract = toolContract("inspect_pcap_capture");
-  const registration = toolRegistrationOptions(contract);
-  const capture = createEvidenceToolHandler(
+  const capture = createRetainedSummaryToolHandler(
     server,
-    async (rawInput, options) => {
-      const parsed = contract.inputSchema.safeParse(rawInput);
-      if (!parsed.success)
-        return err(
-          analysisInputErrorFromIssues(
-            contract.name,
-            parsed.error.issues,
-            rawInput,
-            { cause: parsed.error },
-          ),
-        );
-      const { detail, ...input } = parsed.data;
-      const retention = { recordEvidence, evidenceById };
-      if (detail === "summary") {
-        const ready = requireAnalysisViewRetention(contract.name, retention);
-        if (!ready.ok) return ready;
-      }
-      const result = await service.execute(contract.name, input, options);
-      return detail === "summary" && result.ok
-        ? summarizeRetainedAnalysis(result.value, retention)
-        : result;
-    },
+    contract,
+    (input, options) => service.execute(contract.name, input, options),
     logger,
-    recordEvidence,
+    { recordEvidence, evidenceById },
     withAdmittedAnalysis,
   );
   server.registerTool(
     contract.name,
-    {
-      ...registration,
-      inputSchema: applicationValidatedInputSchema(registration.inputSchema),
-    },
-    capture(contract),
+    applicationToolRegistrationOptions(contract),
+    capture,
   );
 };

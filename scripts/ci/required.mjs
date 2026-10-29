@@ -29,8 +29,14 @@ if (
 if (outputs.tier === "full" && selectedScopes.length !== CI_FLAGS.length)
   throw new Error("Full qualification requires every canonical CI scope");
 const required = reused ? ["changes"] : ["changes", "static", "test"];
+if (outputs.tier === "full") required.push("static-deep");
 const lanes = {
-  code: ["build", "test-shard"],
+  code: [
+    "build",
+    "test-shard",
+    ...(outputs.tier === "fast" ? ["test-source"] : []),
+  ],
+  reverse_tools: ["reverse-tools-quality"],
   runtime: ["windows-native-build", "package-e2e"],
   package: ["windows-curated"],
   sqlite: ["sqlite-runtime"],

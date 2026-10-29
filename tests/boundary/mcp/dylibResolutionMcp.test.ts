@@ -1,4 +1,5 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -246,6 +247,152 @@ it("traces a standalone Mach-O file whose name ends in .app", async () => {
     ]);
   });
 });
+
+/** Trace `app` in `analyzed/`, next to a Mach-O dylib in `outside/`. */
+const traceBesideOutside = async (
+  commands: readonly Uint8Array[],
+  prepare: (analyzed: string) => Promise<void> = async () => {},
+): Promise<{
+  readonly trace: z.infer<typeof dylibResolutionResultSchema>;
+  readonly outsideSha256: string;
+}> => {
+  const parent = await createTestTempDirectory("rea-dylib-mcp-contained-");
+  const analyzed = join(parent, "analyzed");
+  await mkdir(analyzed);
+  await mkdir(join(parent, "outside"));
+  const outside = machoImage({
+    fileType: FILE_TYPE.dylib,
+    commands: [
+      buildVersionCommand(1),
+      dylibCommand(LC.ID_DYLIB, "/outside/secret.dylib"),
+    ],
+  });
+  await writeFile(join(parent, "outside/secret.dylib"), outside);
+  await writeFile(
+    join(analyzed, "app"),
+    machoImage({ commands: [buildVersionCommand(1), ...commands] }),
+  );
+  await prepare(analyzed);
+  let trace: z.infer<typeof dylibResolutionResultSchema> | undefined;
+  await withClient(async (client) => {
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: join(analyzed, "app") },
+    });
+    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
+    const called = await client.callTool({
+      name: "trace_dylib_resolution",
+      arguments: {},
+    });
+    expect(called.isError, JSON.stringify(called.structuredContent)).not.toBe(
+      true,
+    );
+    trace = dylibResolutionResultSchema.parse(
+      structuredResult(called.structuredContent),
+    );
+  });
+  if (trace === undefined) throw new Error("trace_dylib_resolution not called");
+  return {
+    trace,
+    outsideSha256: createHash("sha256").update(outside).digest("hex"),
+  };
+};
+
+// Windows reads `\` as a separator, but a dyld component is a POSIX name.
+it.runIf(process.platform === "win32")(
+  "does not read outside the root through backslashes in Windows dyld names",
+  async () => {
+    const { trace, outsideSha256 } = await traceBesideOutside([
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/..\\outside\\secret.dylib"),
+      rpathCommand("@loader_path/..\\outside"),
+      dylibCommand(LC.LOAD_DYLIB, "@rpath/secret.dylib"),
+    ]);
+    expect(trace.edges.map(({ candidates }) => candidates)).toEqual([
+      [
+        expect.objectContaining({
+          path: "..\\outside\\secret.dylib",
+          outcome: "absent",
+          resolved_path: null,
+        }),
+      ],
+      [
+        expect.objectContaining({
+          path: "..\\outside/secret.dylib",
+          source: "rpath",
+          outcome: "absent",
+          resolved_path: null,
+        }),
+      ],
+    ]);
+    expect(trace.images.map(({ path }) => path)).toEqual(["app"]);
+    expect(JSON.stringify(trace)).not.toContain(outsideSha256);
+  },
+);
+
+it("follows relative symlinks only while they stay inside the root", async () => {
+  const { trace, outsideSha256 } = await traceBesideOutside(
+    [
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/link/secret.dylib"),
+      dylibCommand(LC.LOAD_DYLIB, "@loader_path/sub/lib/libinner.dylib"),
+    ],
+    // Windows stores these relative link texts as `..\outside` and `..\lib`.
+    async (analyzed) => {
+      await symlink("../outside", join(analyzed, "link"), "dir");
+      await mkdir(join(analyzed, "lib"));
+      await mkdir(join(analyzed, "sub"));
+      await symlink("../lib", join(analyzed, "sub/lib"), "dir");
+      await writeFile(
+        join(analyzed, "lib/libinner.dylib"),
+        machoImage({
+          fileType: FILE_TYPE.dylib,
+          commands: [buildVersionCommand(1)],
+        }),
+      );
+    },
+  );
+  expect(trace.edges.map(({ candidates }) => candidates)).toEqual([
+    [
+      expect.objectContaining({
+        path: "link/secret.dylib",
+        outcome: "escapes-target",
+        resolved_path: null,
+      }),
+    ],
+    [
+      expect.objectContaining({
+        path: "sub/lib/libinner.dylib",
+        outcome: "resolved",
+        resolved_path: "lib/libinner.dylib",
+      }),
+    ],
+  ]);
+  expect(trace.images.map(({ path }) => path)).toEqual([
+    "app",
+    "lib/libinner.dylib",
+  ]);
+  expect(JSON.stringify(trace)).not.toContain(outsideSha256);
+});
+
+it.skipIf(process.platform === "win32")(
+  "resolves a POSIX file name that contains backslashes",
+  async () => {
+    const { trace } = await traceBesideOutside(
+      [dylibCommand(LC.LOAD_DYLIB, "@loader_path/..\\outside\\secret.dylib")],
+      (analyzed) =>
+        writeFile(
+          join(analyzed, "..\\outside\\secret.dylib"),
+          machoImage({
+            fileType: FILE_TYPE.dylib,
+            commands: [buildVersionCommand(1)],
+          }),
+        ),
+    );
+    expect(trace.edges[0]?.resolution).toEqual({
+      status: "resolved",
+      image: "..\\outside\\secret.dylib",
+    });
+  },
+);
 
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "keeps a permission denied while canonicalizing the opened bundle",

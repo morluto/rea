@@ -7,6 +7,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
 
 it.each(["inspect_packet_capture", "inspect_packet_fields"])(
   "advertises valid target-free schemas and missing-tool diagnostics: %s",
@@ -122,9 +123,7 @@ it.each(["cancelled", "cleanup"])(
       arguments: {},
     });
     expect(bundle.isError).not.toBe(true);
-    expect(JSON.stringify(bundle.structuredContent)).toContain(
-      evidence.evidence_id,
-    );
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
     expect(harness.session.evidenceById(evidence.evidence_id)).toEqual(
       evidence,
     );

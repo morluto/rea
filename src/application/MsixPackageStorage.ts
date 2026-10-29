@@ -30,8 +30,8 @@ export const windowsAppDataRoots = (
   home: string,
   env: Readonly<NodeJS.ProcessEnv>,
 ): { readonly roaming: string; readonly local: string } => ({
-  roaming: env.APPDATA?.trim() || join(home, "AppData", "Roaming"),
-  local: env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
+  roaming: env.APPDATA || join(home, "AppData", "Roaming"),
+  local: env.LOCALAPPDATA || join(home, "AppData", "Local"),
 });
 
 /** The per-user root of MSIX package data containers. */
@@ -165,6 +165,14 @@ export const redirectedWriteBlocker = (
   return `This process was started by MSIX package ${view.packageFamilyName}, which redirects its writes under ${view.virtualizedRoots.join(" and ")} into the package's private storage. Changes to ${redirected.join(", ")} would not reach the files other apps read. Rerun ${operation} from a terminal that this app did not start.`;
 };
 
+/** An unavailable read-target observation does not establish a target change. */
+interface MsixReadTargetInspectionFailure {
+  readonly _tag: "MsixReadTargetInspectionFailure";
+  readonly path: string;
+  readonly detail: string;
+  readonly cause: unknown;
+}
+
 /**
  * Whether the package began reading its private copy after the AppData file
  * was chosen, for example by saving its settings when it quit.
@@ -172,16 +180,23 @@ export const redirectedWriteBlocker = (
 export const packageReadTargetChanged = async (
   view: MsixPackageView,
   configPath: string,
-): Promise<boolean> => {
-  if (configPath !== view.appDataConfigPath) return false;
+): Promise<Result<boolean, MsixReadTargetInspectionFailure>> => {
+  if (configPath !== view.appDataConfigPath) return ok(false);
   try {
     await lstat(view.privateConfigPath);
-    return true;
+    return ok(true);
   } catch (cause: unknown) {
-    return !(
+    if (
       cause instanceof Error &&
       "code" in cause &&
       (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-    );
+    )
+      return ok(false);
+    return err({
+      _tag: "MsixReadTargetInspectionFailure",
+      path: view.privateConfigPath,
+      detail: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
   }
 };

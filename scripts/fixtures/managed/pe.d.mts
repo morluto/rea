@@ -3,6 +3,8 @@ export interface ManagedPeFixtureMethod {
   readonly flags?: number;
   readonly implFlags?: number;
   readonly name: string;
+  /** An explicit metadata RVA; zero represents a method without an IL body. */
+  readonly rva?: number;
 }
 
 export interface ManagedPeFixtureOptions {
@@ -19,6 +21,7 @@ export interface ManagedPeFixtureOptions {
   readonly pinvoke?: {
     readonly importName?: string;
     readonly mappingFlags?: number;
+    readonly memberRow?: number;
     readonly moduleName?: string;
   };
   readonly readyToRun?: boolean;

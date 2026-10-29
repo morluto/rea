@@ -25,8 +25,13 @@ const resultSchema = z.object({
   ),
 });
 
-it("preserves advertised schemas and handler meaning when presentation order changes", async () => {
+it("preserves full advertised schemas and handler meaning when presentation order changes", async () => {
   const { stdout } = await execute(process.execPath, [fixture, "reversed"], {
+    env: {
+      ...process.env,
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
     timeout: 20_000,
     maxBuffer: 16 * 1024 * 1024,
   });

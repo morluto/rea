@@ -36,14 +36,8 @@ const requestedLayers = [
   ...options.cache.map((path) => ({ role: "cache", path })),
   ...options.assets.map((path) => ({ role: "assets", path })),
 ];
-const canonicalLayers = await Promise.all(
-  requestedLayers.map(async (layer) => ({
-    ...layer,
-    path: await realpath(layer.path),
-  })),
-);
 const staticLayers = [];
-for (const layer of canonicalLayers) {
+for (const layer of requestedLayers) {
   const analyzed = await analyzeJavaScriptApplicationWithOwnedScope({
     input_path: layer.path,
     format: "auto",

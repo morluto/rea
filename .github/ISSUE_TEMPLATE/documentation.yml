@@ -5,6 +5,13 @@ labels:
   - documentation
   - triage
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Report one documentation problem with the exact location and the smallest
+        useful supporting passage, example, or result. Keep answers concise.
+        If something is unknown, write `NOT_ENOUGH_INFO` and explain what is missing.
+
   - type: checkboxes
     id: before-submitting
     attributes:
@@ -28,7 +35,7 @@ body:
     id: problem
     attributes:
       label: Problem
-      description: What is unclear, missing, outdated, or incorrect, and who is affected?
+      description: Quote or describe the current content, explain what is unclear, missing, outdated, or incorrect, and say how to observe the problem. State who is affected when known.
     validations:
       required: true
 
@@ -36,7 +43,7 @@ body:
     id: expected-content
     attributes:
       label: Expected content
-      description: Describe the accurate behavior or example that should be documented.
+      description: Describe the accurate behavior or example that should be documented, with a reference when available. Label a proposed clarification or unknown behavior clearly.
     validations:
       required: true
 
@@ -44,7 +51,9 @@ body:
     id: evidence
     attributes:
       label: Supporting evidence
-      description: Add source, command output, provider documentation, or a link that supports the correction.
+      description: Include an exact passage, source reference, command output, provider documentation, or screenshot supporting the report. For missing or unclear guidance, point to the relevant section and explain the gap. If evidence is unavailable, write NOT_ENOUGH_INFO and explain what is missing.
+    validations:
+      required: true
 
   - type: textarea
     id: additional-context

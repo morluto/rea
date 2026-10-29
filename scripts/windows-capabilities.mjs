@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { probeWindowsCapabilities } from "../dist/application/WindowsCapabilities.js";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+const { probeWindowsCapabilities } = await importVerifierSource(
+  new URL("./lib/windows-capabilities.mts", import.meta.url).href,
+  import.meta.url,
+);
 
 const report = await probeWindowsCapabilities();
 await new Promise((resolveOutput) =>

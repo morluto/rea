@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -18,7 +19,9 @@ describe("managed direct-analysis path boundary", () => {
     await writeFile(path, buildManagedPeFixture());
 
     const evidence = parseEvidence(
-      await runProviderAnalysis(path, "inspect_managed_artifact", {}),
+      await runProviderAnalysis(path, "inspect_managed_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(evidence).toMatchObject({
       operation: "inspect_managed_artifact",
@@ -31,7 +34,9 @@ describe("managed direct-analysis path boundary", () => {
     });
 
     const memberEvidence = parseEvidence(
-      await runProviderAnalysis(path, "inspect_managed_members", {}),
+      await runProviderAnalysis(path, "inspect_managed_members", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     expect(memberEvidence).toMatchObject({
       operation: "inspect_managed_members",
@@ -44,7 +49,11 @@ describe("managed direct-analysis path boundary", () => {
     });
 
     const boundaryEvidence = parseEvidence(
-      await runProviderAnalysis(path, "inspect_managed_native_boundaries", {}),
+      await runProviderAnalysis(
+        path,
+        "inspect_managed_native_boundaries",
+        {},
+      ).then(projectCliAnalysisResult),
     );
     expect(boundaryEvidence).toMatchObject({
       operation: "inspect_managed_native_boundaries",

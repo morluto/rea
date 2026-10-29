@@ -24,6 +24,21 @@ import { SafeOutputTreeCreationFailure } from "../../../src/artifacts/SafeOutput
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 
 describe("safe artifact output cleanup", () => {
+  it("adopts an empty caller directory without taking authority to remove it", async () => {
+    const parent = await createTestTempDirectory("rea-admitted-output-");
+    const output = join(parent, "output");
+    await mkdir(output);
+    const tree = await SafeOutputTree.create(output, process.platform, {
+      acceptExistingEmpty: true,
+    });
+    await tree.write("file", Readable.from([Buffer.from("owned")]), {
+      bytes: 5,
+      sha256: createHash("sha256").update("owned").digest("hex"),
+    });
+    await tree.rollback();
+    expect(await readdir(output)).toEqual([]);
+    await tree.closeHandles();
+  });
   it.skipIf(process.platform !== "linux")(
     "closes the parent descriptor when the output disappears before commit",
     async () => {

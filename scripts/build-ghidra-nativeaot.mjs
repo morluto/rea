@@ -157,7 +157,7 @@ function propertyValue(content, name) {
   return null;
 }
 
-/** Same 12.1 line as GhidraInstallationPolicy, including a distro suffix. */
+/** Release line supported by the separately pinned NativeAOT integration. */
 function ghidraReleaseLineAccepted(raw) {
   const match = /^(\d+)\.(\d+)(?:\.(\d+))?([-+].*)?$/u.exec(raw ?? "");
   return match !== null && Number(match[1]) === 12 && Number(match[2]) === 1;

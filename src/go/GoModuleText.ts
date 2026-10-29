@@ -117,25 +117,17 @@ interface ModuleSourceLine {
   readonly terminated: boolean;
 }
 
-function* moduleSourceLines(
-  source: string | Buffer,
-): Generator<ModuleSourceLine> {
+function* moduleSourceLines(source: Buffer): Generator<ModuleSourceLine> {
   let start = 0;
   while (start < source.length) {
-    const newline =
-      typeof source === "string"
-        ? source.indexOf("\n", start)
-        : source.indexOf(10, start);
+    const newline = source.indexOf(10, start);
     const end = newline < 0 ? source.length : newline;
     let line: string | Buffer;
-    if (typeof source === "string") line = source.slice(start, end);
-    else {
-      const bytes = source.subarray(start, end);
-      try {
-        line = utf8.decode(bytes);
-      } catch {
-        line = bytes;
-      }
+    const bytes = source.subarray(start, end);
+    try {
+      line = utf8.decode(bytes);
+    } catch {
+      line = bytes;
     }
     yield { line, terminated: newline >= 0 };
     if (newline < 0) return;
@@ -147,7 +139,8 @@ const modulePrefixes = ["mod\t", "dep\t", "=>\t"].map((prefix) =>
   Buffer.from(prefix),
 );
 
-const parseModuleRecords = (source: string | Buffer): GoModuleMetadata => {
+/** Decode an unframed Go module body while retaining non-UTF-8 line bytes exactly. */
+export const parseGoModuleBytes = (source: Buffer): GoModuleMetadata => {
   let path: string | null = null;
   let main: GoModule | null = null;
   const dependencies: GoModule[] = [];
@@ -216,11 +209,3 @@ const parseModuleRecords = (source: string | Buffer): GoModuleMetadata => {
     complete: unparsed_lines.length + unparsed_line_bytes_base64.length === 0,
   };
 };
-
-/** Decode Go's module records while preserving unsupported/malformed source lines. */
-export const parseGoModuleText = (text: string): GoModuleMetadata =>
-  parseModuleRecords(text);
-
-/** Decode an unframed Go module body while retaining non-UTF-8 line bytes exactly. */
-export const parseGoModuleBytes = (bytes: Buffer): GoModuleMetadata =>
-  parseModuleRecords(bytes);

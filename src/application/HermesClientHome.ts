@@ -1,13 +1,10 @@
 import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { userInfo, type UserInfo } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 
 /** An unresolved Hermes profile must not be configured as the default home. */
 export class HermesClientPathError extends Error {
@@ -31,7 +28,7 @@ const defaultDirectory = (
         env.LOCALAPPDATA?.trim() || join(home, "AppData", "Local"),
         `hermes${suffix}`,
       )
-    : join(home, `.hermes${suffix}`);
+    : appendCallerPath(home, `.hermes${suffix}`, platform);
 };
 const expandedDirectory = (
   home: string,
@@ -59,14 +56,72 @@ const expandedDirectory = (
     expanded.startsWith("~/") ||
     (platform === "win32" && expanded.startsWith("~\\"))
   )
-    return join(home, expanded.slice(2));
-  return resolve(expanded);
+    return absoluteCallerPath(
+      appendCallerPath(home, expanded.slice(2), platform),
+    );
+  if (expanded.startsWith("~")) {
+    // Named POSIX homes come from the account database, not HOME/USERPROFILE.
+    // Only the current account has a portable Node API; unresolved names must
+    // not become writable relative paths in the caller's working directory.
+    if (platform !== "win32") {
+      const separator = expanded.indexOf("/");
+      const username = expanded.slice(1, separator < 0 ? undefined : separator);
+      let account: UserInfo<string>;
+      try {
+        account = userInfo();
+      } catch {
+        throw new HermesClientPathError(
+          override,
+          "Cannot resolve the OS account for this named Hermes home. Set an absolute HERMES_HOME before configuring Hermes.",
+        );
+      }
+      if (account.username === username && isAbsolute(account.homedir))
+        return separator < 0
+          ? account.homedir
+          : absoluteCallerPath(
+              appendCallerPath(account.homedir, expanded.slice(separator + 1)),
+            );
+    }
+    throw new HermesClientPathError(
+      override,
+      "Cannot resolve this named Hermes home. Set an absolute HERMES_HOME before configuring Hermes.",
+    );
+  }
+  // Hermes expands environment/user syntax and then opens the resulting Path;
+  // preserve POSIX symlink/.. traversal when making a relative override absolute.
+  return absoluteCallerPath(expanded);
 };
+// Resolve existing directory aliases even when setup will create the final home.
+// An unreadable path or dangling alias cannot prove root identity.
 const physicalPath = (path: string): string => {
+  let ancestor = absoluteCallerPath(path);
+  const missing: string[] = [];
   try {
-    return realpathSync(path);
+    while (true) {
+      try {
+        return join(realpathSync(ancestor), ...missing);
+      } catch (cause: unknown) {
+        if (
+          !(cause instanceof Error) ||
+          !("code" in cause) ||
+          cause.code !== "ENOENT" ||
+          dirname(ancestor) === ancestor ||
+          basename(ancestor) === ".."
+        )
+          throw cause;
+        // ENOENT may mean a dangling symlink rather than an absent entry. Do
+        // not reclassify such an alias as a literal child of its lexical parent.
+        if (lstatSync(ancestor, { throwIfNoEntry: false })?.isSymbolicLink())
+          throw cause;
+        missing.unshift(basename(ancestor));
+        ancestor = dirname(ancestor);
+      }
+    }
   } catch {
-    return resolve(path);
+    throw new HermesClientPathError(
+      path,
+      "Cannot resolve the Hermes home root. Restore access to this path before configuring Hermes.",
+    );
   }
 };
 const within = (root: string, path: string): boolean => {
@@ -91,14 +146,14 @@ const liveProfile = (path: string): boolean => {
   try {
     if (!statSync(path).isDirectory()) return false;
     try {
-      statSync(join(dirname(path), ".deleted", basename(path)));
+      statSync(appendCallerPath(dirname(path), `.deleted/${basename(path)}`));
       return false;
     } catch {
       /* No tombstone. */
     }
     return PROFILE_MARKERS.some((marker) => {
       try {
-        const status = lstatSync(join(path, marker));
+        const status = lstatSync(appendCallerPath(path, marker));
         return status.isFile() || status.isSymbolicLink();
       } catch {
         return false;
@@ -124,7 +179,7 @@ export const resolveHermesClientHome = (
   try {
     // Python uses utf-8-sig and ignores unreadable / invalid-UTF8 active_profile files.
     name = new TextDecoder("utf-8", { fatal: true })
-      .decode(readFileSync(join(stickyRoot, "active_profile")))
+      .decode(readFileSync(appendCallerPath(stickyRoot, "active_profile")))
       .trim();
   } catch {
     return root;
@@ -137,10 +192,12 @@ export const resolveHermesClientHome = (
     RESERVED_PROFILES.has(canonical)
   )
     throw new HermesClientPathError(
-      join(stickyRoot, "active_profile"),
+      appendCallerPath(stickyRoot, "active_profile"),
       `Invalid saved Hermes profile ${JSON.stringify(name)}. Run 'hermes profile use default' or repair active_profile.`,
     );
-  const selected = join(root, "profiles", canonical);
+  // Hermes resolves both sticky selection and named profiles from its default
+  // root (including overrides beneath the native home), never mixed roots.
+  const selected = appendCallerPath(stickyRoot, `profiles/${canonical}`);
   if (!liveProfile(selected))
     throw new HermesClientPathError(
       selected,

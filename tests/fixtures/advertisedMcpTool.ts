@@ -5,22 +5,40 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import type { BinarySession } from "../../src/application/binary/BinarySession.js";
 
-/** Verify the actual advertised schemas, retaining a private Ajv registry. */
+interface AdvertisedSchemaAssertions {
+  readonly errors?: unknown;
+  validateSchema(schema: Record<string, unknown>): boolean | Promise<unknown>;
+  validate(
+    schema: Record<string, unknown>,
+    value: unknown,
+  ): boolean | Promise<unknown>;
+}
+
+/** Verify actual advertised schemas; callers may own file-local preparation. */
 export const advertisedMcpToolSchemas = async (
   client: Client,
   name: string,
+  ajv: AdvertisedSchemaAssertions = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }),
 ) => {
   const advertised = (await client.listTools()).tools.find(
     (tool) => tool.name === name,
   );
   if (advertised?.outputSchema === undefined)
     throw new Error(`${name} must publish both schemas`);
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = advertised.outputSchema;
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  return { name: advertised.name, ajv, inputSchema, outputSchema };
+  return {
+    name: advertised.name,
+    toolDefinition: advertised,
+    ajv,
+    inputSchema,
+    outputSchema,
+  };
 };
 
 /** Keep public output, provenance and session retention checks together. */
@@ -29,7 +47,8 @@ export const assertRecordedMcpEvidence = (
   name:
     | "inspect_wasm_artifact"
     | "inspect_binary_layout"
-    | "inspect_evm_interface",
+    | "inspect_evm_interface"
+    | "inspect_native_exports",
   schemas: Awaited<ReturnType<typeof advertisedMcpToolSchemas>>,
   session: BinarySession,
   expected: { readonly artifact: { readonly sha256: string } },

@@ -25,13 +25,13 @@ const cardinalitySchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("optional") }),
   z.strictObject({
     kind: z.literal("exact"),
-    count: z.number().int().min(0),
+    count: z.int().min(0),
   }),
   z
     .strictObject({
       kind: z.literal("range"),
-      min: z.number().int().min(0),
-      max: z.number().int().min(0),
+      min: z.int().min(0),
+      max: z.int().min(0),
     })
     .refine(({ min, max }) => min <= max, {
       message: "cardinality min must not exceed max",
@@ -552,6 +552,22 @@ const countVariantEvents = (
   return counts;
 };
 
+/**
+ * Keys a finite trace by the observations it accepts. Matching treats each
+ * unordered token as a multiset, so its member order is not significant and a
+ * token that repeats one event accepts only that event's sequence.
+ */
+const finiteTraceKey = (
+  trace: readonly (string | { readonly unordered: readonly string[] })[],
+): string =>
+  canonicalTraceJson(
+    trace.flatMap((token): (string | readonly string[])[] => {
+      if (typeof token === "string") return [token];
+      const members = [...token.unordered].sort();
+      return members[0] === members.at(-1) ? members : [members];
+    }),
+  );
+
 const validateFiniteTraces = (
   specification: ProcessTraceSpecification,
   context: z.RefinementCtx,
@@ -572,14 +588,14 @@ const validateFiniteTraces = (
         path: [...variantPath, "id"],
       });
     variantIds.add(variant.id);
-    const canonicalTrace = canonicalTraceJson(variant.trace);
-    if (variantTraces.has(canonicalTrace))
+    const traceKey = finiteTraceKey(variant.trace);
+    if (variantTraces.has(traceKey))
       context.addIssue({
         code: "custom",
         message: "finite trace variants must not duplicate a trace",
         path: [...variantPath, "trace"],
       });
-    variantTraces.add(canonicalTrace);
+    variantTraces.add(traceKey);
     for (const [tokenIndex, token] of variant.trace.entries()) {
       const values = typeof token === "string" ? [token] : token.unordered;
       for (const [eventIndex, id] of values.entries())

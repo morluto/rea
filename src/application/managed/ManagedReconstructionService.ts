@@ -1,55 +1,51 @@
-import { z } from "zod";
-
-import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
 import {
-  importManagedReconstruction,
-  managedReconstructionImportInputSchema,
-  type ManagedReconstructionImportInput,
+  executeManagedReconstructionImport,
+  managedReconstructionImportRequestSchema,
+  resolveManagedReconstructionImport,
+  type ManagedReconstructionImportRequest,
   type ManagedReconstructionImportResult,
+  type ResolvedManagedReconstructionImport,
 } from "../../domain/managed/managedReconstruction.js";
-import { err, ok, type Result } from "../../domain/result.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "../InvestigationProviders.js";
-import {
-  requestInputError,
-  workflowInputError,
-} from "../workflowInputError.js";
+import { ok, type Result } from "../../domain/result.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../../domain/investigationProviders.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "import_managed_reconstruction" as const;
 
-/** Authenticate and import managed decompiler reconstruction as Evidence. */
+/** Validate the request envelope and authenticate its managed Evidence source once. */
+export const resolveManagedReconstructionEvidenceInput = (
+  rawInput: unknown,
+): Result<ResolvedManagedReconstructionImport, AnalysisError> => {
+  const parsed = parseAnalysisInput(
+    OPERATION,
+    rawInput,
+    managedReconstructionImportRequestSchema,
+  );
+  if (!parsed.ok) return parsed;
+  return resolveManagedReconstructionImport(parsed.value);
+};
+
+/** Execute from the source facts returned by the resolver. */
+export const importManagedReconstructionEvidenceResolved = (
+  resolved: ResolvedManagedReconstructionImport,
+): Result<Evidence, AnalysisError> => {
+  const result = executeManagedReconstructionImport(resolved);
+  return ok(createManagedReconstructionEvidence(resolved.request, result));
+};
+
+/** Validate the raw request envelope, then authenticate and import its source. */
 export const importManagedReconstructionEvidence = (
   rawInput: unknown,
 ): Result<Evidence, AnalysisError> => {
-  const parsed = managedReconstructionImportInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(requestInputError(OPERATION, parsed.error, rawInput));
-  return importManagedReconstructionEvidenceValidated(parsed.data);
-};
-
-/** Import reconstruction from input parsed by a trusted adapter. */
-export const importManagedReconstructionEvidenceValidated = (
-  input: ManagedReconstructionImportInput,
-): Result<Evidence, AnalysisError> => {
-  try {
-    const result = importManagedReconstruction(input);
-    return ok(createManagedReconstructionEvidence(input, result));
-  } catch (cause: unknown) {
-    return err(
-      cause instanceof TypeError || cause instanceof z.ZodError
-        ? workflowInputError(OPERATION, cause)
-        : new AnalysisProtocolError(
-            "Managed reconstruction import produced an invalid result",
-            { cause },
-          ),
-    );
-  }
+  const resolved = resolveManagedReconstructionEvidenceInput(rawInput);
+  if (!resolved.ok) return resolved;
+  return importManagedReconstructionEvidenceResolved(resolved.value);
 };
 
 const createManagedReconstructionEvidence = (
-  input: ManagedReconstructionImportInput,
+  input: ManagedReconstructionImportRequest,
   result: ManagedReconstructionImportResult,
 ): Evidence =>
   createEvidence(
@@ -63,20 +59,18 @@ const createManagedReconstructionEvidence = (
       predicateType: "rea.managed-reconstruction-import",
       operation: OPERATION,
       parameters: {
-        static_members_evidence_id: input.static_members.evidence_id,
-        decompiler: jsonValueSchema.parse(result.decompiler),
-        method_locks: jsonValueSchema.parse(
-          input.methods.map(
-            ({ token, signature_sha256, normalized_il_sha256 }) => ({
-              token,
-              signature_sha256,
-              normalized_il_sha256,
-            }),
-          ),
+        static_members_evidence_id: result.static_observation.evidence_id,
+        decompiler: result.decompiler,
+        method_locks: input.methods.map(
+          ({ token, signature_sha256, normalized_il_sha256 }) => ({
+            token,
+            signature_sha256,
+            normalized_il_sha256,
+          }),
         ),
-        notes: jsonValueSchema.parse(input.notes),
+        notes: input.notes,
       },
-      result: jsonValueSchema.parse(result),
+      result,
       rawResult: null,
       confidence: "inferred",
       authority: "analyst-inference",

@@ -1,13 +1,14 @@
+import { createHash } from "node:crypto";
+
+import canonicalize from "canonicalize";
 import { describe, expect, it } from "vitest";
 
 import {
-  computeHistoricalSourceGraphSha256,
   createHistoricalSourceGraph,
   createHistoricalSourceManifest,
   historicalSourceGraphSchema,
   historicalSourceParseFailureKey,
   parseHistoricalSourceGraph,
-  parseHistoricalSourceManifest,
   type HistoricalSourceGraphInput,
 } from "./referenceSourceGraph.js";
 
@@ -103,43 +104,32 @@ const graphInput = (): HistoricalSourceGraphInput => ({
   limitations: [],
 });
 
-describe("historical source graph", () => {
-  it("validates supplementary paths and derived indexes by code point", () => {
-    const paths = ["a", "aa", "\uE000", "\u{10000}"];
-    const input: HistoricalSourceGraphInput = {
-      ...graphInput(),
-      entries: paths.map((path) =>
-        fileEntry({
-          path,
-          language: path,
-          classifications: ["manifest"],
-        }),
-      ),
-      relationships: [],
-      languages: paths,
-      manifests: paths,
-    };
-    const graph = createHistoricalSourceGraph(input);
-    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
-    expect(() =>
-      createHistoricalSourceGraph({
-        ...input,
-        entries: [...input.entries].sort((left, right) =>
-          left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
-        ),
-      }),
-    ).toThrow(/Unicode code point/u);
-  });
-
+const registerSourceCommitmentTests = (): void => {
   it("builds and verifies internal root and manifest commitments", () => {
     const graph = createHistoricalSourceGraph(graphInput());
     const first = createHistoricalSourceManifest(graph);
     const second = createHistoricalSourceManifest(structuredClone(graph));
+    const graphJson = canonicalize(graph);
+    if (graphJson === undefined) throw new TypeError("Unserializable graph");
+    const expectedSemantic = {
+      schema: "HistoricalSourceManifest",
+      authority: "historical-reference",
+      graph_sha256: createHash("sha256").update(graphJson).digest("hex"),
+      root_sha256: graph.root_sha256,
+      inventory_state: "complete",
+      entry_count: 3,
+      relationship_count: 2,
+    };
+    const semanticJson = canonicalize(expectedSemantic);
+    if (semanticJson === undefined)
+      throw new TypeError("Unserializable manifest semantics");
 
+    expect(first).toEqual({
+      ...expectedSemantic,
+      manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
+    });
     expect(first).toEqual(second);
     expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
-    expect(parseHistoricalSourceManifest(first)).toEqual(first);
-    expect(first.graph_sha256).toBe(computeHistoricalSourceGraphSha256(graph));
     expect(() =>
       createHistoricalSourceGraph({
         ...graphInput(),
@@ -205,6 +195,56 @@ describe("historical source graph", () => {
       graphWith("*.env").root_sha256,
     );
   });
+};
+
+describe("historical source graph", () => {
+  it("validates supplementary paths and derived indexes by code point", () => {
+    const paths = ["a", "aa", "\uE000", "\u{10000}"];
+    const input: HistoricalSourceGraphInput = {
+      ...graphInput(),
+      entries: paths.map((path) =>
+        fileEntry({
+          path,
+          language: path,
+          classifications: ["manifest"],
+        }),
+      ),
+      relationships: [],
+      languages: paths,
+      manifests: paths,
+    };
+    const graph = createHistoricalSourceGraph(input);
+    expect(parseHistoricalSourceGraph(graph)).toEqual(graph);
+    expect(() =>
+      createHistoricalSourceGraph({
+        ...input,
+        entries: [...input.entries].sort((left, right) =>
+          left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+        ),
+      }),
+    ).toThrow(/Unicode code point/u);
+  });
+
+  it("omits absent local diagnostics and rejects explicitly undefined non-JSON metadata", () => {
+    const input = graphInput();
+    const graph = createHistoricalSourceGraph(input);
+    expect(
+      graph.entries.every(
+        (entry) => !Object.hasOwn(entry, "local_diagnostics"),
+      ),
+    ).toBe(true);
+    expect(() =>
+      createHistoricalSourceGraph({
+        ...input,
+        entries: input.entries.map((entry) => ({
+          ...entry,
+          local_diagnostics: undefined,
+        })),
+      }),
+    ).toThrow();
+  });
+
+  registerSourceCommitmentTests();
 
   it("retains actual external targets and rejects placeholder targets", () => {
     const input = { ...graphInput(), inventory_state: "partial" as const };
@@ -258,7 +298,67 @@ describe("historical source graph", () => {
   });
 });
 
+const registerLocalDiagnosticCommitmentTests = (): void => {
+  it("keeps unknown-entry diagnostics outside the root commitment", () => {
+    const base = graphInput();
+    base.inventory_state = "partial";
+    base.entries[2] = {
+      path: "src/package.json",
+      kind: "unknown",
+      classifications: ["unknown"],
+      limitations: ["Permission denied at /private/first"],
+    };
+    const graph = createHistoricalSourceGraph(base);
+    const changedMessage = structuredClone(base);
+    changedMessage.entries[2] = {
+      path: "src/package.json",
+      kind: "unknown",
+      classifications: ["unknown"],
+      limitations: ["Permission denied at /private/second"],
+    };
+    const revised = createHistoricalSourceGraph(changedMessage);
+    expect(revised.root_sha256).toBe(graph.root_sha256);
+    expect(createHistoricalSourceManifest(revised).graph_sha256).not.toBe(
+      createHistoricalSourceManifest(graph).graph_sha256,
+    );
+  });
+
+  it("retains local diagnostics outside semantic commitments while committing operation failures", () => {
+    const base = graphInput();
+    base.inventory_state = "partial";
+    base.entries[1] = unavailableFileEntry({
+      limitations: [
+        "File could not be read safely: EACCES. Check permissions.",
+      ],
+      local_diagnostics: [
+        "EACCES: permission denied, open '/first/src/main.ts'",
+      ],
+    });
+    const graph = createHistoricalSourceGraph(base);
+    const moved = structuredClone(base);
+    moved.entries[1]!.local_diagnostics = [
+      "EACCES: permission denied, open '/second/src/main.ts'",
+    ];
+    const relocated = createHistoricalSourceGraph(moved);
+    expect(createHistoricalSourceManifest(relocated)).toEqual(
+      createHistoricalSourceManifest(graph),
+    );
+    expect(relocated.entries[1]!.local_diagnostics).toEqual(
+      moved.entries[1]!.local_diagnostics,
+    );
+    moved.entries[1]!.limitations = [
+      "File could not be read safely: EIO. Check permissions.",
+    ];
+    expect(
+      createHistoricalSourceManifest(createHistoricalSourceGraph(moved))
+        .graph_sha256,
+    ).not.toBe(createHistoricalSourceManifest(graph).graph_sha256);
+  });
+};
+
 describe("partial historical source graphs", () => {
+  registerLocalDiagnosticCommitmentTests();
+
   it("keeps an unreadable symlink target unknown and out of root identity", () => {
     const base = graphInput();
     base.inventory_state = "partial";
@@ -288,8 +388,8 @@ describe("partial historical source graphs", () => {
     };
     const revised = createHistoricalSourceGraph(changedMessage);
     expect(revised.root_sha256).toBe(graph.root_sha256);
-    expect(computeHistoricalSourceGraphSha256(revised)).not.toBe(
-      computeHistoricalSourceGraphSha256(graph),
+    expect(createHistoricalSourceManifest(revised).graph_sha256).not.toBe(
+      createHistoricalSourceManifest(graph).graph_sha256,
     );
     expect(() =>
       createHistoricalSourceGraph({
@@ -313,6 +413,10 @@ describe("partial historical source graphs", () => {
     expect(createHistoricalSourceGraph(partial).inventory_state).toBe(
       "partial",
     );
+    expect(
+      createHistoricalSourceGraph({ ...partial, inventory_state: "unknown" })
+        .inventory_state,
+    ).toBe("unknown");
 
     for (const change of [
       { entries: partial.entries },
@@ -366,7 +470,7 @@ describe("partial historical source graphs", () => {
 });
 
 describe("historical source graph validation", () => {
-  it("rejects strict unknown fields, invalid VCS, dangling internal edges, and false manifests", () => {
+  it("rejects strict unknown fields, invalid VCS, and dangling internal edges", () => {
     expect(() =>
       createHistoricalSourceGraph({ ...graphInput(), surprise: true }),
     ).toThrow();
@@ -424,13 +528,66 @@ describe("historical source graph validation", () => {
         extra: true,
       }),
     ).toThrow();
+  });
+});
 
-    const manifest = createHistoricalSourceManifest(
-      createHistoricalSourceGraph(graphInput()),
+describe("historical source graph excluded symlink targets", () => {
+  it("retains internal symlinks into excluded trees without accepting sibling prefixes", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [
+      {
+        path: "dist",
+        entry_kind: "directory",
+        reason: "caller-excluded",
+        pattern: "dist/",
+      },
+    ];
+    input.entries[2] = symlinkEntry({ target: "../dist/generated.js" });
+    const graph = createHistoricalSourceGraph(input);
+    expect(graph.entries[2]).toMatchObject({
+      target: "../dist/generated.js",
+      target_state: "internal",
+    });
+
+    input.entries[2] = symlinkEntry({ target: "../dist-old/generated.js" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
     );
-    expect(() =>
-      parseHistoricalSourceManifest({ ...manifest, entry_count: 999 }),
-    ).toThrow(/identifier does not match/u);
+  });
+
+  it("does not treat an excluded file or unknown-kind ancestor as a directory", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.exclusions = [
+      {
+        path: "secret.txt",
+        entry_kind: "file",
+        reason: "configured-secret",
+        pattern: "secret.txt",
+      },
+    ];
+    input.entries[2] = symlinkEntry({ target: "../secret.txt/child" });
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+
+    input.exclusions[0] = {
+      path: "secret.txt",
+      entry_kind: "unknown",
+      reason: "configured-secret",
+      pattern: "secret.txt",
+    };
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
+
+    input.exclusions[0] = {
+      path: "secret.txt",
+      reason: "configured-secret",
+      pattern: "secret.txt",
+    };
+    expect(() => createHistoricalSourceGraph(input)).toThrow(
+      /recorded exclusion/u,
+    );
   });
 });
 
@@ -485,4 +642,55 @@ describe("historical source graph symlink path identity", () => {
       /must resolve to an inventoried entry/u,
     );
   });
+});
+
+it.each([
+  "\0",
+  "/absolute.js",
+  "../outside.js",
+  "a/../b.js",
+  "a//b.js",
+  "./a.js",
+  "a/",
+])("rejects unsafe historical logical entry spelling %j", (path) => {
+  const input = graphInput();
+  input.entries = [fileEntry({ path })];
+  input.relationships = [];
+  expect(() => createHistoricalSourceGraph(input)).toThrow();
+});
+
+it("rejects NUL in observed symlink targets before graph identity", () => {
+  const input = graphInput();
+  input.entries[2] = symlinkEntry({ target: "literal\0name.js" });
+  expect(() => createHistoricalSourceGraph(input)).toThrow(
+    /normalized POSIX symlink target/u,
+  );
+});
+
+it.each(["C:\\outside\\file.js", "\\\\server\\share.js"])(
+  "preserves unowned recorded Windows absolute target policy %j",
+  (target) => {
+    const external = graphInput();
+    external.inventory_state = "partial";
+    external.entries[2] = symlinkEntry({ target, target_state: "external" });
+    expect(createHistoricalSourceGraph(external).entries).toContainEqual(
+      expect.objectContaining({ target, target_state: "external" }),
+    );
+    const internal = graphInput();
+    internal.entries[2] = symlinkEntry({ target, target_state: "internal" });
+    expect(() => createHistoricalSourceGraph(internal)).toThrow(
+      /target path does not match its target state/u,
+    );
+  },
+);
+
+it("refuses an absolute POSIX internal target even when lexical joining would name an inventoried file", () => {
+  const input = graphInput();
+  input.entries[2] = symlinkEntry({
+    target: "/main.ts",
+    target_state: "internal",
+  });
+  expect(() => createHistoricalSourceGraph(input)).toThrow(
+    /target path does not match its target state/u,
+  );
 });

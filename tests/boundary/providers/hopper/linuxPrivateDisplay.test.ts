@@ -1,7 +1,11 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import * as ownership from "../../../../src/process/ProcessOwnership.js";
 
 import type {
   HopperStartupDiagnostic,
@@ -33,6 +37,9 @@ const cleanupTimeoutFixturePath = fileURLToPath(
 );
 const ownerLifetimeFixturePath = fileURLToPath(
   new URL("../../../fixtures/hopperOwnerLifetime.py", import.meta.url),
+);
+const displaySelectionFixturePath = fileURLToPath(
+  new URL("../../../fixtures/hopperDisplaySelection.py", import.meta.url),
 );
 
 type DiagnosticOverrides = Partial<
@@ -79,7 +86,7 @@ const processResult = (
   exitCode: value.status === "ready" ? 0 : failureExit(value.failure_code),
   stderr: `${LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX}${JSON.stringify(value)}\n`,
   stderrBytes: 0,
-  cleanupIncomplete: false,
+  cleanup: { status: "released" },
   ...overrides,
 });
 
@@ -136,6 +143,43 @@ describe("Hopper process cleanup", () => {
         { encoding: "utf8", timeout: 5_000 },
       );
       expect(result.status, result.stderr).toBe(0);
+    },
+  );
+});
+
+describe("Hopper demo explicit display number", () => {
+  it.skipIf(process.platform !== "linux")(
+    "honors an explicit display zero instead of choosing a random display",
+    () => {
+      const result = spawnSync(
+        "/usr/bin/python3",
+        [displaySelectionFixturePath, helperPath],
+        { encoding: "utf8", timeout: 5_000 },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const explicit = (display: string) => ({
+        authorized: [`:${display}`],
+        checked: [`/tmp/.X11-unix/X${display}`, `/tmp/.X${display}-lock`],
+        random_calls: 0,
+        reason: "xauth_failed",
+      });
+      expect(JSON.parse(result.stdout)).toEqual({
+        explicit_zero: explicit("0"),
+        explicit_zero_random_occupied: explicit("0"),
+        explicit_zero_occupied: {
+          authorized: [],
+          checked: ["/tmp/.X11-unix/X0"],
+          random_calls: 0,
+          reason: "address_collision",
+        },
+        explicit_one: explicit("1"),
+        omitted: {
+          authorized: [":123"],
+          checked: ["/tmp/.X11-unix/X123", "/tmp/.X123-lock"],
+          random_calls: 1,
+          reason: "xauth_failed",
+        },
+      });
     },
   );
 });
@@ -295,8 +339,133 @@ describe("private display probe output settlement", () => {
         exitCode: 0,
         stderr: "firstlast",
         stderrBytes: Buffer.byteLength("firstlast"),
-        cleanupIncomplete: false,
+        cleanup: { status: "released" },
       });
     },
   );
 });
+
+it("passes the private X authority cookie through xauth stdin", () => {
+  const fixture = fileURLToPath(
+    new URL("../../../fixtures/hopperXauthority.py", import.meta.url),
+  );
+  const process = spawnSync("python3", ["-I", "-S", fixture, helperPath], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  expect(process.status, process.stderr).toBe(0);
+  expect(JSON.parse(process.stdout)).toMatchObject({
+    arguments: ["fixture-xauth", "-q", "-f", expect.any(String), "source", "-"],
+    stdin: `add :123 . ${"0123456789abcdef".repeat(2)}\n`,
+    cookie_in_argv: false,
+    mode: 0o600,
+  });
+});
+
+const inertProbe = async (keepLeader = false) => {
+  const root = await mkdtemp(join(tmpdir(), "rea-private-display-lifecycle-"));
+  const marker = join(root, "descendant-survived");
+  const ready = join(root, "ready");
+  const helper = join(root, "probe.py");
+  const child = `setTimeout(() => require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'survived'), 800)`;
+  await writeFile(
+    helper,
+    [
+      "import subprocess, sys, time",
+      `subprocess.Popen([${JSON.stringify(process.execPath)}, '-e', ${JSON.stringify(child)}], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)`,
+      `open(${JSON.stringify(ready)}, 'w').write('ready')`,
+      "sys.stderr.write('authored probe diagnostic')",
+      "sys.stderr.flush()",
+      ...(keepLeader ? ["time.sleep(2)"] : []),
+    ].join("\n"),
+  );
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  return { helper, marker, ready };
+};
+
+it.skipIf(process.platform === "win32")(
+  "stops silent owned descendants before releasing a normally exited probe",
+  async () => {
+    const { helper, marker } = await inertProbe();
+    const result = await runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+    });
+    expect(result).toMatchObject({
+      outcome: "exited",
+      exitCode: 0,
+      stderr: "authored probe diagnostic",
+      cleanup: { status: "released" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.skipIf(process.platform === "win32").each(["exited", "cancelled"] as const)(
+  "retains refused probe cleanup and retries its exact owner after %s",
+  async (outcome) => {
+    const { helper, ready } = await inertProbe(outcome === "cancelled");
+    const controller = new AbortController();
+    const scheduled = vi.spyOn(globalThis, "setTimeout");
+    const cleared = vi.spyOn(globalThis, "clearTimeout");
+    onTestFinished(() => {
+      scheduled.mockRestore();
+      cleared.mockRestore();
+    });
+    const original = ownership.cleanupOwnedProcessGroup;
+    const cleanup = vi
+      .spyOn(ownership, "cleanupOwnedProcessGroup")
+      .mockImplementation(async () => {
+        // Finalization cancellation must not replace a completed probe outcome.
+        if (outcome === "exited") controller.abort("cancelled during cleanup");
+        return {
+          cleaned: false,
+          reason: "controlled display probe cleanup refusal",
+        };
+      });
+    let pending:
+      | Extract<
+          LinuxPrivateDisplayProbeProcessResult["cleanup"],
+          { status: "pending" }
+        >
+      | undefined;
+    onTestFinished(async () => {
+      cleanup.mockRestore();
+      await pending?.lease.release();
+    });
+    const operation = runLinuxPrivateDisplayProbe("direct", {
+      helperPath: helper,
+      timeoutMs: 5000,
+      signal: controller.signal,
+    });
+    if (outcome === "cancelled") {
+      await vi.waitFor(async () => expect(await access(ready)).toBeUndefined());
+      controller.abort("caller stopped");
+    }
+    const result = await operation;
+    expect(result.outcome).toBe(outcome);
+    // The probe has settled despite refused cleanup; no abandoned output wait
+    // should keep its original deadline alive until a later cleanup retry.
+    const deadlines = scheduled.mock.calls.flatMap((arguments_, index) =>
+      arguments_[1] === 5000 ? [scheduled.mock.results[index]!.value] : [],
+    );
+    expect(deadlines.length).toBeGreaterThan(0);
+    for (const timer of deadlines) expect(cleared).toHaveBeenCalledWith(timer);
+    expect(result.stderr).toBe("authored probe diagnostic");
+    expect(result.cleanup.status).toBe("pending");
+    if (result.cleanup.status !== "pending")
+      throw new Error("Expected retained probe owner");
+    pending = result.cleanup;
+    const retainedRunId = cleanup.mock.calls[0]?.[0].runId;
+    await expect(pending.lease.release()).rejects.toThrow(
+      "controlled display probe cleanup refusal",
+    );
+    expect(
+      cleanup.mock.calls.every(([owner]) => owner.runId === retainedRunId),
+    ).toBe(true);
+    cleanup.mockImplementation(original);
+    await pending.lease.release();
+    expect(pending.lease.released).toBe(true);
+  },
+);

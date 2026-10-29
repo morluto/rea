@@ -1,4 +1,4 @@
-import { isSafeNumber, LosslessNumber } from "lossless-json";
+import { LosslessNumber } from "lossless-json";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { QlogCaptureFacts } from "../../domain/qlogCapture.js";
 import {
@@ -12,16 +12,11 @@ import {
   CaptureRedaction,
   captureObject,
   capturePointer,
+  isCaptureCredentialHeader,
 } from "./CaptureRedaction.js";
 import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
-const credentials = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
 type Projection = Pick<
   WebNetworkCaptureRecord,
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
@@ -84,7 +79,12 @@ export const decodeQlogCapture = (
           "Record ordinal is derived from trace/event source traversal, not global time order. Qlog lengths and FIN do not expose original HTTP body bytes or establish network completeness.",
         ],
       });
-      collectTransportFacts(projection, ordinal, { fact, streams, excluded });
+      collectTransportFacts(projection, ordinal, {
+        fact,
+        streams,
+        excluded,
+        name: object(event) && typeof event.name === "string" ? event.name : "",
+      });
     }
     for (const stream of streams.values()) {
       summarizeStream(stream);
@@ -95,10 +95,10 @@ export const decodeQlogCapture = (
         ...stream.reported_final_sizes,
         ...stream.covered_ranges.flatMap((r) => [r.start, r.end]),
       ];
+      // A stream can have more contributions than call arguments allow.
       if (numericValues.some(excluded))
-        fact.incomplete_fact_records.push(
-          ...stream.contributions.map((c) => c.record_ordinal),
-        );
+        for (const contribution of stream.contributions)
+          fact.incomplete_fact_records.push(contribution.record_ordinal);
       else fact.streams.push(stream);
     }
     fact.incomplete_fact_records = [...new Set(fact.incomplete_fact_records)];
@@ -223,14 +223,25 @@ const collectTransportFacts = (
     fact: Trace;
     streams: Map<string, Stream>;
     excluded: (value: string) => boolean;
+    /** Validated source event name, before declarations are applied. */
+    name: string;
   },
 ): void => {
-  const { fact, streams, excluded } = state;
+  const { fact, streams, excluded, name } = state;
+  // Unknown event payloads carry no facts under this interpretation profile.
+  // Their omission cannot make the transport-fact inventory incomplete.
+  if (name !== "recovery:packet_lost" && !packetEvent(name)) return;
   if (!object(projection.reported) || !object(projection.reported.data)) {
     fact.incomplete_fact_records.push(ordinal);
     return;
   }
   const visible = projection.reported;
+  // Facts are selected by event name, so a declaration that hides the name
+  // of a loss or packet event omits its facts like any other hidden field.
+  if (visible.name !== name) {
+    fact.incomplete_fact_records.push(ordinal);
+    return;
+  }
   const data = visible.data;
   if (!object(data)) return;
   const literals = new Map(
@@ -296,6 +307,8 @@ const collectTransportFacts = (
       length: length.toString(),
       fin: typeof frame.fin === "boolean" ? frame.fin : null,
     });
+    if (typeof frame.fin !== "boolean")
+      fact.incomplete_fact_records.push(ordinal);
   }
 };
 
@@ -421,23 +434,19 @@ const project = (
       /^\/data\/frame\/headers\/\d+\/value$/u.test(pointer) &&
       typeof parent?.name === "string";
     if (
-      (header && credentials.has(String(parent?.name).toLowerCase())) ||
+      (header && isCaptureCredentialHeader(String(parent?.name))) ||
       qlogToken(eventName, pointer, parent)
     )
       return redactor.credential(pointer);
     if (item instanceof LosslessNumber) {
-      if (
-        redactor.text(item.value, pointer) === null ||
-        (isSafeNumber(item.value) &&
-          redactor.text(String(Number(item.value)), pointer) === null)
-      )
-        return null;
+      const number = redactor.number(item, pointer);
+      if (number === null) return null;
       numeric_literals.push({
         pointer,
         producer_type: "json-number",
-        literal: item.value,
+        literal: number.literal,
       });
-      return isSafeNumber(item.value) ? Number(item.value) : null;
+      return number.reported;
     }
     if (typeof item === "string")
       return redactor.text(
@@ -446,7 +455,9 @@ const project = (
         header &&
           ["location", "referer", "origin"].includes(
             String(parent?.name).toLowerCase(),
-          ),
+          )
+          ? {}
+          : undefined,
       );
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))

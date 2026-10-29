@@ -29,7 +29,8 @@ export const createInspectorExclusionCounts = (): Record<
 export const describeInspectorTargetLimitations = (
   attachmentStateUnknown = false,
 ): string[] => [
-  "REA attaches to an already-running exact target and never launches, resumes, evaluates, pauses, or mutates it.",
+  "REA attaches to an already-running exact target. It does not launch the target, evaluate JavaScript, install breakpoints, or send pause/resume commands.",
+  "Enabling Debugger can make target-authored debugger statements pause execution; observation does not suppress or resume these pauses.",
   "Only Runtime.enable and Debugger.enable are sent; source text, object values, EventEmitter activity, and Electron IPC are not inspected.",
   "The selected endpoint and target ID authorize observation; discovery file locations can remain unresolved and do not prove filesystem identity.",
   "Node discovery reports a best-effort pathname rather than an encoded file URL; lossy Windows paths and ambiguous underscores are preserved without guessing a file path.",
@@ -43,6 +44,7 @@ export const describeInspectorTargetLimitations = (
 ];
 
 interface FinalizeCaptureInput {
+  readonly discoveryLimitations?: readonly string[];
   readonly input: ObserveJavaScriptRuntimeInput;
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly target: AuthorizedV8InspectorTarget;
@@ -64,6 +66,7 @@ interface AuthorizedLocationGroup {
 
 /** Canonically authorize, deduplicate, and sort one bounded raw capture. */
 export const finalizeInspectorCapture = async ({
+  discoveryLimitations = [],
   input,
   runtime,
   target,
@@ -89,7 +92,6 @@ export const finalizeInspectorCapture = async ({
   const authorizedGroups: AuthorizedLocationGroup[] = new Array(groups.length);
   let nextGroup = 0;
   let stopScheduling = false;
-  let unresolvedScripts = 0;
   const worker = async (): Promise<void> => {
     try {
       for (;;) {
@@ -140,7 +142,6 @@ export const finalizeInspectorCapture = async ({
   if (locationMode === "reported")
     for (const draft of state.scripts) {
       const location = partialScriptLocation(draft.rawUrl);
-      if (location.kind === "unresolved") unresolvedScripts += 1;
       const script = scriptFromDraft(draft, location);
       scripts.set(script.script_key, script);
     }
@@ -151,6 +152,9 @@ export const finalizeInspectorCapture = async ({
         ? 1
         : 0,
   );
+  const unresolvedScripts = items.filter(
+    ({ location }) => location.kind === "unresolved",
+  ).length;
   const contexts = [...state.contexts.values()]
     .map((context) => ({
       context_key: context.contextKey,
@@ -191,6 +195,7 @@ export const finalizeInspectorCapture = async ({
     scripts: {
       items,
       observed_total: state.scriptsObserved,
+      parse_failed_total: state.parseFailedScripts,
       excluded: {
         ...exclusions,
         invalid_protocol_value: state.invalidScripts,
@@ -218,13 +223,25 @@ export const finalizeInspectorCapture = async ({
         : [
             `${String(unresolvedScripts)} observed script location${unresolvedScripts === 1 ? " remains" : "s remain"} unverified; raw URLs and script metadata are retained.`,
           ]),
+      ...invalidContextUnknowns(state.invalidContexts),
       "Scripts collected before attachment may have been garbage-collected and therefore omitted.",
       "A bounded observation window cannot establish that an unobserved script or behavior never occurs.",
       "The declared Node/Electron process role is not authenticated by the Inspector protocol.",
     ],
-    limitations: describeInspectorTargetLimitations(target.attached === null),
+    limitations: [
+      ...discoveryLimitations,
+      ...describeInspectorTargetLimitations(target.attached === null),
+    ],
   };
 };
+
+/** Report lifecycle events whose context identity could not be parsed. */
+const invalidContextUnknowns = (count: number): string[] =>
+  count === 0
+    ? []
+    : [
+        `${String(count)} execution-context lifecycle ${count === 1 ? "event with a missing or malformed execution-context ID was" : "events with a missing or malformed execution-context ID were"} excluded; the affected contexts' lifecycle state is unknown.`,
+      ];
 
 const scriptFromDraft = (
   draft: ScriptDraft,
@@ -232,6 +249,7 @@ const scriptFromDraft = (
 ): JavaScriptRuntimeObservation["scripts"]["items"][number] => {
   const stable = JSON.stringify({
     location,
+    ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
     cdp_hash: draft.cdpHash,
     length: draft.length,
@@ -240,6 +258,7 @@ const scriptFromDraft = (
   return {
     script_key: `v8_script_${createHash("sha256").update(stable).digest("hex")}`,
     location,
+    ...(location.kind === "file" ? { reported_url: draft.rawUrl } : {}),
     execution_context_key: draft.executionContextKey,
     cdp_hash: draft.cdpHash,
     length: draft.length,

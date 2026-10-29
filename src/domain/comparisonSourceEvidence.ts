@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { prefixedDigestSchema } from "./digests.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { readEvidencePayload } from "./evidenceValidation.js";
 import type { Evidence } from "./evidence.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
@@ -16,14 +18,16 @@ const sideParametersSchema = z.object({
 export const comparisonSourceEvidenceSides = (
   evidence: Evidence,
 ): { left: string[]; right: string[] } => {
-  const parameters = sideParametersSchema.parse(evidence.parameters);
+  const parsed = readEvidencePayload(sideParametersSchema, evidence.parameters);
+  if (!parsed.ok) throw parsed.error;
+  const parameters = parsed.value;
   if (
     (parameters.left_evidence_id === undefined) !==
       (parameters.right_evidence_id === undefined) ||
     (parameters.left_evidence_ids === undefined) !==
       (parameters.right_evidence_ids === undefined)
   )
-    throw new TypeError(
+    throw new EvidenceIntegrityError(
       "Comparison Evidence source representation omitted one side",
     );
   const side = (single: string | undefined, multiple: string[] | undefined) => {
@@ -32,14 +36,16 @@ export const comparisonSourceEvidenceSides = (
       multiple !== undefined &&
       (multiple.length !== 1 || multiple[0] !== single)
     )
-      throw new TypeError(
+      throw new EvidenceIntegrityError(
         "Comparison Evidence source representations disagree",
       );
     const selected = single === undefined ? (multiple ?? []) : [single];
     if (selected.length === 0)
-      throw new TypeError("Comparison Evidence omitted its source parameters");
+      throw new EvidenceIntegrityError(
+        "Comparison Evidence omitted its source parameters",
+      );
     if (new Set(selected).size !== selected.length)
-      throw new TypeError(
+      throw new EvidenceIntegrityError(
         "Comparison Evidence repeats a source within one side",
       );
     return selected;

@@ -1,7 +1,8 @@
 import { z } from "zod";
 
+import { jsonObjectSchema } from "./jsonValue.js";
 import { digestSchema } from "./digests.js";
-import { localPathStringSchema } from "./localPath.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
 import {
   exportedWebScriptSchema,
   webScriptExportManifestSchema,
@@ -9,14 +10,10 @@ import {
 
 /** Inspect one captured script's native ES module relationships. */
 export const webModuleTraceInputSchema = z.strictObject({
-  manifest_path: localPathStringSchema.describe(
+  manifest_path: absoluteLocalPathStringSchema.describe(
     "Absolute path to an export_web_scripts manifest",
   ),
-  script_index: z
-    .number()
-    .int()
-    .min(0)
-    .describe("Zero-based index in manifest.scripts"),
+  script_index: z.int().min(0).describe("Zero-based index in manifest.scripts"),
   importer_url: z
     .string()
     .min(1)
@@ -26,7 +23,7 @@ export const webModuleTraceInputSchema = z.strictObject({
     ),
   import_map: z
     .strictObject({
-      path: localPathStringSchema.describe(
+      path: absoluteLocalPathStringSchema.describe(
         "Absolute local import-map JSON path; no fetch",
       ),
       base_url: z
@@ -42,14 +39,14 @@ export type WebModuleTraceInput = z.output<typeof webModuleTraceInputSchema>;
 export const webModuleFileSchema = z.strictObject({
   path: z.string().min(1),
   sha256: digestSchema,
-  bytes: z.number().int().min(0),
+  bytes: z.int().min(0),
 });
 export type WebModuleFile = z.output<typeof webModuleFileSchema>;
 
 const positionSchema = z.strictObject({
-  offset: z.number().int().min(0),
-  line: z.number().int().min(1),
-  column: z.number().int().min(0),
+  offset: z.int().min(0),
+  line: z.int().min(1),
+  column: z.int().min(0),
 });
 
 /** Parser observations do not assert that a dependency was loaded. */
@@ -69,8 +66,41 @@ export const webModuleResolutionSchema = z.discriminatedUnion("state", [
 ]);
 export type WebModuleResolution = z.output<typeof webModuleResolutionSchema>;
 
+/** Completed native resolution, shared by success and interrupted finalization. */
+export const webModuleResolutionBatchSchema = z.strictObject({
+  engine: z.strictObject({ id: z.string().min(1), version: z.string().min(1) }),
+  resolutions: z.array(webModuleResolutionSchema),
+  diagnostics: z.array(z.string()),
+  rawResult: jsonObjectSchema,
+});
+export type WebModuleResolutionBatch = z.output<
+  typeof webModuleResolutionBatchSchema
+>;
+
+/** Result-affecting context of one local native resolver request. */
+export const webModuleResolutionRequestSchema = z.strictObject({
+  importerUrl: z.string().min(1),
+  importMap: z
+    .strictObject({ baseUrl: z.string().min(1), value: jsonObjectSchema })
+    .nullable(),
+  specifiers: z.array(z.string()).readonly(),
+});
+export type WebModuleResolutionRequest = z.output<
+  typeof webModuleResolutionRequestSchema
+>;
+
+/** A completed batch remains bound to the exact resolver request on failure. */
+export const webModuleResolutionObservationSchema = z.strictObject({
+  kind: z.literal("web-module-resolution"),
+  request: webModuleResolutionRequestSchema,
+  batch: webModuleResolutionBatchSchema,
+});
+export type WebModuleResolutionObservation = z.output<
+  typeof webModuleResolutionObservationSchema
+>;
+
 const candidateSchema = z.strictObject({
-  script_index: z.number().int().min(0),
+  script_index: z.int().min(0),
   match: z.enum(["exact-reported-url", "response-url-without-fragment"]),
   script: exportedWebScriptSchema,
 });
@@ -88,7 +118,7 @@ export const webModuleTraceResultSchema = z.strictObject({
     }).shape,
   }),
   source: webModuleFileSchema.extend({
-    script_index: z.number().int().min(0),
+    script_index: z.int().min(0),
     script: exportedWebScriptSchema,
   }),
   importer: z.strictObject({

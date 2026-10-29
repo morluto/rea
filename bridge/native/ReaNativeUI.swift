@@ -43,10 +43,13 @@ func windowBounds(_ element: AXUIElement) -> CGRect? {
   return CGRect(origin: point, size: size)
 }
 func observe(_ request: Request) async throws -> [String: Any] {
-  guard let app = NSRunningApplication(processIdentifier: request.pid), let url = app.executableURL else {
-    try fail("target-mismatch", "Selected PID does not expose an application executable URL")
+  guard let app = NSRunningApplication(processIdentifier: request.pid) else {
+    try fail("pid-not-application", "LaunchServices does not expose an application for the selected PID; this does not establish that the process is absent")
   }
-  guard let canonicalPointer = realpath(url.path, nil) else { try fail("target-mismatch", "Running executable path cannot be resolved") }
+  guard let url = app.executableURL else {
+    try fail("application-executable-unavailable", "The selected application does not expose an executable URL; select a PID with an identifiable application executable")
+  }
+  guard let canonicalPointer = realpath(url.path, nil) else { try fail("executable-path-unavailable", "Running executable path cannot be resolved") }
   defer { free(canonicalPointer) }
   let canonicalExecutable = String(cString: canonicalPointer)
   guard canonicalExecutable == request.executable else {
@@ -117,7 +120,9 @@ func observe(_ request: Request) async throws -> [String: Any] {
       let childCountResult = childCount(element)
       var actions: CFArray?
       AXUIElementCopyActionNames(element, &actions)
-      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": text(element, kAXValueAttribute), "actions": actions as? [String] ?? [], "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
+      let observedValue = captureAccessibilityValue(attribute(element, kAXValueAttribute))
+      if let gap = observedValue.gap { gaps.append("\(gap) at path \(path)"); truncated = true }
+      nodes.append(["path": path, "role": text(element, kAXRoleAttribute), "title": text(element, kAXTitleAttribute), "value": observedValue.value, "actions": actions as? [String] ?? [], "children_count": childCountResult.value.map { $0 as Any } ?? NSNull()])
       guard let totalChildren = childCountResult.value else {
         truncated = true
         gaps.append("AX child count unavailable at path \(path): AXError \(childCountResult.error ?? -1)")

@@ -134,7 +134,9 @@ it("associates each source-map URL with its edge when aliases share one physical
   );
   expect(mapEdges).toHaveLength(2);
   expect(mapEdges[0]?.target_node_id).toBe(mapEdges[1]?.target_node_id);
-  expect(
+  // Edge order follows content-derived edge IDs, so pair each edge with the
+  // script whose comment declared it.
+  const declaredBySource = new Map(
     mapEdges.map((edge) => {
       const target = nodes.get(edge.target_node_id);
       const observation = target?.observations.find(
@@ -142,24 +144,37 @@ it("associates each source-map URL with its edge when aliases share one physical
           properties.declared_url_sha256 ===
           edge.properties.declared_url_sha256,
       );
-      return {
-        declared_url: observation?.properties.declared_url,
-        resolved_path: edge.properties.resolved_path,
-      };
+      const location = edge.evidence.location;
+      return [
+        location.available && location.value.kind === "source-range"
+          ? location.value.source
+          : null,
+        {
+          declared_url: observation?.properties.declared_url,
+          resolved_path: edge.properties.resolved_path,
+        },
+      ];
     }),
-  ).toEqual([
-    { declared_url: "app.js.map", resolved_path: "dist/app.js.map" },
-    { declared_url: "./app.js.map", resolved_path: "dist/app.js.map" },
-  ]);
+  );
+  expect(Object.fromEntries(declaredBySource)).toEqual({
+    "dist/one.js": {
+      declared_url: "app.js.map",
+      resolved_path: "dist/app.js.map",
+    },
+    "dist/two.js": {
+      declared_url: "./app.js.map",
+      resolved_path: "dist/app.js.map",
+    },
+  });
 });
 
-it("resolves a bare source-map file name and worker URL next to the script", async () => {
+it("resolves a bare source-map file name and module worker URL next to the script", async () => {
   const root = await createTestTempDirectory("rea-source-map-relative-");
   await mkdir(join(root, "dist"));
   await writeFile(
     join(root, "dist", "app.js"),
     [
-      'new Worker("worker.js");',
+      'new Worker(new URL("worker.js", import.meta.url));',
       'navigator.serviceWorker.register("sw.js");',
       "//# sourceMappingURL=app.js.map",
     ].join("\n"),
@@ -191,6 +206,7 @@ it("resolves a bare source-map file name and worker URL next to the script", asy
       .update("app.js.map")
       .digest("hex"),
     resolved_path: "dist/app.js.map",
+    resolution_status: "resolved",
   });
   expect(
     nodes
@@ -212,12 +228,12 @@ it("resolves a bare source-map file name and worker URL next to the script", asy
   expect(workerEdge?.properties).toMatchObject({
     resolved_path: "dist/worker.js",
   });
-  const serviceWorkerEdge = result.graph.edges.find(
-    ({ relation, source_node_id }) =>
-      relation === "maps_to" &&
-      nodes.get(source_node_id)?.kind === "service-worker",
-  );
-  expect(serviceWorkerEdge?.properties).toMatchObject({
-    resolved_path: "dist/sw.js",
-  });
+  // A service worker URL is relative to the unestablished document base.
+  expect(
+    result.graph.edges.some(
+      ({ relation, source_node_id }) =>
+        relation === "maps_to" &&
+        nodes.get(source_node_id)?.kind === "service-worker",
+    ),
+  ).toBe(false);
 });

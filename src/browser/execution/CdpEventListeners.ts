@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type {
   InspectWebEventListenersInput,
-  WebEventListeners,
+  WebEventListenersObservation,
 } from "../../domain/webEventListeners.js";
 import type { CdpRuntimeSources } from "./CdpRuntimeSources.js";
 import { runtimeListenersSchema } from "./CdpRuntimeProtocol.js";
@@ -13,7 +13,7 @@ export const captureWebEventListeners = async (
   input: InspectWebEventListenersInput,
   sources: CdpRuntimeSources,
   group: string,
-): Promise<WebEventListeners> => {
+): Promise<WebEventListenersObservation> => {
   const session = sources.session;
   session.beginCompletion();
   const unsubscribe = session.transport.connection.onEvent((event) =>
@@ -24,10 +24,10 @@ export const captureWebEventListeners = async (
       await session.enable(domain);
     await session.assertDocument();
     const document = z
-      .object({ root: z.object({ nodeId: z.number().int().min(1) }) })
+      .object({ root: z.object({ nodeId: z.int().min(1) }) })
       .parse(await session.command("DOM.getDocument", { depth: 0 }));
     const selected = z
-      .object({ nodeId: z.number().int().min(0) })
+      .object({ nodeId: z.int().min(0) })
       .parse(
         await queryListenerSelector(
           session,
@@ -39,7 +39,7 @@ export const captureWebEventListeners = async (
     let descriptors: z.infer<typeof runtimeListenersSchema>["listeners"] = [];
     if (selected.nodeId !== 0) {
       const described = z
-        .object({ node: z.object({ backendNodeId: z.number().int().min(1) }) })
+        .object({ node: z.object({ backendNodeId: z.int().min(1) }) })
         .parse(
           await session.command("DOM.describeNode", {
             nodeId: selected.nodeId,
@@ -92,8 +92,9 @@ export const captureWebEventListeners = async (
         execution: "unknown",
       })),
       sources: retained,
-      cleanup: "confirmed",
+      cleanup: "unconfirmed",
       limitations: [
+        ...(session.discovery.limitations ?? []),
         "Inspects listeners registered directly on the first native CSS match in the selected main document. Delegated ancestor listeners, descendants, closed shadow roots and framework registries are not enumerated.",
         "Native CDP listener descriptors report callback locations; registration time, dispatch history and UI causality remain unknown. REA does not dispatch an event, evaluate JavaScript or invoke a handler.",
         "Source identity uses this session's script ID and proven main-frame default-world metadata. Isolated or unknown worlds cannot establish website callback/source joins. A URL or sourceURL declaration never establishes identity or execution.",

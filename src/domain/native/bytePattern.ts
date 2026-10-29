@@ -3,45 +3,99 @@ import { addressCoordinate } from "./addressCoordinate.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 
-/** Byte pairs, with whole-byte wildcards; explicit masks can select individual bits. */
+/** Maximum matches delivered by one byte-search page. */
+export const MAX_BYTE_SEARCH_MATCHES = 1000;
+
+/** Exact grammar belongs to the object refinement, not a repeating advertised regex. */
 export const bytePatternFields = {
   pattern: z
     .string()
-    .regex(/^([0-9a-fA-F]{2}|\?\?)(\s*([0-9a-fA-F]{2}|\?\?))*$/u),
+    .describe(
+      "Hexadecimal byte pairs or ?? whole-byte wildcards, with optional whitespace between complete pairs; no leading or trailing whitespace. At least one bit must be constrained after applying the mask.",
+    ),
   mask: z
     .string()
-    .regex(/^[0-9a-fA-F]{2}(\s*[0-9a-fA-F]{2})*$/u)
-    .optional(),
+    .optional()
+    .describe(
+      "Hexadecimal mask byte pairs, with optional whitespace between complete pairs; no leading or trailing whitespace. Must contain the same number of bytes as pattern.",
+    ),
 };
 
-/** Parse once at the input boundary, retaining typed correction issues. */
-export const parseBytePattern = (
+const hexDigit = (code: number): number | undefined => {
+  if (code >= 48 && code <= 57) return code - 48;
+  if (code >= 65 && code <= 70) return code - 55;
+  if (code >= 97 && code <= 102) return code - 87;
+  return undefined;
+};
+
+const readBytePair = (
+  value: string,
+  offset: number,
+): number | "wildcard" | undefined => {
+  if (value[offset] === "?" && value[offset + 1] === "?") return "wildcard";
+  const high = hexDigit(value.charCodeAt(offset));
+  const low = hexDigit(value.charCodeAt(offset + 1));
+  return high === undefined || low === undefined ? undefined : high * 16 + low;
+};
+
+const nextPairOffset = (value: string, offset: number): number => {
+  const end = offset + 2;
+  let next = end;
+  while (next < value.length && /\s/u.test(value[next]!)) next += 1;
+  return next === value.length && next !== end ? -1 : next;
+};
+
+const countBytePairs = (
+  value: string,
+  field: "pattern" | "mask",
+): number | undefined => {
+  let count = 0;
+  for (let offset = 0; offset < value.length;) {
+    const byte = readBytePair(value, offset);
+    if (byte === undefined || (field === "mask" && byte === "wildcard"))
+      return undefined;
+    count += 1;
+    offset = nextPairOffset(value, offset);
+    if (offset < 0) return undefined;
+  }
+  return count === 0 ? undefined : count;
+};
+
+/** Validate without materializing byte arrays or using size-dependent regexes. */
+const validateBytePatternValue = (
   pattern: string,
   mask?: string,
-): Result<{ bytes: number[]; masks: number[] }, AnalysisInputError> => {
+): Result<null, AnalysisInputError> => {
   const invalid = (field: string, message: string) =>
     err(
       new AnalysisInputError("search_bytes", undefined, [
         { path: [field], reason: "invalid_value", message },
       ]),
     );
-  if (!bytePatternFields.pattern.safeParse(pattern).success)
+  const patternCount = countBytePairs(pattern, "pattern");
+  if (patternCount === undefined)
     return invalid("pattern", "Use hexadecimal byte pairs or ?? wildcards");
-  if (mask !== undefined && !bytePatternFields.mask.safeParse(mask).success)
+  const maskCount =
+    mask === undefined ? undefined : countBytePairs(mask, "mask");
+  if (mask !== undefined && maskCount === undefined)
     return invalid("mask", "Use hexadecimal mask byte pairs");
-  const pairs = pattern.replace(/\s/gu, "").match(/../gu) ?? [];
-  const maskPairs = mask?.replace(/\s/gu, "").match(/../gu);
-  if (maskPairs && maskPairs.length !== pairs.length)
+  if (maskCount !== undefined && maskCount !== patternCount)
     return invalid("mask", "Mask length must equal pattern length");
-  const bytes = pairs.map((pair) =>
-    pair === "??" ? 0 : Number.parseInt(pair, 16),
-  );
-  const masks = pairs.map((pair, index) =>
-    pair === "??" ? 0 : Number.parseInt(maskPairs?.[index] ?? "ff", 16),
-  );
-  if (!masks.some((value) => value !== 0))
-    return invalid("pattern", "Pattern must constrain at least one bit");
-  return ok({ bytes, masks });
+  let patternOffset = 0;
+  let maskOffset = 0;
+  for (let index = 0; index < patternCount; index += 1) {
+    const byte = readBytePair(pattern, patternOffset);
+    const selected = mask === undefined ? 255 : readBytePair(mask, maskOffset);
+    if (
+      typeof byte === "number" &&
+      typeof selected === "number" &&
+      selected !== 0
+    )
+      return ok(null);
+    patternOffset = nextPairOffset(pattern, patternOffset);
+    if (mask !== undefined) maskOffset = nextPairOffset(mask, maskOffset);
+  }
+  return invalid("pattern", "Pattern must constrain at least one bit");
 };
 
 /** Shared semantic validation for public and provider inputs. */
@@ -49,7 +103,7 @@ export const validateBytePattern = (
   value: { pattern: string; mask?: string | undefined },
   context: z.RefinementCtx,
 ): void => {
-  const parsed = parseBytePattern(value.pattern, value.mask);
+  const parsed = validateBytePatternValue(value.pattern, value.mask);
   if (!parsed.ok)
     for (const issue of parsed.error.issues)
       context.addIssue({
@@ -64,7 +118,7 @@ const coverageBlock = z
     segment: z.string(),
     start: z.string(),
     end: z.string(),
-    bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((value, context) => {
     const start = addressCoordinate(value.start);
@@ -92,7 +146,6 @@ export const byteSearchResultSchema = z
           address: z.string(),
           segment: z.string(),
           file_offset: z
-            .number()
             .int()
             .nonnegative()
             .max(Number.MAX_SAFE_INTEGER)
@@ -102,10 +155,10 @@ export const byteSearchResultSchema = z
             .nullable(),
         }),
       )
-      .max(1000),
+      .max(MAX_BYTE_SEARCH_MATCHES),
     searched: z.strictObject({
       blocks: z.array(coverageBlock),
-      bytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       skipped_uninitialized: z.array(coverageBlock),
       skipped_not_loaded: z.array(coverageBlock),
     }),
@@ -122,4 +175,31 @@ export const byteSearchResultSchema = z
         code: "custom",
         message: "Byte search coverage and continuation disagree",
       });
+    const ranges = value.searched.blocks.map((block) => ({
+      segment: block.segment,
+      start: addressCoordinate(block.start),
+      end: addressCoordinate(block.end),
+    }));
+    for (const [index, match] of value.matches.entries()) {
+      const address = addressCoordinate(match.address);
+      if (
+        address === null ||
+        !ranges.some(
+          (range) =>
+            range.segment === match.segment &&
+            range.start !== null &&
+            range.end !== null &&
+            range.start.space === address.space &&
+            range.end.space === address.space &&
+            range.start.offset <= address.offset &&
+            address.offset <= range.end.offset,
+        )
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["matches", index, "address"],
+          message:
+            "Byte match must lie within reported searched coverage in the same segment and address space",
+        });
+    }
   });

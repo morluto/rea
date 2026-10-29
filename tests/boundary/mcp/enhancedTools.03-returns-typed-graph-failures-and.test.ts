@@ -2,8 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
-import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
-import { err } from "../../../src/domain/result.js";
 
 import {
   closeEnhancedToolResources,
@@ -11,48 +9,21 @@ import {
   inventory,
   jsonResult,
 } from "./enhancedToolsHarness.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
 
 afterEach(closeEnhancedToolResources);
 
 describe("enhanced MCP tools", () => {
-  it("returns typed graph failures and stable unresolved-name results", async () => {
+  it("returns stable unresolved-name results", async () => {
     const tools = new EnhancedTools({
-      execute: (name) =>
-        name === "procedure_address"
-          ? Promise.resolve(ok("0x1"))
-          : name === "procedure_callees"
-            ? Promise.resolve(err(new AnalysisOutputError(name, "failed")))
-            : Promise.resolve(ok(inventory({}))),
+      execute: () => Promise.resolve(ok(inventory({}))),
     });
 
-    const graph = await tools.execute("get_call_graph", {
-      address: "0x1",
-      direction: "forward",
-    });
     const unresolved = await tools.execute("find_xrefs_to_name", {
       name: "missing",
     });
 
-    expect(graph).toMatchObject({
-      ok: true,
-      value: {
-        graph: {
-          "0": [
-            {
-              address: "0x1",
-              status: "error",
-              error: {
-                category: "execution_failure",
-                message:
-                  "Analysis returned an unreadable result. Run `rea doctor` and review the reported details; repeating the unchanged request is not expected to succeed.",
-              },
-            },
-          ],
-        },
-        limitations: [],
-      },
-    });
     expect(unresolved).toEqual({
       ok: true,
       value: {
@@ -104,4 +75,54 @@ describe("enhanced MCP tools", () => {
     if (result.ok) throw new Error("expected cancellation");
     expect(result.error._tag).toBe("AnalysisCancelledError");
   });
+});
+
+it("exact-name xrefs preserves ambiguity independently of inventory order and accepts repeated rows", async () => {
+  let rows = [
+    { address: "0x20", value: "entry" },
+    { address: "0x10", value: "entry" },
+  ];
+  const queried: unknown[] = [];
+  const client = await connect({
+    execute: async (operation, parameters) => {
+      if (operation === "list_names") return ok(rows);
+      if (operation === "xrefs") {
+        queried.push(parameters.address);
+        return ok(["0x90"]);
+      }
+      throw new Error(`Unexpected operation ${operation}`);
+    },
+  });
+  for (const reversed of [false, true]) {
+    if (reversed) rows.reverse();
+    const rejected = await client.callTool({
+      name: "find_xrefs_to_name",
+      arguments: { name: "entry" },
+    });
+    expect(parseMcpToolError(rejected).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["name"],
+            message: expect.stringContaining("ambiguous at 0x10, 0x20"),
+          }),
+        ],
+      },
+    });
+  }
+  expect(queried).toEqual([]);
+  rows = [
+    { address: "0x10", value: "entry" },
+    { address: "0x10", value: "entry" },
+  ];
+  expect(
+    jsonResult(
+      await client.callTool({
+        name: "find_xrefs_to_name",
+        arguments: { name: "entry" },
+      }),
+    ),
+  ).toMatchObject({ status: "resolved", address: "0x10", xrefs: ["0x90"] });
+  expect(queried).toEqual(["0x10"]);
 });

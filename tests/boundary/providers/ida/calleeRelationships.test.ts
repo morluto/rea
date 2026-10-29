@@ -351,3 +351,34 @@ it("preserves an explicit root cap below the edge limit through every relationsh
     expect((await client.close()).ok).toBe(true);
   }
 });
+
+it("does not treat omitted x86 callee truncation as a definite miss", async () => {
+  const { client, producer } = await callGraphSession(
+    {
+      callees: [{ addr: "0x2000", name: "square", type: "internal" }],
+    },
+    "x86_64",
+  );
+  const inner = producer.overrideCall;
+  producer.overrideCall = (name, args) =>
+    name === "callees"
+      ? [{ callees: [{ addr: "0x2000", name: "square", type: "internal" }] }]
+      : inner?.(name, args);
+  try {
+    const result = await new EnhancedTools(client).execute("trace_call_path", {
+      start: "main",
+      goal: "0x3000",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      goal_status: "unknown",
+      residual_unknowns: expect.arrayContaining([
+        expect.stringContaining(
+          "Call relationship coverage is unknown for 0x1000:",
+        ),
+      ]),
+    });
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});

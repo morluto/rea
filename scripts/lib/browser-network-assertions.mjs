@@ -146,7 +146,23 @@ export function assertBrowserNetworkEvidence(
   );
   assert.ok(first && next);
   assert.equal(next.redirected_from_transaction_id, first.transaction_id);
+  // Every request is stamped when it was observed; finished ones carry the browser's duration.
+  for (const request of requestEvents)
+    assert.ok(
+      Number.isFinite(Date.parse(request.observed_at)),
+      `Request ${request.url.url} has no observation time`,
+    );
+  const timed = events.filter((event) => event.kind === "request-finished");
+  for (const finished of timed)
+    assert.ok(
+      typeof finished.elapsed_ms === "number" &&
+        Number.isFinite(Date.parse(finished.started_at)),
+      `Finished request ${finished.url.url} has no browser start or duration`,
+    );
+  assert.ok(timed.length > 0, "No request finished");
   return {
+    timed_requests: requestEvents.length,
+    timed_completions: timed.length,
     same_url_markers: markers,
     binary_bytes: networkFixtureBinary.length,
     compressed_representation: "playwright-response-body-bytes",

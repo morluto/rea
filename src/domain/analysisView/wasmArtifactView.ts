@@ -1,23 +1,26 @@
+import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok, type Result } from "../result.js";
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
 } from "../wasm/wasmArtifact.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
-import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
+import type {
+  AnalysisViewParent,
+  AnalysisViewRequest,
+  UnsignedAnalysisView,
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisTextPage } from "./analysisViewText.js";
+import {
+  analysisTextPage,
+  analysisTextPageItemSchema,
+} from "./analysisViewText.js";
 
 /** Source forms and text from completed WASM Evidence; this never executes a VM. */
 export const wasmViewRequestSchema = z.strictObject({
@@ -33,8 +36,8 @@ export const wasmViewRequestSchema = z.strictObject({
     "details",
     "tool_profile",
   ]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const wasmViewItemSchema = z.union([
@@ -43,27 +46,29 @@ export const wasmViewItemSchema = z.union([
   wasmArtifactSchema.shape.candidates,
   wasmArtifactSchema.shape.glue,
   wasmArtifactSchema.shape.tool_profile,
-  z.strictObject({ text: z.string(), unit: z.literal("utf16-code-units") }),
+  analysisTextPageItemSchema,
 ]);
 
 /** Counts are observations of the completed producer, independent of runtime semantics. */
 export const wasmSummarySchema = z.strictObject({
   bytes: wasmArtifactSchema.shape.artifact.shape.bytes,
   validation: wasmArtifactSchema.shape.validation,
+  debug_name_metadata: wasmArtifactSchema.shape.debug_name_metadata,
+  custom_section_warnings: wasmArtifactSchema.shape.custom_section_warnings,
   available_counts: z.strictObject({
-    sections: z.number().int().nonnegative(),
-    imports: z.number().int().nonnegative(),
-    exports: z.number().int().nonnegative(),
-    candidates: z.number().int().nonnegative(),
-    glue: z.number().int().nonnegative(),
+    sections: z.int().nonnegative(),
+    imports: z.int().nonnegative(),
+    exports: z.int().nonnegative(),
+    candidates: z.int().nonnegative(),
+    glue: z.int().nonnegative(),
   }),
   wat: wasmArtifactSchema.shape.wat
     .omit({ text: true })
-    .extend({ code_units: z.number().int().nonnegative() }),
+    .extend({ code_units: z.int().nonnegative() }),
   tool_profile: wasmArtifactSchema.shape.tool_profile,
   runtime_execution: wasmArtifactSchema.shape.runtime_execution,
   network_fetch: wasmArtifactSchema.shape.network_fetch,
-  limitation_count: z.number().int().nonnegative(),
+  limitation_count: z.int().nonnegative(),
 });
 
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
@@ -81,27 +86,15 @@ export const projectWasmArtifactView = (
         },
       ]),
     );
-  const parsed = wasmArtifactSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  const parsed = parseAnalysisViewResult(wasmArtifactSchema, parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
   if (
     !wasmArtifactMatchesSubject(
       report.artifact,
       parent.subject == null
         ? null
         : {
-            path: parent.subject.local_path,
             sha256: parent.subject.digest.sha256,
             format: parent.subject.format,
           },
@@ -113,7 +106,7 @@ export const projectWasmArtifactView = (
           path: ["source", "subject"],
           reason: "invalid_value",
           message:
-            "WASM parent Evidence subject must identify the report's exact path and SHA-256.",
+            "WASM parent Evidence subject must identify the report's file format and SHA-256.",
         },
       ]),
     );
@@ -144,6 +137,8 @@ export const projectWasmArtifactView = (
       summary: {
         bytes: report.artifact.bytes,
         validation: report.validation,
+        debug_name_metadata: report.debug_name_metadata,
+        custom_section_warnings: report.custom_section_warnings,
         available_counts: {
           sections: report.sections.length,
           imports: report.imports.length,

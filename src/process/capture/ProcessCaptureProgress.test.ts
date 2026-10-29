@@ -110,4 +110,31 @@ it("still delivers terminal status after an observer rejects an update", async (
     completed: 2,
     terminal: true,
   });
+  expect(delivered.at(-1)?.message).toContain(
+    "owned_process_group=unverified terminal_renderer=unverified temporary_root=unverified",
+  );
+});
+
+it("preserves known cleanup states in terminal progress", async () => {
+  const delivered: Parameters<ProcessCaptureProgress["report"]>[0][] = [];
+  const tracker = createProcessCaptureProgressTracker({
+    async report(update) {
+      delivered.push(update);
+    },
+  });
+  await tracker.report({
+    phase: "cleanup",
+    counts: { frames: 0, samples: 0, interactions: 0 },
+    disposition: "failed",
+    terminal: true,
+    cleanup: {
+      owned_process_group: { state: "not_required", reason: null },
+      terminal_renderer: { state: "not_required", reason: null },
+      temporary_root: { state: "cleaned", reason: null },
+    },
+  });
+
+  expect(delivered[0]?.message).toContain(
+    "owned_process_group=not_required terminal_renderer=not_required temporary_root=cleaned",
+  );
 });

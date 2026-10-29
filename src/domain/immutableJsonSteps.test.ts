@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   freezeOwnedJsonSnapshotSteps,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import { jsonValueValidationIssue, type JsonValue } from "./jsonValue.js";
@@ -23,6 +24,7 @@ describe("cooperative owned snapshot sealing", () => {
     expect(steps.next().done).toBe(false);
     expect(Object.isFrozen(value)).toBe(true);
     expect(isImmutableJsonSnapshot(value)).toBe(false);
+    expect(immutableJsonSnapshotMember(value, "deferred")).toBeUndefined();
     const introduced = { value: 2 };
     deferred.child = introduced;
     expect(complete(steps)).toBe(value);
@@ -49,6 +51,7 @@ describe("cooperative owned snapshot sealing", () => {
     expect(interrupted.next().done).toBe(false);
     interrupted.return(cancelled);
     expect(isImmutableJsonSnapshot(cancelled)).toBe(false);
+    expect(immutableJsonSnapshotMember(cancelled, "values")).toBeUndefined();
   });
 
   it("preserves aliases and rejects accessors, sparse values and cycles", () => {
@@ -79,5 +82,27 @@ describe("cooperative owned snapshot sealing", () => {
     expect(jsonValueValidationIssue(value)).toBeUndefined();
     value.child.value = Number.NaN;
     expect(jsonValueValidationIssue(value)).toBe("JSON numbers must be finite");
+  });
+
+  it("never authenticates roots containing proxies or invokes their traps", () => {
+    let reflected = false;
+    const proxy = new Proxy(
+      { value: 1 },
+      {
+        getPrototypeOf() {
+          reflected = true;
+          throw new Error("must not reflect on a proxy");
+        },
+      },
+    );
+    const root = { child: proxy };
+    for (const input of [proxy, root]) {
+      expect(() => complete(freezeOwnedJsonSnapshotSteps(input))).toThrow(
+        "proxies",
+      );
+      expect(isImmutableJsonSnapshot(input)).toBe(false);
+      expect(immutableJsonSnapshotMember(input, "child")).toBeUndefined();
+    }
+    expect(reflected).toBe(false);
   });
 });

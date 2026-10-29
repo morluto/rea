@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { TraceMap } from "@jridgewell/trace-mapping";
 
 import {
   createJavaScriptApplicationGraph,
@@ -9,6 +8,7 @@ import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
 import { createHistoricalSourceGraph } from "../referenceSourceGraph.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { compareSourceToBundle } from "./sourceToBundleComparison.js";
+import { resolveJavaScriptSourceMapUrl } from "./javascriptSourceMapPaths.js";
 import {
   SOURCE_TO_BUNDLE_SIGNAL_WEIGHTS,
   sourceToBundleComparisonResultSchema,
@@ -30,6 +30,58 @@ const HASH = {
 const EVIDENCE_ID = `ev_${"a".repeat(64)}`;
 
 describe("historical source to bundle comparison", () => {
+  it("matches an unchanged JSON source artifact by its exact content digest", () => {
+    const path = "src/data.json";
+    const artifact = createJavaScriptApplicationNode({
+      kind: "artifact",
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256: HASH.unchanged,
+      },
+      observations: [
+        {
+          label: path,
+          properties: { path, file_kind: "json" },
+          evidence: artifactEvidence(HASH.unchanged, path),
+        },
+      ],
+    });
+    const result = compareSourceToBundle({
+      reference: historicalGraph("complete", [path]),
+      application: {
+        evidenceId: EVIDENCE_ID,
+        rootArtifactSha256: HASH.artifact,
+        graph: createJavaScriptApplicationGraph({
+          schema: "JavaScriptApplicationGraph",
+          root_node_ids: [artifact.node_id],
+          nodes: [artifact],
+          edges: [],
+          coverage: {
+            status: "complete",
+            truncated: false,
+            omitted_count: 0,
+            limits: [],
+          },
+          limitations: [],
+        }),
+      },
+    });
+
+    expect(item(result, path)).toMatchObject({
+      status: "unchanged",
+      confidence: "exact",
+      current_node_ids: [artifact.node_id],
+      candidates: [
+        expect.objectContaining({
+          signals: expect.arrayContaining([
+            expect.objectContaining({ kind: "exact-source-digest" }),
+          ]),
+        }),
+      ],
+    });
+  });
+
   it("classifies exact, changed, absent, split, and merged mappings stably", () => {
     const reference = historicalGraph("complete");
     const graph = applicationGraph("complete");
@@ -120,7 +172,9 @@ describe("historical source to bundle comparison", () => {
     });
     expect(result.coverage.status).toBe("partial");
   });
+});
 
+describe("source to bundle candidate evaluation", () => {
   it("evaluates all indexed candidates for each source file", () => {
     const result = compareSourceToBundle({
       reference: historicalGraph("complete", ["src/split.ts"]),
@@ -330,11 +384,13 @@ describe("source to bundle path syntax", () => {
     });
   });
 
-  it.each([
-    "https://example.test/src/modified.ts?revision=2#section",
-    "webpack://fixture/./src/modified.ts?revision=2#section",
-  ])("still strips URL query and fragment from %s", (path) => {
-    const node = moduleNode("url", { path });
+  it.each(
+    [
+      "https://example.test/src/modified.ts?revision=2#section",
+      "webpack://fixture/./src/modified.ts?revision=2#section",
+    ].flatMap((path) => ["path", "module_path"].map((key) => ({ key, path }))),
+  )("still strips URL query and fragment from $key $path", ({ key, path }) => {
+    const node = moduleNode("url", { [key]: path });
     const graph = createJavaScriptApplicationGraph({
       schema: "JavaScriptApplicationGraph",
       root_node_ids: [node.node_id],
@@ -377,7 +433,7 @@ describe("source to bundle path syntax", () => {
   });
 });
 
-describe("source-map resolver equivalence", () => {
+describe("source-map declaration resolution", () => {
   it.each([
     {
       sourceRoot: "https://cdn.example/src/",
@@ -386,37 +442,56 @@ describe("source-map resolver equivalence", () => {
     },
     {
       sourceRoot: "https://cdn.example/src//",
-      expectedSource: "https://cdn.example/src/a.js",
-      expectedResolution: { kind: "suffix", path: "cdn.example/src/a.js" },
+      expectedSource: "https://cdn.example/src//a.js",
+      expectedResolution: { kind: "suffix", path: "cdn.example/src//a.js" },
     },
     {
       sourceRoot: "webpack://",
+      expectedSource: "webpack://a.js",
+      expectedResolution: {
+        kind: "unresolved",
+        reason:
+          "Source reference uses a non-hierarchical URL without a file pathname.",
+      },
+    },
+    {
+      sourceRoot: "webpack:///",
       expectedSource: "webpack:///a.js",
       expectedResolution: { kind: "suffix", path: "a.js" },
     },
+    {
+      sourceRoot: "../src/",
+      expectedSource: "file:///artifact/src/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "src/a.js" },
+    },
+    {
+      sourceRoot: "",
+      expectedSource: "file:///a.js",
+      expectedResolution: { kind: "suffix", path: "a.js" },
+    },
+    {
+      sourceRoot: null,
+      expectedSource: "file:///artifact/dist/a.js",
+      expectedResolution: { kind: "artifact-relative", path: "dist/a.js" },
+    },
   ])(
-    "matches TraceMap for sourceRoot $sourceRoot",
+    "applies ECMA-426 sourceRoot $sourceRoot consistently to URLs and graph facts",
     ({ sourceRoot, expectedSource, expectedResolution }) => {
-      const producerSource = new TraceMap(
-        {
-          version: 3,
-          file: "main.js",
+      expect(
+        resolveJavaScriptSourceMapUrl(
+          "a.js",
           sourceRoot,
-          sources: ["a.js"],
-          names: [],
-          mappings: "",
-        },
-        "file:///artifact/dist/main.js.map",
-      ).resolvedSources[0];
-      const reference = sourceMapReference(
-        "a.js",
-        sourceRoot,
-        "dist/main.js.map",
-      );
-
-      expect(producerSource).toBe(expectedSource);
-      expect(reference.source_root).toBe(sourceRoot);
-      expect(reference.resolution).toEqual(expectedResolution);
+          "file:///artifact/dist/main.js.map",
+        ),
+      ).toBe(expectedSource);
+      expect(
+        sourceMapReference("a.js", sourceRoot, "dist/main.js.map"),
+      ).toEqual({
+        source_name: "a.js",
+        source_root: sourceRoot,
+        map_path: "dist/main.js.map",
+        resolution: expectedResolution,
+      });
     },
   );
 });

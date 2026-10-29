@@ -59,16 +59,22 @@ try {
         "scripts/run-exclusive.mjs",
         "artifacts",
         process.execPath,
-        resolve("node_modules/turbo/bin/turbo"),
+        resolve("scripts/run-turbo.mjs"),
         "run",
-        ...(plan.needsBuild ? ["artifacts:skills"] : []),
-        ...plan.artifactTasks,
+        ...new Set([
+          ...(plan.needsBuild ? ["artifacts:skills"] : []),
+          ...plan.artifactTasks,
+        ]),
       ]);
       if (prepared.code !== 0) process.exitCode = prepared.code;
     }
     if (!process.exitCode && !shutdownSignal) {
       const tested = await run(process.execPath, [
-        resolve("node_modules/vitest/vitest.mjs"),
+        resolve(
+          request.paths.length > 0
+            ? "scripts/run-exact-tests.mjs"
+            : "node_modules/vitest/vitest.mjs",
+        ),
         ...plan.vitestArguments,
       ]);
       process.exitCode = tested.code;

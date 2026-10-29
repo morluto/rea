@@ -2,7 +2,10 @@ import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
 } from "./ManagedDecodeBudget.js";
-import { managedFailure } from "./ManagedReaderFailure.js";
+import {
+  managedFailure,
+  ManagedReaderFailure,
+} from "./ManagedReaderFailure.js";
 import {
   computeRowSize,
   type RowSizeContext,
@@ -77,7 +80,10 @@ export interface ManagedMetadataLayout {
   readonly streamNames: readonly string[];
   readonly strings: MetadataStream;
   readonly guid: MetadataStream;
-  readonly blob: MetadataStream;
+  /** Empty blob heaps may omit the stream; index zero remains the empty blob. */
+  readonly blob: MetadataStream | null;
+  /** Optional: assemblies without `ldstr` literals may omit #US. */
+  readonly userStrings: MetadataStream | null;
   readonly tables: ReadonlyMap<number, MetadataTableLayout>;
   readonly rowCounts: readonly number[];
   readonly stringIndexSize: 2 | 4;
@@ -88,9 +94,10 @@ export interface ManagedMetadataLayout {
   codedIndexSize(name: CodedIndexName): 2 | 4;
 }
 
-export type CodedIndexName = keyof typeof CODED_INDEXES;
+export type CodedIndexName = keyof typeof MANAGED_CODED_INDEXES;
 
-const CODED_INDEXES = {
+/** ECMA-335 coded-index tag positions, shared by width and coordinate interpretation. */
+export const MANAGED_CODED_INDEXES = {
   TypeDefOrRef: { bits: 2, tables: [2, 1, 27] },
   HasConstant: { bits: 2, tables: [4, 8, 23] },
   HasCustomAttribute: {
@@ -107,15 +114,17 @@ const CODED_INDEXES = {
   MethodDefOrRef: { bits: 1, tables: [6, 10] },
   MemberForwarded: { bits: 1, tables: [4, 6] },
   Implementation: { bits: 2, tables: [38, 35, 39] },
-  CustomAttributeType: { bits: 3, tables: [6, 10] },
+  CustomAttributeType: { bits: 3, tables: [undefined, undefined, 6, 10] },
   ResolutionScope: { bits: 2, tables: [0, 26, 35, 1] },
   TypeOrMethodDef: { bits: 1, tables: [2, 6] },
 } as const;
 
 const SUPPORTED_TABLE_MASK = (1n << BigInt(METADATA_TABLE_NAMES.length)) - 1n;
 
+/** Check a range within `bytes`, which start at artifact file offset `base`. */
 const requireRange = (
   bytes: Buffer,
+  base: number,
   offset: number,
   length: number,
   scope: string,
@@ -131,14 +140,16 @@ const requireRange = (
       "invalid-metadata-root",
       scope,
       `${scope} leaves the metadata byte range`,
-      Number.isSafeInteger(offset) && offset >= 0 ? offset : null,
+      Number.isSafeInteger(base + offset) && offset >= 0 ? base + offset : null,
     );
 };
 
 const align4 = (value: number): number => Math.ceil(value / 4) * 4;
 
+/** Read within the metadata root; report failures at artifact file offsets. */
 const readStreamName = (
   bytes: Buffer,
+  rootOffset: number,
   offset: number,
 ): { readonly name: string; readonly next: number } => {
   const endLimit = Math.min(bytes.length, offset + 32);
@@ -149,7 +160,7 @@ const readStreamName = (
       "invalid-stream",
       "metadata.stream-name",
       "Metadata stream name is missing a bounded terminator",
-      offset,
+      rootOffset + offset,
     );
   const nameBytes = bytes.subarray(offset, end);
   if (nameBytes.some((byte) => byte < 0x20 || byte > 0x7e))
@@ -157,7 +168,7 @@ const readStreamName = (
       "invalid-stream",
       "metadata.stream-name",
       "Metadata stream name is not printable ASCII",
-      offset,
+      rootOffset + offset,
     );
   return {
     name: nameBytes.toString("ascii"),
@@ -194,10 +205,12 @@ const codedSize = (
   name: CodedIndexName,
   rowCounts: readonly number[],
 ): 2 | 4 => {
-  const descriptor = CODED_INDEXES[name];
+  const descriptor = MANAGED_CODED_INDEXES[name];
   let maximum = 0;
-  for (const table of descriptor.tables)
+  for (const table of descriptor.tables) {
+    if (table === undefined) continue;
     maximum = Math.max(maximum, rowCounts[table] ?? 0);
+  }
   return maximum < 2 ** (16 - descriptor.bits) ? 2 : 4;
 };
 
@@ -207,6 +220,7 @@ const tableSize = (index: number, rows: readonly number[]): 2 | 4 =>
 interface ParsedStreams {
   readonly streams: ReadonlyMap<string, MetadataStream>;
   readonly version: string;
+  readonly minimalDeltaOffset: number | null;
 }
 
 const readMetadataStreams = (
@@ -222,7 +236,7 @@ const readMetadataStreams = (
       rootOffset,
     );
   const versionLength = bytes.readUInt32LE(12);
-  requireRange(bytes, 16, versionLength, "metadata.version");
+  requireRange(bytes, rootOffset, 16, versionLength, "metadata.version");
   const versionBytes = bytes.subarray(16, 16 + versionLength);
   const zero = versionBytes.indexOf(0);
   const decodedVersionLength = zero < 0 ? versionBytes.length : zero;
@@ -231,7 +245,7 @@ const readMetadataStreams = (
     .subarray(0, decodedVersionLength)
     .toString("utf8");
   let cursor = align4(16 + versionLength);
-  requireRange(bytes, cursor, 4, "metadata.stream-count");
+  requireRange(bytes, rootOffset, cursor, 4, "metadata.stream-count");
   const streamCount = bytes.readUInt16LE(cursor + 2);
   if (streamCount === 0 || streamCount > 64)
     throw managedFailure(
@@ -242,11 +256,12 @@ const readMetadataStreams = (
     );
   cursor += 4;
   const streams = new Map<string, MetadataStream>();
+  let minimalDeltaOffset: number | null = null;
   for (let index = 0; index < streamCount; index += 1) {
-    requireRange(bytes, cursor, 8, "metadata.stream-header");
+    requireRange(bytes, rootOffset, cursor, 8, "metadata.stream-header");
     const relativeOffset = bytes.readUInt32LE(cursor);
     const streamSize = bytes.readUInt32LE(cursor + 4);
-    const named = readStreamName(bytes, cursor + 8);
+    const named = readStreamName(bytes, rootOffset, cursor + 8);
     if (streams.has(named.name))
       throw managedFailure(
         "invalid-stream",
@@ -254,15 +269,22 @@ const readMetadataStreams = (
         `Duplicate metadata stream ${named.name}`,
         rootOffset + cursor,
       );
-    requireRange(bytes, relativeOffset, streamSize, `metadata.${named.name}`);
+    requireRange(
+      bytes,
+      rootOffset,
+      relativeOffset,
+      streamSize,
+      `metadata.${named.name}`,
+    );
     streams.set(named.name, {
       name: named.name,
       offset: rootOffset + relativeOffset,
       size: streamSize,
     });
+    if (named.name === "#JTD") minimalDeltaOffset = rootOffset + cursor;
     cursor = named.next;
   }
-  return { streams, version };
+  return { streams, version, minimalDeltaOffset };
 };
 
 interface HeapSizes {
@@ -293,7 +315,13 @@ const readTablesHeader = (
     tablesStream.offset,
     tablesStream.offset + tablesStream.size,
   );
-  requireRange(tableBytes, 0, 24, "metadata.tables-header");
+  requireRange(
+    tableBytes,
+    tablesStream.offset,
+    0,
+    24,
+    "metadata.tables-header",
+  );
   const heapSizes = tableBytes[6] ?? 0;
   const heaps = {
     string: (heapSizes & 0x01) === 0 ? (2 as const) : (4 as const),
@@ -313,13 +341,20 @@ const readTablesHeader = (
 
 const readRowCounts = (
   tableBytes: Buffer,
+  tablesOffset: number,
   valid: bigint,
 ): readonly number[] => {
   const rowCounts = Array<number>(METADATA_TABLE_NAMES.length).fill(0);
   let tableCursor = 24;
   for (let index = 0; index < METADATA_TABLE_NAMES.length; index += 1) {
     if ((valid & (1n << BigInt(index))) === 0n) continue;
-    requireRange(tableBytes, tableCursor, 4, "metadata.table-row-count");
+    requireRange(
+      tableBytes,
+      tablesOffset,
+      tableCursor,
+      4,
+      "metadata.table-row-count",
+    );
     const count = tableBytes.readUInt32LE(tableCursor);
     rowCounts[index] = count;
     tableCursor += 4;
@@ -382,7 +417,13 @@ const buildMetadataTables = ({
         "Metadata table byte size overflowed",
         tablesOffset + tableCursor,
       );
-    requireRange(tableBytes, tableCursor, byteLength, "metadata.table-data");
+    requireRange(
+      tableBytes,
+      tablesOffset,
+      tableCursor,
+      byteLength,
+      "metadata.table-data",
+    );
     tables.set(index, {
       index,
       name: METADATA_TABLE_NAMES[index] ?? `Table${String(index)}`,
@@ -410,12 +451,30 @@ export const readManagedMetadataLayout = (
     );
   const bytes = artifact.subarray(rootOffset, rootOffset + size);
   const budget = new ManagedDecodeBudget();
-  const { streams, version } = readMetadataStreams(bytes, rootOffset, budget);
+  const { streams, version, minimalDeltaOffset } = readMetadataStreams(
+    bytes,
+    rootOffset,
+    budget,
+  );
+  // Runtime v9.0.0 MetadataReader recognizes #JTD before sizing references.
+  // Minimal deltas also use baseline coordinates and cumulative heap handles;
+  // widening local rows alone cannot establish standalone member identities.
+  if (minimalDeltaOffset !== null)
+    throw new ManagedReaderFailure(
+      {
+        code: "unsupported-metadata",
+        scope: "metadata.#JTD",
+        detail:
+          "Minimal Edit-and-Continue metadata (#JTD) requires its baseline and prior generations; standalone metadata identities and inventories are unknown.",
+        offset: minimalDeltaOffset,
+      },
+      { metadataHeader: { version, streamNames: [...streams.keys()] } },
+    );
   const { tableBytes, tablesOffset, heaps, valid } = readTablesHeader(
     artifact,
     streams,
   );
-  const rowCounts = readRowCounts(tableBytes, valid);
+  const rowCounts = readRowCounts(tableBytes, tablesOffset, valid);
   const tables = buildMetadataTables({
     tableBytes,
     rowCounts,
@@ -430,7 +489,8 @@ export const readManagedMetadataLayout = (
     streamNames: [...streams.keys()].sort(),
     strings: requireStream(streams, "#Strings"),
     guid: requireStream(streams, "#GUID"),
-    blob: requireStream(streams, "#Blob"),
+    blob: streams.get("#Blob") ?? null,
+    userStrings: streams.get("#US") ?? null,
     tables,
     rowCounts,
     stringIndexSize: heaps.string,

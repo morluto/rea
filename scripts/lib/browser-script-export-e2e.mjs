@@ -15,6 +15,7 @@ import {
   assertExportedScriptAnalysis,
 } from "./browser-script-export-assertions.mjs";
 import { mcpTextValue } from "./mcp-verifier-results.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify capture → export → existing analysis through real CLI and stdio MCP. */
 export async function verifyBrowserScriptExport(
@@ -22,24 +23,28 @@ export async function verifyBrowserScriptExport(
   entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url)),
   attachment,
 ) {
-  const site = await startBrowserScriptSite();
-  const root = await mkdtemp(join(tmpdir(), "rea-browser-script-export-"));
-  const env = {
-    ...process.env,
-    REA_LOG_LEVEL: "silent",
-    HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
-  };
-  const cli = exportCli(entrypoint, env);
-  const scenario = scriptCaptureScenario(executable, site.origin);
-  const save = (name, capture) => saveCapture(root, name, capture);
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [entrypoint, "mcp"],
-    env,
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "web-script-real-e2e", version: "1" });
-  try {
+  let site;
+  let root;
+  let transport;
+  let client;
+  return withVerifierCleanup(async () => {
+    site = await startBrowserScriptSite();
+    root = await mkdtemp(join(tmpdir(), "rea-browser-script-export-"));
+    const env = {
+      ...process.env,
+      REA_LOG_LEVEL: "silent",
+      HOPPER_LAUNCHER_PATH: "/rea-unconfigured-provider/hopper",
+    };
+    const cli = exportCli(entrypoint, env);
+    const scenario = scriptCaptureScenario(executable, site.origin);
+    const save = (name, capture) => saveCapture(root, name, capture);
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env,
+      stderr: "pipe",
+    });
+    client = new Client({ name: "web-script-real-e2e", version: "1" });
     const cliCapture = await cli(
       "capture-browser-scenario",
       JSON.stringify(scenario),
@@ -103,12 +108,15 @@ export async function verifyBrowserScriptExport(
       query_variants_isolated: true,
       implicit_refetches: 0,
     };
-  } finally {
-    await client.close();
-    await transport.close();
-    await site.close();
-    await rm(root, { recursive: true, force: true });
-  }
+  }, [
+    () => client?.close(),
+    () => transport?.close(),
+    () => site?.close(),
+    () =>
+      root === undefined
+        ? undefined
+        : rm(root, { recursive: true, force: true }),
+  ]);
 }
 
 const verifyPassiveExport = async (attachment, { cli, call, save }) => {

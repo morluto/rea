@@ -1,0 +1,35 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "src/main.ts!",
+    "src/cli.ts!",
+    "src/cliOutput.ts!",
+    "src/cliBuiltinArguments.ts!",
+    "src/cli/cliResultOutput.ts!",
+    "src/mcpDoctor.ts!",
+    "src/composition/javascriptAnalysisWorkerProcess.ts!",
+    "src/composition/webBundleAnalysisWorkerProcess.ts!",
+    "src/sqlite/SqliteDatabaseWorker.ts!",
+    "src/evm/EvmoleInterfaceWorker.ts!",
+    "src/browser/history/NodeCaptureProcess.ts!",
+    "src/javascript/sourceMaps/SourceMapCodecProcess.ts!",
+    "scripts/rea.mjs!",
+    "scripts/rea-android-workspace-guardian.mjs!",
+    "scripts/electron-active-hook.cjs!",
+    "scripts/prepack.mjs!",
+    "scripts/prepare.mjs!",
+    "scripts/verify-windows-native-artifact.mjs!"
+  ],
+  "project": ["src/**/*.ts!", "!src/**/*.test.ts", "!src/**/*.fixture.ts"],
+  "ignoreExportsUsedInFile": true,
+  "include": [
+    "files",
+    "exports",
+    "nsExports",
+    "types",
+    "nsTypes",
+    "enumMembers",
+    "namespaceMembers",
+    "duplicates"
+  ]
+}

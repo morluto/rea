@@ -3,7 +3,10 @@ import type { RequestListener, Server } from "node:http";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readCdpJson } from "../../../src/browser/CdpEndpoint.js";
+import {
+  discoverCdpEndpoint,
+  readCdpJson,
+} from "../../../src/browser/CdpEndpoint.js";
 
 const servers: Server[] = [];
 
@@ -19,6 +22,92 @@ afterEach(async () => {
         }),
     ),
   );
+});
+
+describe("CDP discovery response UTF-8", () => {
+  it.each(["title", "url"] as const)(
+    "rejects malformed UTF-8 in a discovered target %s and permits the next discovery",
+    async (field) => {
+      const target = {
+        id: "selected",
+        type: "page",
+        title: "Selected target",
+        url: "https://example.test/",
+        [field]:
+          field === "url" ? "https://example.test/target-slot" : "target-slot",
+      };
+      const valid = Buffer.from(JSON.stringify([target]));
+      const malformed = Buffer.from(valid);
+      malformed[malformed.indexOf("target-slot")] =
+        field === "title" ? 0xff : 0xc3;
+      let sendMalformed = true;
+      let responseClosed: (() => void) | undefined;
+      const closed = new Promise<void>((resolve) => {
+        responseClosed = resolve;
+      });
+      const server = await startServer((request, response) => {
+        if (request.url === "/json/version") {
+          response.end(
+            JSON.stringify({
+              Browser: "Fixture Chromium",
+              "Protocol-Version": "1.3",
+              "User-Agent": "Fixture",
+              "V8-Version": "1",
+              "WebKit-Version": "1",
+              webSocketDebuggerUrl: `ws://${request.headers.host}/devtools/browser/fixture`,
+            }),
+          );
+        } else if (request.url === "/json/list") {
+          if (sendMalformed) response.once("close", () => responseClosed?.());
+          response.end(sendMalformed ? malformed : valid);
+        } else {
+          response.writeHead(404).end();
+        }
+      });
+
+      await expect(
+        discoverCdpEndpoint(server.url.href, "list_browser_targets"),
+      ).rejects.toMatchObject({
+        _tag: "BrowserObservationError",
+        operation: "list_browser_targets",
+        reason: "invalid_endpoint_response",
+      });
+      await closed;
+      sendMalformed = false;
+      await expect(
+        discoverCdpEndpoint(server.url.href, "list_browser_targets"),
+      ).resolves.toMatchObject({ targets: [target] });
+    },
+  );
+
+  it("preserves valid replacement characters and multibyte text across HTTP chunks", async () => {
+    const value = {
+      title: "Literal \uFFFD and 🛰️",
+      url: "https://example.test/空",
+    };
+    const body = Buffer.from(JSON.stringify(value));
+    const split = body.indexOf(Buffer.from("🛰")) + 1;
+    const server = await startServer((_request, response) => {
+      response.write(body.subarray(0, split));
+      setImmediate(() => response.end(body.subarray(split)));
+    });
+
+    await expect(
+      readCdpJson(server.url, "list_browser_targets"),
+    ).resolves.toEqual(value);
+  });
+
+  it("keeps rejecting a leading UTF-8 BOM instead of normalizing it away", async () => {
+    const server = await startServer((_request, response) => {
+      response.end(
+        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("{}")]),
+      );
+    });
+
+    await expect(
+      readCdpJson(server.url, "list_browser_targets"),
+    ).rejects.toMatchObject({ reason: "invalid_endpoint_response" });
+  });
 });
 
 describe("CDP discovery response bounds", () => {

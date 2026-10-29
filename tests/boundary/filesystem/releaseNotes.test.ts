@@ -43,68 +43,77 @@ interface ReleaseNotesSeed {
 let seed: ReleaseNotesSeed | undefined;
 let seedWorkspaceRoot: string | undefined;
 
-const reaServer = (version: string, packageName = "rea-agents") => ({
-  rea: { args: ["-y", `${packageName}@${version}`, "mcp"] },
+const pluginManifests = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
+] as const;
+const pluginServerConfig = ".codex-plugin/mcp.json";
+const cursorServerConfig = ".cursor-plugin/mcp.json";
+
+const pluginMarketplaces = [
+  ".claude-plugin/marketplace.json",
+  ".agents/plugins/marketplace.json",
+] as const;
+const pluginMarketplace = (version: string, packageName = "rea-agents") => ({
+  plugins: [
+    { name: "rea", source: { source: "npm", package: packageName, version } },
+  ],
 });
 
-/** Claude Code and Codex declare the server inline in the manifest. */
-const inlineManifest = (
+const pluginServer = (
   version: string,
-  { skills = ["./skill"], packageName = "rea-agents" } = {},
-) => ({ version, skills, mcpServers: reaServer(version, packageName) });
-
-/** Cursor keeps the version in the manifest and the server in a second file. */
-const cursorManifest = (
-  version: string,
-  { serverFile = "./.cursor-plugin/mcp.json" } = {},
-) => ({ version, mcpServers: serverFile });
-
-const cursorServerFile = (
-  version: string,
-  {
-    packageName = "rea-agents",
-    env,
-  }: { packageName?: string; env?: object } = {},
+  command = "node",
+  launcher = "./scripts/plugin-mcp-launcher.mjs",
 ) => ({
   mcpServers: {
-    rea: { ...reaServer(version, packageName).rea, ...(env ? { env } : {}) },
+    rea: {
+      command,
+      args: [launcher, version],
+      startup_timeout_sec: 30,
+    },
   },
 });
 
-const pluginFiles = [
-  {
-    path: ".claude-plugin/plugin.json",
-    build: inlineManifest,
-    behaviorChanges: [
-      { change: "the skill path", edit: { skills: ["./another-skill"] } },
-      { change: "the launched package", edit: { packageName: "other" } },
-    ],
+const cursorPluginServer = (version: string, command = "node") =>
+  pluginServer(
+    version,
+    command,
+    "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+  );
+
+const pluginManifest = (
+  version: string,
+  { skills = ["./skill"], command = "node" } = {},
+) => ({
+  version,
+  skills,
+  mcpServers: {
+    rea: {
+      command,
+      args: ["${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs", version],
+    },
   },
-  {
-    path: ".codex-plugin/plugin.json",
-    build: inlineManifest,
-    behaviorChanges: [
-      { change: "the skill path", edit: { skills: ["./another-skill"] } },
-      { change: "the launched package", edit: { packageName: "other" } },
-    ],
-  },
-  {
-    path: ".cursor-plugin/plugin.json",
-    build: cursorManifest,
-    behaviorChanges: [
-      { change: "the server file", edit: { serverFile: "./other.json" } },
-    ],
-  },
-  {
-    path: ".cursor-plugin/mcp.json",
-    build: cursorServerFile,
-    behaviorChanges: [
-      { change: "the launched package", edit: { packageName: "other" } },
-      { change: "the server environment", edit: { env: { DEBUG: "1" } } },
-    ],
-  },
-] as const;
-const pluginManifests = pluginFiles.map(({ path }) => path);
+});
+
+const pluginManifestFor = (
+  path: (typeof pluginManifests)[number],
+  version: string,
+  options: { skills?: string[]; command?: string } = {},
+) =>
+  path === ".codex-plugin/plugin.json"
+    ? {
+        version,
+        skills: options.skills ?? ["./skill"],
+        mcpServers: "./.codex-plugin/mcp.json",
+      }
+    : path === ".cursor-plugin/plugin.json"
+      ? {
+          version,
+          skills: options.skills ?? ["./skill"],
+          mcpServers: "./.cursor-plugin/mcp.json",
+        }
+      : pluginManifest(version, options);
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
@@ -121,9 +130,27 @@ beforeAll(async () => {
     join(directory, ".release-please-manifest.json"),
     JSON.stringify({ ".": "6.3.0" }),
   );
-  for (const { path, build } of pluginFiles) {
+  for (const path of pluginManifests) {
     await mkdir(join(directory, dirname(path)), { recursive: true });
-    await writeFile(join(directory, path), JSON.stringify(build("6.3.0")));
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginManifestFor(path, "6.3.0")),
+    );
+  }
+  await writeFile(
+    join(directory, pluginServerConfig),
+    JSON.stringify(pluginServer("6.3.0")),
+  );
+  await writeFile(
+    join(directory, cursorServerConfig),
+    JSON.stringify(cursorPluginServer("6.3.0")),
+  );
+  for (const path of pluginMarketplaces) {
+    await mkdir(join(directory, dirname(path)), { recursive: true });
+    await writeFile(
+      join(directory, path),
+      JSON.stringify(pluginMarketplace("6.3.0")),
+    );
   }
   await git(directory, ["add", "."]);
   await git(directory, ["commit", "-m", "chore: baseline"]);
@@ -173,6 +200,8 @@ beforeAll(async () => {
           author("platformbot", "Bot"),
           author("claude"),
           author("cursoragent"),
+          author("codex"),
+          author("Copilot"),
           author("morluto"),
         ]),
         associatedPullRequests: page([]),
@@ -285,18 +314,32 @@ it("inventories side branches and paginated credits, then checks and renders syn
   const f = await fixture();
   const inventory = z
     .object({
-      commits: z.array(z.object({ sha: z.string() })),
+      commits: z.array(
+        z.object({
+          sha: z.string(),
+          authors: z.array(
+            z.object({ user: z.object({ login: z.string() }).nullable() }),
+          ),
+        }),
+      ),
       pullRequests: z.array(z.object({ number: z.number() })),
     })
     .parse(JSON.parse(await readFile(f.manifest, "utf8")));
   expect(inventory.commits).toHaveLength(3);
+  expect(
+    inventory.commits.flatMap(({ authors }) =>
+      authors.map(({ user }) => user?.login),
+    ),
+  ).toEqual(
+    expect.arrayContaining(["claude", "cursoragent", "codex", "Copilot"]),
+  );
   expect(inventory.pullRequests.map((pr) => pr.number)).toEqual([101]);
   expect(f.record).toContain(
     "Thanks @alice, @bob, @reporter, @second-reporter.",
   );
   expect(f.record).toContain("Thanks @dana.");
   expect(f.record).not.toMatch(
-    /@(?:merger|automation|platformbot|claude|cursoragent|morluto)/u,
+    /@(?:merger|automation|platformbot|claude|cursoragent|codex|Copilot|morluto)/u,
   );
   const body = join(f.directory, "body.md");
   await writeFile(
@@ -394,6 +437,7 @@ it("rejects lost grouped credits, fabricated references, bots, and stale PR bodi
       f.bullet + " Thanks @automation[bot].",
       "Unverified human credit @automation[bot]",
     ],
+    [f.bullet + " Thanks @Copilot.", "Unverified human credit @copilot"],
   ]) {
     await writeFile(
       join(f.directory, "CHANGELOG.md"),
@@ -435,24 +479,35 @@ it("rejects lost grouped credits, fabricated references, bots, and stale PR bodi
 
 it("binds publication to complete recorded history and the reviewed base", async () => {
   const f = await fixture();
-  for (const { path, build } of pluginFiles)
-    await writeFile(join(f.directory, path), JSON.stringify(build("6.4.0")));
-  await git(f.directory, ["add", "CHANGELOG.md", ...pluginManifests]);
+  for (const path of pluginManifests)
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify(pluginManifestFor(path, "6.4.0")),
+    );
+  await writeFile(
+    join(f.directory, pluginServerConfig),
+    JSON.stringify(pluginServer("6.4.0")),
+  );
+  for (const path of pluginMarketplaces)
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify(pluginMarketplace("6.4.0")),
+    );
+  await writeFile(
+    join(f.directory, cursorServerConfig),
+    JSON.stringify(cursorPluginServer("6.4.0")),
+  );
+  await git(f.directory, [
+    "add",
+    "CHANGELOG.md",
+    ...pluginManifests,
+    pluginServerConfig,
+    cursorServerConfig,
+    ...pluginMarketplaces,
+  ]);
   await git(f.directory, ["commit", "-m", "chore: release notes"]);
   const source = await git(f.directory, ["rev-parse", "HEAD"]);
-  // Release PRs may migrate the launcher pin from package@version to bare
-  // SemVer while changing only the plugin version.
-  for (const path of [
-    ".claude-plugin/plugin.json",
-    ".codex-plugin/plugin.json",
-    ".cursor-plugin/mcp.json",
-  ]) {
-    const manifest = JSON.parse(
-      await readFile(join(f.directory, path), "utf8"),
-    );
-    manifest.mcpServers.rea.args[1] = "6.4.0";
-    await writeFile(join(f.directory, path), JSON.stringify(manifest));
-  }
+  // Release PRs bump the plugin manifest version and pinned launch only.
   await f.invoke(["check", "--manifest", f.manifest, "--source", source]);
   await writeFile(join(f.directory, "product.txt"), "later product change");
   await git(f.directory, ["add", "product.txt"]);
@@ -473,20 +528,67 @@ it("binds publication to complete recorded history and the reviewed base", async
   });
 });
 
-it.each(
-  pluginFiles.flatMap(({ path, build, behaviorChanges }) =>
-    behaviorChanges.map(({ change, edit }) => ({
-      path,
-      change,
-      // Each file's edits are typed against that file's own builder above.
-      content: (build as (version: string, edit: object) => object)(
-        "6.4.0",
-        edit,
+it.each(pluginManifests)(
+  "treats a release that changes the skill path in %s as a product change",
+  async (path) => {
+    const f = await fixture();
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify(
+        pluginManifestFor(path, "6.4.0", { skills: ["./another-skill"] }),
       ),
-    })),
-  ),
-)(
-  "treats a release that changes $change in $path as a product change",
+    );
+    await git(f.directory, ["add", "CHANGELOG.md", path]);
+    await git(f.directory, ["commit", "-m", "chore: release notes"]);
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        `Product changed after notes target; regenerate inventory: ${path}`,
+      ),
+    });
+  },
+);
+
+it("accepts Release Please lockfile refreshes without allowing product changes", async () => {
+  const f = await fixture();
+  await writeFile(
+    join(f.directory, "package-lock.json"),
+    '{"lockfileVersion":3}',
+  );
+  await writeFile(
+    join(f.directory, "package-lock.json"),
+    '{"lockfileVersion":3}',
+  );
+  await git(f.directory, [
+    "add",
+    "CHANGELOG.md",
+    "package-lock.json",
+    "package-lock.json",
+  ]);
+  await git(f.directory, ["commit", "-m", "chore: release lockfiles"]);
+  await f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]);
+});
+
+it.each([
+  {
+    path: ".claude-plugin/plugin.json",
+    content: pluginManifest("6.4.0", { command: "other-launcher" }),
+  },
+  {
+    path: pluginServerConfig,
+    content: pluginServer("6.4.0", "other-launcher"),
+  },
+  {
+    path: cursorServerConfig,
+    content: pluginServer(
+      "6.4.0",
+      "other-launcher",
+      "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+    ),
+  },
+])(
+  "keeps launcher behavior in $path outside version-only metadata",
   async ({ path, content }) => {
     const f = await fixture();
     await writeFile(join(f.directory, path), JSON.stringify(content));
@@ -647,3 +749,23 @@ it("fails closed on partial GitHub errors and non-advancing pagination without s
   });
   await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it.each(pluginMarketplaces)(
+  "treats a marketplace package change in %s as product behavior",
+  async (path) => {
+    const f = await fixture();
+    await writeFile(
+      join(f.directory, path),
+      JSON.stringify(pluginMarketplace("6.4.0", "another-package")),
+    );
+    await git(f.directory, ["add", "CHANGELOG.md", path]);
+    await git(f.directory, ["commit", "-m", "chore: release notes"]);
+    await expect(
+      f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining(
+        `Product changed after notes target; regenerate inventory: ${path}`,
+      ),
+    });
+  },
+);

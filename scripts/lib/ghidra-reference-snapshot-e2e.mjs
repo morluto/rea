@@ -1,4 +1,5 @@
 import {
+  requireMcpEvidenceBundle,
   requireMcpToolError,
   requireMcpLifecycleResult,
   requireMcpEvidenceResult,
@@ -26,12 +27,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
   client,
   { target, procedure, omittedEdge, entrypoint, env },
 ) {
-  const bundle = requireMcpLifecycleResult(
+  const bundle = requireMcpEvidenceBundle(
     await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},
     }),
-    "get_evidence_bundle",
   );
   const observed = bundle.records.find(
     (record) =>
@@ -142,7 +142,7 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     const retained = requireMcpEvidenceResult(
       await client.callTool({
         name: "analyze_function",
-        arguments: { procedure },
+        arguments: { procedure, detail: "complete" },
       }),
       "analyze_function",
     );

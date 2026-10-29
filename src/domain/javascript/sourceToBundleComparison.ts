@@ -19,6 +19,7 @@ import {
   historicalSourceFiles,
   scoreSourceToBundleCandidate,
   sourceBearingNodes,
+  sourceToBundleCandidateIdentity,
   type SourceToBundleCandidateIndex,
 } from "./sourceToBundleSignals.js";
 
@@ -61,7 +62,12 @@ export const compareSourceToBundle = (
     ...projection.factors,
   };
   const mappedCurrentIds = new Set(
-    mappings.items.flatMap(({ current_node_ids: nodeIds }) => nodeIds),
+    mappings.items.flatMap(({ current_node_ids: nodeIds, candidates }) => [
+      ...nodeIds,
+      ...candidates
+        .filter((candidate) => nodeIds.includes(candidate.current_node_id))
+        .flatMap((candidate) => candidate.representation_node_ids ?? []),
+    ]),
   );
   const unmappedCurrentNodeIds = projection.currentNodes
     .map(({ node_id: nodeId }) => nodeId)
@@ -131,8 +137,9 @@ const compareMappings = (
     const classification = classifyMapping(
       scored,
       projection.absenceComplete,
-      (nodeId) =>
-        source.sha256 !== null && candidateHasDigest(projection.index, nodeId),
+      (candidate) =>
+        source.sha256 !== null &&
+        candidateHasDigest(projection.index, candidate),
     );
     const semantic = {
       source_path: source.path,
@@ -183,7 +190,7 @@ const scoringModel = (): SourceToBundleComparisonResult["scoring"] => ({
 const classifyMapping = (
   candidates: readonly SourceToBundleCandidate[],
   absenceComplete: boolean,
-  digestComparable: (nodeId: string) => boolean,
+  digestComparable: (candidate: SourceToBundleCandidate) => boolean,
 ): ClassifiedMapping => {
   const exact = candidates.filter((candidate) =>
     hasSignal(candidate, "exact-source-digest"),
@@ -201,9 +208,11 @@ const classifyMapping = (
     return {
       status: "duplicated",
       confidence: "exact",
-      currentNodeIds: exact.map(({ current_node_id: nodeId }) => nodeId),
+      currentNodeIds: uniqueSorted(
+        exact.map(({ current_node_id: nodeId }) => nodeId),
+      ),
       limitations: [
-        "The same historical source digest occurs in multiple current graph nodes.",
+        "The same historical source digest occurs in multiple current source occurrences.",
       ],
     };
   const pathCandidates = candidates.filter((candidate) =>
@@ -222,7 +231,7 @@ const classifyMapping = (
       : pathCandidates.filter(({ score }) => score === topScore);
   if (topPathCandidates.length === 1) {
     const candidate = topPathCandidates[0];
-    if (candidate !== undefined && digestComparable(candidate.current_node_id))
+    if (candidate !== undefined && digestComparable(candidate))
       return {
         status: "modified",
         confidence: candidate.confidence === "high" ? "high" : "medium",
@@ -245,11 +254,11 @@ const classifyMapping = (
     return {
       status: "split",
       confidence: "medium",
-      currentNodeIds: topPathCandidates.map(
-        ({ current_node_id: nodeId }) => nodeId,
+      currentNodeIds: uniqueSorted(
+        topPathCandidates.map(({ current_node_id: nodeId }) => nodeId),
       ),
       limitations: [
-        "Multiple equally scored current nodes retain the historical source path; this is a static split inference, not runtime proof.",
+        "Multiple equally scored current source occurrences retain the historical source path; this is a static split inference, not runtime proof.",
       ],
     };
   if (candidates.length > 0)
@@ -293,8 +302,12 @@ const markMergedMappings = (
     if (item.status !== "unchanged" || item.current_node_ids.length !== 1)
       continue;
     const nodeId = item.current_node_ids[0];
-    if (nodeId === undefined) continue;
-    sourcesByNode.set(nodeId, [...(sourcesByNode.get(nodeId) ?? []), item]);
+    const candidate = item.candidates.find(
+      (candidate) => candidate.current_node_id === nodeId,
+    );
+    if (candidate === undefined) continue;
+    const key = sourceToBundleCandidateIdentity(candidate);
+    sourcesByNode.set(key, [...(sourcesByNode.get(key) ?? []), item]);
   }
   const mergedSources = new Set(
     [...sourcesByNode.values()]
@@ -311,7 +324,7 @@ const markMergedMappings = (
       confidence: "exact" as const,
       limitations: uniqueSorted([
         ...item.limitations,
-        "Multiple historical source paths have exact digest identity with the same current graph node.",
+        "Multiple historical source paths have exact digest identity with the same current source occurrence.",
       ]),
     };
     return { ...semantic, mapping_id: mappingId(input, semantic) };
@@ -388,4 +401,7 @@ const compareCandidates = (
   right: SourceToBundleCandidate,
 ): number =>
   right.score - left.score ||
-  compareUnicodeCodePoints(left.current_node_id, right.current_node_id);
+  compareUnicodeCodePoints(
+    sourceToBundleCandidateIdentity(left),
+    sourceToBundleCandidateIdentity(right),
+  );

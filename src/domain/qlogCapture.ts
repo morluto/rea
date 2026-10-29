@@ -28,15 +28,15 @@ export const qlogCaptureFactsSchema = z.strictObject({
   }),
   traces: z.array(
     z.strictObject({
-      trace_index: z.number().int().nonnegative(),
+      trace_index: z.int().nonnegative(),
       location: traceLocation,
-      event_count: z.number().int().nonnegative(),
+      event_count: z.int().nonnegative(),
       odcid: z.string().nullable(),
       vantage_point: z.enum(["client", "server"]).nullable(),
-      incomplete_fact_records: z.array(z.number().int().nonnegative()),
+      incomplete_fact_records: z.array(z.int().nonnegative()),
       loss_declarations: z.array(
         z.strictObject({
-          record_ordinal: z.number().int().nonnegative(),
+          record_ordinal: z.int().nonnegative(),
           confidence: z.literal("observed"),
           packet_number: unsignedFact,
           packet_type: z.string().nullable(),
@@ -53,8 +53,8 @@ export const qlogCaptureFactsSchema = z.strictObject({
           scope: z.literal("observed-stream-frame-ranges"),
           contributions: z.array(
             z.strictObject({
-              record_ordinal: z.number().int().nonnegative(),
-              frame_index: z.number().int().nonnegative(),
+              record_ordinal: z.int().nonnegative(),
+              frame_index: z.int().nonnegative(),
               offset: decimal,
               length: decimal,
               fin: z.boolean().nullable(),

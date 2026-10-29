@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
-
-import canonicalize from "canonicalize";
 import { z } from "zod";
 
+import { digestCanonicalValue } from "./canonicalDigest.js";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
+import {
+  compareAsciiStrings,
+  isSortedUniqueAscii,
+} from "./canonicalOrdering.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const claimIdSchema = z.string().regex(IDENTIFIER_PATTERN);
@@ -26,12 +28,12 @@ export const evidenceCompletionRecordSchema = z.strictObject({
 });
 
 const completionSummarySchema = z.strictObject({
-  total: z.number().int().min(1),
-  pass: z.number().int().nonnegative(),
-  fail: z.number().int().nonnegative(),
-  unsupported: z.number().int().nonnegative(),
-  truncated: z.number().int().nonnegative(),
-  unknown: z.number().int().nonnegative(),
+  total: z.int().min(1),
+  pass: z.int().nonnegative(),
+  fail: z.int().nonnegative(),
+  unsupported: z.int().nonnegative(),
+  truncated: z.int().nonnegative(),
+  unknown: z.int().nonnegative(),
   complete: z.boolean(),
 });
 
@@ -57,15 +59,6 @@ type EvidenceCompletionLedgerValue = z.infer<
   typeof completionLedgerObjectSchema
 >;
 
-const compareIdentifiers = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
-
-const isSortedUnique = (values: readonly string[]): boolean =>
-  values.every(
-    (value, index) =>
-      index === 0 || compareIdentifiers(values[index - 1] ?? "", value) < 0,
-  );
-
 const summarize = (
   records: readonly EvidenceCompletionRecord[],
 ): EvidenceCompletionLedger["summary"] => {
@@ -84,34 +77,22 @@ const summarize = (
   };
 };
 
-const canonicalJson = (value: unknown): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError(
-      "RFC 8785 canonicalization rejected the completion ledger",
-    );
-  return serialized;
-};
-
 const computeLedgerId = (
   records: readonly EvidenceCompletionRecord[],
-): string =>
-  `ecl_${createHash("sha256")
-    .update(canonicalJson({ records }))
-    .digest("hex")}`;
+): string => `ecl_${digestCanonicalValue({ records }, "Completion ledger")}`;
 
 const ledgerIssues = (
   ledger: EvidenceCompletionLedgerValue,
   context: z.RefinementCtx,
 ): void => {
-  if (!isSortedUnique(ledger.records.map((record) => record.claim_id)))
+  if (!isSortedUniqueAscii(ledger.records.map((record) => record.claim_id)))
     context.addIssue({
       code: "custom",
       path: ["records"],
       message: "Completion records must be sorted by unique claim ID",
     });
   for (const [index, record] of ledger.records.entries())
-    if (!isSortedUnique(record.evidence_ids))
+    if (!isSortedUniqueAscii(record.evidence_ids))
       context.addIssue({
         code: "custom",
         path: ["records", index, "evidence_ids"],
@@ -149,13 +130,13 @@ export const createEvidenceCompletionLedger = (
     .map((record) => evidenceCompletionRecordSchema.parse(record))
     .map((record) => ({
       ...record,
-      evidence_ids: [...record.evidence_ids].sort(compareIdentifiers),
+      evidence_ids: [...record.evidence_ids].sort(compareAsciiStrings),
     }))
-    .sort((left, right) => compareIdentifiers(left.claim_id, right.claim_id));
-  if (!isSortedUnique(records.map((record) => record.claim_id)))
+    .sort((left, right) => compareAsciiStrings(left.claim_id, right.claim_id));
+  if (!isSortedUniqueAscii(records.map((record) => record.claim_id)))
     throw new TypeError("Completion claim IDs must be unique");
   for (const record of records)
-    if (!isSortedUnique(record.evidence_ids))
+    if (!isSortedUniqueAscii(record.evidence_ids))
       throw new TypeError("Completion Evidence IDs must be unique per claim");
   return evidenceCompletionLedgerSchema.parse({
     ledger_id: computeLedgerId(records),
@@ -163,8 +144,3 @@ export const createEvidenceCompletionLedger = (
     summary: summarize(records),
   });
 };
-
-/** Parse a completion ledger and reject non-canonical or tampered content. */
-export const parseEvidenceCompletionLedger = (
-  input: unknown,
-): EvidenceCompletionLedger => evidenceCompletionLedgerSchema.parse(input);

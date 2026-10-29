@@ -3,6 +3,7 @@ import { z } from "zod";
 import { digestSchema, prefixedDigestSchema } from "./digests.js";
 import { evidenceSchema, type Evidence } from "./evidence.js";
 import type { EvidenceBundle } from "./evidenceBundle.js";
+import { nativeValueFlowMetadataSchema } from "./native/nativeValueFlow.js";
 
 /** Exact retained-record selectors; selection never resolves a provider address. */
 export const evidenceRecordFiltersSchema = z.strictObject({
@@ -14,21 +15,11 @@ export const evidenceRecordFiltersSchema = z.strictObject({
 });
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
 
-const countSchema = z.number().int().nonnegative();
+const countSchema = z.int().nonnegative();
 const nativeMetadataSchema = z.object({
   procedure: z.object({ address: z.string(), name: z.string().nullish() }),
   native_value_flow: z.unknown().optional(),
 });
-const valueFlowMetadataSchema = z.union([
-  z.object({
-    available: z.literal(true),
-    truncated: z.boolean(),
-    omitted_operations_lower_bound: countSchema.optional(),
-    known_omitted_inputs: countSchema.optional(),
-    known_omitted_edges: countSchema.optional(),
-  }),
-  z.object({ available: z.literal(false), reason: z.string() }),
-]);
 
 const nativeSummarySchema = z.discriminatedUnion("available", [
   z.strictObject({
@@ -88,7 +79,9 @@ const nativeSummary = (
   const parsed = nativeMetadataSchema.safeParse(evidence.normalized_result);
   if (!parsed.success)
     return { available: false, reason: "not-recorded-or-incompatible" };
-  const flow = valueFlowMetadataSchema.safeParse(parsed.data.native_value_flow);
+  const flow = nativeValueFlowMetadataSchema.safeParse(
+    parsed.data.native_value_flow,
+  );
   return {
     available: true,
     procedure_address: parsed.data.procedure.address,

@@ -13,6 +13,8 @@ import type { Result } from "../../domain/result.js";
 
 /** Provider-neutral boundary for root-confined Electron file-page observation. */
 export interface ElectronObservationPort {
+  /** Release provider-owned transports during command or server shutdown. */
+  close?(): Promise<void>;
   identity(): ProviderIdentity;
   listTargets(
     input: ListElectronTargetsInput,

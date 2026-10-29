@@ -1,4 +1,5 @@
 import { ghidraSeedReportSchema } from "./GhidraAnalysisSeeds.js";
+import { ghidraDisabledAnalyzerReportSchema } from "./GhidraDisabledAnalyzers.js";
 import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
@@ -11,7 +12,7 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 
-/** Exact methods proved by the bridge handshake after auto-analysis. */
+/** Exact methods proved by the selected Program bridge handshake. */
 export const GHIDRA_SESSION_CAPABILITIES = [
   "ping",
   "shutdown",
@@ -46,7 +47,8 @@ const sessionInfoSchema = z
       })
       .strict(),
     read_only: z.boolean(),
-    analysis_complete: z.boolean(),
+    analysis_complete: z.boolean().nullable(),
+    existing_project: z.literal(true).optional(),
     analysis_timed_out: z.boolean(),
     /** Program Information attributes; absent load state remains unknown. */
     pdb: z
@@ -83,11 +85,12 @@ const sessionInfoSchema = z
       .optional(),
     analysis_extensions: z.array(ghidraExtensionResultSchema).optional(),
     analysis_seeds: ghidraSeedReportSchema.optional(),
+    disabled_analyzers: ghidraDisabledAnalyzerReportSchema.optional(),
     mips_soft_float_storage: z
       .object({
         policy: z.literal(GHIDRA_MIPS_SOFT_FLOAT_STORAGE),
-        functions: z.number().int().nonnegative(),
-        definitions: z.number().int().nonnegative(),
+        functions: z.int().nonnegative(),
+        definitions: z.int().nonnegative(),
       })
       .strict()
       .optional(),
@@ -105,7 +108,7 @@ const sessionInfoSchema = z
   })
   .strict();
 
-/** Authenticated metadata produced after Ghidra finishes auto-analysis. */
+/** Authenticated Program metadata; original analysis can remain unknown. */
 export type GhidraSessionInfo = z.infer<typeof sessionInfoSchema>;
 
 /** Describe missing PDB authority without claiming all names are generated. */
@@ -121,21 +124,26 @@ export const ghidraPdbLimitations = (
     limitations.push(
       `PDB attributes ${pdb.resource_limit.omitted_attributes.join(", ")} were omitted because the handshake's ${pdb.resource_limit.utf16_budget}-UTF-16-unit PDB attribute budget was exhausted. Omitted values remain unknown; they were not truncated or reported as absent.`,
     );
+  const hasReference = [
+    pdb.file,
+    pdb.guid,
+    pdb.age,
+    pdb.signature,
+    pdb.version,
+  ].some((value) => value !== null);
+  const reference = hasReference
+    ? `The Ghidra Program references PDB ${pdb.file ?? "(file unknown)"} (GUID ${pdb.guid ?? "unknown"}, age (hex) ${pdb.age ?? "unknown"}, signature ${pdb.signature ?? "unknown"}, version ${pdb.version ?? "unknown"}); `
+    : "";
   if (pdb.loaded === true)
     return [
       ...limitations,
-      "Ghidra reports a loaded PDB; this is not an independent PDB identity or complete symbol/type-coverage attestation. Original names and types may still be missing; an empty name search does not prove a procedure is absent. Use list_procedures and address-based analysis to inspect recovered functions.",
+      `${reference}Ghidra reports a loaded PDB; this is not an independent PDB identity or complete symbol/type-coverage attestation. Original names and types may still be missing; an empty name search does not prove a procedure is absent. Use list_procedures and address-based analysis to inspect recovered functions.`,
     ];
-  if (
-    [pdb.file, pdb.guid, pdb.age, pdb.signature, pdb.version].every(
-      (value) => value === null,
-    )
-  )
-    return limitations;
+  if (!hasReference) return limitations;
   const state = pdb.loaded === false ? "not loaded" : "load state unknown";
   return [
     ...limitations,
-    `The target references PDB ${pdb.file ?? "(file unknown)"} (GUID ${pdb.guid ?? "unknown"}, age (hex) ${pdb.age ?? "unknown"}, signature ${pdb.signature ?? "unknown"}, version ${pdb.version ?? "unknown"}); Ghidra reports ${state}. Original names and types may be missing; an empty name search does not prove a procedure is absent. Use list_procedures and address-based analysis to inspect recovered functions. REA does not admit a caller-selected PDB companion.`,
+    `${reference}Ghidra reports ${state}. Original names and types may be missing; an empty name search does not prove a procedure is absent. Use list_procedures and address-based analysis to inspect recovered functions. REA does not admit a caller-selected PDB companion.`,
   ];
 };
 
@@ -148,6 +156,7 @@ export const parseGhidraSessionInfo = (
     readonly profileDigest: string;
     readonly targetSha256: string;
     readonly expectedReadOnly?: boolean;
+    readonly expectedExistingProject?: boolean;
     readonly expectedLanguageId?: string;
     readonly expectedCompilerSpecId?: string;
   },
@@ -174,7 +183,13 @@ export const parseGhidraSessionInfo = (
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||
-    parsed.data.analysis_complete === parsed.data.analysis_timed_out
+    (expected.expectedExistingProject === true
+      ? parsed.data.existing_project !== true ||
+        parsed.data.analysis_complete !== null ||
+        parsed.data.analysis_timed_out
+      : parsed.data.existing_project !== undefined ||
+        parsed.data.analysis_complete === null ||
+        parsed.data.analysis_complete === parsed.data.analysis_timed_out)
   )
     return err(new Error("Ghidra bridge handshake identity is invalid"));
   return ok(parsed.data);

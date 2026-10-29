@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { isSafeNumber, LosslessNumber } from "lossless-json";
+import { LosslessNumber } from "lossless-json";
 import { parseCaptureJson } from "./CaptureJson.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../../domain/stringPatterns.js";
 import {
   WEB_NETWORK_CAPTURE_LIMITS,
   type WebNetworkCapture,
@@ -25,14 +26,16 @@ type Projection = Pick<
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
 >;
 
-/** Decode a retained HAR with exact numeric lexemes and unchanged upstream schema validation. */
+/** Decode a retained HAR, validating a disposable projection of source facts. */
 export const decodeHarCapture = (
   text: string,
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
-  const validation = projectHar(raw, [], false);
-  createHarValidator()(validation.reported);
+  const validation = projectHar(raw, [], "validation");
+  const adaptedPlaywrightEntries = new Set(
+    createHarValidator()(validation.reported),
+  );
   if (
     !captureObject(raw) ||
     !captureObject(raw.log) ||
@@ -52,11 +55,11 @@ export const decodeHarCapture = (
   const container = projectHar(
     { ...raw, log: { ...raw.log, entries: null } },
     sensitiveValues,
-    true,
+    "container",
   );
   const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
     // Validate each original record even when a structural ancestor excludes it.
-    const projected = projectHar(entry, sensitiveValues, true);
+    const projected = projectHar(entry, sensitiveValues, "entry");
     const projection: Projection = recordsExcluded
       ? {
           reported: null,
@@ -72,7 +75,12 @@ export const decodeHarCapture = (
         : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
       ...projection,
       limitations: [
-        "HAR text is producer-decoded Unicode. Original body bytes remain unknown unless content explicitly uses valid base64; declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        ...(adaptedPlaywrightEntries.has(ordinal)
+          ? [
+              "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+            ]
+          : []),
         ...(recordsExcluded
           ? [
               "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",
@@ -94,14 +102,31 @@ export const decodeHarCapture = (
   };
 };
 
+/** Relative HTTP paths belong only to entries, never similarly named container extensions. */
 const projectHar = (
   value: unknown,
   sensitiveValues: readonly string[],
-  redact: boolean,
+  scope: "validation" | "container" | "entry",
 ): Projection => {
-  const redactor = new CaptureRedaction(sensitiveValues);
+  const redact = scope !== "validation";
+  const redactor = new CaptureRedaction(
+    sensitiveValues,
+    scope === "entry" ? value : undefined,
+  );
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
+  const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
+    // Evidence publishes an unsafe number as null; the schema must still judge it as a number.
+    if (!redact) return validationNumber(item.value);
+    const number = redactor.number(item, pointer, redact);
+    if (number === null) return null;
+    numeric_literals.push({
+      pointer,
+      producer_type: "json-number",
+      literal: number.literal,
+    });
+    return number.reported;
+  };
   const visit = (
     item: unknown,
     pointer: string,
@@ -111,27 +136,19 @@ const projectHar = (
     if (depth > WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        "HAR exceeds the 64-level complete-evidence nesting budget.",
+        "HAR exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.",
         pointer,
       );
     if (
-      redact &&
+      scope === "entry" &&
       parent !== undefined &&
       redactor.harCredential(pointer, parent)
     )
       return redactor.credential(pointer);
-    if (item instanceof LosslessNumber) {
-      if (redact && redactor.text(item.value, pointer) === null) return null;
-      numeric_literals.push({
-        pointer,
-        producer_type: "json-number",
-        literal: item.value,
-      });
-      return isSafeNumber(item.value) ? Number(item.value) : null;
-    }
+    if (item instanceof LosslessNumber) return projectNumber(item, pointer);
     if (typeof item === "string") {
       if (
-        redact &&
+        scope === "entry" &&
         pointer === "/response/content/text" &&
         parent?.encoding === "base64"
       ) {
@@ -178,7 +195,9 @@ const projectHar = (
         ? redactor.text(
             item,
             pointer,
-            redactor.harTransportUrl(pointer, parent),
+            scope === "entry"
+              ? redactor.harTransportUrl(pointer, parent)
+              : undefined,
           )
         : item;
     }
@@ -227,19 +246,36 @@ const projectHar = (
   };
 };
 
+/**
+ * A JSON number lexeme as the validation copy carries it: its nearest double, unless rounding or
+ * overflow erased a fractional part, so the schema's `integer` checks the lexeme, not the double.
+ */
+const validationNumber = (literal: string): number => {
+  const nearest = Number(literal);
+  if (integerLexeme(literal)) return nearest;
+  if (Number.isFinite(nearest) && !Number.isInteger(nearest)) return nearest;
+  return literal.startsWith("-") ? -0.5 : 0.5;
+};
+
+/** Whether a JSON number lexeme denotes an integer, decided from its digits and exponent. */
+const integerLexeme = (literal: string): boolean => {
+  const match = /^-?(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal);
+  if (match === null) return false;
+  const [, whole = "", fraction = "", exponent = "0"] = match;
+  const digits = `${whole}${fraction}`;
+  const significant = digits.replace(/0+$/, "");
+  if (/^0*$/.test(significant)) return true;
+  const trailingZeros = digits.length - significant.length;
+  return Number(exponent) - fraction.length + trailingZeros >= 0;
+};
+
 const decodeHarBase64 = (value: string, pointer: string): Buffer => {
   const compact = value.replace(/[\t\n\r ]/g, "");
-  const bytes = Buffer.from(compact, "base64");
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      compact,
-    ) ||
-    bytes.toString("base64") !== compact
-  )
+  if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
       "format",
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );
-  return bytes;
+  return Buffer.from(compact, "base64");
 };

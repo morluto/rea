@@ -1,33 +1,22 @@
-import { isAbsolute } from "node:path";
 import { executableFormatHintSchema } from "../domain/dosCom.js";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import { z } from "zod";
-import { analysisProviderSelectorSchema } from "./providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
-const snapshotPathSchema = localPathStringSchema
-  .refine(isAbsolute, {
-    message:
-      "snapshot_path must be an absolute local filesystem path (for example /tmp/rea/analysis.json or C:\\rea\\analysis.json)",
-  })
-  .describe(
-    "Absolute local filesystem path for the analysis snapshot; relative paths are rejected.",
-  );
+const snapshotPathSchema = absoluteLocalPathStringSchema.describe(
+  "Absolute local filesystem path for the analysis snapshot; relative paths are rejected.",
+);
 
 /** Caller-supplied analysis target path; must name the target absolutely. */
-const binaryTargetPathSchema = localPathStringSchema
-  .refine(isAbsolute, {
-    message:
-      "path must be an absolute local filesystem path (for example /tmp/fixture.bin or C:\\analysis\\fixture.bin)",
-  })
-  .describe(
-    "Absolute local filesystem path for the analysis target; relative paths are rejected.",
-  );
+const binaryTargetPathSchema = absoluteLocalPathStringSchema.describe(
+  "Absolute local filesystem path for the analysis target; relative paths are rejected.",
+);
 
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z
@@ -36,17 +25,17 @@ export const openBinaryInputSchema = z
     format: executableFormatHintSchema
       .optional()
       .describe(
-        "Explicit headerless interpretation: dos-com or raw-binary. Omission preserves header-based detection.",
+        "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected). Omission preserves header-based detection.",
       ),
     architecture: binaryArchitectureSchema
       .optional()
       .describe(
-        "Caller-supplied CPU family. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied CPU family. Required with format=raw-binary; rejected otherwise. format=gamecube-dol takes powerpc from the header, so it must be omitted.",
       ),
     entry_point: rawBinaryEntryPointSchema
       .optional()
       .describe(
-        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise.",
+        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise. Optional with format=gamecube-dol; must equal the DOL header entry.",
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),
@@ -75,6 +64,11 @@ export const openBinaryInputSchema = z
       message: pairing,
     });
   });
+
+/** Open only app resources when no declared executable is available. */
+export const openBundleResourcesInputSchema = z.strictObject({
+  path: binaryTargetPathSchema,
+});
 
 /** Input contract for closing a target after an optional atomic snapshot. */
 export const closeBinaryInputSchema = z.strictObject({

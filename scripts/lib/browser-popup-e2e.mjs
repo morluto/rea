@@ -1,3 +1,4 @@
+import { requireMcpOutput } from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { once } from "node:events";
@@ -98,13 +99,13 @@ const verifySharedContext = async (executable, origin) => {
       scenarioFor(executable, origin, ["network"]),
       {},
     );
-    assert.ok(secrets);
+    if (!secrets.ok) throw secrets.error;
     const events = new PlaywrightScenarioEvents({
       page,
       context,
       ownsContext: false,
       enabled: new Set(["network"]),
-      secrets,
+      secrets: secrets.value,
     });
     await Promise.all([
       page.goto(origin),
@@ -163,11 +164,11 @@ const verifyTransports = async (executable, origin) => {
       { timeout: 60_000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));
-    const evidence = parseEvidence(captured.structuredContent);
-    assertNetwork(
-      browserScenarioCaptureSchema.parse(evidence.normalized_result),
-      origin,
+    assert.notEqual(captured.structuredContent, undefined);
+    const evidence = parseEvidence(
+      requireMcpOutput(captured, "capture_browser_scenario"),
     );
+    assertNetwork(evidence.normalized_result, origin);
   } finally {
     try {
       await client.close();

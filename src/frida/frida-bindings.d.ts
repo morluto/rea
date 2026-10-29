@@ -4,6 +4,9 @@ declare module "frida" {
     readonly payload?: unknown;
     readonly description?: string;
     readonly stack?: string;
+    readonly fileName?: string;
+    readonly lineNumber?: number;
+    readonly columnNumber?: number;
   }
 
   export type SignalHandler = (...args: never[]) => void;

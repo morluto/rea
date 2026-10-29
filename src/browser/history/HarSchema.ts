@@ -1,10 +1,39 @@
 import { createRequire } from "node:module";
+import { isIP } from "node:net";
 import { Ajv } from "ajv";
 import { z } from "zod";
 import { CaptureFormatError } from "./CaptureFormatError.js";
+import { captureObject } from "./CaptureRedaction.js";
 
-/** Validate using the unchanged, pinned upstream HAR 1.2 draft-06 schemas. */
-export const createHarValidator = (): ((value: unknown) => void) => {
+const durationSchema = { type: "number", minimum: 0 };
+const optionalDurationSchema = {
+  anyOf: [durationSchema, { const: -1 }],
+};
+
+// har-schema@2.0.0 omits object types and uses the unknown `min` keyword
+// on duration fields. Own the corrections from HAR 1.2 without changing
+// producer data or mutating the installed schemas.
+const timingsSchema = {
+  $id: "timings.json#",
+  $schema: "http://json-schema.org/draft-06/schema#",
+  type: "object",
+  required: ["send", "wait", "receive"],
+  properties: {
+    send: durationSchema,
+    wait: durationSchema,
+    receive: durationSchema,
+    blocked: optionalDurationSchema,
+    dns: optionalDurationSchema,
+    connect: optionalDurationSchema,
+    ssl: optionalDurationSchema,
+    comment: { type: "string" },
+  },
+};
+
+/** Validate with pinned HAR 1.2 draft-06 schemas and the owned schema corrections. */
+export const createHarValidator = (): ((
+  value: unknown,
+) => readonly number[]) => {
   const require = createRequire(import.meta.url);
   const schemas = z
     .record(z.string(), z.record(z.string(), z.unknown()))
@@ -15,12 +44,34 @@ export const createHarValidator = (): ((value: unknown) => void) => {
   if (typeof plugin !== "function")
     throw new Error("Pinned AJV formats plugin is unavailable");
   plugin(ajv);
-  for (const schema of Object.values(schemas)) ajv.addSchema(schema);
+  const propertiesSchema = z.record(z.string(), z.unknown());
+  const correctedSchemas: Record<string, Record<string, unknown>> = {
+    timings: timingsSchema,
+    cache: { ...schemas.cache, type: "object" },
+    entry: {
+      ...schemas.entry,
+      properties: {
+        ...propertiesSchema.parse(schemas.entry?.properties),
+        time: durationSchema,
+      },
+    },
+    pageTimings: {
+      ...schemas.pageTimings,
+      properties: {
+        ...propertiesSchema.parse(schemas.pageTimings?.properties),
+        onContentLoad: optionalDurationSchema,
+        onLoad: optionalDurationSchema,
+      },
+    },
+  };
+  for (const [name, schema] of Object.entries(schemas))
+    ajv.addSchema(correctedSchemas[name] ?? schema);
   const validate = ajv.getSchema("har.json#");
   if (validate === undefined)
     throw new Error("Pinned HAR root schema is unavailable");
   return (value) => {
-    allowMitmproxyAbsentPostData(value);
+    const adaptedPlaywrightEntries =
+      allowObservedProducerRepresentations(value);
     if (!validate(value)) {
       const error = validate.errors?.[0];
       // AJV messages name the violated constraint, such as the missing
@@ -33,59 +84,42 @@ export const createHarValidator = (): ((value: unknown) => void) => {
         error?.instancePath ?? "",
       );
     }
+    return adaptedPlaywrightEntries;
   };
 };
 
-/** Observed SaveHar 12.2.3 compatibility: validate omitted optional text while retaining reported null. */
-const allowMitmproxyAbsentPostData = (value: unknown): void => {
-  const parsed = z
-    .object({
-      log: z.object({
-        creator: z.object({
-          name: z.literal("mitmproxy"),
-          version: z.literal("12.2.3"),
-        }),
-        entries: z.array(z.unknown()),
-      }),
-    })
-    .safeParse(value);
-  if (
-    !parsed.success ||
-    typeof value !== "object" ||
-    value === null ||
-    !("log" in value)
-  )
-    return;
+/** Adapt only observed producer representations in the disposable validation copy. */
+const allowObservedProducerRepresentations = (
+  value: unknown,
+): readonly number[] => {
+  if (!captureObject(value) || !captureObject(value.log)) return [];
   const log = value.log;
-  if (
-    typeof log !== "object" ||
-    log === null ||
-    !("entries" in log) ||
-    !Array.isArray(log.entries)
-  )
-    return;
-  for (const entry of log.entries) {
+  if (!captureObject(log.creator) || !Array.isArray(log.entries)) return [];
+  const mitmproxy =
+    log.creator.name === "mitmproxy" && log.creator.version === "12.2.3";
+  const playwright =
+    log.creator.name === "Playwright" && log.creator.version === "1.58.2";
+  if (!mitmproxy && !playwright) return [];
+  const adaptedPlaywrightEntries: number[] = [];
+  for (const [ordinal, entry] of log.entries.entries()) {
     const candidate: unknown = entry;
+    if (!captureObject(candidate)) continue;
+    const address = candidate.serverIPAddress;
     if (
-      typeof candidate !== "object" ||
-      candidate === null ||
-      !("request" in candidate)
-    )
-      continue;
+      playwright &&
+      typeof address === "string" &&
+      address.startsWith("[") &&
+      address.endsWith("]") &&
+      isIP(address.slice(1, -1)) === 6
+    ) {
+      candidate.serverIPAddress = address.slice(1, -1);
+      adaptedPlaywrightEntries.push(ordinal);
+    }
+    if (!mitmproxy) continue;
     const request = candidate.request;
-    if (
-      typeof request !== "object" ||
-      request === null ||
-      !("postData" in request)
-    )
-      continue;
+    if (!captureObject(request)) continue;
     const body = request.postData;
-    if (
-      typeof body === "object" &&
-      body !== null &&
-      "text" in body &&
-      body.text === null
-    )
-      delete body.text;
+    if (captureObject(body) && body.text === null) delete body.text;
   }
+  return adaptedPlaywrightEntries;
 };

@@ -6,19 +6,19 @@ import type { WebModuleImport } from "./webModuleTrace.js";
 import type { ExportedWebScript } from "./webScriptExport.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
-  isTypeOnlyExportDeclaration,
-  isTypeOnlyImportDeclaration,
+  semanticStaticModuleSource,
 } from "./javascript/javascriptModuleDeclaration.js";
 
 /** Collect module declarations, omitting whole-statement type-only forms. */
 export const collectWebModuleImports = (
   source: string,
+  sourcePath: string,
 ): {
   readonly imports: readonly WebModuleImport[];
   readonly state: "parsed" | "unparseable";
   readonly diagnostics: readonly string[];
 } => {
-  const ast = parseJavaScriptSource(source);
+  const ast = parseJavaScriptSource(source, sourcePath);
   if (ast === null)
     return {
       imports: [],
@@ -59,28 +59,14 @@ export const collectWebModuleImports = (
   };
   traverseJavaScriptAst(ast, {
     enter: (node) => {
-      if (node.type === "ImportDeclaration") {
-        if (isTypeOnlyImportDeclaration(node)) return;
-        add("static-import", node.source);
-      } else if (
-        node.type === "ExportAllDeclaration" ||
-        node.type === "ExportNamedDeclaration"
-      ) {
-        if (
-          isTypeOnlyExportDeclaration(node) ||
-          node.source === null ||
-          node.source === undefined
-        )
-          return;
-        add("re-export", node.source);
+      const moduleSource = semanticStaticModuleSource(node);
+      if (moduleSource !== null) {
+        add(
+          node.type === "ImportDeclaration" ? "static-import" : "re-export",
+          moduleSource,
+        );
       } else if (node.type === "ImportExpression")
         add("dynamic-import", node.source);
-      else if (
-        node.type === "CallExpression" &&
-        node.callee.type === "Import" &&
-        node.arguments[0] !== undefined
-      )
-        add("dynamic-import", node.arguments[0]);
     },
   });
   imports.sort((a, b) => a.start.offset - b.start.offset);

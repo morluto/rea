@@ -12,16 +12,29 @@ struct ProcessIdentityObservation: Encodable {
   let pid: Int32
   let state: String
   let identity: String?
+  let effective_uid: UInt32?
+  let lifecycle: String?
+  let relation: ProcessRelationObservation?
   let reason: String?
 }
 
-private struct ProcessMetadata {
+struct ProcessRelationObservation: Encodable {
+  let state: String
+  let parent_pid: Int32
+  let process_group_id: Int32
+}
+
+struct ProcessMetadata {
   let identity: String
+  let effectiveUid: UInt32
+  let lifecycle: String
+  let parentPid: Int32
+  let processGroupId: Int32
   let pointerSize: Int
 }
 
 struct ProcessSnapshot {
-  fileprivate let metadata: [Int32: ProcessMetadata]
+  let metadata: [Int32: ProcessMetadata]
   let failure: String?
 }
 
@@ -75,6 +88,10 @@ func readProcessSnapshot(
           process.kp_proc.p_pid,
           ProcessMetadata(
             identity: "\(start.tv_sec):\(start.tv_usec)",
+            effectiveUid: process.kp_eproc.e_ucred.cr_uid,
+            lifecycle: process.kp_proc.p_stat == SZOMB ? "zombie" : "non-zombie",
+            parentPid: process.kp_eproc.e_ppid,
+            processGroupId: process.kp_eproc.e_pgid,
             pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
           )
         )
@@ -87,20 +104,61 @@ func readProcessSnapshot(
 }
 
 func readProcessIdentities(pids: [Int32]) -> [ProcessIdentityObservation] {
-  let snapshot = readProcessSnapshot()
+  readProcessIdentities(pids: pids, snapshot: readProcessSnapshot())
+}
+
+func readProcessIdentities(
+  pids: [Int32],
+  snapshot: ProcessSnapshot
+) -> [ProcessIdentityObservation] {
   return pids.map { pid in
+    guard pid > 0 else {
+      return unavailableIdentity(pid: pid, reason: "invalid_process_id")
+    }
     guard let metadata = snapshot.metadata[pid] else {
-      return unavailableIdentity(
+      if let failure = snapshot.failure {
+        return unavailableIdentity(pid: pid, reason: failure)
+      }
+      // This records absence from this successful KERN_PROC_ALL snapshot only.
+      // Unlike the Linux procfs path, it has no PID-specific kill(0)
+      // corroboration; callers must not treat it as universal or future exit
+      // proof.
+      return ProcessIdentityObservation(
         pid: pid,
-        reason: snapshot.failure ?? "process_not_in_snapshot"
+        state: "absent",
+        identity: nil,
+        effective_uid: nil,
+        lifecycle: nil,
+        relation: nil,
+        reason: "not-in-snapshot"
       )
     }
-    return ProcessIdentityObservation(pid: pid, state: "readable", identity: metadata.identity, reason: nil)
+    return ProcessIdentityObservation(
+      pid: pid,
+      state: "readable",
+      identity: metadata.identity,
+      effective_uid: metadata.effectiveUid,
+      lifecycle: metadata.lifecycle,
+      relation: ProcessRelationObservation(
+        state: "observed",
+        parent_pid: metadata.parentPid,
+        process_group_id: metadata.processGroupId
+      ),
+      reason: nil
+    )
   }
 }
 
 private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityObservation {
-  ProcessIdentityObservation(pid: pid, state: "unavailable", identity: nil, reason: reason)
+  ProcessIdentityObservation(
+    pid: pid,
+    state: "unavailable",
+    identity: nil,
+    effective_uid: nil,
+    lifecycle: nil,
+    relation: nil,
+    reason: reason
+  )
 }
 
 enum RunTokenReadError: Error {

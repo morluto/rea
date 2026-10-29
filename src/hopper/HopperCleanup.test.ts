@@ -7,11 +7,15 @@ import { EventEmitter } from "node:events";
 import { Socket } from "node:net";
 
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { ok } from "../domain/result.js";
 import type { BridgeLaunch } from "./BridgeLauncher.js";
-import { cleanupHopperSession } from "./HopperCleanup.js";
+import {
+  cleanupHopperSession,
+  confirmExternalApplicationExit,
+  type HopperOwnedResources,
+} from "./HopperCleanup.js";
 
 const loggerHarness = () => {
   const logs: unknown[] = [];
@@ -47,6 +51,61 @@ const processCleanupLaunch = (): BridgeLaunch => ({
 const failure = (message: string) =>
   Object.assign(new TypeError(message), { code: "ECONNRESET" });
 
+const externalApplicationResources = (): HopperOwnedResources => ({
+  launch: {
+    process: Object.assign(new EventEmitter(), {
+      stdout: null,
+      stderr: null,
+      exitCode: null,
+      signalCode: null,
+      kill: () => true,
+    }),
+    ownsProcessLifetime: false,
+    providerLifetime: "external-application",
+    shutdownMode: "bridge-request",
+  },
+  processSupervisor: undefined,
+  runtimeRoot: undefined,
+  shutdownConfirmed: false,
+  externalApplication: {
+    pid: 123,
+    identity: { state: "readable", identity: "captured-start" },
+  },
+});
+
+describe("external Hopper process exit confirmation", () => {
+  it("confirms only the captured GUI process exit and releases its transport", async () => {
+    const resources = externalApplicationResources();
+    const released: unknown[] = [];
+    const observeExit = vi.fn().mockResolvedValue("exited");
+    await confirmExternalApplicationExit(
+      resources,
+      undefined,
+      (socket) => released.push(socket),
+      observeExit,
+    );
+    expect(observeExit).toHaveBeenCalledWith(123, "captured-start");
+    expect(resources.shutdownConfirmed).toBe(true);
+    expect(released).toEqual([undefined]);
+  });
+
+  it.each(["present", "unverified"] as const)(
+    "does not confirm an external application while its exact identity is %s",
+    async (observation) => {
+      const resources = externalApplicationResources();
+      const releaseTransport = vi.fn();
+      await confirmExternalApplicationExit(
+        resources,
+        undefined,
+        releaseTransport,
+        async () => observation,
+      );
+      expect(resources.shutdownConfirmed).toBe(false);
+      expect(releaseTransport).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("Hopper shutdown rejection diagnostics", () => {
   it("retains the primary shutdown operation and rejection cause", async () => {
     const { logger, logs } = loggerHarness();
@@ -57,6 +116,7 @@ describe("Hopper shutdown rejection diagnostics", () => {
         processSupervisor: undefined,
         runtimeRoot: undefined,
         shutdownConfirmed: false,
+        externalApplication: undefined,
       },
       activeRequest: null,
       retainDocument: false,
@@ -96,6 +156,7 @@ describe("Hopper shutdown rejection diagnostics", () => {
         processSupervisor: undefined,
         runtimeRoot: undefined,
         shutdownConfirmed: false,
+        externalApplication: undefined,
       },
       activeRequest: null,
       retainDocument: false,
@@ -152,6 +213,7 @@ it("keeps a prepared backing image when native document closure cannot be confir
         runtimeRoot,
         processSupervisor: undefined,
         shutdownConfirmed: false,
+        externalApplication: undefined,
       },
       activeRequest: null,
       retainDocument: true,

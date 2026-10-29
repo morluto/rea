@@ -254,6 +254,7 @@ describe("CDP SVG query concurrency", () => {
           browser.emitRawMessage(
             JSON.stringify({
               id: command.id,
+              sessionId: command.sessionId,
               result: {
                 node: {
                   backendNodeId: id,
@@ -295,6 +296,7 @@ describe("CDP SVG query concurrency", () => {
       browser.emitRawMessage(
         JSON.stringify({
           id: batch.at(-1)?.id,
+          sessionId: batch.at(-1)?.sessionId,
           error: { code: -32_602, message: "Invalid parameters" },
         }),
       );

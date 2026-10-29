@@ -2,37 +2,41 @@ import { z } from "zod";
 import {
   nativeCallEventSchema,
   nativeCapturedOutputSchema,
+  nativeCallObservationResultSchema,
 } from "./nativeCallObservation.js";
 
-/** Native call evidence retained when observation fails before a full result. */
+const completed = nativeCallObservationResultSchema.shape;
+
+/** Native facts retained on failure, including completed facts before finalization. */
 export const nativeCallPartialObservationSchema = z.strictObject({
   kind: z.literal("native-call-observation"),
-  target: z.strictObject({
-    path: z.string(),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/u),
-    architecture: z.string(),
-    arguments: z.array(z.string()),
-    environment: z.record(z.string(), z.string()),
-    working_directory: z.string().nullable(),
+  target: completed.target.omit({ launch_identity: true }).extend({
+    launch_identity: completed.target.shape.launch_identity.optional(),
   }),
-  process: z.strictObject({
-    pid: z.number().int().positive().nullable(),
+  process: completed.process.partial().extend({
+    pid: z.int().positive().nullable(),
     stdout: nativeCapturedOutputSchema.nullable(),
     stderr: nativeCapturedOutputSchema.nullable(),
     other_stops: z.array(z.string()),
   }),
-  debugger: z.strictObject({ version: z.string().nullable() }),
+  debugger: completed.debugger
+    .partial()
+    .extend({ version: z.string().nullable() }),
+  breakpoints: completed.breakpoints.optional(),
   events: z.array(nativeCallEventSchema),
-  coverage: z.strictObject({
-    status: z.literal("partial"),
-    reason: z.enum([
-      "cancelled",
-      "timeout",
-      "tracer-failure",
-      "capture-failure",
-      "cleanup-failure",
-    ]),
-  }),
+  coverage: completed.coverage
+    .omit({ status: true })
+    .partial()
+    .extend({
+      status: z.literal("partial"),
+      reason: z.enum([
+        "cancelled",
+        "timeout",
+        "tracer-failure",
+        "capture-failure",
+        "cleanup-failure",
+      ]),
+    }),
   limitations: z.array(z.string()),
 });
 

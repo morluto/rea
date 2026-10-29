@@ -39,3 +39,8 @@ export function createVerifierRun(): VerifierRunStart;
 export function completeVerifierRun(
   run: VerifierRunStart,
 ): Promise<VerifierRun>;
+
+/** Require positive process-lineage evidence before claiming cleanup complete. */
+export function assertVerifierCleanupComplete(
+  processLineage: VerifierProcessLineage,
+): void;

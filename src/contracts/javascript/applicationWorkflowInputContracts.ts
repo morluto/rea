@@ -1,6 +1,12 @@
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../../domain/localPath.js";
+import { sourceToBundleViewRequestSchema } from "../../domain/analysisView/sourceToBundleView.js";
+import { evidenceSchema } from "../../domain/evidence.js";
 import { z } from "zod";
 
-import { evidenceInputSchema } from "../evidenceInputContracts.js";
+import { evidenceInputSchema } from "../../domain/evidenceReference.js";
 import { compareApplicationVersionsInputSchema } from "../../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { compareJavaScriptExportShapesInputSchema } from "../../domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { traceApplicationFeatureInputSchema } from "../../domain/javascript/javascriptFeatureTraceSchemas.js";
@@ -11,6 +17,7 @@ const traceApplicationFeatureFacts = {
   native_observations:
     traceApplicationFeatureInputSchema.shape.native_observations,
   seed: traceApplicationFeatureInputSchema.shape.seed,
+  semantic_page: traceApplicationFeatureInputSchema.shape.semantic_page,
   direction: traceApplicationFeatureInputSchema.shape.direction,
 } as const;
 
@@ -40,14 +47,34 @@ export const compareApplicationVersionsRequestSchema = z.strictObject({
   right: evidenceInputSchema,
 });
 
-const compareSourceToBundleFacts = {
-  reference: compareSourceToBundleInputSchema.shape.reference,
-} as const;
-
-/** Historical-source comparison accepting inline or same-session application Evidence. */
+const referenceFile = z.strictObject({
+  kind: z.literal("file"),
+  path: localPathStringSchema,
+});
+const sourceToBundleSelection = {
+  view: z
+    .union([
+      z.strictObject({ kind: z.literal("summary") }),
+      sourceToBundleViewRequestSchema,
+    ])
+    .optional(),
+};
+/** Historical graph JSON is a transport alternative to the inline graph, authenticated by the same graph parser. */
+export const compareSourceToBundleCliInputSchema = z.strictObject({
+  reference: z.union([
+    compareSourceToBundleInputSchema.shape.reference,
+    referenceFile,
+  ]),
+  application: evidenceSchema,
+});
+/** The MCP host accepts absolute local paths; omitted view preserves the full report. */
 export const compareSourceToBundleRequestSchema = z.strictObject({
-  ...compareSourceToBundleFacts,
+  reference: z.union([
+    compareSourceToBundleInputSchema.shape.reference,
+    referenceFile.extend({ path: absoluteLocalPathStringSchema }),
+  ]),
   application: evidenceInputSchema,
+  ...sourceToBundleSelection,
 });
 
 const compareJavaScriptExportShapesFacts = {

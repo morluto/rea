@@ -1,5 +1,6 @@
 import {
   copyFile,
+  lstat,
   mkdir,
   readFile,
   symlink,
@@ -12,12 +13,18 @@ import { describe, expect, it } from "vitest";
 import { execFileOutput } from "../../../src/process/ExecFileOutput.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const run = (root: string, command: string, arguments_: readonly string[]) =>
+const run = (
+  root: string,
+  command: string,
+  arguments_: readonly string[],
+  env?: NodeJS.ProcessEnv,
+) =>
   execFileOutput(command, arguments_, {
     cwd: root,
     stopSignal: "SIGTERM",
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
+    ...(env === undefined ? {} : { env }),
   });
 
 const git = (root: string, ...arguments_: string[]) =>
@@ -44,7 +51,9 @@ const fixture = async () => {
   await mkdir(join(root, "src"));
   for (const path of [
     "scripts/run-development-tests.mjs",
+    "scripts/run-exact-tests.mjs",
     "scripts/lib/development-tests.mjs",
+    "scripts/lib/test-projects.mjs",
   ])
     await copyFile(join(process.cwd(), path), join(root, path));
   await symlink(
@@ -69,11 +78,214 @@ const fixture = async () => {
   return root;
 };
 
+// Assertions read the child's plain-text summary. An inherited color setting
+// styled the counts in the CI lane; NO_COLOR takes precedence over FORCE_COLOR.
 const testCommand = (root: string, ...arguments_: string[]) =>
-  run(root, process.execPath, [
-    "scripts/run-development-tests.mjs",
-    ...arguments_,
-  ]);
+  run(
+    root,
+    process.execPath,
+    ["scripts/run-development-tests.mjs", ...arguments_],
+    { ...process.env, NO_COLOR: "1" },
+  );
+
+describe("development test runner symlink aliases", () => {
+  it("rejects excluded file and directory aliases without running their targets", async ({
+    skip,
+  }) => {
+    for (const { kind, mode } of [
+      { kind: "file", mode: "focused" },
+      { kind: "directory", mode: "local" },
+      { kind: "directory", mode: "focused" },
+    ] as const) {
+      const root = await fixture();
+      const included =
+        kind === "file" ? join(root, "src") : join(root, "src", "domain");
+      const includedTest = join(included, "value.test.ts");
+      const alias =
+        kind === "file"
+          ? join(root, "src", "excluded.test.ts")
+          : join(root, "src", "contracts");
+      if (kind === "directory") {
+        await mkdir(included);
+        for (const name of ["value.ts", "value.test.ts"])
+          await copyFile(join(root, "src", name), join(included, name));
+      }
+      try {
+        await symlink(
+          kind === "file" ? includedTest : included,
+          alias,
+          kind === "directory"
+            ? process.platform === "win32"
+              ? "junction"
+              : "dir"
+            : undefined,
+        );
+      } catch (cause) {
+        if (
+          process.platform === "win32" &&
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "EPERM" || cause.code === "EACCES")
+        )
+          skip("Windows symlink creation requires unavailable privileges");
+        throw cause;
+      }
+      const selectedAlias =
+        kind === "file"
+          ? "src/excluded.test.ts"
+          : "src/contracts/value.test.ts";
+      const includedSelection =
+        kind === "file" ? "src/value.test.ts" : "src/domain/value.test.ts";
+      await writeFile(
+        join(root, "vitest.config.mjs"),
+        `export default { test: { projects: [{ test: { name: "domain", include: ["${includedSelection}"] } }] } };\n`,
+      );
+
+      await expect(
+        testCommand(root, mode, selectedAlias),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          `Selected test files were not discovered: ${selectedAlias}`,
+        ),
+      });
+      await expect(
+        readFile(join(root, "selected.txt"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await testCommand(root, mode, includedSelection);
+      expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
+    }
+  });
+});
+
+describe("development test runner exact selection", () => {
+  it("matches selected path casing to the host filesystem", async () => {
+    const root = await fixture();
+    try {
+      await lstat(join(root, "src/VALUE.test.ts"));
+    } catch (cause) {
+      if (
+        !(cause instanceof Error) ||
+        !("code" in cause) ||
+        cause.code !== "ENOENT"
+      )
+        throw cause;
+      await expect(
+        testCommand(root, "focused", "src/VALUE.test.ts"),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("ENOENT"),
+      });
+      return;
+    }
+    await testCommand(root, "focused", "src/VALUE.test.ts");
+    expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
+  });
+
+  it("matches Unicode-normalized aliases by filesystem identity", async () => {
+    const root = await fixture();
+    const composed = "caf\u00e9.test.ts";
+    const decomposed = composed.normalize("NFD");
+    await writeFile(
+      join(root, "src", composed),
+      'import { it } from "vitest"; it("checks the selected Unicode path", () => {});\n',
+    );
+    const selected = join(root, "src", decomposed);
+    try {
+      await lstat(selected);
+    } catch (cause) {
+      if (
+        !(cause instanceof Error) ||
+        !("code" in cause) ||
+        cause.code !== "ENOENT"
+      )
+        throw cause;
+      await expect(
+        testCommand(root, "focused", `src/${decomposed}`),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("ENOENT"),
+      });
+      return;
+    }
+    const result = await testCommand(root, "focused", `src/${decomposed}`);
+    expect(result.stdout).toContain("1 passed");
+  });
+
+  it.each(["local", "focused"])(
+    "runs only the exact selected file in %s mode",
+    async (mode) => {
+      const root = await fixture();
+      await mkdir(join(root, "src", "nested", "src"), { recursive: true });
+      await writeFile(
+        join(root, "src", "nested", "src", "value.test.ts"),
+        'import { it } from "vitest"; it("must not run", () => { throw new Error("unselected nested test ran"); });\n',
+      );
+      const result = await testCommand(root, mode, "src/value.test.ts");
+      expect(result.stdout).toContain("1 passed");
+      expect(result.stdout).not.toContain("nested/src/value.test.ts");
+      expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
+    },
+  );
+
+  it("fails when any selected existing test file is excluded from discovery", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "src", "excluded.test.ts"),
+      'import { it } from "vitest"; it("excluded", () => {});\n',
+    );
+    await writeFile(
+      join(root, "vitest.config.mjs"),
+      'export default { test: { projects: [{ test: { name: "domain", include: ["src/value.test.ts"] } }] } };\n',
+    );
+    await expect(
+      testCommand(root, "focused", "src/value.test.ts", "src/excluded.test.ts"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "Selected test files were not discovered: src/excluded.test.ts",
+      ),
+    });
+  });
+
+  it("runs every selected file and preserves selected test failures", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "src", "failure.test.ts"),
+      'import { it } from "vitest"; it("selected failure", () => { throw new Error("selected regression"); });\n',
+    );
+    await expect(
+      testCommand(root, "focused", "src/value.test.ts", "src/failure.test.ts"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("1 failed | 1 passed"),
+      stderr: expect.stringContaining("selected regression"),
+    });
+    expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
+  });
+
+  it("preserves all configured projects for an exact file", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "vitest.config.mjs"),
+      'export default { test: { projects: ["domain", "evaluation"].map(name => ({ test: { name, include: ["src/value.test.ts"] } })) } };\n',
+    );
+    const result = await testCommand(root, "focused", "src/value.test.ts");
+    expect(result.stdout).toMatch(/Test Files\s+2 passed/u);
+  });
+
+  it("fails an exact file with no tests even when another selected file passes", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "src", "empty.test.ts"), "export {};\n");
+    await expect(
+      testCommand(root, "focused", "src/value.test.ts", "src/empty.test.ts"),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("No test suite found"),
+    });
+    expect(await readFile(join(root, "selected.txt"), "utf8")).toBe("1");
+  });
+});
 
 describe("development test runner public CLI", () => {
   it("runs an explicitly selected source test on a clean tree without build artifacts", async () => {

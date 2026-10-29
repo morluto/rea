@@ -118,3 +118,93 @@ const captureEvents = (): CdpCaptureEvents =>
     }),
     new Set(["https://app.example"]),
   );
+
+it.each([
+  {
+    name: "absent auxiliary data",
+    auxiliary: undefined,
+    frame: "frame-1",
+    invalid: false,
+  },
+  {
+    name: "conflicting frame",
+    auxiliary: { frameId: "other-frame" },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "empty frame",
+    auxiliary: { frameId: "" },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "null frame",
+    auxiliary: { frameId: null },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "numeric frame",
+    auxiliary: { frameId: 7 },
+    frame: null,
+    invalid: true,
+  },
+  {
+    name: "malformed auxiliary data",
+    auxiliary: null,
+    frame: null,
+    invalid: true,
+  },
+])(
+  "keeps script ownership uncertain for $name",
+  ({ auxiliary, frame, invalid }) => {
+    const events = captureEvents();
+    events.beginAuthorizedFrame("frame-1");
+    events.ingest({
+      method: "Runtime.executionContextCreated",
+      params: { context: { id: 7, auxData: { frameId: "frame-1" } } },
+    });
+    events.ingest({
+      method: "Debugger.scriptParsed",
+      params: {
+        scriptId: "script",
+        url: "https://app.example/app.js",
+        executionContextId: 7,
+        ...(auxiliary === undefined
+          ? {}
+          : { executionContextAuxData: auxiliary }),
+      },
+    });
+    const script = events.scripts.get("script");
+    if (script === undefined)
+      throw new Error("Expected retained script metadata");
+    expect(script.frameId).toBe(frame);
+    expect(events.frameForScript(script, new Set(["frame-1"]))).toBe(frame);
+    expect(
+      events.completeness
+        .snapshot()
+        .excluded.filter(({ section }) => section === "scripts"),
+    ).toEqual(
+      invalid
+        ? [{ section: "scripts", reason: "invalid_protocol_value", count: 1 }]
+        : [],
+    );
+  },
+);
+
+it("rejects an empty script ID before retaining its metadata", () => {
+  const events = captureEvents();
+  events.beginAuthorizedFrame("frame-1");
+  events.ingest({
+    method: "Debugger.scriptParsed",
+    params: { scriptId: "", url: "https://app.example/app.js" },
+  });
+  expect(events.scripts.size).toBe(0);
+  expect(events.retainedScriptMetadataBytes).toBe(0);
+  expect(events.completeness.snapshot().excluded).toContainEqual({
+    section: "scripts",
+    reason: "invalid_protocol_value",
+    count: 1,
+  });
+});

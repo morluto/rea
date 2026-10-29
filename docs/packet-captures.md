@@ -10,10 +10,17 @@ Supply an existing TShark 4.x installation **on Linux**, with util-linux
 `prlimit` available at `/usr/bin/prlimit`. Override its absolute path with
 `REA_TSHARK_PRLIMIT_COMMAND` if required. Unsupported hosts, including macOS
 and Windows, are refused before inspection because this integration requires
-an enforced address-space limit:
+an enforced address-space limit.
+
+TShark selection follows the same rule as [`inspect_pcap_capture`](pcap-analysis.md):
+an absolute `REA_TSHARK_COMMAND`, otherwise `tshark` from the first absolute
+`PATH` entry that holds an executable file. A relative `REA_TSHARK_COMMAND` is
+refused rather than looked up. Either way the selected executable is resolved,
+hashed and rechecked after each run, and Evidence records its
+`selection_source` (`environment` or `path`):
 
 ```sh
-export REA_TSHARK_COMMAND=/absolute/path/to/tshark
+export REA_TSHARK_COMMAND=/absolute/path/to/tshark   # optional when tshark is on PATH
 rea inspect-packet-capture /artifacts/device.pcapng \
   --fields ip.addr --fields udp.port --fields data.data \
   --display_filter 'udp' --format json
@@ -54,6 +61,22 @@ resource limit; use selected fields, a display filter or an input-packet limit
 when dissection output is too large. Each call checks the recording's current
 digest, so pages from different source digests must not be combined.
 
+For a question about a known input prefix, select `packet_limit` for that
+prefix, the fields needed for the answer, and a matching output window. For
+example, a question about the first twelve PostgreSQL TCP packets within
+original frames 1–2,000 can use fields `tcp.srcport`, `tcp.dstport`, `tcp.flags`,
+filter `tcp.port == 5432`, `packet_limit: 2000` and `match_limit: 12`.
+The matching count then describes that input prefix. A filter containing
+`frame.number <= 2000` without an input limit still reads the entire capture;
+returning twelve rows does not limit producer output. These controls answer a
+bounded question and must not be used to infer whole-capture absence.
+
+Discover unfamiliar field names with `inspect_packet_fields`, using an exact
+protocol and a narrow query. If the installed names are already established,
+direct field selection avoids an additional glossary probe. Count discovery
+and any retries when comparing investigation cost; a small page alone does
+not establish a faster workflow.
+
 Additional selections:
 
 - `display_filter`: Wireshark display-filter syntax; omitted means no filter.
@@ -72,6 +95,8 @@ for field names, display filters, decode-as syntax and pass semantics. Invalid
 fields or filters return producer diagnostics. An empty result does not prove
 absence of traffic outside the selected recording, filter or read range.
 Dissector results are observations, not independently verified device behavior.
+TShark may resolve a selected alias to its canonical field name in packet output;
+the report preserves the exact requested selection and the producer's output key.
 
 Evidence includes source path/digest/size, exact selections, typed packet fields,
 configured and resolved executable paths/digests/full version banner, arguments and stderr. Warnings remain

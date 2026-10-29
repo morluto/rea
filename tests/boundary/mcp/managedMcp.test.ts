@@ -20,8 +20,46 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { ManagedStaticProvider } from "../../../src/dotnet/ManagedStaticProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
+import { elf } from "../../../src/domain/binaryTarget.fixture.js";
+import { managedMemberInspectionSchema } from "../../../src/domain/managed/managedArtifact.js";
+import { managedMemberComparisonResultSchema } from "../../../src/domain/managed/managedMemberComparison.js";
 
 type ManagedOutputAssertion = Awaited<ReturnType<typeof createOutputAssertion>>;
+
+const fieldTokenFixture = (): Buffer => {
+  const il = Buffer.from([0xd0, 1, 0, 0, 0x0a, 0x26, 0x2a]);
+  return buildManagedPeFixture({
+    targetFramework: null,
+    memberRefName: "Counter",
+    memberRefParentRaw: 8,
+    memberRefSignature: Buffer.from([0x06, 0x08]),
+    ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+  });
+};
+
+const assertFieldMemberRefToken = async (
+  client: Client,
+  path: string,
+): Promise<void> => {
+  const fieldToken = structured(
+    await client.callTool({
+      name: "inspect_managed_members",
+      arguments: { path },
+    }),
+  );
+  const inspection = managedMemberInspectionSchema.parse(
+    fieldToken.normalized_result,
+  );
+  expect(inspection.member_refs[0]?.signature).toMatchObject({
+    kind: "field",
+    parse_status: "decoded",
+  });
+  expect(inspection.methods[0]?.body.anchors[0]).toMatchObject({
+    opcode: "ldtoken",
+    operand_kind: "field",
+    operand: "0x0a000001",
+  });
+};
 
 it("runs every managed static inspection independently of an active native target", async () => {
   const directory = await createTestTempDirectory(
@@ -30,6 +68,7 @@ it("runs every managed static inspection independently of an active native targe
   const path = join(directory, "fixture.dll");
   const otherPath = join(directory, "other-fixture.dll");
   const partialPath = join(directory, "partial-method.dll");
+  const fieldTokenPath = join(directory, "field-token.dll");
   await writeFile(path, buildManagedPeFixture());
   await writeFile(otherPath, buildManagedPeFixture({ methodName: "Other" }));
   await writeFile(
@@ -39,6 +78,7 @@ it("runs every managed static inspection independently of an active native targe
       ilBody: Buffer.from([0x06, 0x2a]),
     }),
   );
+  await writeFile(fieldTokenPath, fieldTokenFixture());
   const session = composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
@@ -57,6 +97,7 @@ it("runs every managed static inspection independently of an active native targe
     name: "managed-independent-mcp",
     version: "1.0.0",
   });
+
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -89,6 +130,20 @@ it("runs every managed static inspection independently of an active native targe
       arguments: { path: join(directory, "missing.dll") },
     });
     expect(invalidSelection.isError).toBe(true);
+    const nativePath = join(directory, "native.elf");
+    await writeFile(nativePath, elf(2, 1, 0x3e));
+    expect(
+      parseMcpToolError(
+        await client.callTool({
+          name: "inspect_managed_artifact",
+          arguments: { path: nativePath },
+        }),
+      ).error,
+    ).toMatchObject({
+      code: "unsupported_target",
+      category: "unsupported_target",
+      details: { operation: "inspect_managed_artifact", path: nativePath },
+    });
     const members = structured(
       await client.callTool({ name: "inspect_managed_members", arguments: {} }),
     );
@@ -146,11 +201,97 @@ it("runs every managed static inspection independently of an active native targe
         coverage: { state: "partial" },
       },
     });
+    await assertFieldMemberRefToken(client, fieldTokenPath);
   } finally {
     await Promise.all([client.close(), server.close()]);
     await session.close();
   }
 }, 30_000);
+
+it("compares observed call-target names through the managed MCP contract", async () => {
+  const directory = await createTestTempDirectory("rea-managed-call-target-");
+  const leftPath = join(directory, "left.dll");
+  const rightPath = join(directory, "right.dll");
+  const samePath = join(directory, "same.dll");
+  const il = Buffer.from([0x28, 1, 0, 0, 0x0a, 0x2a]);
+  const fixture = (memberRefName: string) =>
+    buildManagedPeFixture({
+      targetFramework: null,
+      memberRefName,
+      ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
+    });
+  await Promise.all([
+    writeFile(leftPath, fixture("Clear")),
+    writeFile(rightPath, fixture("WriteLine")),
+    writeFile(samePath, fixture("Clear")),
+  ]);
+  const session = composeBinarySession(new AnalysisProviderRegistry([]), [
+    new ManagedStaticProvider(),
+  ]);
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "managed-call-target-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const outputAssertion = await createOutputAssertion(client);
+    const inspect = async (path: string) =>
+      inlineEvidence(
+        structured(
+          await client.callTool({
+            name: "inspect_managed_members",
+            arguments: { path },
+          }),
+        ),
+      );
+    const left = await inspect(leftPath);
+    const right = await inspect(rightPath);
+    const same = await inspect(samePath);
+    for (const [evidence, name] of [
+      [left, "Clear"],
+      [right, "WriteLine"],
+    ] as const) {
+      const inspection = managedMemberInspectionSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(inspection.methods[0]?.body.anchors).toMatchObject([
+        { opcode: "call", operand_kind: "method" },
+        { opcode: "ret", operand_kind: "none" },
+      ]);
+      expect(inspection.call_edges[0]).toMatchObject({
+        target_name: name,
+        target_declaring_type:
+          "System.Runtime.Versioning.TargetFrameworkAttribute",
+      });
+    }
+    const compare = async (rightEvidence: Record<string, unknown>) =>
+      structured(
+        await client.callTool({
+          name: "compare_managed_members",
+          arguments: { left, right: rightEvidence },
+        }),
+      );
+    const changed = inlineEvidence(await compare(right));
+    outputAssertion.assert("compare_managed_members", changed);
+    const changedReport = managedMemberComparisonResultSchema.parse(
+      changed.normalized_result,
+    );
+    expect(changedReport.methods).toContainEqual(
+      expect.objectContaining({
+        status: "changed",
+        dimensions: expect.arrayContaining(["call-target"]),
+      }),
+    );
+    const unchanged = inlineEvidence(await compare(same));
+    expect(
+      managedMemberComparisonResultSchema.parse(unchanged.normalized_result)
+        .methods,
+    ).toContainEqual(expect.objectContaining({ status: "unchanged" }));
+  } finally {
+    await Promise.allSettled([client.close(), server.close(), session.close()]);
+  }
+});
 
 it("opens a managed PE and executes the managed static provider through MCP", async () => {
   const directory = await createTestTempDirectory("rea-managed-mcp-");
@@ -248,7 +389,12 @@ const verifyManagedCatalogAndNativeWorkflow = async (
     },
   });
   expect(parseMcpToolError(wrong)).toMatchObject({
-    error: { code: "evidence_integrity_mismatch" },
+    error: {
+      code: "invalid_request",
+      details: {
+        issues: [expect.objectContaining({ path: ["managed_boundaries"] })],
+      },
+    },
   });
 };
 
@@ -462,9 +608,6 @@ const verifyManagedTypeSelection = async (
   expect(
     validate({ path, type_names: ["Fixture.Program", "Missing.Type"] }),
   ).toBe(true);
-  expect(
-    validate({ path, type_names: ["Fixture.Program", "Fixture.Program"] }),
-  ).toBe(false);
   const selected = structured(
     await client.callTool({
       name: "inspect_managed_members",
@@ -486,7 +629,9 @@ const verifyManagedTypeSelection = async (
     name: "inspect_managed_members",
     arguments: { path, type_names: ["Fixture.Program", "Fixture.Program"] },
   });
-  expect(repeatedSelection.isError).toBe(true);
+  expect(parseMcpToolError(repeatedSelection).error.code).toBe(
+    "invalid_request",
+  );
   const reselectedOtherTarget = structured(
     await client.callTool({
       name: "inspect_managed_artifact",

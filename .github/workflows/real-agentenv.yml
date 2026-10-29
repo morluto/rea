@@ -1,0 +1,98 @@
+name: Real agentenv environment bundle
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
+  NODE_OPTIONS: --max-old-space-size=768
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  real-agentenv:
+    name: Export and run an environment bundle with the agentenv runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
+      - run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      # Public ECR caps anonymous pulls by data per source IP and hosted runners share IPs, so the
+      # framework's image builds can fail here for hours. mirror.gcr.io serves the same Docker
+      # official images under the same digests, so each base image the pinned framework builds from
+      # is pulled there and named as its Dockerfile names it, as the framework's own CI does.
+      # Digest-pinned names are set in containerd, whose images Docker reads only on the containerd
+      # image store; switching stores restarts dockerd, so it happens before anything uses Docker.
+      - name: Use the containerd image store
+        run: |
+          [ -s /etc/docker/daemon.json ] || echo '{}' | sudo tee /etc/docker/daemon.json >/dev/null
+          jq '.features["containerd-snapshotter"] = true' /etc/docker/daemon.json > "$RUNNER_TEMP/daemon.json"
+          sudo mv "$RUNNER_TEMP/daemon.json" /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | grep -q io.containerd.snapshotter
+      - name: Acquire the pinned agentenv runner in isolated runner storage and check host Docker
+        shell: bash
+        run: |
+          runner_root="${RUNNER_TEMP}/rea-agentenv-runner"
+          python -m venv "${runner_root}"
+          "${runner_root}/bin/python" -m pip install --require-virtualenv --no-cache-dir 'agentenv-framework==0.9.1334'
+          "${runner_root}/bin/agent-env" --version
+          docker version --format '{{.Server.Version}}'
+          echo "REA_AGENT_ENV_COMMAND=${runner_root}/bin/agent-env" >> "${GITHUB_ENV}"
+          echo "REA_DOCKER_COMMAND=$(command -v docker)" >> "${GITHUB_ENV}"
+      - name: Pull the pinned framework's public ECR base images from mirror.gcr.io
+        shell: bash
+        run: |
+          package="$("${REA_AGENT_ENV_COMMAND%/agent-env}/python" -c 'import agent_env, pathlib; print(pathlib.Path(agent_env.__file__).parent)')"
+          grep -rhoE '^FROM +public\.ecr\.aws/docker/library/[^ ]+' --include='Dockerfile*' "${package}" | awk '{print $2}' | sort -u |
+            while read -r image; do
+              name=${image#public.ecr.aws/docker/library/}
+              source=mirror.gcr.io/library/$name
+              case $name in *@*) source=mirror.gcr.io/library/${name%%[:@]*}@${name#*@} ;; esac
+              for attempt in 1 2 3; do
+                docker pull --quiet "$source" && break
+                if [ "$attempt" = 3 ]; then echo "::warning::couldn't pull $source; $image's build will pull it"; continue 2; fi
+                sleep $((attempt * 10))
+              done
+              case ${name%@*} in *:*) docker tag "$source" "${image%@*}" ;; esac
+              case $image in *@*) sudo ctr --namespace moby images tag "$source" "$image" >/dev/null ;; esac
+            done
+      - name: Export a bundle from the source-owned capture and run it with the agentenv runner
+        run: npm run verify:agentenv:environment

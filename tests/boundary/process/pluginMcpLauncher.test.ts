@@ -1,44 +1,52 @@
 import { spawn } from "node:child_process";
-import { lstat, mkdir, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
 
-import { packageRunnerCommand } from "../../../scripts/lib/packageRunnerCommand.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const launcher = fileURLToPath(
   new URL("../../../scripts/plugin-mcp-launcher.mjs", import.meta.url),
 );
 
-const start = (path: string, version = "6.4.0") => {
-  const child = spawn(process.execPath, [launcher, version], {
-    env: {
-      ...process.env,
-      PATH: `${path}${delimiter}${process.env.PATH ?? ""}`,
-    },
+const pluginFixture = async (runtime: string) => {
+  const workspace = await createTestTempDirectory("rea-plugin-");
+  const root = join(workspace, "plugin with spaces");
+  await mkdir(root);
+  await mkdir(join(root, "scripts"));
+  await mkdir(join(root, "dist/mcp"), { recursive: true });
+  const entry = join(root, "scripts/plugin-mcp-launcher.mjs");
+  await copyFile(launcher, entry);
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "rea-agents", version: "6.8.0", type: "module" }),
+  );
+  await writeFile(join(root, "dist/mcp/main.js"), "");
+  await writeFile(join(root, "scripts/rea.mjs"), runtime);
+  return { root, entry };
+};
+
+const start = (entry: string, cwd: string, args = ["6.8.0"]) => {
+  const child = spawn(process.execPath, [entry, ...args], {
+    cwd,
     stdio: "pipe",
   });
   let stdout = "";
   let stderr = "";
-  child.stdout.on(
-    "data",
-    (bytes: Buffer) => (stdout += bytes.toString("utf8")),
-  );
-  child.stderr.on(
-    "data",
-    (bytes: Buffer) => (stderr += bytes.toString("utf8")),
-  );
+  child.stdout.on("data", (bytes: Buffer) => {
+    stdout += bytes.toString();
+  });
+  child.stderr.on("data", (bytes: Buffer) => {
+    stderr += bytes.toString();
+  });
   const closed = new Promise<{
     code: number | null;
-    signal: NodeJS.Signals | null;
     stdout: string;
     stderr: string;
   }>((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (code, signal) =>
-      resolve({ code, signal, stdout, stderr }),
-    );
+    child.once("close", (code) => resolve({ code, stdout, stderr }));
   });
   onTestFinished(async () => {
     if (child.exitCode === null && child.signalCode === null)
@@ -48,106 +56,109 @@ const start = (path: string, version = "6.4.0") => {
   return { child, closed };
 };
 
-const fakeRunner = async (body: string) => {
-  const root = await createTestTempDirectory("rea-plugin-launcher-");
-  const bin = join(root, "plugin with spaces", "bin");
-  await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, "npx"), `#!${process.execPath}\n${body}\n`, {
-    mode: 0o755,
+it("runs the matching runtime in-process and preserves cwd, stdio, and exit status", async () => {
+  const { root, entry } = await pluginFixture(`
+    process.stderr.write(JSON.stringify({ pid: process.pid, args: process.argv.slice(2), cwd: process.cwd() }));
+    process.stdin.pipe(process.stdout);
+    process.stdin.on("end", () => { process.exitCode = 7; });
+  `);
+  const caller = await createTestTempDirectory("rea-plugin-caller-");
+  const cwd = join(caller, "caller with spaces");
+  await mkdir(cwd);
+  // Built source plugins and npm artifacts use the same runtime owner.
+  await writeFile(join(root, ".git"), "gitdir: /fixture/worktree");
+  const { child, closed } = start(entry, cwd);
+  child.stdin.end('{"jsonrpc":"2.0","id":1}\n');
+  const result = await closed;
+  expect(result).toMatchObject({
+    code: 7,
+    stdout: '{"jsonrpc":"2.0","id":1}\n',
   });
-  return bin;
-};
-
-it("escapes a Windows temporary prefix through cmd.exe and npx.cmd", () => {
-  expect(
-    packageRunnerCommand("npx", "rea-agents@6.4.0", "win32", "C:\\Temp&A"),
-  ).toEqual([
-    "cmd.exe",
-    "/d",
-    "/c",
-    "npx",
-    "-y",
-    "--prefix=C:\\Temp^^^&A",
-    "rea-agents@6.4.0",
-    "mcp",
-  ]);
+  expect(JSON.parse(result.stderr)).toEqual({
+    pid: child.pid,
+    args: ["mcp"],
+    cwd,
+  });
 });
 
-it("rejects command separators in a Windows temporary prefix", () => {
-  expect(() =>
-    packageRunnerCommand("npx", "rea-agents@6.4.0", "win32", "C:\\Temp\nA"),
-  ).toThrow("command separator");
-});
-
-it.skipIf(process.platform === "win32")(
-  "passes the exact pin and protocol streams through the source-only plugin launcher",
-  async () => {
-    const bin = await fakeRunner(`
-      process.stderr.write(JSON.stringify(process.argv.slice(2)));
-      process.stdin.pipe(process.stdout);
-      process.stdin.on("end", () => { process.exitCode = 7; });
-    `);
-    const { child, closed } = start(bin, "6.4.0-rc.1");
-    child.stdin.end('{"jsonrpc":"2.0","id":1}\n');
+it.each([["latest"], ["6.8.0&echo wrong"], ["6.8.0", "extra"], []])(
+  "rejects a non-exact or extra version argument: %j",
+  async (...args) => {
+    const { root, entry } = await pluginFixture(
+      'process.stdout.write("unexpected");',
+    );
+    const { child, closed } = start(entry, root, args);
+    child.stdin.end();
     expect(await closed).toEqual({
-      code: 7,
-      signal: null,
-      stdout: '{"jsonrpc":"2.0","id":1}\n',
-      stderr: expect.stringMatching(
-        /^\["-y","--prefix=.+","rea-agents@6\.4\.0-rc\.1","mcp"\]$/u,
-      ),
+      code: 1,
+      stdout: "",
+      stderr: "REA plugin requires one exact rea-agents@VERSION pin.\n",
     });
   },
 );
 
+it("rejects a mismatched runtime instead of downloading another package", async () => {
+  const { root, entry } = await pluginFixture(
+    'process.stdout.write("unexpected");',
+  );
+  const { child, closed } = start(entry, root, ["6.7.0"]);
+  child.stdin.end();
+  expect(await closed).toEqual({
+    code: 1,
+    stdout: "",
+    stderr:
+      "REA plugin version pin does not match its installed rea-agents package; reinstall the plugin.\n",
+  });
+});
+
+it("reports how to repair an incomplete artifact or unbuilt source checkout", async () => {
+  const { root, entry } = await pluginFixture(
+    'process.stdout.write("unexpected");',
+  );
+  await rm(join(root, "dist"), { recursive: true });
+  const { child, closed } = start(entry, root);
+  child.stdin.end();
+  expect(await closed).toEqual({
+    code: 1,
+    stdout: "",
+    stderr:
+      "REA plugin runtime is missing; reinstall the plugin, or run npm ci && npm run build:cached in a source checkout.\n",
+  });
+});
+
+it("preserves runtime startup failures", async () => {
+  const { root, entry } = await pluginFixture(
+    'throw new Error("runtime failed");',
+  );
+  const { child, closed } = start(entry, root);
+  child.stdin.end();
+  const result = await closed;
+  expect(result.code).toBe(1);
+  expect(result.stdout).toBe("");
+  expect(result.stderr).toContain("runtime failed");
+});
+
 it.skipIf(process.platform === "win32")(
-  "forwards termination to the live package-runner child before exiting",
+  "leaves signal cleanup with the running REA runtime",
   async () => {
-    const bin = await fakeRunner(`
-      process.on("SIGTERM", () => { process.stderr.write("stopped"); process.exit(0); });
-      process.stdout.write("ready");
-      process.stdin.resume();
-    `);
-    const { child, closed } = start(bin);
+    const { root, entry } = await pluginFixture(`
+    process.on("SIGTERM", () => { process.stderr.write("cleaned"); process.exit(0); });
+    process.stdin.resume();
+    process.stdout.write("ready");
+  `);
+    const { child, closed } = start(entry, root);
     await new Promise<void>((resolve, reject) => {
       child.stdout.once("data", () => resolve());
       child.once("error", reject);
+      child.once("exit", () =>
+        reject(new Error("runtime exited before readiness")),
+      );
     });
     child.kill("SIGTERM");
-    expect(await closed).toMatchObject({ code: 0, stderr: "stopped" });
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "isolates local package resolution and removes the owned runner directory",
-  async () => {
-    const bin = await fakeRunner(
-      "process.stdout.write(JSON.stringify({ cwd: process.cwd(), args: process.argv.slice(2) }));",
-    );
-    const { child, closed } = start(bin);
-    child.stdin.end();
-    const result = await closed;
-    expect(result.code).toBe(0);
-    const observed = JSON.parse(result.stdout) as {
-      cwd: string;
-      args: string[];
-    };
-    expect(observed.cwd).toBe(process.cwd());
-    const prefix = observed.args[1]?.slice("--prefix=".length);
-    expect(prefix).toContain("rea-plugin-launcher-");
-    await expect(lstat(prefix!)).rejects.toMatchObject({
-      code: "ENOENT",
+    expect(await closed).toEqual({
+      code: 0,
+      stdout: "ready",
+      stderr: "cleaned",
     });
   },
 );
-
-it("rejects a shell expression instead of treating it as the pinned package", async () => {
-  const root = await createTestTempDirectory("rea-plugin-invalid-pin-");
-  const { child, closed } = start(root, "6.4.0&echo wrong");
-  child.stdin.end();
-  expect(await closed).toMatchObject({
-    code: 1,
-    stdout: "",
-    stderr: "REA plugin requires one exact package version.\n",
-  });
-});

@@ -3,15 +3,16 @@ import {
   type AnalysisInputIssue,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { uniqueSorted } from "../canonicalOrdering.js";
 import type { BinaryLayout } from "../native/binaryLayout.js";
 import { err, ok, type Result } from "../result.js";
 import type {
   AnalysisViewParent,
   AnalysisViewRequest,
   UnsignedAnalysisView,
+  GroupingViewKind,
 } from "./analysisView.js";
 import {
+  boundedViewMessages,
   completeWithinViewCoverage as completeCoverage,
   pageViewCoverage as pageCoverage,
 } from "./analysisViewCoverage.js";
@@ -39,17 +40,20 @@ const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   return unknowns;
 };
 
-const displayName = (name: LayoutName): string => name.display;
-
 const namedMatches = <Row extends { readonly name: LayoutName }>(
   rows: readonly Row[],
   name: string,
-): readonly { readonly index: number; readonly row: Row }[] =>
-  rows.flatMap((row, index) =>
-    row.name.unknown_reason === null && displayName(row.name) === name
+): readonly { readonly index: number; readonly row: Row }[] => {
+  const bytes = Buffer.from(name, "utf8");
+  // Display text may replace malformed source bytes or use provider formatting.
+  if (bytes.toString("utf8") !== name) return [];
+  const encoded = bytes.toString("base64");
+  return rows.flatMap((row, index) =>
+    row.name.unknown_reason === null && row.name.bytes_base64 === encoded
       ? [{ index, row }]
       : [],
   );
+};
 
 const selectNamed = <Row extends { readonly name: LayoutName }>(
   collection: "sections" | "symbols",
@@ -90,14 +94,24 @@ const selectIndexed = <Row>(
 ): Result<Row, AnalysisError> => {
   const row = rows[index];
   if (row !== undefined) return ok(row);
+  if (rows.length === 0)
+    return err(
+      inputError([
+        {
+          path: ["view", "selector", "index"],
+          reason: "invalid_value",
+          message: `No retained ${collection} entries can be selected by index.`,
+        },
+      ]),
+    );
   return err(
     inputError([
       {
         path: ["view", "selector", "index"],
         reason: "out_of_range",
-        message: `${collection} index ${String(index)} is outside 0..${String(Math.max(0, rows.length - 1))} (${String(rows.length)} entries).`,
+        message: `${collection} index ${String(index)} is outside 0..${String(rows.length - 1)} (${String(rows.length)} entries).`,
         minimum: 0,
-        maximum: Math.max(0, rows.length - 1),
+        maximum: rows.length - 1,
       },
     ]),
   );
@@ -126,8 +140,16 @@ const parentFields = (parent: AnalysisViewParent, layout: BinaryLayout) => ({
     path: layout.artifact.path,
     sha256: layout.artifact.sha256,
   },
-  limitations: uniqueSorted([...parent.limitations, ...layout.limitations]),
-  unknowns: uniqueSorted([...layoutUnknowns(layout)]),
+  limitations: boundedViewMessages(
+    [...parent.limitations, ...layout.limitations],
+    parent.evidenceId,
+    "limitations",
+  ),
+  unknowns: boundedViewMessages(
+    layoutUnknowns(layout),
+    parent.evidenceId,
+    "unknowns",
+  ),
 });
 
 const layoutSummary = (layout: BinaryLayout) => ({
@@ -149,7 +171,7 @@ const layoutSummary = (layout: BinaryLayout) => ({
 export const projectBinaryLayoutView = (
   parent: AnalysisViewParent,
   layout: BinaryLayout,
-  view: Exclude<AnalysisViewRequest, { kind: "api-surface" }>,
+  view: Exclude<AnalysisViewRequest, { kind: GroupingViewKind }>,
 ): Result<UnsignedAnalysisView, AnalysisError> => {
   const shared = parentFields(parent, layout);
   if (view.kind === "native")

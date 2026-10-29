@@ -1,18 +1,20 @@
+import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { createHash } from "node:crypto";
 import type { Readable } from "node:stream";
 
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { streamChunkToBuffer } from "./StreamBytes.js";
+import {
+  createArtifactClassificationProbe,
+  type ArtifactClassificationEvidence,
+} from "./ArtifactClassificationProbe.js";
 
 /** Full stream digest and byte count with bounded classification evidence. */
-export type HashResult = {
+export type HashResult = ArtifactClassificationEvidence & {
   readonly sha256: string;
   readonly bytes: number;
-  readonly prefix: Buffer;
+  readonly md5?: string;
 };
-
-/** Bounded classification evidence; this is not an executable format size limit. */
-export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
 
 /** Preserve the inventory cancellation reason at a stream boundary. */
 export const abortIfNeeded = (signal?: AbortSignal): void => {
@@ -20,6 +22,7 @@ export const abortIfNeeded = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "Artifact inventory cancelled",
+      { cause: signal.reason },
     );
 };
 
@@ -27,24 +30,44 @@ export const abortIfNeeded = (signal?: AbortSignal): void => {
 export const hashReadable = async (
   stream: Readable,
   signal?: AbortSignal,
+  integrityAlgorithm?: "sha256" | "md5",
+  asarHeaderAdmission?: AsarHeaderAdmission,
+): Promise<HashResult> => {
+  const completed = await hashReadableToCompletion(
+    stream,
+    signal,
+    integrityAlgorithm,
+    asarHeaderAdmission,
+  );
+  abortIfNeeded(signal);
+  return completed;
+};
+
+/** Keep a fully delivered digest so its owner can validate before late cancellation.
+ * Source stability remains the stream or caller's responsibility.
+ */
+export const hashReadableToCompletion = async (
+  stream: Readable,
+  signal?: AbortSignal,
+  integrityAlgorithm?: "sha256" | "md5",
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<HashResult> => {
   const hash = createHash("sha256");
-  const prefixes: Buffer[] = [];
-  let prefixBytes = 0;
+  const md5 = integrityAlgorithm === "md5" ? createHash("md5") : undefined;
+  const probe = createArtifactClassificationProbe(asarHeaderAdmission);
   let bytes = 0;
   for await (const raw of stream) {
     abortIfNeeded(signal);
     const chunk = streamChunkToBuffer(raw);
     bytes += chunk.length;
     hash.update(chunk);
-    if (prefixBytes < ARTIFACT_CLASSIFICATION_PREFIX_BYTES) {
-      const selected = chunk.subarray(
-        0,
-        ARTIFACT_CLASSIFICATION_PREFIX_BYTES - prefixBytes,
-      );
-      prefixes.push(selected);
-      prefixBytes += selected.length;
-    }
+    md5?.update(chunk);
+    probe.write(chunk);
   }
-  return { sha256: hash.digest("hex"), bytes, prefix: Buffer.concat(prefixes) };
+  return {
+    sha256: hash.digest("hex"),
+    ...(md5 === undefined ? {} : { md5: md5.digest("hex") }),
+    bytes,
+    ...probe.finish(bytes),
+  };
 };

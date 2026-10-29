@@ -68,7 +68,9 @@ it("extracts a rewritten unpacked companion only when the caller records the mis
   onTestFinished(() =>
     rm(result.output_root, { recursive: true, force: true }),
   );
-  expect(await readFile(join(result.output_root, addon))).toEqual(stripped);
+  expect(
+    Buffer.compare(await readFile(join(result.output_root, addon)), stripped),
+  ).toBe(0);
   expect(result.integrity_contradictions).toEqual([
     { logical_path: addon, trust: "observed-untrusted" },
   ]);

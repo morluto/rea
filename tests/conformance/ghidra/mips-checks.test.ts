@@ -7,7 +7,7 @@ import {
   parseMipsReadelf,
 } from "./mips-checks.mjs";
 
-// GNU readelf 2.40 output for the source-owned Clang 17 / LLD fixture.
+// GNU readelf 2.44 output for the source-owned Clang 19 / LLD 19 fixture.
 // This tests the reader boundary, not Ghidra; the real lane rebuilds both orders.
 const readelf = `ELF Header:
   Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00
@@ -21,7 +21,7 @@ const readelf = `ELF Header:
   Version:                           0x1
   Entry point address:               0x201b0
   Start of program headers:          52 (bytes into file)
-  Start of section headers:          2996 (bytes into file)
+  Start of section headers:          2624 (bytes into file)
   Flags:                             0x70001001, noreorder, o32, mips32r2
   Size of this header:               52 (bytes)
   Size of program headers:           32 (bytes)
@@ -29,6 +29,38 @@ const readelf = `ELF Header:
   Size of section headers:           40 (bytes)
   Number of section headers:         24
   Section header string table index: 22
+
+Section Headers:
+  [Nr] Name              Type            Addr     Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            00000000 000000 000000 00      0   0  0
+  [ 1] .MIPS.abiflags    MIPS_ABIFLAGS   00010118 000118 000018 18   A  0   0  8
+  [ 2] .reginfo          MIPS_REGINFO    00010130 000130 000018 18   A  0   0  4
+  [ 3] .rodata           PROGBITS        00010148 000148 00001e 00   A  0   0  1
+  [ 4] .text             PROGBITS        00020170 000170 0000f0 00  AX  0   0 16
+  [ 5] .data             PROGBITS        00030260 000260 000000 00  WA  0   0 16
+  [ 6] .got              PROGBITS        00030260 000260 000008 00 WAp  0   0 16
+  [ 7] .sdata            PROGBITS        00030268 000268 000004 00 WAp  0   0  4
+  [ 8] .bss              NOBITS          00030270 00026c 000000 00  WA  0   0 16
+  [ 9] .mdebug.abi32     PROGBITS        00000000 00026c 000000 00      0   0  1
+  [10] .pdr              PROGBITS        00000000 00026c 000060 00      0   0  4
+  [11] .debug_abbrev     MIPS_DWARF      00000000 0002cc 0000b3 00      0   0  1
+  [12] .debug_info       MIPS_DWARF      00000000 00037f 00015e 00      0   0  1
+  [13] .debug_str_offsets MIPS_DWARF      00000000 0004dd 000040 00      0   0  1
+  [14] .debug_str        MIPS_DWARF      00000000 00051d 0000ef 01  MS  0   0  1
+  [15] .debug_addr       MIPS_DWARF      00000000 00060c 000018 00      0   0  1
+  [16] .comment          PROGBITS        00000000 000624 00003e 01  MS  0   0  1
+  [17] .debug_frame      MIPS_DWARF      00000000 000664 00004c 00      0   0  4
+  [18] .debug_line       MIPS_DWARF      00000000 0006b0 0000f8 00      0   0  1
+  [19] .debug_line_str   MIPS_DWARF      00000000 0007a8 000098 01  MS  0   0  1
+  [20] .debug_aranges    MIPS_DWARF      00000000 000840 000020 00      0   0  1
+  [21] .symtab           SYMTAB          00000000 000860 000090 10     23   4  4
+  [22] .shstrtab         STRTAB          00000000 0008f0 0000f0 00      0   0  1
+  [23] .strtab           STRTAB          00000000 0009e0 00005f 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
 
 Symbol table '.symtab' contains 9 entries:
    Num:    Value  Size Type    Bind   Vis      Ndx Name
@@ -54,6 +86,15 @@ ASEs:
 	None
 FLAGS 1: 00000000
 FLAGS 2: 00000000
+
+Static GOT:
+ Canonical gp value: 00038250
+
+ Reserved entries:
+   Address     Access    Value
+  00030260 -32752(gp) 00000000
+  00030264 -32748(gp) 80000000
+
 `;
 const sha256 = "a".repeat(64);
 const image = {
@@ -94,6 +135,7 @@ describe("MIPS real-verifier independent expectations", () => {
       elfClass: 32,
       byteOrder: "little",
       flags: 0x70001001,
+      gnuAttributes: null,
       abiFlags: {
         isaLevel: 32,
         isaRevision: 2,
@@ -229,6 +271,67 @@ describe("MIPS real-verifier independent expectations", () => {
   });
 });
 
+describe("MIPS real-verifier GNU attribute coverage", () => {
+  it.each(["exec", "rel"] as const)(
+    "reports verified GNU attribute absence for both byte orders of %s fixtures",
+    (objectType) => {
+      for (const byteOrder of ["little", "big"]) {
+        const text = readelf
+          .replace("little endian", `${byteOrder} endian`)
+          .replace(
+            "EXEC (Executable file)",
+            objectType === "rel"
+              ? "REL (Relocatable file)"
+              : "EXEC (Executable file)",
+          );
+        expect(
+          parseMipsReadelf(text, byteOrder, "hard", objectType).mips
+            .gnuAttributes,
+        ).toBeNull();
+      }
+    },
+  );
+
+  it("rejects GNU attribute sections even when their name is unrelated", () => {
+    expect(() =>
+      parseMipsReadelf(
+        readelf.replace(
+          ".comment          PROGBITS",
+          ".comment          GNU_ATTRIBUTES",
+        ),
+        "little",
+      ),
+    ).toThrow(/GNU attributes/u);
+  });
+
+  it("uses the section type rather than its name to establish absence", () => {
+    expect(
+      parseMipsReadelf(
+        readelf.replace(
+          ".comment          PROGBITS",
+          ".gnu.attributes  PROGBITS",
+        ),
+        "little",
+      ).mips.gnuAttributes,
+    ).toBeNull();
+  });
+
+  it.each([
+    [
+      "missing table",
+      readelf.replace(
+        /Section Headers:[\s\S]*?Key to Flags:/u,
+        "Key to Flags:",
+      ),
+    ],
+    ["missing entry", readelf.replace(/^.*\[ 5\].*\n/gmu, "")],
+    ["duplicate index", readelf.replace("[ 5]", "[ 4]")],
+    ["malformed entry", readelf.replace(/^.*\[ 5\].*$/gmu, "  [ 5] malformed")],
+  ])("refuses GNU attribute absence from a %s", (_name, text) => {
+    expect(() => parseMipsReadelf(text, "little")).toThrow(/section/u);
+  });
+});
+
 describe("MIPS soft-float real-verifier expectations", () => {
   const softReadelf = readelf
     .replace("CPR1 size: 32", "CPR1 size: 0")
@@ -249,6 +352,7 @@ describe("MIPS soft-float real-verifier expectations", () => {
   it("reads the soft-float ABI record and its fixture symbols", () => {
     const parsed = parseMipsReadelf(softReadelf, "little", "soft");
     expect(parsed.mips.abiFlags).toMatchObject({ cpr1Size: 0, fpAbi: 3 });
+    expect(parsed.mips.gnuAttributes).toBeNull();
     expect(parsed.symbols.rea_mips_soft_mixed).toBe("0x20380");
   });
 

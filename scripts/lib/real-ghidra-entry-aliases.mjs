@@ -73,7 +73,8 @@ export async function verifyGhidraEntryAliases({
         alias.address,
       );
       assert.equal(
-        (await call("analyze_function", { procedure })).procedure.address,
+        (await call("analyze_function", { procedure, detail: "complete" }))
+          .procedure.address,
         alias.address,
       );
       assert.equal(

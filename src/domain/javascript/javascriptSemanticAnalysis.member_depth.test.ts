@@ -134,11 +134,19 @@ it("keeps a shadowed require local through a deep member initializer", () => {
 
 it.each([
   ["root.first.last()", "root.first.last"],
+  ["root[`first`].last()", "root.first.last"],
+  ['root["first" as const].last()', "root.first.last"],
   ['root[""].last()', "root..last"],
+  ["root[``].last()", "root..last"],
+  ['root["" as const].last()', "root..last"],
   ['("")[""].last()', "last"],
   ['("")[""]()', ""],
   ["root[0].last()", "root.0.last"],
+  ["root[0x1n].last()", "root.1.last"],
+  ["root[-1n].last()", "root.-1.last"],
   ["root[key].last()", "root.[computed@5].last"],
+  ["root[`first${key}`].last()", "root.[computed@5].last"],
+  ["root[`\\unicode`].last()", "root.[computed@5].last"],
   ["root?.first.last()", "root.first.last"],
   [`root${ordinaryMemberChain}.last()`, `root${ordinaryMemberChain}.last`],
 ])("preserves exact callee syntax (case %#)", (source, expected) => {

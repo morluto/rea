@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../../../src/contracts/officialToolContracts.js";
-import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { nativeSymbolMetadataSchema } from "../../../../src/domain/native/nativeSymbol.js";
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 
 const execute = promisify(execFile);
 const bridgePath = new URL(
@@ -29,6 +31,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: nativeSymbolMetadataSchema.nullable(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),
@@ -43,6 +46,7 @@ const probeResultSchema = z.strictObject({
     length: z.number(),
     signature: z.literal("int fixture-procedure()"),
     locals: z.array(z.unknown()),
+    symbol: nativeSymbolMetadataSchema.nullable(),
     classification: z.null(),
     body: z.strictObject({
       available: z.literal(false),
@@ -54,6 +58,7 @@ const probeResultSchema = z.strictObject({
     procedure: z.strictObject({
       address: z.literal("0x401000"),
       name: z.literal("fixture-procedure"),
+      symbol: nativeSymbolMetadataSchema.nullable(),
       classification: z.null(),
       body: z.strictObject({
         available: z.literal(false),
@@ -133,7 +138,7 @@ describe("Hopper API facade", () => {
   it("imports without Hopper globals and gates exhaustive work during analysis", async () => {
     const { stdout } = await execute(
       "python3",
-      [probePath.pathname, bridgePath.pathname],
+      [fileURLToPath(probePath), fileURLToPath(bridgePath)],
       {
         encoding: "utf8",
         timeout: 3_000,
@@ -167,6 +172,19 @@ describe("Hopper API facade", () => {
       },
       native_api: null,
       native_value_flow: null,
+      facet_availability: {
+        pseudocode: {
+          available: false,
+          reason: "Hopper did not supply pseudocode.",
+        },
+        assembly: { available: true },
+        comments: { available: true },
+        callers: { available: true },
+        callees: { available: true },
+        references: { available: true },
+        strings_names: { available: true },
+        cfg: { available: true },
+      },
     });
     expect(result.provider_faults.map((reply) => reply.error.message)).toEqual([
       "TypeError: Hopper bridge operation failed",

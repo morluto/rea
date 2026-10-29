@@ -9,6 +9,7 @@ import {
   writeFile,
   truncate,
 } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
@@ -21,6 +22,9 @@ import {
   readValidatedAsarEntry,
 } from "../../../src/artifacts/AsarEntryStream.js";
 import { hashReadable } from "../../../src/artifacts/ArtifactHash.js";
+import { ARTIFACT_CLASSIFICATION_PREFIX_BYTES } from "../../../src/artifacts/ArtifactClassificationProbe.js";
+import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
+import { readArtifactFileChunks } from "../../../src/artifacts/readArtifactFileChunks.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const memberBytes = 64 * 1024 * 1024;
@@ -714,12 +718,15 @@ it("preserves filesystem errors raised while consuming a member stream", async (
     errno: -5,
     syscall: "read",
   });
-  const source = Readable.from(
-    (async function* () {
-      yield Buffer.from("partial");
-      throw ioError;
-    })(),
-  );
+  let delivered = false;
+  const read = (async (target: Buffer) => {
+    if (delivered) throw ioError;
+    delivered = true;
+    const partial = Buffer.from("partial");
+    partial.copy(target);
+    return { bytesRead: partial.length, buffer: target };
+  }) as FileHandle["read"];
+  const source = readArtifactFileChunks({ read });
   const output = readValidatedAsarEntry(
     source,
     undefined,
@@ -742,6 +749,29 @@ it("preserves filesystem errors raised while consuming a member stream", async (
 });
 
 describe("ASAR entry streaming", () => {
+  it("matches ASAR after a long JSON prefix without retaining it in the classification prefix", async () => {
+    const bytes = asarHeaderBytes(`${" ".repeat(9_000)}{"files":{}}`);
+    const observed = await hashReadable(
+      Readable.from(
+        (async function* () {
+          for (const byte of bytes) yield Buffer.of(byte);
+        })(),
+      ),
+    );
+
+    expect(observed.prefix).toHaveLength(ARTIFACT_CLASSIFICATION_PREFIX_BYTES);
+    expect(observed.asarHeader).toMatchObject({
+      state: "matched",
+      signatureOffset: 16 + 9_000,
+      extents: {
+        jsonBytes: Buffer.byteLength(`${" ".repeat(9_000)}{"files":{}}`),
+      },
+    });
+    expect(observed.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+  });
+
   it("reports the observed digest when an unpacked member changes size", async () => {
     const root = await createTestTempDirectory(
       "rea-asar-unpacked-size-change-",

@@ -1,14 +1,17 @@
 """Maintain shared HTML and run the static website's contributor commands."""
 
 import argparse
+from datetime import date
 from functools import partial
 from html import escape
 from html.parser import HTMLParser
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import json
 from pathlib import Path, PurePosixPath
 from string import Template
 import subprocess
 import sys
+import tempfile
 from textwrap import indent
 from urllib.parse import quote, urlsplit
 
@@ -20,8 +23,86 @@ NAVIGATION = (
     ("Showcases", "showcase/"),
     ("Blog", "blog/"),
     ("Guides", "guides/"),
-    ("FAQ", "faq/"),
 )
+
+
+def checked_contributors(data):
+    """Validate the public snapshot once, before rendering or replacing it."""
+    if not isinstance(data, dict) or data.get("repository") != "morluto/rea":
+        raise ValueError("Contributors must come from morluto/rea")
+    if not isinstance(data.get("updated"), str):
+        raise ValueError("Contributors need an ISO update date")
+    date.fromisoformat(data["updated"])
+    people = data.get("contributors")
+    if not isinstance(people, list) or not people:
+        raise ValueError("Contributors must be a nonempty list")
+    ids, logins = set(), set()
+    for person in people:
+        if not isinstance(person, dict):
+            raise ValueError("Invalid contributor record")
+        identity, login = person.get("id"), person.get("login")
+        if type(identity) is not int or identity <= 0 or identity in ids:
+            raise ValueError("Contributor IDs must be unique positive integers")
+        if not isinstance(login, str) or not login.strip() or login.casefold() in logins:
+            raise ValueError("Contributor usernames must be nonempty and unique")
+        if person.get("type") not in ("User", "Bot"):
+            raise ValueError(f"Unknown contributor type: {login}")
+        for key, host in (("html_url", "github.com"), ("avatar_url", "avatars.githubusercontent.com")):
+            value = person.get(key)
+            if not isinstance(value, str):
+                raise ValueError(f"Missing {key}: {login}")
+            url = urlsplit(value)
+            if url.scheme != "https" or url.netloc != host or not url.path:
+                raise ValueError(f"Invalid public {key}: {login}")
+        ids.add(identity)
+        logins.add(login.casefold())
+    return data
+
+
+def contributor_block(root):
+    """Render equal-sized profile links from the checked GitHub snapshot."""
+    path = root / "website/public/contributors/people.json"
+    data = checked_contributors(json.loads(path.read_text(encoding="utf-8")))
+    cards = []
+    for person in sorted(data["contributors"], key=lambda item: item["login"].casefold()):
+        login = escape(person["login"], quote=True)
+        profile = escape(person["html_url"], quote=True)
+        avatar = escape(person["avatar_url"], quote=True)
+        cards.append(
+            f'  <li data-contributor="{login}"><a class="contributor-card" href="{profile}">\n'
+            f'    <img src="{avatar}" alt="" width="56" height="56" loading="lazy" decoding="async" referrerpolicy="no-referrer" />\n'
+            f'    <span dir="ltr">@{login}</span>\n'
+            '  </a></li>'
+        )
+    template = root / "website/templates/contributors.html.tmpl"
+    return indent(Template(template.read_text(encoding="utf-8")).substitute(
+        cards="\n".join(cards), updated=escape(data["updated"], quote=True),
+    ), "        ")
+
+
+def refresh_contributors(root):
+    """Validate every GitHub page, then atomically replace the offline snapshot."""
+    result = subprocess.run(
+        ["gh", "api", "--paginate", "repos/morluto/rea/contributors?per_page=100", "--jq",
+         "[.[] | {login,id,type,avatar_url,html_url}]"],
+        capture_output=True, text=True, check=True,
+    )
+    decoder, remaining, people = json.JSONDecoder(), result.stdout.strip(), []
+    while remaining:
+        page, end = decoder.raw_decode(remaining)
+        if not isinstance(page, list):
+            raise ValueError("GitHub returned an invalid contributors page")
+        people.extend(page)
+        remaining = remaining[end:].lstrip()
+    data = checked_contributors({
+        "repository": "morluto/rea", "updated": date.today().isoformat(), "contributors": people,
+    })
+    path = root / "website/public/contributors/people.json"
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=f".{path.name}-") as directory:
+        staged = Path(directory) / path.name
+        staged.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        staged.replace(path)
+    print(f"Refreshed {len(people)} contributors. Run sync, translations extract and check.")
 
 
 def authored_markdown(root):
@@ -117,10 +198,13 @@ def shared_blocks(root, path, source):
     values["language_picker"] = indent(selector, "      ") if not metadata.noindex else ""
     values["alternates"] = alternates if not metadata.noindex else ""
     templates = root / "website/templates"
-    return {
+    blocks = {
         name: indent(Template((templates / f"{name}.html.tmpl").read_text(encoding="utf-8")).substitute(values), "    ")
         for name in ("sharing", "theme", "header", "footer")
     }
+    if route == "contributors/":
+        blocks["contributors"] = contributor_block(root)
+    return blocks
 
 
 def sync_pages(root, check=False):
@@ -206,6 +290,7 @@ def main():
     sync = commands.add_parser("sync", help="Update shared HTML after editing templates or page metadata")
     sync.add_argument("--check", action="store_true", help="Report drift without rewriting pages")
     commands.add_parser("check", help="Check shared HTML, prepare assets, verify links and run regression tests")
+    commands.add_parser("contributors", help="Refresh the public contributor snapshot using GitHub CLI")
     links = commands.add_parser("links", help="Audit external targets using gh and HTTP; separate from offline checks")
     links.add_argument("--report", help="Write the full external-link JSON report")
     create = commands.add_parser("new-page", help="Create a draft reading page")
@@ -238,6 +323,8 @@ def main():
             new_page(root, args.route, args.title, args.description)
         elif args.command == "sync":
             sync_pages(root, check=args.check)
+        elif args.command == "contributors":
+            refresh_contributors(root)
         elif args.command == "check":
             sync_pages(root, check=True)
             for name in ("prepare-website.py", "verify-website.py", "test-website.py"):

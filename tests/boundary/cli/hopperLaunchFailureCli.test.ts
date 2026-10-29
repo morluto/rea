@@ -1,11 +1,11 @@
 import { chmod, copyFile, rm } from "node:fs/promises";
 
-import { describe, expect, onTestFinished } from "vitest";
+import { describe, expect } from "vitest";
 import { z } from "zod";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { acquireHopperTargetLease } from "../../../src/hopper/HopperTargetLease.js";
+import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
 
 const FAILED_LAUNCHER = `#!/bin/sh
 printf 'Cannot launch Hopper!\\nDocument state is unknown.\\n' >&2
@@ -39,7 +39,57 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
       const targetPath = workspace.path("probe");
       await copyFile("/usr/bin/true", targetPath);
       const loaderArgs = ["--probe"];
-      onTestFinished(async () => {
+      try {
+        for (const attempt of ["first", "retry"]) {
+          const result = await cli.run({
+            arguments: [
+              "analyze",
+              targetPath,
+              "--provider",
+              "hopper",
+              "--json",
+            ],
+            environment: {
+              ...workspace.environment,
+              HOPPER_LAUNCHER_PATH: launcherPath,
+              HOPPER_LOADER_ARGS_JSON: JSON.stringify(loaderArgs),
+              REA_LOG_LEVEL: "silent",
+            },
+            timeoutMs: 45_000,
+          });
+          const retained = RetainedRuntime.safeParse(result.json);
+          if (retained.success)
+            await rm(
+              retained.data.details.diagnostics.cleanup_error.details
+                .diagnostics.runtime_root,
+              { recursive: true, force: true },
+            );
+
+          expect(result.exitCode, attempt).toBe(1);
+          expect(result.json, attempt).toMatchObject({
+            code: "cleanup_incomplete",
+            details: {
+              cleanup: "incomplete",
+              diagnostics: {
+                primary_error: {
+                  code: "provider_unavailable",
+                  details: {
+                    stage: "launch",
+                    launcher: {
+                      exit_code: 2,
+                      stderr: {
+                        text: expect.stringContaining(
+                          "Document state is unknown",
+                        ),
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          });
+        }
+      } finally {
         const recovered = await acquireHopperTargetLease({
           targetPath,
           targetKind: "executable",
@@ -48,50 +98,6 @@ describe("Hopper launcher failure through the one-shot CLI", () => {
         });
         expect(recovered.acquired).toBe(true);
         if (recovered.acquired) await recovered.lease.release();
-      });
-
-      for (const attempt of ["first", "retry"]) {
-        const result = await cli.run({
-          arguments: ["analyze", targetPath, "--provider", "hopper", "--json"],
-          environment: {
-            ...workspace.environment,
-            HOPPER_LAUNCHER_PATH: launcherPath,
-            HOPPER_LOADER_ARGS_JSON: JSON.stringify(loaderArgs),
-            REA_LOG_LEVEL: "silent",
-          },
-          timeoutMs: 45_000,
-        });
-        const retained = RetainedRuntime.safeParse(result.json);
-        if (retained.success)
-          await rm(
-            retained.data.details.diagnostics.cleanup_error.details.diagnostics
-              .runtime_root,
-            { recursive: true, force: true },
-          );
-
-        expect(result.exitCode, attempt).toBe(1);
-        expect(result.json, attempt).toMatchObject({
-          code: "cleanup_incomplete",
-          details: {
-            cleanup: "incomplete",
-            diagnostics: {
-              primary_error: {
-                code: "provider_unavailable",
-                details: {
-                  stage: "launch",
-                  launcher: {
-                    exit_code: 2,
-                    stderr: {
-                      text: expect.stringContaining(
-                        "Document state is unknown",
-                      ),
-                    },
-                  },
-                },
-              },
-            },
-          },
-        });
       }
     },
   );

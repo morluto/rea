@@ -13,7 +13,14 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import {
+  signatureInspectionFixture,
+  NativeFixtureRunner,
+  nativeMachoTargetForFile,
+} from "../../../fixtures/nativeCommands.js";
+import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import {
@@ -26,15 +33,12 @@ import {
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
-import { err } from "../../../../src/domain/result.js";
+import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import {
-  NativeFixtureRunner,
-  nativeMachoTargetForFile,
-} from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const CONTENT = "registered executable bytes";
+const runFile = promisify(execFile);
 const fixture = async () => {
   const directory = await createTestTempDirectory("rea-signature-binding-");
   const path = join(directory, "program");
@@ -60,18 +64,80 @@ class Captures extends NativeFixtureRunner {
   }
 }
 
-describe("native signature target identity", () => {
+const registerSignatureObservationCases = () => {
   it("inspects an unchanged registered executable", async () => {
     const { target } = await fixture();
-    const result = await new NativeMacOSProvider({}, new Captures(), "darwin")
+    const captures: (readonly string[])[] = [];
+    const result = await new NativeMacOSProvider(
+      {},
+      new Captures(async (args) => {
+        captures.push(args);
+      }),
+      "darwin",
+    )
       .createClient(target)
       .execute("inspect_signature", {});
-    expect(result.ok && result.value.result).toMatchObject({
+    if (!result.ok) throw result.error;
+    expect(captures.map((args) => args[args.indexOf("-a") + 1])).toEqual([
+      target.architecture,
+      target.architecture,
+      target.architecture,
+      ...target.availableArchitectures,
+    ]);
+    expect(result.value.result).toMatchObject({
       signed: true,
       identifier: "com.example.fixture",
+      designated_requirement: "identifier com.example.fixture",
+      limitations: expect.arrayContaining([
+        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
+        expect.stringContaining("Partial signature coverage:"),
+      ]),
     });
   });
 
+  it("projects typed plist scalars from a controlled entitlement response", async () => {
+    const { path, target } = await fixture();
+    const replay = new NativeFixtureRunner();
+    const xml = `<?xml version="1.0"?><plist><dict>
+<key>positive</key><real>+infinity</real>
+<key>negative</key><real>-inf</real>
+<key>nan</key><real>nan</real>
+<key>integer</key><integer>9007199254740993</integer>
+<key>date</key><date>2001-01-01T00:00:00Z</date>
+<key>data</key><data>AQID</data><key>control</key><true/>
+</dict></plist>`;
+    const runner: NativeCommandRunner = {
+      run(tool, args) {
+        return args.includes("--entitlements")
+          ? new NativeFixtureRunner({ codesign: xml }).run(tool, args)
+          : replay.run(tool, args);
+      },
+    };
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    const signature = inspectSignatureSchema.parse(result.value.result);
+    expect(signature.entitlements).toEqual({
+      positive: { $plist_type: "real", value: "+infinity" },
+      negative: { $plist_type: "real", value: "-infinity" },
+      nan: { $plist_type: "real", value: "nan" },
+      integer: { $plist_type: "integer", decimal: "9007199254740993" },
+      date: { $plist_type: "date", iso8601: "2001-01-01T00:00:00.000Z" },
+      data: { $plist_type: "data", base64: "AQID" },
+      control: true,
+    });
+    expect(signature.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Entitlements: 3 non-finite real value(s)"),
+        expect.stringContaining("unambiguous integer value(s)"),
+      ]),
+    );
+    expect(await readFile(path, "utf8")).toBe(CONTENT);
+  });
+};
+
+const registerSignatureIdentityGuardCases = () => {
   it.each(["changed", "missing", "directory", "symlink"] as const)(
     "rejects a %s target before commands run",
     async (replacement) => {
@@ -170,6 +236,11 @@ describe("native signature target identity", () => {
       }
     },
   );
+};
+
+describe("native signature target identity", () => {
+  registerSignatureObservationCases();
+  registerSignatureIdentityGuardCases();
 });
 
 it.each([
@@ -184,14 +255,29 @@ it.each([
   async (stage, failure) => {
     const { path, target } = await fixture();
     const replay = new NativeFixtureRunner();
-    const unsigned = new NativeFixtureRunner(
-      { codesign: "code object is not signed at all\n" },
-      1,
-    );
+    const unsigned: NativeCommandRunner = {
+      async run(tool, args, options) {
+        const diagnostic = `${args.at(-1)}: code object is not signed at all\n`;
+        const capture = await new NativeFixtureRunner(
+          { codesign: diagnostic },
+          1,
+        ).run(tool, args);
+        if (!capture.ok) return capture;
+        return ok({
+          ...capture.value,
+          stdout: "",
+          stderr: diagnostic,
+          stdoutBytes: 0,
+          stderrBytes: Buffer.byteLength(diagnostic),
+        });
+      },
+    };
     let failed = false;
+    let displayCaptures = 0;
     const runner: NativeCommandRunner = {
       async run(tool, args) {
-        const slice = args.includes("-a");
+        const display = args.includes("--verbose=4");
+        const slice = display && displayCaptures++ > 0;
         const selected =
           stage === "slice"
             ? slice
@@ -199,9 +285,7 @@ it.each([
               ? args.includes("-r-")
               : stage === "entitlements"
                 ? args.includes("--entitlements")
-                : !args.includes("-r-") &&
-                  !args.includes("--entitlements") &&
-                  !slice;
+                : display && !slice;
         if (selected) {
           failed = true;
           await rm(path);
@@ -215,7 +299,7 @@ it.each([
           return err(new NativeCommandFailure(tool, "nonzero-exit", 1));
         }
         if (stage === "slice" && args.includes("-r-"))
-          return unsigned.run(tool, args);
+          return unsigned.run(tool, args, {});
         return replay.run(tool, args);
       },
     };
@@ -297,7 +381,7 @@ it("returns typed cancellation at binding entry and final verification", async (
         ok: false,
         error: { _tag: "AnalysisCancelledError" },
       });
-      return result;
+      return result.ok ? ok(signatureInspectionFixture()) : result;
     },
   );
 });
@@ -316,6 +400,135 @@ it("preserves cancellation after a capture instead of classifying it as invalid 
     error: { _tag: "AnalysisCancelledError" },
   });
 });
+
+it("does not classify an unrelated path-echo diagnostic as an unsigned observation", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-signature-path-diagnostic-",
+  );
+  const path = join(directory, "source\ncode object is not signed\noperand");
+  await writeFile(path, CONTENT);
+  const target = await nativeMachoTargetForFile(path);
+  let snapshotPath: string | undefined;
+  const runner: NativeCommandRunner = {
+    async run(tool, args) {
+      snapshotPath = args.at(-1);
+      if (snapshotPath === undefined)
+        throw new Error("Expected the bound snapshot as the codesign operand");
+      expect(
+        Buffer.compare(await readFile(snapshotPath), Buffer.from(CONTENT)),
+      ).toBe(0);
+      return new NativeFixtureRunner(
+        { codesign: `${snapshotPath}: No such file or directory\n` },
+        1,
+      ).run(tool, args);
+    },
+  };
+
+  const result = await new NativeMacOSProvider({}, runner, "darwin")
+    .createClient(target)
+    .execute("inspect_signature", {});
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError" },
+  });
+  expect(await readFile(path, "utf8")).toBe(CONTENT);
+  if (snapshotPath === undefined) throw new Error("Expected codesign capture");
+  await expect(lstat(dirname(snapshotPath))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.skipIf(process.platform !== "darwin")(
+  "rejects a path-injected unsigned diagnostic when real codesign sees a removed private snapshot",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-signature-snapshot-path-",
+    );
+    const path = join(directory, "source\ncode object is not signed\noperand");
+    await copyFile("/usr/bin/true", path);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
+    const originalBytes = await readFile(path);
+    const real = new XcrunCommandRunner({});
+    let snapshotPath: string | undefined;
+    const runner: NativeCommandRunner = {
+      async run(tool, args, options) {
+        snapshotPath = args.at(-1);
+        if (snapshotPath === undefined)
+          throw new Error(
+            "Expected the bound snapshot as the codesign operand",
+          );
+        expect(snapshotPath).not.toBe(path);
+        expect(snapshotPath).toContain("\ncode object is not signed\n");
+        await rm(snapshotPath);
+        return real.run(tool, args, options);
+      },
+    };
+
+    const result = await new NativeMacOSProvider({}, runner, "darwin")
+      .createClient(target)
+      .execute("inspect_signature", {});
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError" },
+    });
+    expect(Buffer.compare(await readFile(path), originalBytes)).toBe(0);
+    if (snapshotPath === undefined)
+      throw new Error("Expected codesign capture");
+    await expect(lstat(dirname(snapshotPath))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it.skipIf(process.platform !== "darwin")(
+  "accepts the exact unsigned diagnostic for a caller path containing that phrase",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-signature-real-unsigned-",
+    );
+    const path = join(directory, "source\ncode object is not signed\noperand");
+    await copyFile("/usr/bin/true", path);
+    await runFile("/usr/bin/codesign", ["--remove-signature", path]);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
+    const result = await new NativeMacOSProvider(
+      {},
+      new XcrunCommandRunner({}),
+      "darwin",
+    )
+      .createClient(target)
+      .execute("inspect_signature", {});
+    if (!result.ok) throw result.error;
+    const parsed = inspectSignatureSchema.parse(result.value.result);
+    expect(parsed).toMatchObject({ signed: false });
+    const selectedArchitecture =
+      target.architecture === "x86" ? "i386" : target.architecture;
+    expect(
+      parsed.provenance.map(
+        ({ command }) => command[command.indexOf("-a") + 1],
+      ),
+    ).toEqual([
+      selectedArchitecture,
+      selectedArchitecture,
+      selectedArchitecture,
+      ...(target.availableArchitectures.length > 1
+        ? target.availableArchitectures.map((architecture) =>
+            architecture === "x86" ? "i386" : architecture,
+          )
+        : []),
+    ]);
+    expect(parsed.provenance.every(({ exit }) => exit.code === 1)).toBe(true);
+  },
+);
 
 it.each(["success", "failure", "cancellation", "throw"] as const)(
   "releases the verified snapshot after %s",
@@ -358,11 +571,36 @@ it("copies and hashes the same bytes across multiple snapshot chunks", async () 
     target,
     new ArtifactResourceScope(),
     async (binding) => {
-      expect(await readFile(binding.snapshotPath)).toEqual(bytes);
-      return verifySignatureTarget(target, binding);
+      expect(Buffer.compare(await readFile(binding.snapshotPath), bytes)).toBe(
+        0,
+      );
+      const verified = await verifySignatureTarget(target, binding);
+      return verified.ok ? ok(signatureInspectionFixture()) : verified;
     },
   );
 });
+
+it.skipIf(process.platform === "win32")(
+  "rejects a changed snapshot identity while the registered source remains unchanged",
+  async () => {
+    const { path, target } = await fixture();
+    const result = await withSignatureTarget(
+      target,
+      new ArtifactResourceScope(),
+      async (binding) => {
+        await chmod(binding.snapshotPath, 0o600);
+        await writeFile(binding.snapshotPath, "replacement snapshot bytes");
+        const verified = await verifySignatureTarget(target, binding);
+        return verified.ok ? ok(signatureInspectionFixture()) : verified;
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisArtifactChangedError" },
+    });
+    expect(await readFile(path, "utf8")).toBe(CONTENT);
+  },
+);
 
 it("cleans the private snapshot when inspection throws", async () => {
   const { target } = await fixture();
@@ -411,7 +649,11 @@ it.skipIf(process.platform !== "darwin")(
         program,
       ]);
     }
-    const target = await nativeMachoTargetForFile(path);
+    const admitted = await parseBinaryTarget(path);
+    if (!admitted.ok) throw admitted.error;
+    const target = admitted.value;
+    if (target.kind !== "executable")
+      throw new Error("Expected the copied system executable");
     const real = new XcrunCommandRunner({});
     let capturedPath: string | undefined;
     const runner: NativeCommandRunner = {
@@ -420,9 +662,12 @@ it.skipIf(process.platform !== "darwin")(
         await rename(selected, saved);
         await rename(replacement, selected);
         try {
-          expect(await readFile(path)).not.toEqual(
-            await readFile(join(saved, "program")),
-          );
+          expect(
+            Buffer.compare(
+              await readFile(path),
+              await readFile(join(saved, "program")),
+            ),
+          ).not.toBe(0);
           return await real.run(tool, args, options);
         } finally {
           await rename(selected, replacement);
@@ -433,11 +678,11 @@ it.skipIf(process.platform !== "darwin")(
     const result = await new NativeMacOSProvider({}, runner, "darwin")
       .createClient(target)
       .execute("inspect_signature", {});
-    expect(result.ok && result.value.result).toMatchObject({
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
       signed: true,
       identifier: "rea.original",
     });
-    if (!result.ok) throw result.error;
     expect(
       inspectSignatureSchema
         .parse(result.value.result)
@@ -450,3 +695,57 @@ it.skipIf(process.platform !== "darwin")(
     });
   },
 );
+
+for (const cleanupFails of [false, true])
+  it(`retains completed provider signature facts when root finalization cancels (fails: ${cleanupFails})`, async () => {
+    const { path, target } = await fixture();
+    const controller = new AbortController();
+    const reason = { caller: "provider-final-root-close" };
+    const root = join(dirname(path), "controlled-snapshot-root");
+    let attempts = 0;
+    const client = new NativeMacOSProvider(
+      {},
+      new Captures(),
+      "darwin",
+      undefined,
+      async () => {
+        await mkdir(root);
+        return {
+          path: root,
+          async close() {
+            try {
+              if (cleanupFails && attempts++ === 0)
+                throw new Error("controlled provider root cleanup failure");
+              await rm(root, { recursive: true });
+            } finally {
+              controller.abort(reason);
+            }
+          },
+        };
+      },
+    ).createClient(target);
+    onTestFinished(async () => {
+      await client.close();
+    });
+    const result = await client.execute(
+      "inspect_signature",
+      {},
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok)
+      throw new Error("Expected cancellation after completed provider facts");
+    expect(result.error.cleanupIncomplete).toBe(cleanupFails);
+    const facts = inspectSignatureSchema.parse(result.error.partialObservation);
+    expect(facts.signed).toBe(true);
+    expect(facts.provenance).toHaveLength(5);
+    expect(
+      projectAnalysisError(result.error).details?.partial_observation,
+    ).toEqual(facts);
+    expect((await client.close()).ok).toBe(true);
+    expect(resolvedAnalysisError(result.error)).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+    });
+    await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
+  });

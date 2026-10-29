@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 
 const execute = promisify(execFile);
 const bin = process.env.REA_WABT_BIN_DIRECTORY;
@@ -53,7 +54,8 @@ const inspect = async (path) => {
     arguments: { path },
   });
   assert.notEqual(result.isError, true, JSON.stringify(result));
-  return parseEvidence(result.structuredContent);
+  assert.notEqual(result.structuredContent, undefined);
+  return parseEvidence(requireMcpOutput(result, "inspect_wasm_artifact"));
 };
 const compare = async (left, right, scope = "both") => {
   const input = {
@@ -66,7 +68,8 @@ const compare = async (left, right, scope = "both") => {
     arguments: input,
   });
   assert.notEqual(reply.isError, true, JSON.stringify(reply));
-  const mcp = parseEvidence(reply.structuredContent);
+  assert.notEqual(reply.structuredContent, undefined);
+  const mcp = parseEvidence(requireMcpOutput(reply, "compare_wasm_interfaces"));
   const file = join(root, "comparison.json");
   await writeFile(file, JSON.stringify({ left, right, scope }));
   const local = parseEvidence(

@@ -43,12 +43,23 @@ input.on('line', (line) => {
     HOME: "/selected-home",
     PATH: "/selected-path",
   };
+  const registrationEnvironment: Record<string, string> = {
+    REA_REGISTRATION_CONTEXT: "registration",
+  };
+  if (process.platform === "win32") {
+    const systemRoot = process.env.SYSTEMROOT;
+    if (systemRoot === undefined || systemRoot.length === 0)
+      throw new Error(
+        "The Windows Node fixture requires its actual SYSTEMROOT.",
+      );
+    registrationEnvironment.SYSTEMROOT = systemRoot;
+  }
   for (const selected of [environment, {}]) {
     const connection = createIdaMcpConnection(
       {
         command: process.execPath,
         args: [script],
-        env: { REA_REGISTRATION_CONTEXT: "registration" },
+        env: registrationEnvironment,
         mode: "attached",
         timeoutMs: 5000,
       },

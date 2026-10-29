@@ -16,7 +16,7 @@
     "tests/conformance/native/Assets.xcassets/Contents.json": "67328f1f20917d61b0904d1eeadd3a9af5ebdfeb20bdd8c6f585f97f7192d873",
     "tests/conformance/native/Assets.xcassets/FixtureColor.colorset/Contents.json": "26c6400ce2082ddc155175e80130daddded1a863bd68fe441bee413cc2786731",
     "tests/fixtures/golden/keyed-archive/foundation.xml": "93c2bf33ad960be6fba6d45c28462c4bda73ff371fe16725d087087f044479ec",
-    "tests/fixtures/golden/keyed-archive/graph.json": "eaadd9fca83052e81abd0dac797d2423b0bb750bea386f790586273eb3a3172e",
+    "tests/fixtures/golden/keyed-archive/graph.json": "d761330d5a3ca89a51eaaacaa5d43b92cda2ee544931b8b67849b2e937cf848a",
     "tests/fixtures/golden/assetutil.json": "ff50e24963447584e3398dddf4b0426274ffd2ea2d3ae6fac8295f449f91feb3",
     "tests/fixtures/golden/mcp-initialize.json": "8f590db5143106aa43dfa96123178484d98268874eff7fabbd708c240c5975bc"
   }

@@ -2,8 +2,12 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
-import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
+import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
+import {
+  ghidraFunctionDossier,
+  ghidraFunctionIdentity,
+} from "../../../src/domain/ghidraValues.fixture.js";
 import {
   jsonValueSchema,
   type JsonValue,
@@ -13,6 +17,107 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+
+it.each([
+  { pseudocodeAvailable: true, reportsCoverage: true },
+  { pseudocodeAvailable: false, reportsCoverage: true },
+  { pseudocodeAvailable: true, reportsCoverage: false },
+  { pseudocodeAvailable: false, reportsCoverage: false },
+])(
+  "compares observed empty Ghidra facets with pseudocode=$pseudocodeAvailable and coverage=$reportsCoverage",
+  async ({ pseudocodeAvailable, reportsCoverage }) => {
+    const coverage = reportsCoverage
+      ? { status: "complete" as const }
+      : undefined;
+    const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+    Object.assign(dossier, {
+      comments: [],
+      callers: [],
+      callees: [],
+      incoming_references: [],
+      outgoing_references: [],
+      referenced_strings: [],
+      referenced_names: [],
+      pseudocode: pseudocodeAvailable ? dossier.pseudocode : "",
+      facet_availability: {
+        pseudocode: pseudocodeAvailable
+          ? { available: true }
+          : { available: false, reason: "Ghidra did not supply pseudocode." },
+        assembly: { available: true },
+        comments: { available: true },
+        callers: { available: true },
+        callees: { available: true },
+        references: { available: true },
+        strings_names: { available: true },
+        cfg: { available: true },
+      },
+    });
+    const harness = await connectGhidraMcp(
+      "ghidra-empty-dossier-coverage",
+      (operation) => {
+        if (operation !== "analyze_function")
+          throw new Error(`Unexpected operation: ${operation}`);
+        return Promise.resolve(
+          ok({
+            value: jsonValueSchema.parse(dossier),
+            limitations: [],
+            ...(coverage === undefined
+              ? {}
+              : { relationship_coverage: coverage }),
+          }),
+        );
+      },
+    );
+    try {
+      const analyzed = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: dossier.procedure.address, detail: "complete" },
+      });
+      expect(analyzed.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        analyzed.structuredContent,
+      );
+      expect(evidence.relationship_coverage).toEqual(coverage ?? null);
+      expect(evidence.normalized_result).toEqual(dossier);
+      const reply = await harness.mcp.callTool({
+        name: "compare_functions",
+        arguments: { left: evidence, right: evidence },
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      const comparison = functionComparisonResultSchema.parse(
+        sessionEvidence(harness.session, reply.structuredContent)
+          .normalized_result,
+      );
+      expect(
+        Object.fromEntries(
+          comparison.dimensions.map(({ dimension, status }) => [
+            dimension,
+            status,
+          ]),
+        ),
+      ).toEqual({
+        identity: "unchanged",
+        pseudocode: pseudocodeAvailable ? "unchanged" : "unknown",
+        assembly: "unchanged",
+        comments: "unchanged",
+        calls: reportsCoverage ? "unchanged" : "unknown",
+        references: "unchanged",
+        strings_names: "unchanged",
+        cfg: "unchanged",
+      });
+      const replay = await harness.session.execute(
+        "analyze_function",
+        evidence.parameters,
+      );
+      if (!replay.ok) throw replay.error;
+      expect(replay.value.relationshipCoverage).toEqual(coverage);
+      expect(harness.calls).toEqual(["analyze_function"]);
+    } finally {
+      await harness.close();
+    }
+  },
+);
 
 it("retains terminal-call qualifications across function views and snapshot replay", async () => {
   const limitation =
@@ -67,23 +172,21 @@ it("retains terminal-call qualifications across function views and snapshot repl
         name,
         arguments:
           name === "analyze_function"
-            ? { procedure: identity.address }
+            ? { procedure: identity.address, detail: "complete" }
             : { procedure: identity.address, document: "fixture" },
       };
       const reply = await harness.mcp.callTool(request);
-      expect(reply.isError, name).not.toBe(true);
+      expect(reply.isError, `${name}: ${JSON.stringify(reply)}`).not.toBe(true);
       const evidence = sessionEvidence(
         harness.session,
         reply.structuredContent,
       );
       expect(evidence.normalized_result, name).toEqual(value);
-      expect(evidence.raw_result, name).toEqual({
-        value,
-        limitations: [limitation],
-      });
+      expect(evidence.raw_result, name).toBeNull();
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        function_boundary_observations: "ghidra-terminal-call-limitations-v2",
+        function_boundary_observations:
+          "ghidra-function-boundary-limitations-v4",
       });
       const replay = await harness.session.execute(name, evidence.parameters);
       if (!replay.ok) throw replay.error;
@@ -94,6 +197,61 @@ it("retains terminal-call qualifications across function views and snapshot repl
       );
     }
     expect(harness.calls).toEqual([...values.keys()]);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("retains handler-region limitations on incoming and outgoing reference Evidence", async () => {
+  const limitation =
+    "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x40108f (push 0x4010c0 followed by fs-segment stack chaining); handler 0x4010c0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  const harness = await connectGhidraMcp(
+    "ghidra-seh-reference-evidence",
+    (operation, input) => {
+      if (operation !== "procedure_references")
+        throw new Error(`Unexpected operation: ${operation}`);
+      return Promise.resolve(
+        ok({
+          value: jsonValueSchema.parse({
+            procedure: ghidraFunctionIdentity(),
+            direction: input.direction ?? "outgoing",
+            references: [],
+            reference_kinds_available: true,
+            unresolved_calls: [],
+          }),
+          limitations: [limitation],
+        }),
+      );
+    },
+  );
+  try {
+    for (const direction of ["incoming", "outgoing"] as const) {
+      const reply = await harness.mcp.callTool({
+        name: "procedure_references",
+        arguments: { procedure: dossier.procedure.address, direction },
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        reply.structuredContent,
+      );
+      expect(evidence.normalized_result).toMatchObject({ direction });
+      expect(evidence.raw_result).toBeNull();
+      expect(evidence.limitations).toContain(limitation);
+      const replay = await harness.session.execute(
+        "procedure_references",
+        evidence.parameters,
+      );
+      if (!replay.ok) throw replay.error;
+      expect(replay.value.limitations).toContain(limitation);
+    }
+    expect(harness.calls).toEqual([
+      "procedure_references",
+      "procedure_references",
+      "procedure_references",
+      "procedure_references",
+    ]);
   } finally {
     await harness.close();
   }
@@ -252,6 +410,7 @@ describe("Ghidra MCP evidence parity", () => {
         ],
       });
 
+      const beforeOverview = harness.calls.length;
       const mcpOverview = sessionEvidence(
         session,
         (
@@ -266,6 +425,9 @@ describe("Ghidra MCP evidence parity", () => {
         {},
       );
       if (!directOverview.ok) throw directOverview.error;
+      expect(harness.calls.slice(beforeOverview)).toEqual([
+        "read_binary_inventory_summary",
+      ]);
       expect(mcpOverview.normalized_result).toEqual(directOverview.value);
       expect(mcpOverview).toMatchObject({
         provider: { id: "rea-workflow" },
@@ -302,7 +464,7 @@ describe("Ghidra MCP evidence parity", () => {
         (
           await mcp.callTool({
             name: "analyze_function",
-            arguments: { procedure: "fixture_main" },
+            arguments: { procedure: "fixture_main", detail: "complete" },
           })
         ).structuredContent,
       );

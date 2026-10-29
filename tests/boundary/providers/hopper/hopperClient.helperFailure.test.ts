@@ -15,6 +15,7 @@ import type {
 } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperApplicationLauncher } from "../../../../src/hopper/BridgeLauncher.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
+import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
 import { HopperFixtureLauncher } from "./hopperClient.fixture.js";
 
 // Failure assertions keep the external document unknown. Teardown then publishes
@@ -83,16 +84,17 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
   const directory = await createTestTempDirectory("rea-hopper-helper-failure-");
   const targetPath = join(directory, "target");
   await writeFile(targetPath, "fixture target");
+  const helperPath = join(directory, "helper.cjs");
+  await writeFile(
+    helperPath,
+    'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3));',
+  );
   const launcher = new HopperApplicationLauncher({
     environment: {},
     launcherPath: process.execPath,
     targetPath,
     targetKind: "executable",
-    loaderArgs: [
-      "-e",
-      'process.stderr.write("Hopper has not been found.\\n", () => process.exit(3))',
-      "--",
-    ],
+    loaderArgs: [helperPath, "--"],
     bridgeScriptPath: "/rea/hopper_bridge.py",
     launchMode: "native",
   });
@@ -117,6 +119,87 @@ it("does not equate an owned native helper exit with an external GUI exit", asyn
     exitCode: null,
   });
 });
+
+it.skipIf(process.platform !== "darwin")(
+  "releases the runtime and target lease after a provenance-verified Spotlight exit, then retries",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-hopper-native-not-found-",
+    );
+    const targetPath = join(directory, "target");
+    await writeFile(targetPath, "fixture target");
+    const helperPath = join(directory, "spotlight-helper.cjs");
+    await writeFile(
+      helperPath,
+      'process.stderr.write("Hopper has not been found.\\nPlease make sure that Spotlight is active in order for this tool to find Hopper\'s executable.\\n", () => process.exit(3));',
+    );
+    const loaderArgs = [helperPath, "--"];
+    // Simulate a verified native helper at the launcher provenance boundary;
+    // publisher verification itself has real codesign boundary coverage.
+    const native = new HopperApplicationLauncher(
+      {
+        environment: {},
+        launcherPath: process.execPath,
+        targetPath,
+        targetKind: "executable",
+        loaderArgs,
+        bridgeScriptPath: "/rea/hopper_bridge.py",
+        launchMode: "native",
+      },
+      { verifyNativeHelper: async () => "verified" },
+    );
+    const retry = new HopperFixtureLauncher();
+    let session: BridgeSession | undefined;
+    const client = new HopperClient({
+      launcher: {
+        async launch(input, options) {
+          if (session !== undefined) return retry.launch(input);
+          session = input;
+          const launched = await native.launch(input, options);
+          expect(launched).toMatchObject({
+            ok: true,
+            value: { nativeHelperVerified: true },
+          });
+          return launched;
+        },
+      },
+      startupTimeoutMs: 10_000,
+    });
+    onTestFinished(async () => {
+      const closed = await client.close();
+      if (!closed.ok) throw closed.error;
+    });
+    const failed = await client.start();
+    expect(failed).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperStartError", cleanupIncomplete: false },
+    });
+    if (failed.ok) throw new Error("Expected Spotlight failure");
+    expect(projectAnalysisError(failed.error)).toMatchObject({
+      code: "provider_unavailable",
+      message: expect.stringContaining("Spotlight"),
+      details: { launcher: { exit_code: 3 } },
+    });
+    if (session === undefined) throw new Error("Missing launch session");
+    await expect(access(session.directory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const lease = await acquireHopperTargetLease({
+      targetPath,
+      targetKind: "executable",
+      loaderArgs,
+      runId: "spotlight-retry-proof",
+    });
+    if (!lease.acquired)
+      throw new Error("Spotlight failure retained the target lease");
+    await lease.lease.release();
+    expect(await client.start()).toMatchObject({ ok: true });
+    expect(await client.callTool("echo", { value: "retried" })).toEqual({
+      ok: true,
+      value: { value: "retried" },
+    });
+  },
+);
 
 it.each(["exit", "signal", "exit75"] as const)(
   "reports a failed non-owning launcher %s without waiting for bridge timeout or inventing a GUI exit",

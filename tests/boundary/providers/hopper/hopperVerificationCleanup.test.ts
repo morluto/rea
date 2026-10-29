@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
 import { snapshotHopperRuntime } from "../../../../scripts/lib/real-hopper-cleanup.mjs";
-import { acquireHopperTargetLease } from "../../../../src/hopper/HopperTargetLease.js";
+import { acquireHopperTargetLease } from "../../../../src/process/HopperLease.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(

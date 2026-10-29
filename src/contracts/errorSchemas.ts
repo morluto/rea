@@ -1,6 +1,8 @@
 import { z } from "zod";
 
+import { analysisErrorRecoverySchema } from "../domain/analysisErrorRecovery.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import type { AnalysisErrorProjection } from "../domain/analysisErrorProjection.js";
 
 const categorySchema = z.enum([
   "invalid_input",
@@ -24,6 +26,7 @@ const common = {
   message: z.string().min(1),
   retryable: z.boolean(),
   remediation: remediationSchema,
+  recovery: analysisErrorRecoverySchema.optional(),
 };
 const genericDetails = z.record(z.string(), jsonValueSchema).optional();
 const generic = <Code extends string>(code: Code) =>
@@ -47,14 +50,28 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
     .object({
       code: z.literal("artifact_integrity_mismatch"),
       ...common,
-      details: z
-        .object({
-          logical_path: z.string(),
-          declared_sha256: z.string().nullable(),
-          calculated_sha256: z.string().nullable(),
-          unpacked: z.boolean(),
-        })
-        .strict(),
+      details: z.union([
+        z
+          .object({
+            logical_path: z.string(),
+            declared_sha256: z.string().nullable(),
+            calculated_sha256: z.string().nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
+        z
+          .object({
+            logical_path: z.string(),
+            algorithm: z.literal("md5"),
+            declared_md5: z.string().regex(/^[a-f0-9]{32}$/u),
+            calculated_md5: z
+              .string()
+              .regex(/^[a-f0-9]{32}$/u)
+              .nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
+      ]),
     })
     .strict(),
   generic("artifact_operation_failed"),
@@ -66,7 +83,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("configuration_invalid"),
   generic("target_unavailable"),
   generic("execution_failure"),
-]);
+]) as unknown as z.ZodType<AnalysisErrorProjection>;
 
 /** CLI label and input diagnostics surrounding the strict canonical error projection. */
 export const analysisCliErrorEnvelopeSchema = z

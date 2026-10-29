@@ -10,6 +10,10 @@ import { z } from "zod";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import type { ProviderAvailability } from "../../../src/application/AnalysisProvider.js";
+import type { AndroidAnalysisPort } from "../../../src/application/android/AndroidAnalysisPort.js";
+import type { AdbDeviceAnalysisPort } from "../../../src/application/adb/AdbDeviceAnalysisPort.js";
+import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import {
   createEvidenceBundle,
   evidenceBundleSchema,
@@ -24,6 +28,38 @@ const SNAPSHOT_PROFILE = createAnalysisProfile(
   { fixture: true },
 );
 
+const HOST_TOOLS_NOT_CONFIGURED: ProviderAvailability = {
+  status: "unavailable",
+  code: "not_configured",
+  reason: "The target-free MCP fixture does not probe host tools.",
+  diagnostics: { source: "test_fixture" },
+};
+
+const unusedHostToolExecution = async (): Promise<never> => {
+  throw new Error("Host-tool execution is outside the target-free fixture");
+};
+
+// These fixed ports keep this fake-session harness independent of whichever
+// Android tools happen to be installed on the test host. The dedicated public
+// availability test below continues to exercise status projection separately.
+const androidAnalysis: AndroidAnalysisPort = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
+
+const adbDeviceAnalysis: AdbDeviceAnalysisPort = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
+
+const apktoolAnalysis: ApktoolResourceAnalysisPort = {
+  inspectAvailability: async () => HOST_TOOLS_NOT_CONFIGURED,
+  close: async () => {},
+  execute: unusedHostToolExecution,
+};
+
 export interface SessionMcpHarness {
   readonly mcp: Client;
   readonly first: string;
@@ -35,6 +71,7 @@ export const createSessionMcpHarness = async (
   root: string,
   provider: (closed: string[]) => AnalysisProvider,
   resources: Array<{ close(): Promise<unknown> }>,
+  maximumInputElements?: number,
 ): Promise<SessionMcpHarness> => {
   const first = join(root, "first.hop");
   const second = join(root, "second.hop");
@@ -47,7 +84,18 @@ export const createSessionMcpHarness = async (
   const server = createServer(
     { kind: "session", session },
     {
+      androidAnalysis,
+      adbDeviceAnalysis,
+      apktoolAnalysis,
       logger: silentLogger,
+      ...(maximumInputElements === undefined
+        ? {}
+        : {
+            environment: {
+              ...process.env,
+              REA_MCP_MAX_INPUT_ELEMENTS: String(maximumInputElements),
+            },
+          }),
     },
   );
   const mcp = new Client({ name: "session-test", version: "1.0.0" });

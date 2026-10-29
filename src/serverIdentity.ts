@@ -1,7 +1,7 @@
 import { dirname, basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CATALOG_IDENTITY } from "./catalogIdentity.js";
+import type { createCatalogIdentity } from "./catalogIdentity.js";
 import { PRODUCT_IDENTITY, SDK_IDENTITY } from "./identity.js";
 
 /** Optional observations supplied by a client comparing its expected server. */
@@ -27,11 +27,14 @@ const packageRoot = (): string => {
 /** Build one runtime identity without claiming alignment from absent observations. */
 export const createServerIdentity = (input: {
   readonly startedAt: string;
+  readonly commandPath: string | undefined;
   readonly expected?: ExpectedServerIdentity;
   readonly client?: ConnectedClientIdentity;
   readonly protocolVersion?: string | undefined;
+  readonly catalog: ReturnType<typeof createCatalogIdentity>;
 }) => {
-  const serverPath = resolve(process.argv[1] ?? "unknown");
+  const catalog = input.catalog;
+  const serverPath = input.commandPath || undefined;
   const reasons: string[] = [];
   if (
     input.expected?.package_version !== undefined &&
@@ -40,17 +43,20 @@ export const createServerIdentity = (input: {
     reasons.push("package_version_mismatch");
   if (
     input.expected?.catalog_digest !== undefined &&
-    input.expected.catalog_digest !== CATALOG_IDENTITY.digests.combined_sha256
+    input.expected.catalog_digest !== catalog.digests.combined_sha256
   )
     reasons.push("catalog_digest_mismatch");
   if (
     input.expected?.server_path !== undefined &&
+    serverPath !== undefined &&
     resolve(input.expected.server_path) !== serverPath
   )
     reasons.push("registration_path_mismatch");
   const observedExpectation =
     input.expected !== undefined &&
     Object.values(input.expected).some((value) => value !== undefined);
+  const pathComparable =
+    input.expected?.server_path === undefined || serverPath !== undefined;
   return {
     package: {
       name: PRODUCT_IDENTITY.packageName,
@@ -62,7 +68,7 @@ export const createServerIdentity = (input: {
       name: PRODUCT_IDENTITY.mcpServerKey,
       version: PRODUCT_IDENTITY.packageVersion,
       started_at: input.startedAt,
-      command_path: serverPath,
+      command_path: serverPath ?? null,
     },
     sdk: SDK_IDENTITY,
     negotiated_protocol_version: input.protocolVersion ?? null,
@@ -74,7 +80,10 @@ export const createServerIdentity = (input: {
       name: PRODUCT_IDENTITY.skillName,
       expected_version: PRODUCT_IDENTITY.skillVersion,
     },
-    catalog: CATALOG_IDENTITY,
+    catalog: {
+      counts: catalog.counts,
+      digests: catalog.digests,
+    },
     protocol_features: {
       progress: true,
       cancellation: true,
@@ -84,16 +93,19 @@ export const createServerIdentity = (input: {
       state:
         reasons.length > 0
           ? "mcp_server_restart_required"
-          : observedExpectation
+          : observedExpectation && pathComparable
             ? "aligned"
             : "unknown",
       reasons,
       remediation:
         reasons.length > 0
           ? "Restart the registered MCP server/client, then compare identity again."
-          : observedExpectation
+          : observedExpectation && pathComparable
             ? null
-            : "Supply expected package, catalog, or registration identity to compare the live server.",
+            : input.expected?.server_path !== undefined &&
+                serverPath === undefined
+              ? "The server entrypoint path is unavailable, so registration identity cannot be compared."
+              : "Supply expected package, catalog, or registration identity to compare the live server.",
     },
   } as const;
 };

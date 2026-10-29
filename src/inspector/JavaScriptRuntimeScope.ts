@@ -1,3 +1,7 @@
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -22,9 +26,12 @@ export type RuntimeLocationDecision =
 /** Throw the operation's typed cancellation error whenever its signal is aborted. */
 export const throwIfRuntimeObservationCancelled = (
   signal?: AbortSignal,
+  operation:
+    | "observe_javascript_runtime"
+    | "list_javascript_runtime_targets" = "observe_javascript_runtime",
 ): void => {
   if (signal?.aborted === true)
-    throw new AnalysisCancelledError("observe_javascript_runtime");
+    throw new AnalysisCancelledError(operation, { cause: signal.reason });
 };
 
 /**
@@ -45,11 +52,20 @@ export const inspectorExclusionKey = (
 export const authorizeRuntimeLocation = async (
   value: string,
   signal?: AbortSignal,
+  operation:
+    | "observe_javascript_runtime"
+    | "list_javascript_runtime_targets" = "observe_javascript_runtime",
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): Promise<RuntimeLocationDecision> => {
-  throwIfRuntimeObservationCancelled(signal);
-  if (value.startsWith("file:")) {
-    const filePath = await authorizedElectronFile(value);
-    throwIfRuntimeObservationCancelled(signal);
+  throwIfRuntimeObservationCancelled(signal, operation);
+  if (URL.parse(value)?.protocol === "file:") {
+    const filePath = await authorizedElectronFile(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+    );
+    throwIfRuntimeObservationCancelled(signal, operation);
     return filePath === undefined
       ? { allowed: false, reason: "not_approved" }
       : { allowed: true, location: { kind: "file", file_path: filePath } };
@@ -93,6 +109,11 @@ export const projectReportedRuntimeUrl = (
 export const authorizeRuntimeTargetLocation = async (
   value: string,
   context: { readonly type: string; readonly product: string },
+  signal?: AbortSignal,
+  operation:
+    | "observe_javascript_runtime"
+    | "list_javascript_runtime_targets" = "list_javascript_runtime_targets",
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
 ): Promise<
   | {
       readonly allowed: true;
@@ -100,15 +121,26 @@ export const authorizeRuntimeTargetLocation = async (
     }
   | { readonly allowed: false; readonly reason: BrowserExclusionReason }
 > => {
+  throwIfRuntimeObservationCancelled(signal, operation);
   if (
     context.type !== "node" ||
     !/^node\.js\/v/iu.test(context.product) ||
     !value.startsWith("file://")
   )
-    return authorizeRuntimeLocation(value);
+    return authorizeRuntimeLocation(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+    );
   const reportedPath = value.slice("file://".length);
   if (!reportedPath.startsWith("/") && !/^[a-z]:[/\\_]/iu.test(reportedPath))
-    return authorizeRuntimeLocation(value);
+    return authorizeRuntimeLocation(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+    );
 
   // Node concatenates the pathname, then replaces quotes and backslashes with
   // underscores. A remaining underscore cannot prove which pathname was used.
@@ -116,6 +148,9 @@ export const authorizeRuntimeTargetLocation = async (
     if (reportedPath.startsWith("/")) {
       const decision = await authorizeRuntimeLocation(
         pathToFileURL(reportedPath).href,
+        signal,
+        operation,
+        asarHeaderAdmission,
       );
       if (decision.allowed) return decision;
     }

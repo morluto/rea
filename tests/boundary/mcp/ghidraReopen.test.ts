@@ -1,3 +1,5 @@
+import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
+import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,7 +13,6 @@ import { composeBinarySession } from "../../../src/application/binary/BinarySess
 import { LazyAnalysisProvider } from "../../../src/application/binary/LazyAnalysisProvider.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
-import { ok } from "../../../src/domain/result.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallation.js";
 import type {
@@ -101,13 +102,16 @@ const installationHost: GhidraInstallationHost = {
   architecture: "x64",
   readText: () => "application.version=12.1.4\napplication.java.min=21\n",
   executable: () => true,
-  probeJava: () => ({
-    version: "21.0.11",
-    major: 21,
-    home: "/fixture/jdk-21",
-    bits: 64,
-    runtime: "jdk",
-  }),
+  probeJava: () =>
+    javaProbeOk<GhidraJavaObservation>({
+      osArch: "amd64",
+      osName: "Linux",
+      version: "21.0.11",
+      major: 21,
+      home: "/fixture/jdk-21",
+      bits: 64,
+      runtime: "jdk",
+    }),
 };
 
 // Only installation discovery and the Java bridge are simulated. Requests use
@@ -181,7 +185,7 @@ const connectGhidra = async () => {
       }
     }
     for (const launched of launcher.launches) await expectReleased(launched);
-    expect(await readFile(target)).toEqual(source);
+    expect(Buffer.compare(await readFile(target), source)).toBe(0);
   };
   try {
     await server.connect(serverTransport);
@@ -246,9 +250,8 @@ const disconnect = async (
     child.on("message", received);
     child.send("disconnect");
   });
-  await expect
-    .poll(async () => (await client.ping({ timeoutMs: 200 })).ok)
-    .toBe(false);
+  const disconnectedPing = await client.ping({ timeoutMs: 200 });
+  expect(disconnectedPing.ok).toBe(false);
   expect(child.exitCode).toBeNull();
   expect(child.signalCode).toBeNull();
 };

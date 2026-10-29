@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { moduleResolutionModeForJavaScriptReference } from "./javascriptModuleResolutionMode.js";
 import {
   origin,
   topLevelBinding,
@@ -56,6 +61,91 @@ describe("TypeScript import-equals links", () => {
   });
 });
 
+describe("CommonJS wrapper parameter redeclarations", () => {
+  it("does not infer a CommonJS wrapper from resolution mode in an explicit module", () => {
+    const path = "app/main.mjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed?.program.sourceType).toBe("module");
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).not.toContainEqual(
+      expect.objectContaining({ specifier: "./dependency.cjs" }),
+    );
+  });
+
+  it("retains ambient exports and require through uninitialized top-level vars", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var module, exports, require; module.exports = require("./dependency.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "commonjs-export",
+          specifier: "./dependency.cjs",
+          localName: null,
+          exportedName: "default",
+        }),
+      ]),
+    );
+  });
+
+  it("retains the Node loader call on an uninitialized wrapper var assignment RHS", () => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(
+      'var require; require = require("./bootstrap.cjs");',
+      path,
+    );
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(ir.moduleLinks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "require",
+          specifier: "./bootstrap.cjs",
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    'var require = local; require("./dependency.cjs");',
+    'var require; require = replacement; require("./dependency.cjs");',
+    "var module; module = replacement; module.exports = 1;",
+    "var exports; exports = replacement; exports.value = 1;",
+    'let require; require("./dependency.cjs");',
+    'function nested() { var require; require("./dependency.cjs"); }',
+  ])("keeps non-wrapper declarations as shadows: %s", (source) => {
+    const path = "app/main.cjs";
+    const parsed = parseJavaScriptSource(source, path);
+    expect(parsed).not.toBeNull();
+    const ir = analyzeParsedJavaScriptSemantics(
+      parsed!,
+      moduleResolutionModeForJavaScriptReference(path, "static-import"),
+    );
+    expect(
+      ir.moduleLinks.filter(
+        ({ kind }) => kind === "require" || kind === "commonjs-export",
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("TypeScript type-only module links", () => {
   it("retains declarations without runtime bindings or callable claims", () => {
     const ir = analyzeJavaScriptSemantics(`
@@ -69,6 +159,11 @@ describe("TypeScript type-only module links", () => {
       function hiddenFunction() { return 1; }
       export type { hiddenFunction };
     `);
+
+    expect(ir.bindings.map(({ name }) => name).sort()).toEqual([
+      "hiddenFunction",
+      "value",
+    ]);
 
     const externalLinks = ir.moduleLinks
       .filter(({ specifier }) => specifier !== null)
@@ -184,6 +279,7 @@ describe("CommonJS dependency links", () => {
       const bound = (require("bound") as unknown);
       const { left, right } = require("destructured");
       module.exports = require("forwarded");
+      exports = module.exports;
       exports.member = require("member").value;
       exports.first = exports.second = require("chained");
     `);

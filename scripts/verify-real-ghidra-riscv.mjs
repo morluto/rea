@@ -21,12 +21,13 @@ import addFormats from "ajv-formats";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { functionDossierSchema } from "../dist/domain/hopperValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildRiscvFixture } from "../tests/conformance/ghidra/riscv-fixture.mjs";
 import {
   mcpTextValue,
-  requireMcpOperationResult,
+  requireMcpLifecycleResult,
+  requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -42,7 +43,7 @@ for (const key of ["REA_GHIDRA_LANGUAGE_ID", "REA_GHIDRA_COMPILER_SPEC_ID"])
     throw new Error(
       `Unset ${key}: this lane verifies provider-pinned selection.`,
     );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -141,18 +142,24 @@ try {
         { name, arguments: args },
         { timeout: 240000 },
       );
-      const projected = requireMcpOperationResult(reply, name);
+      const lifecycle = [
+        "open_binary",
+        "close_binary",
+        "binary_session",
+      ].includes(name);
+      const admitted = lifecycle
+        ? requireMcpLifecycleResult(reply, name)
+        : parseEvidence(requireMcpOutput(reply, name));
       const textual = JSON.parse(mcpTextValue(reply));
-      assert.deepEqual(reply.structuredContent, textual);
+      assert.ok(reply.structuredContent, `${name} omitted structured result`);
       const validate = validators.get(name);
       assert.ok(validate, `${name} missing from advertised catalog`);
       assert.ok(
         validate(textual),
         `${name}: ${JSON.stringify(validate.errors)}`,
       );
-      if (!["open_binary", "close_binary", "binary_session"].includes(name))
-        assertEvidence(parseEvidence(textual));
-      return projected;
+      if (!lifecycle) assertEvidence(admitted);
+      return lifecycle ? admitted : admitted.normalized_result;
     };
     const opened = await call("open_binary", {
       path: fixture.path,
@@ -213,6 +220,7 @@ try {
     const dossier = functionDossierSchema.parse(
       await call("analyze_function", {
         procedure: fixture.symbols.rea_riscv_entry,
+        detail: "complete",
       }),
     );
     assert.ok(dossier.pseudocode.trim().length > 0);

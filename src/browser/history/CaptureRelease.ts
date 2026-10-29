@@ -1,26 +1,42 @@
+import {
+  CAPTURE_DECODER_SEMI_SPACE_MIB,
+  DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
+} from "../../domain/analysisResourceLimits.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 
-/** Exact upstream package profile for unchanged offline HAR validation and numeric parsing. */
+/** Upstream packages and owned schema corrections for offline HAR decoding. */
 export const HAR_CAPTURE_PROVIDER_IDENTITY = {
   id: "har-schema/lossless-json",
   name: "REA HAR capture adapter",
-  version: "har-schema@2.0.0;jsonc-parser@3.3.1;lossless-json@4.3.1",
+  version:
+    "har-schema@2.0.0;har-schema-corrections@1;jsonc-parser@3.3.1;lossless-json@4.3.1",
 } as const;
 
-/** Fixed V8 heap settings used by the owned Node capture decoder process. */
+/**
+ * Default V8 heap settings for the owned Node capture decoder process.
+ * The old generation is `REA_CAPTURE_DECODER_OLD_GENERATION_MIB`; the
+ * semi-space stays fixed.
+ */
 export const NODE_CAPTURE_HEAP_LIMITS = {
-  oldGenerationMiB: 192,
-  semiSpaceMiB: 8,
+  oldGenerationMiB: DEFAULT_CAPTURE_DECODER_OLD_GENERATION_MIB,
+  semiSpaceMiB: CAPTURE_DECODER_SEMI_SPACE_MIB,
 } as const;
+
+/** Windows Job Object commit limit for one resolved old-generation budget. */
+export const captureDecoderProcessMemoryLimitBytes = (
+  oldGenerationMiB: number,
+): number | null => javaScriptWorkerMemoryLimitBytes(oldGenerationMiB);
 
 /** The Node capture decoder runs on this executable; Bun accepts but ignores V8 heap flags. */
 export const NODE_CAPTURE_HEAP_ENFORCED =
   javaScriptRuntime(process.versions).id === "node";
 
-/** Windows Job Object commit limit replacing the ignored heap flags under Bun; otherwise null. */
+/** Commit limit for the default heap. A configured heap uses `captureDecoderProcessMemoryLimitBytes`. */
 export const NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES =
-  javaScriptWorkerMemoryLimitBytes(NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB);
+  captureDecoderProcessMemoryLimitBytes(
+    NODE_CAPTURE_HEAP_LIMITS.oldGenerationMiB,
+  );
 
 /** Native executable profile verified with unchanged mitmproxy raw-state decoding. */
 export const MITMPROXY_CAPTURE_PROVIDER_IDENTITY = {

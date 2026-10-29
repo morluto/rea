@@ -41,7 +41,7 @@ body:
     id: context-evidence
     attributes:
       label: Context and evidence
-      description: Explain the problem or motivation. If you have evidence, distinguish observed behavior from ideas or guesses.
+      description: Explain the problem or motivation and link relevant evidence when available. Distinguish observed behavior, source-derived reasoning, proposed behavior, and unknowns. A question without measurements or a finished design is welcome.
     validations:
       required: true
 

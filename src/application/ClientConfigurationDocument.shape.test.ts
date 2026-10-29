@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseClientConfiguration } from "./ClientConfigurationDocument.js";
+import {
+  parseClientConfiguration,
+  shadowedClientServers,
+} from "./ClientConfigurationDocument.js";
 
 describe("parseClientConfiguration shape diagnostics", () => {
   it.each([
@@ -30,5 +33,26 @@ describe("parseClientConfiguration shape diagnostics", () => {
     expect(() => parseClientConfiguration("not-json", "json")).toThrow(
       SyntaxError,
     );
+  });
+
+  it("reports only duplicates in the effective server object", () => {
+    const owned = '{"command":"rea","args":["mcp"]}';
+    const activeTable = `{"mcpServers":{"rea":null,"rea":${owned}}}`;
+    const active = parseClientConfiguration(activeTable, "json");
+    expect(shadowedClientServers(activeTable, active, "rea")).toEqual({
+      servers: [null],
+      legacyServers: [],
+    });
+
+    // Removing from the effective parent leaves an earlier repeated parent
+    // inactive. Its members are not registrations the client would reveal.
+    const inactiveParent =
+      `{"mcpServers":{"rea":{"command":"/usr/bin/false"}},` +
+      `"mcpServers":{"rea":${owned}}}`;
+    const parsed = parseClientConfiguration(inactiveParent, "json");
+    expect(shadowedClientServers(inactiveParent, parsed, "rea")).toEqual({
+      servers: [],
+      legacyServers: [],
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
   javascriptRecoveryResultSchema,
@@ -37,6 +38,7 @@ type PublicationContext = {
   admitted: Exclude<WakaruVersionAdmission, { status: "unsupported" }>;
   parsed: Awaited<ReturnType<typeof parseWakaruReports>>;
   execution: Awaited<ReturnType<typeof runWakaruCommand>>;
+  resources?: ArtifactResourceScope;
   signal?: AbortSignal;
 };
 type PublishedFile = JavaScriptRecoveryResult["manifest"];
@@ -46,7 +48,7 @@ type RecoveryWriter = (path: string, bytes: Buffer) => Promise<PublishedFile>;
 export const publishWakaruArtifacts = async (
   context: PublicationContext,
 ): Promise<JavaScriptRecoveryResult> => {
-  const { tree, sources, parsed, staging, signal } = context;
+  const { tree, sources, parsed, staging, signal, resources } = context;
   const write = async (path: string, bytes: Buffer) => {
     const sha256 = recoveryDigest(bytes);
     const file = await tree.write(
@@ -68,6 +70,7 @@ export const publishWakaruArtifacts = async (
       source.snapshot_path,
       source.bytes,
       signal,
+      resources,
     );
     if (recoveryDigest(snapshot) !== source.sha256)
       throw new AnalysisOutputError(
@@ -94,6 +97,7 @@ export const publishWakaruArtifacts = async (
       join(staging, "provenance.json"),
       RECOVERY_LIMITS.reportBytes,
       signal,
+      resources,
     ),
   );
   const details = {
@@ -105,7 +109,7 @@ export const publishWakaruArtifacts = async (
       id: "wakaru",
       version: context.admitted.version,
       executable: {
-        path: context.engine.command,
+        path: context.engine.command.resolvedPath,
         sha256: context.engine.sha256,
         bytes: context.engine.bytes,
       },
@@ -161,13 +165,14 @@ const publishModule = async (
   module: PublicationContext["parsed"]["report"]["modules"][number],
   write: RecoveryWriter,
 ): Promise<JavaScriptRecoveryResult["modules"][number]> => {
-  const { staging, sources, parsed, signal } = context;
+  const { staging, sources, parsed, signal, resources } = context;
   const artifact = await write(
     `modules/${module.filename}`,
     await readRecoveryFile(
       join(staging, module.filename),
       RECOVERY_LIMITS.outputBytes,
       signal,
+      resources,
     ),
   );
   const mapPath = join(staging, `${module.filename}.map`);
@@ -177,6 +182,7 @@ const publishModule = async (
     mapPath,
     RECOVERY_LIMITS.outputBytes,
     signal,
+    resources,
   ).catch((cause: unknown) => {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return null;

@@ -62,6 +62,12 @@ if (!result.ok) throw result.error;
 const capture = electronActiveObservationResultSchema.parse(
   result.value.normalized_result,
 );
+const crashAction = capture.actions.find(
+  ({ kind }) => kind === "renderer-crash",
+);
+const crashedWindow = capture.windows.find(
+  ({ window_id }) => window_id === crashAction?.target,
+);
 
 const output = {
   verifier_run: await completeVerifierRun(verifierRun),
@@ -83,6 +89,17 @@ const output = {
         kind === "renderer-crash" && window_index === 1,
     ) &&
     capture.windows.length >= 2 &&
+    capture.actions
+      .filter(({ target }) => target !== null)
+      .every(({ target }) =>
+        capture.windows.some(({ window_id }) => window_id === target),
+      ) &&
+    crashedWindow !== undefined &&
+    capture.timeline.events.some(
+      ({ event, target }) =>
+        event === "render-process-gone" &&
+        target === crashedWindow.web_contents_id,
+    ) &&
     capture.ipc.events.some(
       ({ kind, channel }) =>
         kind === "main-handler-invocation" && channel === "readiness:echo",

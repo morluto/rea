@@ -1,8 +1,14 @@
+import * as t from "@babel/types";
 import { expect, it, vi } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
 import { onlyBinding } from "./javascriptSemanticAnalysis.fixture.js";
 import type { JavaScriptSemanticIr } from "./javascriptSemanticIr.js";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 /** Count AST ancestry lookups made while analyzing one source. */
 const ancestryReads = (
@@ -33,19 +39,37 @@ const ancestryReads = (
   }
 };
 
-it("bounds ancestry reads for repeated deep lexical references", () => {
+it.each(["const a=1;", "let a; a=1;"])(
+  "bounds ancestry reads for repeated deep lexical references after %s",
+  (declaration) => {
+    const reads = (depth: number): number =>
+      ancestryReads(
+        `${declaration} module.exports.value=${"a+(".repeat(depth)}a${")".repeat(depth)};`,
+        (ir) => {
+          expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+          expect(onlyBinding(ir, "a").value).toEqual({
+            status: "literal",
+            value: 1,
+          });
+        },
+      );
+
+    const smaller = reads(80);
+    const larger = reads(160);
+    expect(smaller).toBeGreaterThan(0);
+    expect(larger).toBeLessThan(3 * smaller);
+  },
+);
+
+it("bounds ancestry reads after a write in the same expression", () => {
   const reads = (depth: number): number =>
     ancestryReads(
-      `const a=1; module.exports.value=${"a+(".repeat(depth)}a${")".repeat(depth)};`,
+      `let a=0; module.exports.value={set:(a=1),value:${"a+(".repeat(depth)}a${")".repeat(depth)}};`,
       (ir) => {
         expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
-        expect(onlyBinding(ir, "a").value).toEqual({
-          status: "literal",
-          value: 1,
-        });
+        expect(onlyBinding(ir, "a").value.status).toBe("ambiguous");
       },
     );
-
   const smaller = reads(80);
   const larger = reads(160);
   expect(smaller).toBeGreaterThan(0);
@@ -127,3 +151,97 @@ it.each([
     expect(larger).toBeLessThan(8 * smaller);
   },
 );
+
+/** Count reads of short-circuit left operands while analyzing one source. */
+const logicalOperandReads = (
+  source: string,
+  inspect: (ir: JavaScriptSemanticIr) => void,
+): number => {
+  const file = parseJavaScriptSource(source);
+  if (file === null) throw new Error("fixture must parse");
+  let reads = 0;
+  traverseJavaScriptAst(file, {
+    enter: (node) => {
+      if (!t.isLogicalExpression(node)) return;
+      const left = node.left;
+      Object.defineProperty(node, "left", {
+        enumerable: true,
+        configurable: true,
+        get: () => {
+          reads++;
+          return left;
+        },
+      });
+    },
+  });
+  reads = 0;
+  inspect(analyzeParsedJavaScriptSemantics(file));
+  return reads;
+};
+
+/** A left-nested chain `o0 op1 o1 op2 o2 ...` as written in tokenizers. */
+const logicalChain = (
+  length: number,
+  operand: (index: number) => string,
+  operator: (index: number) => string,
+): string =>
+  Array.from({ length: length - 1 }, (unused, index) => index + 1).reduce(
+    (chain, index) => `(${chain}) ${operator(index)} ${operand(index)}`,
+    operand(0),
+  );
+
+const call = (index: number): string => `f${String(index)}(s)`;
+
+it.each([
+  ["||", call, () => "||"],
+  ["&&", (index: number) => `s.k${String(index)}`, () => "&&"],
+  ["??", call, () => "??"],
+  [
+    "mixed ||/&&/?? and conditional",
+    (index: number) =>
+      index % 4 === 0
+        ? `(s.k ? ${call(index)} : s.k${String(index)})`
+        : call(index),
+    (index: number) => ["||", "&&", "??"][index % 3] ?? "||",
+  ],
+])(
+  "reads each operand of a long %s chain a bounded number of times",
+  (_, operand, operator) => {
+    // Logical branch selection evaluates the left operand. Evaluating it again
+    // as a value branch at every level doubles the work per operand.
+    const reads = (length: number): number =>
+      logicalOperandReads(
+        `function next(s){ var tok=${logicalChain(length, operand, operator)}; return tok; } module.exports=next;`,
+        (ir) => {
+          expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+          expect(onlyBinding(ir, "tok").value.status).not.toBe("literal");
+        },
+      );
+
+    const smaller = reads(8);
+    const larger = reads(16);
+    expect(smaller).toBeGreaterThan(0);
+    // Doubling per operand would multiply the reads by 256.
+    expect(larger).toBeLessThan(4 * smaller);
+  },
+);
+
+it("keeps established logical operands across a long chain", () => {
+  // Known-falsy operands select the right branch at every level; the value and
+  // provenance must still come from the one reachable operand.
+  const ir = analyzeJavaScriptSemantics(
+    `const tok = ${'false || null || 0 || "" || '.repeat(10)}require("electron").app;`,
+  );
+  expect(ir.coverage).toEqual({ status: "complete", omittedCount: 0 });
+  expect(onlyBinding(ir, "tok").provenance).toEqual({
+    status: "module",
+    origins: [
+      {
+        specifier: "electron",
+        importedPath: ["app"],
+        resolutionMode: "require",
+      },
+    ],
+    reason: null,
+  });
+});

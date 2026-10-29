@@ -1,9 +1,11 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { chmod, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
+import { createInspectionResources } from "../../fixtures/inspectionResources.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { writeAnalysisSnapshot } from "../../../src/application/binary/AnalysisSnapshotFiles.js";
@@ -16,14 +18,16 @@ import {
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import {
-  REA_WORKFLOW_PROVIDER,
-  workflowAnalysisProfile,
-} from "../../../src/application/InvestigationProviders.js";
+import { REA_WORKFLOW_PROVIDER } from "../../../src/domain/investigationProviders.js";
+import { workflowAnalysisProfile } from "../../../src/application/WorkflowAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../src/hopper/HopperProviderCapabilities.js";
+
 import { resolveHopperAnalysisProfile } from "../../../src/hopper/HopperAnalysisProfile.js";
 
+let inspectionResources = createInspectionResources();
 afterEach(async () => {
+  await inspectionResources.close();
+  inspectionResources = createInspectionResources();
   vi.unstubAllEnvs();
 });
 
@@ -36,21 +40,23 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("REA_ANALYSIS_PROVIDER", "environment-provider");
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        targetPath,
-        "binary_overview",
-        {},
-        {
-          providerId: "request-provider",
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          targetPath,
+          "binary_overview",
+          {},
+          {
+            providerId: "request-provider",
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       error: "Analysis failed",
       code: "capability_unavailable",
       details: {
         selection_reason: "unknown_provider",
         requested_provider_id: "request-provider",
-        candidate_ids: ["ghidra", "hopper", "ida"],
+        candidate_ids: ["ghidra", "hopper", "ida", "kuna"],
       },
     });
   });
@@ -67,6 +73,7 @@ describe("direct analysis snapshot files", () => {
       launcherPath,
       loaderArgsOverride: [],
       provider: HOPPER_PROVIDER_IDENTITY,
+      resourceScope: inspectionResources.owner,
     });
     if (!resolved.ok || resolved.value.profile === null)
       throw new Error("fixture Hopper profile did not resolve");
@@ -92,14 +99,16 @@ describe("direct analysis snapshot files", () => {
     vi.stubEnv("HOPPER_LAUNCHER_PATH", launcherPath);
 
     await expect(
-      createDirectAnalysis(process.env).runDirectAnalysis(
-        process.execPath,
-        "binary_overview",
-        {},
-        {
-          snapshotPath,
-        },
-      ),
+      createDirectAnalysis(process.env)
+        .runDirectAnalysis(
+          process.execPath,
+          "binary_overview",
+          {},
+          {
+            snapshotPath,
+          },
+        )
+        .then(projectCliAnalysisResult),
     ).resolves.not.toEqual(evidence);
   });
 });

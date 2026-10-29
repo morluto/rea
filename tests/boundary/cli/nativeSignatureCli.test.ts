@@ -60,7 +60,13 @@ describe.skipIf(process.platform !== "darwin")(
               authorities: [],
               entitlements: null,
               designated_requirement: expect.stringMatching(/^cdhash H"/u),
+              limitations: [
+                expect.stringContaining("trust validation are not examined."),
+              ],
             },
+            limitations: [
+              expect.stringContaining("trust validation are not examined."),
+            ],
           });
         }
         const identifier = await cli.run({

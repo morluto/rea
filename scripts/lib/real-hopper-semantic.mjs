@@ -1,17 +1,6 @@
 import assert from "node:assert/strict";
 
-/**
- * `requireFunctionDossierOracle` is only used inside `verifyRealHopperFixture`,
- * which runs against the real Hopper bridge after `build:cached`. Loading it
- * lazily keeps this module importable from `test:fast` (which docs promise to
- * run "without build" — see docs/testing.md § test scripts) so that mock-only
- * callers such as `requireCurrentDocument` and `resolveFixtureProcedure` do
- * not require `dist/`.
- */
-const loadFunctionDossierOracle = () =>
-  import("../../dist/application/RealHopperAssertions.js").then(
-    (module) => module.requireFunctionDossierOracle,
-  );
+import { requireFunctionDossierOracle } from "./real-hopper-assertions.mjs";
 
 /** Require truthful tri-state permissions from real Hopper memory regions. */
 export const requireTruthfulMemoryRegions = (segments) => {
@@ -99,7 +88,6 @@ export async function verifyRealHopperFixture({
   oracle,
   normalizedResult,
 }) {
-  const requireFunctionDossierOracle = await loadFunctionDossierOracle();
   const main = await resolveFixtureProcedure(
     client,
     options,
@@ -327,14 +315,57 @@ export const analyzeFixtureProcedure = async (
   options,
   procedure,
   normalizedResult,
-) =>
-  normalizedResult(
+) => {
+  const reply = await client.callTool(
+    {
+      name: "analyze_function",
+      arguments: { procedure: procedure.address, detail: "complete" },
+    },
+    options,
+  );
+  const dossier = normalizedResult(reply, "analyze_function");
+  assert.deepEqual(reply.structuredContent.relationship_coverage, {
+    status: "complete",
+  });
+  for (const facet of [
+    "pseudocode",
+    "assembly",
+    "comments",
+    "callers",
+    "callees",
+    "references",
+    "strings_names",
+    "cfg",
+  ])
+    assert.deepEqual(dossier.facet_availability[facet], { available: true });
+  const comparison = normalizedResult(
     await client.callTool(
       {
-        name: "analyze_function",
-        arguments: { procedure: procedure.address },
+        name: "compare_functions",
+        arguments: {
+          left: reply.structuredContent,
+          right: reply.structuredContent,
+        },
       },
       options,
     ),
-    "analyze_function",
+    "compare_functions",
   );
+  assert.deepEqual(
+    Object.fromEntries(
+      comparison.dimensions.map(({ dimension, status }) => [dimension, status]),
+    ),
+    {
+      identity: "unchanged",
+      pseudocode: "unchanged",
+      assembly: "unchanged",
+      comments: "unchanged",
+      calls: "unchanged",
+      references: "unknown",
+      strings_names: "unchanged",
+      cfg: "unchanged",
+    },
+    JSON.stringify(comparison.dimensions),
+  );
+  return dossier;
+};

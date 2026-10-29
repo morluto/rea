@@ -9,8 +9,49 @@ import {
 } from "./browserScenarioDiffValues.js";
 import {
   browserScenarioCaptureSchema,
+  retainedBrowserScenarioCaptureSchema,
   type BrowserScenarioCapture,
 } from "./browserScenarioCapture.js";
+import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "./browserScenarioCaptureLimits.js";
+import { BROWSER_STORAGE_FINGERPRINT_VERSION } from "./browserScenarioCaptureValues.js";
+
+const noEventOmissions = {
+  by_kind: [],
+  network_transactions: [],
+  network_transaction_range: null,
+} as const;
+
+it("admits legacy event-family omission only for retained capture consumers", () => {
+  const current = scenarioCapture({});
+  const { event_families: _selection, ...scenario } = current.scenario;
+  const legacy = { ...current, scenario };
+  expect(browserScenarioCaptureSchema.safeParse(legacy).success).toBe(false);
+  const admitted = retainedBrowserScenarioCaptureSchema.parse(legacy);
+  expect(admitted.scenario.event_families).toBeUndefined();
+  for (const [before_scenario, after_scenario] of [
+    [current, legacy],
+    [legacy, current],
+    [legacy, legacy],
+  ]) {
+    const result = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario,
+        after_scenario,
+      }),
+    );
+    expect(result.overall_status).toBe("unknown");
+    expect(
+      result.steps
+        .flatMap((step) => step.artifact_diffs)
+        .filter(({ artifact }) => artifact === "events"),
+    ).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        reason: expect.stringContaining("not recorded"),
+      }),
+    );
+  }
+});
 
 const networkCapture = (sourceSequence: number, receiptStep: number) => {
   const base = scenarioCapture({});
@@ -29,6 +70,7 @@ const networkCapture = (sourceSequence: number, receiptStep: number) => {
       resource_type: "fetch",
       transaction_id: "request-1",
       redirected_from_transaction_id: null,
+      redirected_from_transaction_state: "root",
       header_names: [],
       status: null,
       failure: null,
@@ -64,7 +106,12 @@ const networkCapture = (sourceSequence: number, receiptStep: number) => {
       },
       event_families: ["network"],
     },
-    events: { items: events, retained: 2, dropped: 0 },
+    events: {
+      items: events,
+      retained: 2,
+      dropped: 0,
+      omissions: noEventOmissions,
+    },
   });
 };
 
@@ -147,7 +194,7 @@ it("reports content-selection mismatch as unknown instead of a website change", 
     ).toBe(false);
 });
 
-it("reports event-family mismatch and legacy selection as unknown", () => {
+it("reports event-family selection mismatch as unknown", () => {
   const consoleOnly = scenarioCapture({});
   const withFamilies = (
     capture: BrowserScenarioCapture,
@@ -192,18 +239,6 @@ it("reports event-family mismatch and legacy selection as unknown", () => {
     ).overall_status,
   ).toBe("unchanged");
 
-  const legacy = withFamilies(consoleOnly, undefined);
-  expect(legacy.scenario.event_families).toBeUndefined();
-  for (const [before, after] of [
-    [legacy, consoleOnly],
-    [legacy, legacy],
-  ] as const)
-    expect(eventDiffs(compare(before, after))).toContainEqual(
-      expect.objectContaining({
-        status: "unknown",
-        reason: expect.stringContaining("Event family selection is unknown"),
-      }),
-    );
   expect(
     compareBrowserScenariosInputSchema.safeParse({
       before_scenario: {
@@ -216,7 +251,7 @@ it("reports event-family mismatch and legacy selection as unknown", () => {
 
   const quiet = browserScenarioCaptureSchema.parse({
     ...withFamilies(consoleOnly, []),
-    events: { retained: 0, dropped: 0, items: [] },
+    events: { retained: 0, dropped: 0, items: [], omissions: noEventOmissions },
   });
   const differentEvents = compare(quiet, widened);
   expect(differentEvents.overall_status).toBe("unknown");
@@ -233,6 +268,579 @@ it("reports event-family mismatch and legacy selection as unknown", () => {
       ),
     }),
   );
+  for (const diff of both) {
+    expect(diff.reason?.match(/Event family selections differ/gu)).toHaveLength(
+      1,
+    );
+    expect(
+      diff.reason?.match(/Network content selections differ/gu),
+    ).toHaveLength(1);
+  }
+});
+
+it("reports a shared unknown redirect predecessor only once", () => {
+  const original = networkCapture(1, 0);
+  const capture = browserScenarioCaptureSchema.parse({
+    ...original,
+    events: {
+      ...original.events,
+      items: original.events.items.map((event) =>
+        event.kind === "request"
+          ? { ...event, redirected_from_transaction_state: "unknown" }
+          : event,
+      ),
+    },
+  });
+  const compare = (value: BrowserScenarioCapture) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: value,
+        after_scenario: value,
+      }),
+    );
+  expect(compare(original).overall_status).toBe("unchanged");
+  const result = compare(capture);
+  expect(result.overall_status).toBe("unknown");
+  const diffs = result.steps.flatMap((step) =>
+    step.artifact_diffs.filter((diff) => diff.artifact === "events"),
+  );
+  expect(diffs.length).toBeGreaterThan(0);
+  for (const diff of diffs) {
+    expect(diff.status).toBe("unknown");
+    expect(diff.before_sha256).toBe(diff.after_sha256);
+    expect(diff.reason).toBe(
+      "Redirect predecessor evidence is missing; network transaction identity remains unknown.",
+    );
+  }
+});
+
+const concurrentCapture = (
+  requestOrder: readonly ("a" | "b")[],
+  statuses: Readonly<Record<"a" | "b", number>>,
+  responseStep = 0,
+  responseOrder: readonly ("a" | "b")[] = requestOrder,
+  redirect = false,
+) => {
+  const base = scenarioCapture({});
+  const network = (path: "a" | "b") => ({
+    step_index: 0,
+    transaction_id: `request-${String(requestOrder.indexOf(path) + 1)}`,
+    redirected_from_transaction_id:
+      redirect && path === "b"
+        ? `request-${String(requestOrder.indexOf("a") + 1)}`
+        : null,
+    ...(!redirect || path !== "b"
+      ? { redirected_from_transaction_state: "root" as const }
+      : {}),
+    method: "GET",
+    url: {
+      url: `https://app.example.test/${path}.js`,
+      origin: "https://app.example.test",
+      query_parameter_names: [],
+      redacted: false,
+    },
+    resource_type: "script",
+    header_names: [],
+    failure: null,
+  });
+  const request = (path: "a" | "b") => ({
+    ...network(path),
+    kind: "request",
+    status: null,
+  });
+  const response = (path: "a" | "b") => ({
+    ...network(path),
+    step_index: responseStep,
+    kind: "response",
+    status: statuses[path],
+  });
+  const events = (
+    redirect
+      ? requestOrder.flatMap((path) => [request(path), response(path)])
+      : [...requestOrder.map(request), ...responseOrder.map(response)]
+  ).map((event, index) => ({ ...event, sequence: index + 1 }));
+  return browserScenarioCaptureSchema.parse({
+    ...base,
+    events: {
+      items: events,
+      retained: events.length,
+      dropped: 0,
+      omissions: noEventOmissions,
+    },
+  });
+};
+
+const redirectChainCapture = (swapLeaves = false, reverseReceipt = false) => {
+  const base = scenarioCapture({});
+  const nodes = [
+    { id: "root-a", parent: null, path: "first-a", status: 301 },
+    { id: "root-b", parent: null, path: "first-b", status: 302 },
+    { id: "middle-a", parent: "root-a", path: "same-middle", status: 307 },
+    { id: "middle-b", parent: "root-b", path: "same-middle", status: 307 },
+    {
+      id: "leaf-a",
+      parent: swapLeaves ? "middle-b" : "middle-a",
+      path: "last-a",
+      status: 200,
+    },
+    {
+      id: "leaf-b",
+      parent: swapLeaves ? "middle-a" : "middle-b",
+      path: "last-b",
+      status: 200,
+    },
+  ];
+  const events = (reverseReceipt ? [...nodes].reverse() : nodes)
+    .flatMap((node) => {
+      const network = {
+        step_index: 0,
+        transaction_id: (reverseReceipt ? "renamed-" : "") + node.id,
+        redirected_from_transaction_id:
+          node.parent === null
+            ? null
+            : (reverseReceipt ? "renamed-" : "") + node.parent,
+        ...(node.parent === null
+          ? { redirected_from_transaction_state: "root" as const }
+          : {}),
+        method: "GET",
+        url: {
+          url: `https://app.example.test/${node.path}`,
+          origin: "https://app.example.test",
+          query_parameter_names: [],
+          redacted: false,
+        },
+        resource_type: "document",
+        header_names: [],
+        failure: null,
+      };
+      return [
+        { ...network, kind: "request", status: null },
+        { ...network, kind: "response", status: node.status },
+      ];
+    })
+    .map((event, index) => ({ ...event, sequence: index + 1 }));
+  return browserScenarioCaptureSchema.parse({
+    ...base,
+    events: {
+      items: events,
+      retained: events.length,
+      dropped: 0,
+      omissions: noEventOmissions,
+    },
+  });
+};
+
+describe("browser scenario network event order", () => {
+  it("retains multi-hop redirect ancestry while ignoring IDs and concurrent receipt order", () => {
+    const compare = (after: BrowserScenarioCapture) =>
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: redirectChainCapture(),
+          after_scenario: after,
+        }),
+      );
+    expect(compare(redirectChainCapture(false, true)).overall_status).toBe(
+      "unchanged",
+    );
+    expect(compare(redirectChainCapture(true)).overall_status).toBe("changed");
+  });
+
+  it("keeps duplicate request identities incomparable without dropping occurrences", () => {
+    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
+    const request = capture.events.items.find(
+      (event) => event.kind === "request",
+    );
+    if (request === undefined) throw new Error("Expected request fixture");
+    const ambiguous = browserScenarioCaptureSchema.parse({
+      ...capture,
+      events: {
+        ...capture.events,
+        retained: capture.events.retained + 1,
+        items: [
+          ...capture.events.items,
+          { ...request, sequence: capture.events.retained + 1, step_index: 1 },
+        ],
+      },
+    });
+    for (const [before_scenario, after_scenario] of [
+      [ambiguous, ambiguous],
+      [ambiguous, capture],
+      [capture, ambiguous],
+    ] as const) {
+      const input = compareBrowserScenariosInputSchema.parse({
+        before_scenario,
+        after_scenario,
+      });
+      const compared = compareBrowserScenarios(input);
+      expect(compared.overall_status).toBe("unknown");
+      expect(
+        compared.steps.flatMap((step) => step.artifact_diffs),
+      ).toContainEqual(
+        expect.objectContaining({
+          artifact: "events",
+          status: "unknown",
+          reason: expect.stringContaining("Multiple requests share"),
+        }),
+      );
+      expect(input.before_scenario.events.items).toEqual(
+        before_scenario.events.items,
+      );
+      expect(input.after_scenario.events.items).toEqual(
+        after_scenario.events.items,
+      );
+    }
+  });
+
+  it("keeps missing and cyclic redirect ancestry incomparable", () => {
+    for (const predecessor of ["missing", "middle-a", null]) {
+      const capture = redirectChainCapture();
+      const events = capture.events.items.map((event) =>
+        "transaction_id" in event && event.transaction_id === "root-a"
+          ? {
+              ...event,
+              redirected_from_transaction_id: predecessor,
+              redirected_from_transaction_state: undefined,
+            }
+          : event,
+      );
+      const broken = browserScenarioCaptureSchema.parse({
+        ...capture,
+        events: { ...capture.events, items: events },
+      });
+      const compared = compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: broken,
+          after_scenario: broken,
+        }),
+      );
+      expect(compared.overall_status).toBe("unknown");
+      expect(
+        compared.steps.flatMap((step) => step.artifact_diffs),
+      ).toContainEqual(
+        expect.objectContaining({
+          artifact: "events",
+          status: "unknown",
+          reason: expect.stringContaining("Redirect"),
+        }),
+      );
+    }
+  });
+
+  it("keeps contradictory phase ancestry unknown", () => {
+    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
+    const events = capture.events.items.map((event) =>
+      event.kind === "response" && event.transaction_id === "request-2"
+        ? {
+            ...event,
+            redirected_from_transaction_id: "request-1",
+            redirected_from_transaction_state: undefined,
+          }
+        : event,
+    );
+    const malformed = browserScenarioCaptureSchema.parse({
+      ...capture,
+      events: { ...capture.events, items: events },
+    });
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: malformed,
+        after_scenario: malformed,
+      }),
+    );
+    expect(compared.overall_status).toBe("unknown");
+    expect(
+      compared.steps.flatMap((step) => step.artifact_diffs),
+    ).toContainEqual(
+      expect.objectContaining({
+        artifact: "events",
+        status: "unknown",
+        reason: expect.stringContaining("Redirect predecessor"),
+      }),
+    );
+  });
+});
+
+describe("browser scenario network comparison stability", () => {
+  it("keeps normalization away from generated network fingerprints", () => {
+    const rules = [..."0123456789abcdef"].map((match, index) => ({
+      rule_id: `remove-fingerprint-hex-${String(index)}`,
+      artifacts: ["events"] as const,
+      match,
+      replacement: "",
+    }));
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: concurrentCapture(["a", "b"], {
+          a: 200,
+          b: 404,
+        }),
+        after_scenario: concurrentCapture(["a", "b"], {
+          a: 201,
+          b: 404,
+        }),
+        normalization: { rules },
+      }),
+    );
+    expect(compared.overall_status).toBe("changed");
+  });
+
+  it("reports changed ordinary events despite incomplete redirect ancestry", () => {
+    const withGap = (text: string) => {
+      const base = scenarioCapture({});
+      const consoleEvent = base.events.items[0];
+      if (consoleEvent?.kind !== "console")
+        throw new Error("Expected console fixture");
+      return browserScenarioCaptureSchema.parse({
+        ...base,
+        scenario: {
+          ...base.scenario,
+          event_families: ["console", "network"],
+        },
+        events: {
+          retained: 2,
+          dropped: 0,
+          omissions: noEventOmissions,
+          items: [
+            { ...consoleEvent, text },
+            {
+              sequence: 2,
+              step_index: 0,
+              kind: "request",
+              transaction_id: "orphan-request",
+              redirected_from_transaction_id: null,
+              method: "GET",
+              url: {
+                url: "https://app.example.test/orphan",
+                origin: "https://app.example.test",
+                query_parameter_names: [],
+                redacted: false,
+              },
+              resource_type: "fetch",
+              header_names: [],
+              status: null,
+              failure: null,
+            },
+          ],
+        },
+      });
+    };
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: withGap("settings-ready"),
+        after_scenario: withGap("settings-failed"),
+      }),
+    );
+    expect(compared.overall_status).toBe("changed");
+  });
+
+  it("compares concurrent network transactions without receipt order, receipt step or capture-local IDs", () => {
+    const compare = (
+      before: BrowserScenarioCapture,
+      after: BrowserScenarioCapture,
+    ) =>
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: before,
+          after_scenario: after,
+        }),
+      ).overall_status;
+    const statuses = { a: 200, b: 404 };
+
+    expect(
+      compare(
+        concurrentCapture(["a", "b"], statuses),
+        concurrentCapture(["b", "a"], statuses, 1, ["a", "b"]),
+      ),
+    ).toBe("unchanged");
+    expect(
+      compare(
+        concurrentCapture(["a", "b"], statuses),
+        concurrentCapture(["b", "a"], { a: 404, b: 200 }),
+      ),
+    ).toBe("changed");
+    expect(
+      compare(
+        concurrentCapture(["a", "b"], statuses, 0, ["a", "b"]),
+        concurrentCapture(["a", "b"], statuses, 0, ["b", "a"]),
+      ),
+    ).toBe("unchanged");
+    // Redirect linkage is distinct from independent concurrent transactions.
+    expect(
+      compare(
+        concurrentCapture(["a", "b"], statuses),
+        concurrentCapture(["a", "b"], statuses, 0, ["a", "b"], true),
+      ),
+    ).toBe("changed");
+  });
+});
+
+describe("browser scenario network request times", () => {
+  /** A two-request capture whose `a` request finished and whose `b` request failed with `failure`. */
+  const ended = (failure = "net::ERR_ABORTED"): BrowserScenarioCapture => {
+    const capture = concurrentCapture(["a", "b"], { a: 200, b: 404 });
+    let sequence = Math.max(...capture.events.items.map((e) => e.sequence));
+    const terminal = capture.events.items.flatMap((event) =>
+      event.kind === "request"
+        ? [
+            event.url.url.endsWith("/a.js")
+              ? {
+                  ...event,
+                  sequence: ++sequence,
+                  kind: "request-finished" as const,
+                }
+              : {
+                  ...event,
+                  sequence: ++sequence,
+                  kind: "request-failed" as const,
+                  failure,
+                },
+          ]
+        : [],
+    );
+    return browserScenarioCaptureSchema.parse({
+      ...capture,
+      events: {
+        ...capture.events,
+        retained: capture.events.items.length + terminal.length,
+        items: [...capture.events.items, ...terminal],
+      },
+    });
+  };
+
+  /** The same capture with every request observed, started and timed `offset` ms later. */
+  const timed = (
+    capture: BrowserScenarioCapture,
+    offset: number,
+  ): BrowserScenarioCapture =>
+    browserScenarioCaptureSchema.parse({
+      ...capture,
+      events: {
+        ...capture.events,
+        items: capture.events.items.map((event) =>
+          event.kind === "request"
+            ? {
+                ...event,
+                observed_at: new Date(
+                  Date.parse("2026-10-24T05:00:00.000Z") + offset,
+                ).toISOString(),
+              }
+            : event.kind === "request-finished" ||
+                event.kind === "request-failed"
+              ? {
+                  ...event,
+                  started_at: new Date(
+                    Date.parse("2026-10-24T04:59:59.990Z") + offset,
+                  ).toISOString(),
+                  elapsed_ms: 3 + offset,
+                }
+              : event,
+        ),
+      },
+    });
+
+  const compare = (
+    before: BrowserScenarioCapture,
+    after: BrowserScenarioCapture,
+  ) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+      }),
+    );
+
+  it("ignores when requests were observed, started and how long they took", () => {
+    const early = timed(ended(), 0);
+    const late = timed(ended(), 7_000);
+    const terminal = early.events.items.filter(
+      (event) =>
+        event.kind === "request-finished" || event.kind === "request-failed",
+    );
+    expect(terminal.map(({ kind }) => kind).sort()).toEqual([
+      "request-failed",
+      "request-finished",
+    ]);
+    for (const event of terminal)
+      expect(event).toMatchObject({
+        started_at: expect.any(String),
+        elapsed_ms: expect.any(Number),
+      });
+    const compared = compare(early, late);
+    expect(compared.overall_status).toBe("unchanged");
+    expect(compared.normalization.built_in_rules).toContain(
+      "ignore_network_request_timing",
+    );
+    // A capture made before request times were recorded compares with a timed one.
+    expect(compare(ended(), late).overall_status).toBe("unchanged");
+  });
+
+  it("still compares the rest of a timed completion event", () => {
+    expect(
+      compare(
+        timed(ended(), 0),
+        timed(ended("net::ERR_CONNECTION_RESET"), 7_000),
+      ).overall_status,
+    ).toBe("changed");
+  });
+});
+
+describe("scenario comparison recovery guidance", () => {
+  it("retains network guidance beside a changed console event", () => {
+    const before = scenarioCapture({});
+    const afterBase = scenarioCapture({});
+    const consoleEvent = afterBase.events.items[0];
+    if (consoleEvent?.kind !== "console")
+      throw new Error("Expected console fixture");
+    const after = browserScenarioCaptureSchema.parse({
+      ...afterBase,
+      scenario: {
+        ...afterBase.scenario,
+        network_content: {
+          ...afterBase.scenario.network_content,
+          response_body: true,
+        },
+      },
+      events: {
+        ...afterBase.events,
+        items: [{ ...consoleEvent, text: "settings-ready-again" }],
+      },
+    });
+    const compare = (left: typeof before, right: typeof before) =>
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: left,
+          after_scenario: right,
+        }),
+      );
+
+    const changed = compare(before, after);
+    expect(changed.overall_status).toBe("changed");
+    expect(changed.steps.flatMap((step) => step.artifact_diffs)).toContainEqual(
+      expect.objectContaining({
+        artifact: "events",
+        status: "changed",
+        reason: expect.stringContaining("Network content selections differ"),
+      }),
+    );
+    const sameSelection = compare(before, scenarioCapture({}));
+    expect(sameSelection.overall_status).toBe("unchanged");
+    expect(
+      sameSelection.steps.flatMap((step) => step.artifact_diffs),
+    ).not.toContainEqual(expect.objectContaining({ artifact: "events" }));
+    const quietMismatch = compare(
+      before,
+      browserScenarioCaptureSchema.parse({ ...after, events: before.events }),
+    );
+    expect(
+      quietMismatch.steps.flatMap((step) => step.artifact_diffs),
+    ).toContainEqual(
+      expect.objectContaining({
+        artifact: "events",
+        status: "unknown",
+        reason: expect.stringContaining("Network content selections differ"),
+      }),
+    );
+  });
 });
 
 describe("browser scenario comparison", () => {
@@ -525,6 +1133,158 @@ const multiStepScenarioCapture = (
   });
 };
 
+describe("storage fingerprint provenance", () => {
+  const withStorage = (value: unknown) => {
+    const base = scenarioCapture({});
+    return browserScenarioCaptureSchema.parse({
+      ...base,
+      steps: base.steps.map((step) => ({
+        ...step,
+        artifacts: {
+          ...step.artifacts,
+          storage: { state: "captured", value },
+        },
+      })),
+    });
+  };
+  const compare = (before: unknown, after: unknown) =>
+    compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: withStorage(before),
+        after_scenario: withStorage(after),
+      }),
+    );
+  const empty = { cookies: [], local_storage: [], session_storage: [] };
+
+  it.each(["cookies", "local_storage", "session_storage"])(
+    "withholds legacy %s value identity on either side",
+    (kind) => {
+      const entry = {
+        name: "value",
+        value_state: "hashed",
+        value_sha256: "a".repeat(64),
+      };
+      const value = {
+        ...empty,
+        [kind]: [
+          kind === "cookies"
+            ? {
+                ...entry,
+                domain: "app.example.test",
+                path: "/",
+                secure: false,
+                http_only: false,
+                same_site: "Lax",
+              }
+            : entry,
+        ],
+      };
+      const current = { ...value, fingerprint_version: 2 };
+      for (const [before, after] of [
+        [value, value],
+        [value, current],
+        [current, value],
+      ]) {
+        const result = compare(before, after);
+        expect(result.overall_status).toBe("unknown");
+        expect(result.steps.flatMap((step) => step.artifact_diffs)).toEqual([
+          expect.objectContaining({
+            artifact: "storage",
+            status: "unknown",
+            reason: expect.stringContaining("Legacy storage fingerprints"),
+          }),
+          expect.objectContaining({
+            artifact: "storage",
+            status: "unknown",
+            reason: expect.stringContaining("Legacy storage fingerprints"),
+          }),
+        ]);
+      }
+      expect(compare(current, current).overall_status).toBe("unchanged");
+    },
+  );
+
+  it("conservatively withholds legacy comparisons even when digests differ", () => {
+    const entry = {
+      name: "value",
+      value_state: "hashed",
+      value_sha256: "a".repeat(64),
+    };
+    const left = { ...empty, local_storage: [entry] };
+    const right = {
+      ...empty,
+      local_storage: [{ ...entry, value_sha256: "b".repeat(64) }],
+    };
+    for (const [before, after] of [
+      [left, right],
+      [left, { ...right, fingerprint_version: 2 }],
+      [{ ...left, fingerprint_version: 2 }, right],
+    ])
+      expect(compare(before, after).overall_status).toBe("unknown");
+  });
+
+  it("checks legacy provenance before applying storage normalization", () => {
+    const legacy = {
+      ...empty,
+      local_storage: [
+        {
+          name: "value",
+          value_state: "hashed",
+          value_sha256: "a".repeat(64),
+        },
+      ],
+    };
+    const result = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: withStorage(legacy),
+        after_scenario: withStorage({ ...legacy, fingerprint_version: 2 }),
+        normalization: {
+          rules: [
+            {
+              rule_id: "rewrite-value-state",
+              artifacts: ["storage"],
+              match: "hashed",
+              replacement: "redacted-secret",
+            },
+          ],
+        },
+      }),
+    );
+    expect(result.overall_status).toBe("unknown");
+    expect(result.steps.flatMap((step) => step.artifact_diffs)).toEqual([
+      expect.objectContaining({
+        artifact: "storage",
+        status: "unknown",
+        reason: expect.stringContaining("Legacy storage fingerprints"),
+      }),
+      expect.objectContaining({
+        artifact: "storage",
+        status: "unknown",
+        reason: expect.stringContaining("Legacy storage fingerprints"),
+      }),
+    ]);
+  });
+
+  it.each([false, true])(
+    "does not turn encoding metadata alone into a storage change (redacted=%s)",
+    (redacted) => {
+      const entries = redacted
+        ? [
+            {
+              name: "secret",
+              value_state: "redacted-secret",
+              value_sha256: null,
+            },
+          ]
+        : [];
+      const legacy = { ...empty, local_storage: entries };
+      const current = { ...legacy, fingerprint_version: 2 };
+      expect(compare(legacy, current).overall_status).toBe("unchanged");
+      expect(compare(current, legacy).overall_status).toBe("unchanged");
+    },
+  );
+});
+
 interface ScenarioCaptureOptions {
   readonly stepId?: string;
   readonly action?: string;
@@ -575,6 +1335,7 @@ const scenarioCapture = (
         header_values: false,
       },
       event_families: ["console"],
+      limits: DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
     },
     duration_ms: options.elapsedMs ?? 10,
     steps: [
@@ -620,6 +1381,7 @@ const scenarioCapture = (
           url: null,
         },
       ],
+      omissions: noEventOmissions,
     },
     completeness,
     limitations: [],
@@ -634,3 +1396,122 @@ const textArtifact = (text: string) => {
     text,
   };
 };
+
+const storageScenarioCapture = (
+  family: "cookies" | "local_storage" | "session_storage",
+  entries: readonly { name: string; value_sha256: string }[],
+): BrowserScenarioCapture => {
+  const capture = scenarioCapture({});
+  const values = entries.map((entry) => ({
+    ...(family === "cookies"
+      ? {
+          domain: "app.example.test",
+          path: "/",
+          secure: true,
+          http_only: false,
+          same_site: "Lax",
+        }
+      : {}),
+    ...entry,
+    value_state: "hashed",
+  }));
+  return browserScenarioCaptureSchema.parse({
+    ...capture,
+    steps: capture.steps.map((step) => ({
+      ...step,
+      artifacts: {
+        ...step.artifacts,
+        storage: {
+          state: "captured",
+          value: {
+            fingerprint_version: BROWSER_STORAGE_FINGERPRINT_VERSION,
+            cookies: [],
+            local_storage: [],
+            session_storage: [],
+            [family]: values,
+          },
+        },
+      },
+    })),
+  });
+};
+
+it.each(["cookies", "local_storage", "session_storage"] as const)(
+  "compares %s contents independently of enumeration order without losing edits or multiplicity",
+  (family) => {
+    const entries = [
+      { name: "theme", value_sha256: "a".repeat(64) },
+      { name: "locale", value_sha256: "b".repeat(64) },
+    ] as const;
+    const before = storageScenarioCapture(family, entries);
+    const after = storageScenarioCapture(family, entries.toReversed());
+    const retained = structuredClone(after);
+    const compare = (right: BrowserScenarioCapture) =>
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: before,
+          after_scenario: right,
+        }),
+      );
+    expect(compare(after).overall_status).toBe("unchanged");
+    expect(compare(after).normalization.built_in_rules).toContain(
+      "compare_storage_entries_as_unordered_collection",
+    );
+    expect(after).toEqual(retained);
+    const normalized = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: before,
+        after_scenario: after,
+        normalization: {
+          rules: [
+            {
+              rule_id: "names",
+              artifacts: ["storage"],
+              match: "theme",
+              replacement: "locale",
+            },
+          ],
+        },
+      }),
+    );
+    expect(normalized.overall_status).toBe("unchanged");
+    for (const changed of [
+      [{ ...entries[0], value_sha256: "c".repeat(64) }, entries[1]],
+      [entries[0]],
+      [...entries, entries[0]],
+    ]) {
+      const result = compare(storageScenarioCapture(family, changed));
+      expect(result.overall_status).toBe("changed");
+      expect(result.steps[0]?.artifact_diffs).toContainEqual(
+        expect.objectContaining({ artifact: "storage", status: "changed" }),
+      );
+    }
+  },
+);
+
+it("retains cookie scope and flags when canonicalizing storage inventories", () => {
+  const before = storageScenarioCapture("cookies", [
+    { name: "session", value_sha256: "a".repeat(64) },
+  ]);
+  for (const change of [
+    { path: "/profile" },
+    { domain: ".example.test" },
+    { secure: false },
+    { http_only: true },
+    { same_site: "Strict" },
+  ]) {
+    const after = structuredClone(before);
+    const storage = after.steps[0]?.artifacts.storage;
+    if (storage?.state !== "captured" || storage.value.cookies[0] === undefined)
+      throw new Error("Expected captured cookie fixture");
+    Object.assign(storage.value.cookies[0], change);
+    expect(
+      compareBrowserScenarios(
+        compareBrowserScenariosInputSchema.parse({
+          before_scenario: before,
+          after_scenario: after,
+        }),
+      ).overall_status,
+    ).toBe("changed");
+  }
+});

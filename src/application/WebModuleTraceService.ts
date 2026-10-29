@@ -1,7 +1,10 @@
 import { closeOwnedWebResources } from "./closeOwnedWebResources.js";
-import { isAbsolute } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  primaryAnalysisError,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -10,7 +13,6 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   collectWebModuleImports,
@@ -19,7 +21,9 @@ import {
 import {
   webModuleTraceInputSchema,
   webModuleFileSchema,
-  webModuleResolutionSchema,
+  webModuleResolutionBatchSchema,
+  webModuleResolutionObservationSchema,
+  type WebModuleResolutionBatch,
   webModuleTraceResultSchema,
   type WebModuleResolution,
   type WebModuleTraceResult,
@@ -33,8 +37,10 @@ import type { ExecutionOptions } from "./AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
   WebModuleResolutionPort,
-  WebModuleResolutionBatch,
 } from "./WebModulePorts.js";
+
+import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import { parseAnalysisInput } from "./AnalysisInput.js";
 
 const OPERATION = "trace_web_module_imports";
 const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
@@ -45,12 +51,6 @@ const artifactsSchema = selectedWebScriptArtifactsSchema.extend({
       value: jsonObjectSchema,
     })
     .nullable(),
-});
-const resolutionBatchSchema = z.strictObject({
-  engine: z.strictObject({ id: z.string().min(1), version: z.string().min(1) }),
-  resolutions: z.array(webModuleResolutionSchema),
-  diagnostics: z.array(z.string()),
-  rawResult: jsonObjectSchema,
 });
 const LIMITATIONS = [
   "Resolution is derived under the selected importer URL and optional import map; it does not establish that the map was installed in the captured page.",
@@ -84,25 +84,14 @@ export class WebModuleTraceService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (isAborted(options?.signal))
-      return err(new AnalysisCancelledError(OPERATION));
-    const parsed = webModuleTraceInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
-          cause: parsed.error,
-        }),
-      );
-    const input = parsed.data;
-    for (const [path, value] of [
-      ["manifest_path", input.manifest_path],
-      ["import_map.path", input.import_map?.path],
-    ] as const)
-      if (value !== undefined && !isAbsolute(value))
-        return invalid(
-          path.split("."),
-          "Expected an absolute filesystem path on this host.",
-        );
+    const parsed = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      webModuleTraceInputSchema,
+      options?.signal,
+    );
+    if (!parsed.ok) return parsed;
+    const input = parsed.value;
     for (const [path, value] of [
       ["importer_url", input.importer_url],
       ["import_map.base_url", input.import_map?.base_url],
@@ -136,49 +125,87 @@ export class WebModuleTraceService {
     const bound = validateSelectedWebScript(input, data, OPERATION);
     if (!bound.ok) return bound;
     const selected = bound.value;
+    const incomplete = (error: AnalysisError): Result<never, AnalysisError> => {
+      const resolverObservation =
+        webModuleResolutionObservationSchema.safeParse(
+          error.partialObservation,
+        );
+      error.partialObservation = {
+        ...(resolverObservation.success
+          ? { resolver_observation: resolverObservation.data }
+          : {}),
+        kind: "web-trace-observation",
+        analysis: "incomplete",
+        manifest: data.manifestFile,
+        source: data.sourceFile,
+        ...(data.importMap === null ? {} : { import_map: data.importMap.file }),
+      };
+      primaryAnalysisError(error).partialObservation = error.partialObservation;
+      return err(error);
+    };
     const importerUrl = input.importer_url ?? selected.url;
-    const importerAdmission = admitContext(importerUrl, ["importer_url"]);
-    if (!importerAdmission.ok) return importerAdmission;
-    const syntax = collectWebModuleImports(data.source);
+    if (input.importer_url === undefined) {
+      const importerAdmission = admitContext(importerUrl);
+      if (!importerAdmission.ok) return incomplete(importerAdmission.error);
+    }
+    const syntax = collectWebModuleImports(data.source, data.sourceFile.path);
     const literals = syntax.imports
       .filter((reference) => reference.specifier !== null)
       .map((reference) => reference.specifier ?? "");
     let resolution: WebModuleResolutionBatch | null = null;
+    let resolutionFailure: AnalysisError | undefined;
     if (literals.length > 0) {
-      const execution = await this.resolver.resolve(
-        {
-          importerUrl,
-          importMap:
-            data.importMap === null
-              ? null
-              : {
-                  baseUrl: data.importMap.baseUrl,
-                  value: data.importMap.value,
-                },
-          specifiers: literals,
-        },
-        options,
-      );
-      if (!execution.ok) return execution;
-      const report = resolutionBatchSchema.safeParse(execution.value);
-      if (!report.success)
-        return err(
-          new AnalysisOutputError(
-            OPERATION,
-            "Resolver returned malformed or incomplete native evidence.",
-          ),
+      if (options?.signal?.aborted)
+        return incomplete(
+          new AnalysisCancelledError(OPERATION, {
+            cause: options.signal.reason,
+          }),
         );
-      resolution = report.data;
+      const request = {
+        importerUrl,
+        importMap:
+          data.importMap === null
+            ? null
+            : {
+                baseUrl: data.importMap.baseUrl,
+                value: data.importMap.value,
+              },
+        specifiers: literals,
+      };
+      const execution = await this.resolver.resolve(request, options);
+      if (execution.ok) {
+        const report = webModuleResolutionBatchSchema.safeParse(
+          execution.value,
+        );
+        if (!report.success)
+          return incomplete(
+            new AnalysisOutputError(
+              OPERATION,
+              "Resolver returned malformed or incomplete native evidence.",
+            ),
+          );
+        resolution = report.data;
+      } else {
+        const observation = webModuleResolutionObservationSchema.safeParse(
+          execution.error.partialObservation,
+        );
+        if (
+          !observation.success ||
+          !isDeepStrictEqual(observation.data.request, request) ||
+          observation.data.batch.resolutions.length !== literals.length
+        )
+          return incomplete(execution.error);
+        resolution = observation.data.batch;
+        resolutionFailure = execution.error;
+      }
       if (resolution.resolutions.length !== literals.length)
-        return err(
+        return incomplete(
           new AnalysisOutputError(
             OPERATION,
             "Resolver did not return every selected literal specifier.",
           ),
         );
     }
-    if (isAborted(options?.signal))
-      return err(new AnalysisCancelledError(OPERATION));
     let literalIndex = 0;
     const imports: WebModuleTraceResult["imports"] = [];
     for (const reference of syntax.imports) {
@@ -190,7 +217,7 @@ export class WebModuleTraceService {
       else {
         const reported = resolution?.resolutions[literalIndex++];
         if (reported === undefined)
-          return err(
+          return incomplete(
             new AnalysisOutputError(
               OPERATION,
               "Resolver omitted a selected literal specifier.",
@@ -237,74 +264,94 @@ export class WebModuleTraceService {
       limitations: LIMITATIONS,
     });
     if (!normalized.success)
-      return err(new AnalysisOutputError(OPERATION, normalized.error.message));
-    return ok(
-      createEvidence(
-        {
-          path: data.sourceFile.path,
-          sha256: data.sourceFile.sha256,
-          format: "file",
-        },
-        {
-          id: "rea-web-module-trace",
-          name: "REA captured module relationship trace",
-          version: "1",
-        },
-        {
-          operation: OPERATION,
-          parameters: jsonObjectSchema.parse(input),
-          result: normalized.data,
-          rawResult: resolution?.rawResult ?? null,
-          confidence: "derived",
-          authority: "historical-reference",
-          limitations: LIMITATIONS,
-          locations: [
-            { kind: "artifact-path", path: data.sourceFile.path },
-            { kind: "artifact-path", path: input.manifest_path },
-          ],
-          evidenceLinks:
-            data.manifest.source_evidence_id === null
-              ? []
-              : [data.manifest.source_evidence_id],
-        },
-      ),
+      return incomplete(
+        new AnalysisOutputError(OPERATION, normalized.error.message),
+      );
+    const evidence = createEvidence(
+      {
+        path: data.sourceFile.path,
+        sha256: data.sourceFile.sha256,
+        format: "file",
+      },
+      {
+        id: "rea-web-module-trace",
+        name: "REA captured module relationship trace",
+        version: "1",
+      },
+      {
+        operation: OPERATION,
+        parameters: input,
+        result: normalized.data,
+        rawResult: resolution?.rawResult ?? null,
+        confidence: "derived",
+        authority: "historical-reference",
+        limitations: LIMITATIONS,
+        locations: [
+          { kind: "artifact-path", path: data.sourceFile.path },
+          { kind: "artifact-path", path: input.manifest_path },
+        ],
+        evidenceLinks:
+          data.manifest.source_evidence_id === null
+            ? []
+            : [data.manifest.source_evidence_id],
+      },
     );
+    if (resolutionFailure !== undefined) {
+      resolutionFailure.partialObservation = evidence;
+      return err(resolutionFailure);
+    }
+    return completeProviderEvidence(evidence, options?.signal);
   }
 }
 
 const admitContext = (
   value: string,
-  path: readonly string[],
+  path?: readonly string[],
 ): Result<null, AnalysisError> => {
+  const reportedUnavailable = () =>
+    err(
+      new AnalysisCapabilityUnavailableError(
+        "web-module-resolution",
+        OPERATION,
+        "reported_source_context_unavailable",
+        {
+          userMessage:
+            "The manifest's reported source URL is not a usable HTTP(S) module context. Select importer_url explicitly for this script.",
+        },
+      ),
+    );
   let url: URL;
   try {
     url = new URL(value);
   } catch (cause: unknown) {
     void cause;
+    if (path === undefined) return reportedUnavailable();
     return invalid(
       path,
       "Expected an absolute context URL. Select importer_url explicitly when the reported source URL is unknown.",
     );
   }
-  if (url.username !== "" || url.password !== "")
+  if (url.username !== "" || url.password !== "") {
+    if (path === undefined) return reportedUnavailable();
     return invalid(
       path,
       "Module context URLs must not contain username/password userinfo.",
     );
-  if (url.protocol !== "http:" && url.protocol !== "https:")
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
     return err(
       new AnalysisCapabilityUnavailableError(
         "web-module-resolution",
         OPERATION,
         "unsupported_context_scheme",
         {
-          userMessage: `${path.join(".")} ${value} uses unsupported ${url.protocol} context. This trace currently supports HTTP(S) importer/map contexts; select a supported context explicitly when appropriate.`,
+          userMessage: `${path?.join(".") ?? "The reported source URL"} ${value} uses unsupported ${url.protocol} context. This trace currently supports HTTP(S) importer/map contexts; select a supported context explicitly when appropriate.`,
         },
       ),
     );
+  }
   return ok(null);
 };
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
 const invalid = (path: readonly string[], message: string) =>
   err(
     new AnalysisInputError(OPERATION, undefined, [

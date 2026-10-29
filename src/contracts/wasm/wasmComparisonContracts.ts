@@ -1,6 +1,6 @@
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
-import { evidenceInputSchema } from "../evidenceInputContracts.js";
+import { evidenceInputSchema } from "../../domain/evidenceReference.js";
 import { wasmInterfaceSchema } from "../../domain/wasm/wasmInterface.js";
 import { toolContractMetadata } from "../toolEffects.js";
 import type { ToolContract } from "../toolContractTypes.js";
@@ -23,7 +23,7 @@ const identity = z.object({
   artifact: z.object({
     path: z.string(),
     sha256: z.string(),
-    bytes: z.number().int().nonnegative(),
+    bytes: z.int().nonnegative(),
   }),
 });
 export const wasmInterfaceComparisonSchema = z.object({

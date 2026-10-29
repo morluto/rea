@@ -1,0 +1,51 @@
+name: PR readiness
+
+on:
+  pull_request_target:
+    branches: [main, "release/*"]
+    types:
+      [
+        opened,
+        edited,
+        synchronize,
+        reopened,
+        ready_for_review,
+        converted_to_draft,
+      ]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: Open PR to recheck
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: pr-readiness-${{ github.event.pull_request.number || inputs.pull_request_number }}
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    name: Validate author declaration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Check initial readiness
+        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553 # v9
+        with:
+          script: |
+            const { pathToFileURL } = require("node:url");
+            const entry = pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/ci/pr-readiness.mjs`,
+            );
+            const { runReadinessCheck } = await import(entry.href);
+            await runReadinessCheck({ github, context, core });

@@ -1,19 +1,88 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
+import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
 } from "../../../fixtures/artifactInventory.js";
-import { artifactExtractionResultSchema } from "../../../../src/domain/artifactGraph.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { DirectoryArtifactReader } from "../../../../src/artifacts/DirectoryArtifactReader.js";
+
+it.for([false, true])(
+  "preserves source traversal coverage when invalid-byte names are present: %s",
+  async (invalidName, context) => {
+    if (invalidName && process.platform !== "linux") context.skip();
+    const root = await createTestTempDirectory("rea-extract-coverage-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "visible.txt"), "retained");
+    if (invalidName)
+      await writeFile(
+        Buffer.concat([Buffer.from(`${source}/`), Buffer.from([0xff])]),
+        "unrepresented",
+      );
+    const snapshot = await scanArtifactInventory(source);
+    const extracted = await extractDirectory(source, join(root, "output"));
+    expect(extracted.coverage).toEqual(snapshot.coverage);
+    expect(extracted.coverage.status).toBe(
+      invalidName ? "unknown" : "complete",
+    );
+    expect(extracted.limitations).toEqual(
+      expect.arrayContaining([...snapshot.limitations]),
+    );
+    expect(
+      extracted.artifacts.map(({ relative_path }) => relative_path),
+    ).toEqual(["visible.txt"]);
+    expect(
+      await readFile(join(extracted.output_root, "visible.txt"), "utf8"),
+    ).toBe("retained");
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "retains newly unknown materialization traversal after a complete inventory",
+  async () => {
+    const root = await createTestTempDirectory("rea-extract-late-coverage-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "visible.txt"), "retained");
+    const snapshot = await scanArtifactInventory(source);
+    expect(snapshot.coverage.status).toBe("complete");
+    await writeFile(
+      Buffer.concat([Buffer.from(`${source}/`), Buffer.from([0xff])]),
+      "unrepresented",
+    );
+    const extracted = await materializeArtifactInventory(
+      {
+        inputPath: source,
+        inputFormat: "asar",
+        outputRoot: join(root, "output"),
+        environment: {},
+        integrityPolicy: "fail",
+      },
+      source,
+      snapshot,
+    );
+    expect(extracted.coverage.status).toBe("unknown");
+    expect(extracted.limitations).toContainEqual(
+      expect.stringContaining("not valid UTF-8"),
+    );
+  },
+);
 
 it.each(["file", "directory"] as const)(
   "rolls back when an inventoried %s disappears before extraction",
@@ -47,6 +116,31 @@ it.each(["file", "directory"] as const)(
   },
 );
 
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "rolls back when a previously inventoried directory becomes unreadable",
+  async () => {
+    const root = await createTestTempDirectory("rea-extract-denied-late-");
+    const source = join(root, "source");
+    const child = join(source, "child");
+    await mkdir(child, { recursive: true });
+    await writeFile(join(child, "selected.txt"), "selected bytes\n");
+    const output = join(root, "output");
+    const materialize = await inventoriedExtraction(source, output);
+    await chmod(child, 0);
+    onTestFinished(() => chmod(child, 0o755));
+    await expect(materialize()).rejects.toMatchObject({
+      reason: "integrity",
+      message:
+        "Inventoried regular artifact entries were not materialized: child/selected.txt",
+    });
+    await expect(access(output)).rejects.toThrow();
+    await chmod(child, 0o755);
+    expect(await readFile(join(child, "selected.txt"), "utf8")).toBe(
+      "selected bytes\n",
+    );
+  },
+);
+
 it("still refuses a regular file added after inventory and rolls back", async () => {
   const root = await createTestTempDirectory("rea-extract-added-");
   const source = join(root, "source");
@@ -60,6 +154,150 @@ it("still refuses a regular file added after inventory and rolls back", async ()
     message: "Regular artifact entry is missing from inventory: z.txt",
   });
   await expect(access(output)).rejects.toThrow();
+});
+
+it
+  .skipIf(process.platform !== "linux")
+  .each(["inventory", "materialization"] as const)(
+  "retains unknown filename coverage established during %s",
+  async (phase) => {
+    const root = await createTestTempDirectory(
+      "rea-extract-unknown-traversal-",
+    );
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "known.txt"), "retained bytes\n");
+    const opaque = Buffer.concat([
+      Buffer.from(join(source, "opaque-")),
+      Buffer.from([0xff]),
+    ]);
+    if (phase === "inventory") await writeFile(opaque, "opaque bytes\n");
+    const output = join(root, "output");
+    const materialize = await inventoriedExtraction(source, output);
+    if (phase === "inventory") await rm(opaque);
+    else await writeFile(opaque, "opaque bytes\n");
+
+    const result = await materialize();
+    expect(result.artifacts.map(({ relative_path }) => relative_path)).toEqual([
+      "known.txt",
+    ]);
+    expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
+      "retained bytes\n",
+    );
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("not valid UTF-8"),
+    );
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("source traversal coverage is unknown"),
+    );
+    expect(
+      result.limitations.some((value) => value.startsWith("All regular files")),
+    ).toBe(false);
+  },
+);
+
+it.each(["inventory", "materialization"] as const)(
+  "retains typed unknown coverage from only the %s producer stage",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-extract-stage-coverage-");
+    const source = join(root, "source");
+    await mkdir(source);
+    await writeFile(join(source, "known.txt"), "retained bytes\n");
+    const output = join(root, "output");
+    let stage: "inventory" | "materialization" = "inventory";
+    const limitation = `Producer traversal coverage is unknown during ${phase}.`;
+    const entries = DirectoryArtifactReader.prototype.entries;
+    const spy = vi
+      .spyOn(DirectoryArtifactReader.prototype, "entries")
+      .mockImplementation(async function* (
+        this: DirectoryArtifactReader,
+        signal,
+        selection,
+      ) {
+        yield* entries.call(this, signal, selection);
+        if (typeof selection === "function") return;
+        if (stage === phase)
+          selection?.onCoverage?.({
+            status: "unknown",
+            limitations: [limitation],
+          });
+        // A later complete observation must not erase established uncertainty.
+        selection?.onCoverage?.({ status: "complete", limitations: [] });
+      });
+    try {
+      const materialize = await inventoriedExtraction(source, output);
+      stage = "materialization";
+      const result = await materialize();
+      expect(result.limitations).toContain(limitation);
+      expect(result.limitations).toContainEqual(
+        expect.stringContaining("source traversal coverage is unknown"),
+      );
+      expect(
+        result.limitations.some((value) =>
+          value.startsWith("All regular files"),
+        ),
+      ).toBe(false);
+      expect(
+        result.artifacts.map(({ relative_path }) => relative_path),
+      ).toEqual(["known.txt"]);
+      expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
+        "retained bytes\n",
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  },
+);
+
+it("normalizes an NFD omission once across inventory and materialization", async () => {
+  const root = await createTestTempDirectory("rea-extract-omission-nfc-");
+  const source = join(root, "source");
+  await mkdir(source);
+  await writeFile(join(source, "known.txt"), "retained bytes\n");
+  const output = join(root, "output");
+  const entries = DirectoryArtifactReader.prototype.entries;
+  const spy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "entries")
+    .mockImplementation(async function* (
+      this: DirectoryArtifactReader,
+      signal,
+      selection,
+    ) {
+      yield* entries.call(this, signal, selection);
+      if (typeof selection === "function") return;
+      selection?.onOmission?.({ path: "cafe\u0301.pipe", kind: "fifo" });
+      selection?.onCoverage?.({ status: "complete", limitations: [] });
+    });
+  try {
+    const snapshot = await scanArtifactInventory(source);
+    expect(snapshot.coverage.status).toBe("unknown");
+    const result = await materializeArtifactInventory(
+      {
+        inputPath: source,
+        inputFormat: "asar",
+        outputRoot: output,
+        environment: process.env,
+        integrityPolicy: "fail",
+      },
+      source,
+      snapshot,
+    );
+    const omission = 'Artifact traversal omitted fifo at "caf\u00e9.pipe".';
+    for (const limitations of [snapshot.limitations, result.limitations])
+      expect(
+        limitations.filter((value) =>
+          value.startsWith("Artifact traversal omitted"),
+        ),
+      ).toEqual([omission]);
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining("source traversal coverage is unknown"),
+    );
+    expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
+      "retained bytes\n",
+    );
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it("rolls back when cancellation arrives while closing the materialization reader", async () => {
@@ -109,9 +347,7 @@ it("preserves every equal-content occurrence and copies a nested ASAR as its con
   await writeFile(join(source, "a.txt"), "same bytes\n");
   await writeFile(join(source, "b.txt"), "same bytes\n");
   const output = join(root, "output");
-  const result = await extract(source, output);
-  if (!result.ok) throw result.error;
-  const extracted = artifactExtractionResultSchema.parse(result.value.result);
+  const extracted = await extractDirectory(source, output);
   expect(extracted.artifacts.map(({ relative_path }) => relative_path)).toEqual(
     ["a.txt", "app.asar", "b.txt"],
   );
@@ -120,9 +356,12 @@ it("preserves every equal-content occurrence and copies a nested ASAR as its con
     extracted.artifacts[2]?.artifact_id,
   );
   for (const path of ["a.txt", "b.txt", "app.asar"])
-    expect(await readFile(join(output, path))).toEqual(
-      await readFile(join(source, path)),
-    );
+    expect(
+      Buffer.compare(
+        await readFile(join(output, path)),
+        await readFile(join(source, path)),
+      ),
+    ).toBe(0);
 });
 
 it("ignores unavailable members of a nested ASAR but refuses them as active entries", async () => {
@@ -139,23 +378,22 @@ it("ignores unavailable members of a nested ASAR but refuses them as active entr
   await rm(join(`${archive}.unpacked`, "native", "addon.node"));
 
   const nestedOutput = join(root, "nested-output");
-  const nestedResult = await extract(source, nestedOutput);
-  if (!nestedResult.ok) throw nestedResult.error;
-  const nestedExtraction = artifactExtractionResultSchema.parse(
-    nestedResult.value.result,
-  );
+  const nestedExtraction = await extractDirectory(source, nestedOutput);
   expect(
     nestedExtraction.extraction_manifest.selected_occurrence_ids,
   ).toHaveLength(1);
   expect(
     nestedExtraction.artifacts.map(({ relative_path }) => relative_path),
   ).toEqual(["app.asar"]);
-  expect(await readFile(join(nestedOutput, "app.asar"))).toEqual(
-    await readFile(archive),
-  );
+  expect(
+    Buffer.compare(
+      await readFile(join(nestedOutput, "app.asar")),
+      await readFile(archive),
+    ),
+  ).toBe(0);
 
   const activeOutput = join(root, "active-output");
-  const activeResult = await extract(archive, activeOutput);
+  const activeResult = await extractArchive(archive, activeOutput);
   if (activeResult.ok)
     throw new Error("Unavailable active ASAR member must fail extraction");
   expect(projectAnalysisError(activeResult.error)).toMatchObject({
@@ -182,13 +420,16 @@ const inventoriedExtraction = async (source: string, output: string) => {
     );
 };
 
-const extract = (source: string, output: string) =>
-  new ArtifactProvider(process.env)
-    .createClient({
-      path: source,
-      sourcePath: source,
-      sha256: "0".repeat(64),
-      kind: "archive",
-      format: "asar",
-    })
+/** Raw directory completeness belongs to inventory/materialization, not file target admission. */
+const extractDirectory = async (source: string, output: string) => {
+  const materialize = await inventoriedExtraction(source, output);
+  return materialize();
+};
+
+const extractArchive = async (source: string, output: string) => {
+  const target = await parseBinaryTarget(source);
+  if (!target.ok) throw target.error;
+  return new ArtifactProvider(process.env)
+    .createClient(target.value)
     .execute("extract_artifact", { output_root: output });
+};

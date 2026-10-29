@@ -8,6 +8,7 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { urlDeclaresQueryOrFragment } from "../domain/urlComponents.js";
 import { parseCdpEndpointValue, readCdpJson } from "../browser/CdpEndpoint.js";
+import { parseCdpDiscoveryTargets } from "../browser/CdpDiscoveryTargets.js";
 
 const versionSchema = z
   .object({
@@ -17,26 +18,17 @@ const versionSchema = z
   })
   .passthrough();
 
-const targetSchema = z
-  .object({
-    id: z.string().min(1),
-    type: z.string().min(1),
-    url: z.string(),
-    attached: z.boolean().nullable().optional(),
-    webSocketDebuggerUrl: z.string().min(1),
-  })
-  .passthrough();
-const targetsSchema = z.array(targetSchema);
-
 export interface V8InspectorTarget {
   readonly id: string;
   readonly type: string;
   readonly url: string;
   readonly attached: boolean | null;
-  readonly webSocketUrl: string;
+  readonly webSocketUrl: string | null;
 }
 
 export interface V8InspectorDiscovery {
+  readonly limitations: readonly string[];
+  readonly ambiguousTargetIds?: readonly string[];
   readonly runtime: JavaScriptRuntimeTargetList["runtime"];
   readonly targets: readonly V8InspectorTarget[];
 }
@@ -52,8 +44,13 @@ export const discoverV8Inspector = async (
     readCdpJson(new URL("/json/list", endpoint), operation, signal),
   ]);
   const version = parseCdpEndpointValue(versionSchema, versionInput, operation);
-  const targets = parseCdpEndpointValue(targetsSchema, targetsInput, operation);
+  const { targets, limitations, ambiguousTargetIds } = parseCdpDiscoveryTargets(
+    targetsInput,
+    operation,
+  );
   return {
+    limitations,
+    ambiguousTargetIds,
     runtime: {
       product: version.Browser,
       protocol_version: version["Protocol-Version"],
@@ -68,7 +65,6 @@ export const discoverV8Inspector = async (
         endpoint,
         target.id,
         target.webSocketDebuggerUrl,
-        operation,
       ),
     })),
   };
@@ -77,16 +73,14 @@ export const discoverV8Inspector = async (
 const validatedInspectorWebSocket = (
   endpoint: string,
   targetId: string,
-  reported: string,
-  operation: BrowserObservationOperation,
-): string => {
+  reported: unknown,
+): string | null => {
+  if (typeof reported !== "string" || reported.length === 0) return null;
   let socket: URL;
   try {
     socket = new URL(reported);
-  } catch (cause: unknown) {
-    throw new BrowserObservationError(operation, "invalid_endpoint_response", {
-      cause,
-    });
+  } catch {
+    return null;
   }
   const trusted = new URL(endpoint);
   const allowedPaths = new Set([
@@ -102,12 +96,16 @@ const validatedInspectorWebSocket = (
     urlDeclaresQueryOrFragment(socket) ||
     !allowedPaths.has(socket.pathname)
   )
-    throw new BrowserObservationError(operation, "invalid_endpoint_response");
+    return null;
   socket.hostname = trusted.hostname;
   return socket.href;
 };
 
 /** Authorized target plus its durable location. */
-export interface AuthorizedV8InspectorTarget extends V8InspectorTarget {
+export interface AuthorizedV8InspectorTarget extends Omit<
+  V8InspectorTarget,
+  "webSocketUrl"
+> {
+  readonly webSocketUrl: string;
   readonly location: JavaScriptRuntimeTargetLocation;
 }

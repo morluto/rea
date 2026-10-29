@@ -1,32 +1,35 @@
+import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
-import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { err, ok, type Result } from "../result.js";
-import {
-  analysisViewInputError,
-  type AnalysisViewParent,
-  type AnalysisViewRequest,
-  type UnsignedAnalysisView,
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import type {
+  AnalysisViewParent,
+  AnalysisViewRequest,
+  UnsignedAnalysisView,
 } from "./analysisView.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { analysisTextPage } from "./analysisViewText.js";
+import {
+  analysisTextPage,
+  analysisTextPageItemSchema,
+} from "./analysisViewText.js";
 
 /** Retained inferred candidates or exact text; offsets for text count UTF-16 code units. */
 export const evmViewRequestSchema = z.strictObject({
   kind: z.literal("evm"),
   facet: z.enum(["functions", "bytecode_hex", "stdout", "stderr"]),
-  offset: z.number().int().nonnegative().default(0),
-  limit: z.number().int().positive().default(64),
+  offset: z.int().nonnegative().default(0),
+  limit: z.int().positive().default(64),
 });
 
 export const evmViewItemSchema = z.union([
   evmInterfaceSchema.shape.functions,
-  z.strictObject({ text: z.string(), unit: z.literal("utf16-code-units") }),
+  analysisTextPageItemSchema,
 ]);
 
 /** Complete inferred interface facts without the unrequested hex or duplicated stdout. */
@@ -40,7 +43,7 @@ export const evmSummarySchema = z.strictObject({
   diagnostics: evmInterfaceSchema.shape.diagnostics
     .omit({ stdout: true })
     .extend({
-      stdout_code_units: z.number().int().nonnegative(),
+      stdout_code_units: z.int().nonnegative(),
     }),
   limitations: evmInterfaceSchema.shape.limitations,
 });
@@ -60,25 +63,14 @@ export const projectEvmInterfaceView = (
         },
       ]),
     );
-  const parsed = evmInterfaceSchema.safeParse(parent.normalizedResult);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "inspect_analysis_view",
-        parsed.error.issues.map((issue) => ({
-          ...issue,
-          path: ["source", "normalized_result", ...issue.path],
-        })),
-        { source: { normalized_result: parent.normalizedResult } },
-        { cause: parsed.error },
-      ),
-    );
-  const report = parsed.data;
+  const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
+  const subject = parent.subject;
   if (
-    parent.subject == null ||
-    parent.subject.format !== "file" ||
-    parent.subject.local_path !== report.artifact.path ||
-    parent.subject.digest.sha256 !== report.artifact.sha256
+    subject == null ||
+    subject.format !== "file" ||
+    subject.digest.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([
@@ -86,7 +78,7 @@ export const projectEvmInterfaceView = (
           path: ["source", "subject"],
           reason: "invalid_value",
           message:
-            "EVM parent subject must identify the report's exact carrier path and SHA-256.",
+            "EVM parent subject must identify the report's carrier format and SHA-256.",
         },
       ]),
     );

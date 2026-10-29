@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   onlyCallable,
   topLevelBinding,
@@ -210,6 +214,67 @@ describe("JavaScript semantic analysis: read-modify-write", () => {
     ]);
   });
 
+  it.each([
+    ["destructuring assignment", "[source.count] = [2];"],
+    ["destructuring assignment with default", "[source.count = 2] = [];"],
+    [
+      "nested destructuring assignment",
+      "({ value: { count: source.count } } = {});",
+    ],
+    ["rest destructuring assignment", "[...source.items] = [];"],
+    ["for-of head", "for (source.count of [4]) {}"],
+    ["for-in head", "for (source.count in { key: true }) {}"],
+    ["delete", "delete source.count;"],
+  ])("records a member target in %s as a write", (_name, statement) => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { count: 1, items: [] };
+      ${statement}
+    `);
+    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual(["write"]);
+  });
+
+  it.each([
+    ["non-null update", "source.count!++;"],
+    ["non-null compound assignment", "source.count! += 1;"],
+    ["cast compound assignment", "(source.count as number) += 1;"],
+    ["parenthesized update", "(source.count)++;"],
+  ])(
+    "retains the property read in a wrapped read-modify-write: %s",
+    (_name, statement) => {
+      const ir = analyzeJavaScriptSemantics(`
+        const source = { count: 1 };
+        ${statement}
+      `);
+      expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+        "read",
+        "write",
+      ]);
+    },
+  );
+
+  it.each([
+    ["cast plain assignment", "(source.count as number) = 2;"],
+    ["non-null delete", "delete source.count!;"],
+  ])("keeps a wrapped %s write-only", (_name, statement) => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { count: 1 };
+      ${statement}
+    `);
+    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual(["write"]);
+  });
+
+  it("keeps a member in a destructuring default value a read", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      const source = { count: 1 };
+      let value;
+      [value = source.count] = [];
+    `);
+    expect(ir.objectOperations.map(({ kind }) => kind)).toEqual([
+      "destructure",
+      "read",
+    ]);
+  });
+
   it("does not model a compound binding write as a competing replacement", () => {
     const ir = analyzeJavaScriptSemantics(`
       let count = 1;
@@ -219,6 +284,37 @@ describe("JavaScript semantic analysis: read-modify-write", () => {
     expect(topLevelBinding(ir, "count").value).toMatchObject({
       status: "unknown",
     });
+  });
+});
+
+describe("JavaScript semantic analysis: wrapped binding targets", () => {
+  it("records a wrapped identifier update as a read before a write", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      let count = 1;
+      count! += 1;
+      (count as number)++;
+      const copy = count!;
+    `);
+    expect(
+      ir.references
+        .filter(({ name }) => name === "count")
+        .map(({ role }) => role),
+    ).toEqual(["read", "write", "read", "write", "read"]);
+    expect(topLevelBinding(ir, "count").value).toMatchObject({
+      status: "unknown",
+    });
+  });
+
+  it("records a wrapped identifier assignment as a write of its value", () => {
+    const ir = analyzeJavaScriptSemantics(`
+      let count = 1;
+      count! = 2;
+    `);
+    expect(
+      ir.references
+        .filter(({ name }) => name === "count")
+        .map(({ role }) => role),
+    ).toEqual(["write"]);
   });
 });
 
@@ -251,7 +347,7 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     });
   });
 
-  it("fails closed on assignment ambiguity and alias cycles", () => {
+  it("preserves initializer uncertainty, assignment ambiguity and alias cycles", () => {
     const ambiguous = analyzeJavaScriptSemantics(`
       let current = "first";
       current = "second";
@@ -262,7 +358,8 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
       status: "ambiguous",
     });
     expect(topLevelBinding(ambiguous, "left").value).toMatchObject({
-      status: "cycle",
+      status: "unknown",
+      reason: "Binding right has no proven initializer at this read.",
     });
     expect(topLevelBinding(ambiguous, "right").provenance).toMatchObject({
       status: "cycle",
@@ -316,6 +413,69 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
         bindingId: topLevelBinding(ir, "retained").bindingId,
       }),
     ]);
+  });
+});
+
+describe("JavaScript semantic analysis: mapped arguments writes", () => {
+  const commonJs = (source: string) => {
+    const parsed = parseJavaScriptSource(source, "mapped-arguments.cjs");
+    if (parsed === null) throw new Error("Expected CommonJS fixture to parse");
+    return analyzeParsedJavaScriptSemantics(parsed);
+  };
+  const returnField = (source: string) => {
+    const value = onlyCallable(commonJs(source), "read").returnSites[0]?.value;
+    if (value?.status !== "object")
+      throw new Error("Expected an object return value");
+    const field = value.properties.find(({ name }) => name === "value");
+    if (field === undefined) throw new Error("Expected returned value field");
+    return field.value;
+  };
+
+  it.each([
+    ["direct arguments write", "arguments[0] = 2;"],
+    ["stable arguments alias write", "const args = arguments; args[0] = 2;"],
+    ["array assignment pattern write", "[arguments[0]] = [2];"],
+    [
+      "nested object assignment pattern write",
+      "({ nested: arguments[0] } = { nested: 2 });",
+    ],
+  ])("does not retain a stale literal after a %s", (_name, write) => {
+    expect(
+      returnField(
+        `function read(value) { value = 1; ${write} return { value }; }`,
+      ).status,
+    ).not.toBe("literal");
+  });
+
+  it.each([
+    [
+      "strict function",
+      'function read(value) { "use strict"; value = 1; arguments[0] = 2; return { value }; }',
+    ],
+    [
+      "default parameter",
+      "function read(value = 0) { value = 1; arguments[0] = 2; return { value }; }",
+    ],
+    [
+      "no arguments write",
+      "function read(value) { value = 1; return { value }; }",
+    ],
+  ])("keeps the independent parameter value for a %s", (_name, fn) => {
+    expect(returnField(fn)).toEqual({ status: "literal", value: 1 });
+  });
+
+  it("retains uncertainty when source mode cannot establish sloppy semantics", () => {
+    const parsed = parseJavaScriptSource(
+      "function read(value) { value = 1; arguments[0] = 2; return { value }; }",
+    );
+    if (parsed === null) throw new Error("Expected fixture to parse");
+    const value = onlyCallable(analyzeParsedJavaScriptSemantics(parsed), "read")
+      .returnSites[0]?.value;
+    if (value?.status !== "object")
+      throw new Error("Expected an object return value");
+    expect(
+      value.properties.find(({ name }) => name === "value")?.value.status,
+    ).not.toBe("literal");
   });
 });
 
@@ -458,6 +618,62 @@ describe("nonfinite static values", () => {
 });
 
 describe("binding write invalidation", () => {
+  it.each(["in", "of"])(
+    "retains prototype uncertainty for an empty template in for-%s",
+    (operator) => {
+      const ir = analyzeJavaScriptSemantics(`
+        String.prototype.extra = "possible inherited key";
+        let selected = "before";
+        for (selected ${operator} \`\`) {}
+        const observed = selected;
+      `);
+      expect(
+        topLevelBinding(ir, "selected").definitions.some(
+          ({ kind }) => kind === "assignment",
+        ),
+      ).toBe(true);
+      expect(topLevelBinding(ir, "observed").value.status).not.toBe("literal");
+    },
+  );
+
+  it.each(
+    [
+      { input: '"abc"', empty: false },
+      { input: "`abc`", empty: false },
+      { input: "`\\u0061`", empty: false },
+      { input: '""', empty: true },
+      { input: "``", empty: true },
+      { input: "`\\\n`", empty: true },
+    ].flatMap((literal) =>
+      ["in", "of"].flatMap((operator) =>
+        ["selected", "[selected]"].map((head) => ({
+          ...literal,
+          operator,
+          head,
+        })),
+      ),
+    ),
+  )(
+    "preserves writes for $head $operator $input (empty=$empty)",
+    ({ input, empty, operator, head }) => {
+      const ir = analyzeJavaScriptSemantics(`
+        let selected = "before";
+        for (${head} ${operator} ${input}) {}
+        const observed = selected;
+        export function result() { return observed; }
+      `);
+      expect(
+        topLevelBinding(ir, "selected").definitions.some(
+          ({ kind }) => kind === "assignment",
+        ),
+      ).toBe(!empty);
+      const value = topLevelBinding(ir, "observed").value;
+      if (empty) expect(value).toEqual({ status: "literal", value: "before" });
+      else expect(value).not.toEqual({ status: "literal", value: "before" });
+      expect(onlyCallable(ir, "result").returnSites[0]?.value).toEqual(value);
+    },
+  );
+
   it.each([
     ["let value = 1; value++; const observed = value;", "unknown"],
     ["let value = 1; --value; const observed = value;", "unknown"],

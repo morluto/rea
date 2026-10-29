@@ -7,9 +7,9 @@ import {
   serializeEvidenceBundle,
   type EvidenceBundle,
 } from "./evidenceBundle.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { ResidualUnknown } from "./residualUnknown.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { comparisonStatusSchema } from "./comparisonStatus.js";
 import { localPathStringSchema } from "./localPath.js";
 
@@ -59,16 +59,16 @@ export const bundleComparisonResultSchema = z.object({
   left_bundle_sha256: digestSchema,
   right_bundle_sha256: digestSchema,
   summary: z.object({
-    records_unchanged: z.number().int().min(0),
-    records_added: z.number().int().min(0),
-    records_removed: z.number().int().min(0),
-    records_changed: z.number().int().min(0),
-    unknowns_unchanged: z.number().int().min(0),
-    unknowns_added: z.number().int().min(0),
-    unknowns_removed: z.number().int().min(0),
-    unknowns_advanced: z.number().int().min(0),
-    unknowns_diverged: z.number().int().min(0),
-    unresolved: z.number().int().min(0),
+    records_unchanged: z.int().min(0),
+    records_added: z.int().min(0),
+    records_removed: z.int().min(0),
+    records_changed: z.int().min(0),
+    unknowns_unchanged: z.int().min(0),
+    unknowns_added: z.int().min(0),
+    unknowns_removed: z.int().min(0),
+    unknowns_advanced: z.int().min(0),
+    unknowns_diverged: z.int().min(0),
+    unresolved: z.int().min(0),
   }),
   changes: z.array(bundleChangeSchema),
   limitations: z.array(z.string()),
@@ -78,7 +78,7 @@ export type BundleComparisonResult = z.infer<
   typeof bundleComparisonResultSchema
 >;
 type BundleChange = z.infer<typeof bundleChangeSchema>;
-type RecordPair = z.infer<
+export type BundleRecordPair = z.infer<
   typeof bundleComparisonInputSchema
 >["record_pairs"][number];
 
@@ -86,7 +86,7 @@ type RecordPair = z.infer<
 export const compareBundles = (
   leftInput: unknown,
   rightInput: unknown,
-  recordPairs: readonly RecordPair[] = [],
+  recordPairs: readonly BundleRecordPair[] = [],
 ): BundleComparisonResult => {
   const left = parseEvidenceBundle(leftInput);
   const right = parseEvidenceBundle(rightInput);
@@ -102,11 +102,7 @@ export const compareBundles = (
   ).length;
   return bundleComparisonResultSchema.parse({
     status:
-      leftDigest === rightDigest && changes.length === 0
-        ? "unchanged"
-        : unresolved > 0
-          ? "unknown"
-          : "changed",
+      unresolved > 0 ? "unknown" : changes.length > 0 ? "changed" : "unchanged",
     left_bundle_sha256: leftDigest,
     right_bundle_sha256: rightDigest,
     summary: {
@@ -126,7 +122,7 @@ export const compareBundles = (
 const compareRecords = (
   left: EvidenceBundle,
   right: EvidenceBundle,
-  pairs: readonly RecordPair[],
+  pairs: readonly BundleRecordPair[],
 ) => {
   const leftIds = new Set(left.records.map(({ evidence_id: id }) => id));
   const rightIds = new Set(right.records.map(({ evidence_id: id }) => id));
@@ -134,20 +130,31 @@ const compareRecords = (
   const pairedRight = new Set<string>();
   const changes: BundleChange[] = [];
   let changed = 0;
-  for (const pair of pairs) {
+  for (const [index, pair] of pairs.entries()) {
     if (!leftIds.has(pair.left_evidence_id))
-      throw new TypeError(
+      throw recordPairFailure(
+        index,
+        "left_evidence_id",
         `Explicit pair references missing left evidence ${pair.left_evidence_id}`,
       );
     if (!rightIds.has(pair.right_evidence_id))
-      throw new TypeError(
+      throw recordPairFailure(
+        index,
+        "right_evidence_id",
         `Explicit pair references missing right evidence ${pair.right_evidence_id}`,
       );
-    if (
-      pairedLeft.has(pair.left_evidence_id) ||
-      pairedRight.has(pair.right_evidence_id)
-    )
-      throw new TypeError("Explicit evidence pairs must be one-to-one");
+    if (pairedLeft.has(pair.left_evidence_id))
+      throw recordPairFailure(
+        index,
+        "left_evidence_id",
+        "Explicit evidence pairs must be one-to-one",
+      );
+    if (pairedRight.has(pair.right_evidence_id))
+      throw recordPairFailure(
+        index,
+        "right_evidence_id",
+        "Explicit evidence pairs must be one-to-one",
+      );
     pairedLeft.add(pair.left_evidence_id);
     pairedRight.add(pair.right_evidence_id);
     if (pair.left_evidence_id === pair.right_evidence_id) continue;
@@ -201,6 +208,15 @@ const compareRecords = (
     },
   };
 };
+
+const recordPairFailure = (
+  index: number,
+  field: keyof BundleRecordPair,
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError("compare_bundles", { userMessage: message }, [
+    { path: ["record_pairs", index, field], reason: "invalid_value", message },
+  ]);
 
 const compareUnknowns = (left: EvidenceBundle, right: EvidenceBundle) => {
   const leftHistories = histories(left.unknowns);

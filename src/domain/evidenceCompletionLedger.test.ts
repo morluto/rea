@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createEvidenceCompletionLedger,
-  parseEvidenceCompletionLedger,
+  evidenceCompletionLedgerSchema,
   type EvidenceCompletionStatus,
 } from "./evidenceCompletionLedger.js";
 
@@ -103,13 +103,13 @@ describe("Evidence completion ledger", () => {
       record("scenario.valid", "pass"),
     ]);
     expect(() =>
-      parseEvidenceCompletionLedger({
+      evidenceCompletionLedgerSchema.parse({
         ...ledger,
         summary: { ...ledger.summary, complete: false },
       }),
     ).toThrow();
     expect(() =>
-      parseEvidenceCompletionLedger({
+      evidenceCompletionLedgerSchema.parse({
         ...ledger,
         ledger_id: `ecl_${"0".repeat(64)}`,
       }),
@@ -121,7 +121,7 @@ describe("Evidence completion ledger", () => {
       record("scenario.path-free", "pass"),
     ]);
     expect(() =>
-      parseEvidenceCompletionLedger({
+      evidenceCompletionLedgerSchema.parse({
         ...ledger,
         records: [
           {

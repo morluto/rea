@@ -74,6 +74,11 @@ bridge.exposeInMainWorld("fixture", {
     command: process.execPath,
     args: [entrypoint, "mcp"],
     env: {
+      ...Object.fromEntries(
+        ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY"].flatMap((name) =>
+          process.env[name] === undefined ? [] : [[name, process.env[name]]],
+        ),
+      ),
       PATH: process.env.PATH,
       REA_LOG_LEVEL: "silent",
       HOPPER_LAUNCHER_PATH: "/rea-unconfigured/hopper",
@@ -221,15 +226,21 @@ bridge.exposeInMainWorld("fixture", {
       { name: "capture_electron_scenario", arguments: input },
       { timeout: 150_000 },
     );
-    const capture = active.isError
-      ? requireMcpToolError(active).details.partial_observation.capture
-      : active.structuredContent.normalized_result;
-    if (active.isError) {
+    const activeError = active.isError
+      ? requireMcpToolError(active)
+      : undefined;
+    if (activeError !== undefined)
       assert.equal(
-        requireMcpToolError(active).code,
+        activeError.code,
         "cleanup_incomplete",
-        JSON.stringify(active),
+        JSON.stringify(activeError),
       );
+    const capture =
+      activeError === undefined
+        ? active.structuredContent.normalized_result
+        : activeError.details?.partial_observation?.capture;
+    assert.ok(capture, JSON.stringify(activeError ?? active));
+    if (activeError !== undefined) {
       assert.equal(capture.application.cleanup, "unverified");
     } else {
       assert.ok(

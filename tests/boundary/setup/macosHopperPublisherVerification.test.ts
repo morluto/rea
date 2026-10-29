@@ -6,10 +6,11 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 import {
-  HOPPER_PUBLISHER,
   macHopperInstallDisclosure,
   systemMacHopperInstallHost,
 } from "../../../src/application/MacHopper.js";
+import { verifyMacHopperNativeHelper } from "../../../src/hopper/HopperMacPublisher.js";
+import { HOPPER_PUBLISHER } from "../../../src/domain/hopperPublisher.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const run = promisify(execFile);
@@ -94,6 +95,24 @@ describe("macOS Hopper publisher verification", () => {
     );
   });
 
+  itDarwin(
+    "withholds native-helper provenance from custom signed or modified executables",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-hopper-helper-publisher-",
+      );
+      const app = await buildBundle(root, "hopper");
+      const executable = join(app, ...executableSegments);
+      await expect(
+        verifyMacHopperNativeHelper(executable, process.env),
+      ).resolves.toBe("unknown");
+      await appendFile(executable, "modified\n");
+      await expect(
+        verifyMacHopperNativeHelper(executable, process.env),
+      ).resolves.toBe("unknown");
+    },
+  );
+
   // Opt-in positive control: point this at a mounted official Hopper bundle,
   // for example `hdiutil attach -readonly -nobrowse Hopper-6.6.0-demo.dmg`.
   // It proves the pinned requirement is satisfiable by the real publisher, so
@@ -103,6 +122,12 @@ describe("macOS Hopper publisher verification", () => {
     "accepts the officially signed Hopper application",
     async () => {
       await expect(host().validBundle(realApp ?? "")).resolves.toBe("verified");
+      await expect(
+        verifyMacHopperNativeHelper(
+          join(realApp ?? "", ...executableSegments),
+          process.env,
+        ),
+      ).resolves.toBe("verified");
     },
   );
 });

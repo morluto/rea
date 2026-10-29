@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { firstProcedureAddress } from "../dist/application/RealHopperAssertions.js";
+import { firstProcedureAddress } from "./lib/real-hopper-assertions.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
 import { resolveHopperAnalysisProfile } from "../dist/hopper/HopperAnalysisProfile.js";
 import { HopperApplicationLauncher } from "../dist/hopper/BridgeLauncher.js";
 import { HopperClient } from "../dist/hopper/HopperClient.js";
@@ -26,6 +28,16 @@ const root = await realpath(
   await mkdtemp(join(tmpdir(), "rea-hopper-deadlines-")),
 );
 const target = join(root, "deadline-fixture");
+const profileResources = new ArtifactResourceScope();
+const profileResourceScope = {
+  retain: (owner, resource) =>
+    profileResources.retain({
+      kind: "lease",
+      resource,
+      lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+    }),
+  run: (operation) => profileResources.run(operation),
+};
 let client;
 let primaryFailure;
 try {
@@ -39,6 +51,7 @@ try {
     launcherPath,
     loaderArgsOverride: [],
     provider: HOPPER_PROVIDER_IDENTITY,
+    resourceScope: profileResourceScope,
   });
   if (!resolved.ok) throw resolved.error;
   const profile = resolved.value.profile;
@@ -138,15 +151,28 @@ try {
   primaryFailure = cause;
   throw cause;
 } finally {
+  let cleanupFailure;
   if (client !== undefined) {
     const closed = await client.close();
-    if (!closed.ok)
-      throw primaryFailure === undefined
-        ? closed.error
+    if (!closed.ok) cleanupFailure = closed.error;
+  }
+  try {
+    await profileResources.close();
+  } catch (cause) {
+    cleanupFailure =
+      cleanupFailure === undefined
+        ? cause
         : new AggregateError(
-            [primaryFailure, closed.error],
-            "Hopper verification and cleanup failed",
+            [cleanupFailure, cause],
+            "Hopper profile and client cleanup failed",
           );
   }
   await rm(root, { recursive: true, force: true });
+  if (cleanupFailure !== undefined)
+    throw primaryFailure === undefined
+      ? cleanupFailure
+      : new AggregateError(
+          [primaryFailure, cleanupFailure],
+          "Hopper verification and cleanup failed",
+        );
 }

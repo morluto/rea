@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import * as t from "@babel/types";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
@@ -171,6 +171,34 @@ it("invalidates a bootstrap module slot mutated through an alias", () => {
 });
 
 it.each([
+  [
+    "destructuring assignment",
+    `[table[1]] = [function(module) { module.exports = require("other"); }];`,
+  ],
+  ["for-of head", `for (table[1] of replacements) {}`],
+  [
+    "wrapped assignment",
+    `(table as never)[1] = function(module) { module.exports = require("other"); };`,
+  ],
+])(
+  "invalidates a bootstrap module slot overwritten through %s",
+  (_name, write) => {
+    const values = inspectedValues(`(() => {
+    const modules = {
+      1(module) { module.exports = require("electron"); },
+      2(module, exports, load) { inspect(load(1)); }
+    };
+    const table = modules;
+    function load(id) { const m = {exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    ${write}
+    load(2);
+  })();`);
+    expect(values).toHaveLength(1);
+    expect(values[0]).toEqual(expect.objectContaining({ kind: "unknown" }));
+  },
+);
+
+it.each([
   `const electron=require("electron"); const ipc=electron.ipcMain; ipc.handle=()=>null; inspect(electron.ipcMain.handle);`,
   `require("electron").ipcMain.handle=()=>null; inspect(require("electron").ipcMain.handle);`,
   `const electron=require("electron"); ({ipcMain:electron.ipcMain}=replacement); inspect(electron.ipcMain);`,
@@ -288,6 +316,126 @@ it("does not treat statements after a returned module factory as initialized", (
   expect(result).toMatchObject({ kind: "unknown" });
 });
 
+it("retains the guard on a factory's completed fallthrough activation", () => {
+  const value = inspectOne(`(() => {
+    const modules = {
+      5(module, exports) {
+        { if (flag) return; }
+        const electron = require("electron");
+        exports.read = () => electron;
+      },
+      9(module, exports, load) { inspect(load(5).read()); }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  const electron = symbolicVariants(value).filter(
+    (variant) => variant.kind === "external",
+  );
+  expect(electron).toHaveLength(1);
+  expect(electron[0]).toMatchObject({
+    path: ["electron"],
+    conditions: expect.arrayContaining([
+      {
+        node: expect.objectContaining({ type: "Identifier", name: "flag" }),
+        positive: false,
+      },
+    ]),
+  });
+  expect(
+    symbolicVariants(value).some((variant) => variant.kind === "unknown"),
+  ).toBe(true);
+});
+
+it("shares completed factory control flow across repeated loads within one analysis", () => {
+  const { parsed, resolver } = resolverFor(`(() => {
+    const modules = {
+      5(module, exports) { if (flag) return; exports.value = 42; },
+      9(module, exports, load) { ${"inspect(load(5));".repeat(64)} }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  const evaluated = vi.spyOn(resolver, "evaluate");
+  const results: SymbolicValue[] = [];
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" })
+      )
+        results.push(resolver.evaluate(node.arguments[0]));
+    },
+  });
+  expect(results).toHaveLength(64);
+  expect(
+    results.every((result) =>
+      symbolicVariants(result).every(
+        (variant, index) => variant === symbolicVariants(results[0]!)[index],
+      ),
+    ),
+  ).toBe(true);
+  expect(
+    evaluated.mock.calls.filter(([node]) =>
+      t.isIdentifier(node, { name: "flag" }),
+    ),
+  ).toHaveLength(1);
+  expect(resolver.truncated).toBe(false);
+});
+
+it("bounds predicate expansion across many conditional factory exits", () => {
+  const { resolver, values } = inspectFixture(`(() => {
+    const modules = {
+      5(module, exports) { ${"if (flag) return;".repeat(1_600)} exports.value = 42; },
+      9(module, exports, load) { inspect(load(5)); }
+    };
+    function load(id) { const m={exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(9);
+  })();`);
+  expect(resolver.truncated).toBe(true);
+  expect(values.flatMap(symbolicVariants)).toContainEqual(
+    expect.objectContaining({
+      kind: "unknown",
+      reason: expect.stringContaining("resource limit"),
+    }),
+  );
+});
+
+it("does not borrow an unrelated activation's namespace read boundary", () => {
+  const { parsed, resolver, values } = inspectFixture(`(() => {
+    const modules = {5(module,exports){exports.stop=true;inspect(exports);if(exports.stop)return;}};
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(5);
+  })();`);
+  const namespace = values[0];
+  if (namespace?.kind !== "namespace")
+    throw new Error("namespace fixture missing");
+  let read: t.MemberExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (t.isIfStatement(node) && t.isMemberExpression(node.test))
+        read = node.test;
+    },
+  });
+  if (read === undefined) throw new Error("namespace read fixture missing");
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: namespace.environment,
+    }),
+  ).toMatchObject({ kind: "literal", value: true });
+  expect(
+    resolver.property(namespace, "stop", {
+      node: read,
+      environment: { ...namespace.environment, activation: {} },
+    }),
+  ).toMatchObject({
+    kind: "unknown",
+    reason: "module export read boundary is unavailable",
+  });
+  expect(resolver.truncated).toBe(false);
+});
+
 it("treats known symbolic records and loaders as truthy", () => {
   expect(symbolicTruth({ kind: "record", values: new Map() })).toBe(true);
   expect(symbolicTruth({ kind: "loader", modules: new Map() })).toBe(true);
@@ -359,6 +507,62 @@ it("composes fallthrough guards across successive conditional returns", () => {
     false,
     false,
   ]);
+});
+
+it.each([
+  ["while", 'inspect((() => { while (flag) { return "loop"; } })());'],
+  ["for", 'inspect((() => { for (;;) { return "forever"; } })());'],
+  ["try", 'inspect((() => { try { return "try"; } finally {} })());'],
+  [
+    "switch",
+    'inspect((() => { switch (x) { default: return "switch"; } })());',
+  ],
+])(
+  "keeps unsupported %s return control flow explicitly unknown",
+  (_name, source) => {
+    const value = inspectOne(source);
+    expect(
+      symbolicVariants(value).some((variant) => variant.kind === "unknown"),
+    ).toBe(true);
+    expect(value).not.toEqual({ kind: "literal", value: undefined });
+  },
+);
+
+it("preserves later returns with unresolved conditions after unsupported return flow", () => {
+  const variants = symbolicVariants(
+    inspectOne(`inspect((() => {
+      while (flag) { return "inside"; }
+      return "after";
+    })());`),
+  );
+
+  expect(variants.some((variant) => variant.kind === "unknown")).toBe(true);
+  expect(variants).toContainEqual(
+    expect.objectContaining({
+      kind: "literal",
+      value: "after",
+      conditionUnresolved: true,
+    }),
+  );
+});
+
+it("does not treat loops without owned returns as unknown return flow", () => {
+  expect(
+    inspectOne(`inspect((() => {
+      while (flag) { work(); }
+      return "after";
+    })());`),
+  ).toEqual({ kind: "literal", value: "after" });
+});
+
+it("does not treat nested-function returns as wrapper return flow", () => {
+  expect(
+    inspectOne(`inspect((() => {
+      try { function nested() { return "inner"; } }
+      catch {}
+      return "outer";
+    })());`),
+  ).toEqual({ kind: "literal", value: "outer" });
 });
 
 it("marks return guards unresolved when a nested join cannot be represented", () => {
@@ -437,4 +641,297 @@ it("propagates branch guards through object properties and function calls", () =
       false,
     ]);
   }
+});
+
+it("completes a loaded module past a very large array without stack overflow", () => {
+  const parsed = parseJavaScriptSource(`(() => {
+    const modules = {
+      4(module) {
+        module.exports = { table: [0] };
+        if (module) { return; }
+        return;
+      },
+      8(module, exports, load) { const dep = load(4); inspect(dep); }
+    };
+    function load(id) { const m = {exports:{}}; modules[id](m,m.exports,load); return m.exports; }
+    load(8);
+  })();`);
+  if (parsed === null) throw new Error("symbolic source fixture did not parse");
+  const arrays: t.ArrayExpression[] = [];
+  const bareReturns: t.ReturnStatement[] = [];
+  let inspectCall: t.CallExpression | undefined;
+  traverseJavaScriptAst(parsed.program, {
+    enter: (node) => {
+      if (t.isArrayExpression(node)) arrays.push(node);
+      if (t.isReturnStatement(node) && node.argument == null)
+        bareReturns.push(node);
+      if (
+        t.isCallExpression(node) &&
+        t.isIdentifier(node.callee, { name: "inspect" })
+      )
+        inspectCall = node;
+    },
+  });
+  for (const array of arrays)
+    array.elements = Array.from({ length: 1_000_000 }, () =>
+      t.numericLiteral(0),
+    );
+  const earliestReturn = bareReturns.toSorted(
+    (left, right) => (left.start ?? 0) - (right.start ?? 0),
+  )[0];
+  const inspected = inspectCall?.arguments[0];
+  if (earliestReturn === undefined || inspected === undefined)
+    throw new Error("symbolic source fixture is missing its probes");
+
+  const state = completeSemanticSteps(
+    indexJavaScriptBindingsSteps(parsed.program),
+  );
+  const resolver = new JavaScriptSymbolicBindings(state, parsed.program);
+  const namespace = symbolicVariants(resolver.evaluate(inspected)).find(
+    (variant) => variant.kind === "namespace",
+  );
+  if (namespace?.kind !== "namespace")
+    throw new Error("loaded module namespace missing");
+  expect(namespace.environment.completedAt).toBe(earliestReturn);
+});
+
+it("keeps async call objects truthy and unwraps only awaited results", () => {
+  const values = inspectedValues(`async function flag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(flag() ?? true);
+    inspect(await flag()); inspect(flag() || false);`);
+  expect(values[0]).toMatchObject({
+    kind: "promise",
+    value: { kind: "literal", value: false },
+  });
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(values[2]?.kind).toBe("promise");
+  expect(values[3]).toMatchObject({ kind: "literal", value: false });
+  expect(values[4]?.kind).toBe("promise");
+});
+
+it("does not execute generator bodies to resolve initial calls", () => {
+  const { resolver, values } = inspectFixture(`function* flag(){return false;}
+    async function* asyncFlag(){return false;}
+    inspect(flag()); inspect(!flag()); inspect(asyncFlag()); inspect(flag() ?? false);`);
+  expect(values.map((value) => value.kind)).toEqual([
+    "iterator",
+    "literal",
+    "iterator",
+    "iterator",
+  ]);
+  expect(values[1]).toMatchObject({ kind: "literal", value: false });
+  expect(resolver.unresolved).toBe(false);
+});
+
+it("preserves captured initialization through async and forwarding returns", () => {
+  const { resolver, values } = inspectFixture(`function outer(){
+    const electron=require("electron");
+    async function capture(){return ()=>electron.ipcMain;}
+    return capture();
+  }
+  async function forward(){return outer();}
+  inspect(await forward());`);
+  const fn = values[0];
+  expect(fn?.kind).toBe("function");
+  if (fn?.kind !== "function") throw new Error("awaited closure missing");
+  expect(resolver.evaluate(fn.node.body, resolver.bind(fn, []))).toMatchObject({
+    kind: "external",
+    path: ["electron", "ipcMain"],
+  });
+  expect(fn.origins.length).toBeGreaterThan(0);
+});
+
+it.each([
+  "function* value(){return false;}",
+  "async function value(){return false;}",
+])(
+  "keeps opaque call-result member access explicitly unresolved: %s",
+  (declaration) => {
+    const { resolver, values } = inspectFixture(
+      `${declaration}inspect(value().next);`,
+    );
+    expect(values[0]).toMatchObject({
+      kind: "unknown",
+      reason: expect.stringContaining("members are not modeled"),
+    });
+    expect(resolver.unresolved).toBe(true);
+  },
+);
+
+it.each([
+  ["unknown spread", `{value:require("electron"),...input}`, "unknown"],
+  ["unknown descriptor", `input`, "unknown"],
+  ["negative number spread", `{value:require("electron"),...-1}`, "external"],
+  ["negative bigint spread", `{value:require("electron"),...-1n}`, "external"],
+  [
+    "ordinary method value",
+    `{value(){return require("electron")}}`,
+    "function",
+  ],
+  ["null prototype", `{__proto__:null,value:require("electron")}`, "external"],
+  [
+    "ignored primitive prototype",
+    `{__proto__:0,value:require("electron")}`,
+    "external",
+  ],
+  [
+    "function spread",
+    `{value:require("electron"),...function(){}}`,
+    "external",
+  ],
+  ["regexp spread", `{value:require("electron"),.../x/}`, "external"],
+  [
+    "interpolated string spread",
+    '{value:require("electron"),...`x${input}`}',
+    "external",
+  ],
+  ["empty array spread", `{value:require("electron"),...[]}`, "external"],
+  ["array spread", `{value:require("electron"),...[1]}`, "external"],
+  ["sparse array spread", `{value:require("electron"),...[,1]}`, "external"],
+  [
+    "unknown iterable array spread",
+    `{value:require("electron"),...[...input]}`,
+    "external",
+  ],
+  [
+    "patched defineProperty",
+    `{get:()=>replacement}`,
+    "external",
+    "Object.defineProperty=()=>{};",
+  ],
+  [
+    "literal-return no-op replacement",
+    `{enumerable:true}`,
+    "external",
+    "Object.defineProperty=(_target,_key)=>0;",
+  ],
+  [
+    "successive no-op replacements",
+    `{enumerable:true}`,
+    "external",
+    "Object.defineProperty=()=>{};Object.defineProperty=()=>{};",
+  ],
+  [
+    "literal stub with effectful parameter binding",
+    `{enumerable:true}`,
+    "unknown",
+    "Object.defineProperty=(target=mutate())=>0;",
+  ],
+  [
+    "mixed getter and spread value",
+    `{get:()=>0,...{value:require("electron")}}`,
+    "unknown",
+  ],
+  [
+    "mixed setter and value",
+    `{value:require("electron"),set:()=>{}}`,
+    "unknown",
+  ],
+  [
+    "erased descriptor assertion",
+    `({value:require("electron")} as const)`,
+    "external",
+  ],
+  ["string spread", `{value:require("electron"),..."x"}`, "external"],
+  ["accessor getter", `{get(){return replacement}}`, "unknown"],
+  ["accessor setter", `{set(value){replacement=value}}`, "unknown"],
+  ["absent accessor", `{get:undefined}`, "unknown"],
+  ["unknown key", `{value:require("electron"),[key]:replacement}`, "unknown"],
+  [
+    "getter",
+    `{value:require("electron"),get value(){return replacement}}`,
+    "unknown",
+  ],
+  [
+    "unknown spread may supply accessors",
+    `{...input,value:require("electron")}`,
+    "unknown",
+  ],
+  [
+    "known spread before value",
+    `{...{enumerable:true},value:require("electron")}`,
+    "external",
+  ],
+  ["null spread", `{value:require("electron"),...null}`, "external"],
+  ["undefined spread", `{value:require("electron"),...undefined}`, "external"],
+  ["void spread", `{value:require("electron"),...void 0}`, "external"],
+  [
+    "shadowed undefined",
+    `{value:require("electron"),...undefined}`,
+    "unknown",
+    "const undefined=input;",
+  ],
+  ["unchanged value", `{enumerable:true}`, "external"],
+])(
+  "preserves effective descriptor value uncertainty for %s",
+  (_name, descriptor, kind, setup = "") => {
+    const value = inspectOne(`(() => {
+      const modules = {
+        1(module,exports) {
+          ${setup}
+          exports.api = require("electron");
+          Object.defineProperty(exports,"api",${descriptor});
+        },
+        2(module,exports,load) { inspect(load(1).api); }
+      };
+      function load(id) {const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+      load(2);
+    })();`);
+    expect(value.kind).toBe(kind);
+    if (kind === "external")
+      expect(value).toEqual({ kind: "external", path: ["electron"] });
+  },
+);
+
+it("reads a literal prototype only from its actual prototype setter", () => {
+  expect(
+    inspectOne('inspect(({ordinary:require("electron")}).__proto__);').kind,
+  ).toBe("unknown");
+  expect(
+    inspectOne(
+      'inspect(({__proto__:require("electron"),ordinary:1}).__proto__);',
+    ),
+  ).toEqual({ kind: "external", path: ["electron"] });
+});
+
+it.each(["local", "outer"])(
+  "does not resurrect an export when the intrinsic changes %s after replacement",
+  (position) => {
+    const value = inspectOne(`(() => {
+    const modules = {
+      1(module,exports) {
+        exports.api = require("electron");
+        Object.defineProperty(exports,"api",{value:null});
+        ${position === "local" ? "Object.defineProperty=()=>{};" : ""}
+      },
+      2(module,exports,load) {inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}
+    load(2);
+    ${position === "outer" ? "Object.defineProperty=()=>{};" : ""}
+  })();`);
+    expect(value.kind).not.toBe("external");
+  },
+);
+
+it("does not preserve a sender through a possibly mutating intrinsic replacement", () => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){exports.api=require("electron");Object.defineProperty=(target,key)=>{target[key]=null;};Object.defineProperty(exports,"api",{value:require("electron")});},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}load(2);
+  })();`);
+  expect(value.kind).toBe("unknown");
+});
+
+it("keeps a possibly repeated factory's native descriptor value unknown", () => {
+  const value = inspectOne(`(() => {
+    const modules={
+      1(module,exports){exports.api=null;Object.defineProperty(exports,"api",{value:require("electron")});Object.defineProperty=()=>{};},
+      2(module,exports,load){inspect(load(1).api);}
+    };
+    function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}load(2);
+  })();`);
+  expect(value.kind).toBe("unknown");
 });

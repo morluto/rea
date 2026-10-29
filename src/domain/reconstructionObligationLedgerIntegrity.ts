@@ -1,5 +1,6 @@
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJson } from "./comparisonSemantics.js";
+import { evidenceAuthoritySchema } from "./evidence.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import type {
@@ -49,6 +50,12 @@ export const summarizeReconstructionObligations = (
   ),
   by_evidence_authority: countBy(
     obligations,
+    evidenceAuthoritySchema.options,
+    ({ authority_references: references }) =>
+      references.map(({ authority }) => authority),
+  ),
+  by_source_state: countBy(
+    obligations,
     ["candidate", "observed", "reviewed", "unknown"],
     ({ source_state }) => source_state,
   ),
@@ -67,7 +74,8 @@ export const reconstructionObligationLedgerStatus = (
     requiredOpen.some(
       ({ status, diagnostics }) =>
         status === "contradicted" ||
-        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed"),
+        hasReconstructionObligationDiagnostic(diagnostics, "verifier-failed") ||
+        hasReconstructionObligationDiagnostic(diagnostics, "fixture-failed"),
     )
   )
     return "failed";
@@ -201,12 +209,19 @@ export const reconstructionObligationLedgerClosureDigest = (ledger: {
     "Reconstruction obligation ledger",
   );
 
+/** Count items per key; an item counts once under each distinct key it has. */
 const countBy = <Value extends string, Item>(
   items: readonly Item[],
   values: readonly Value[],
-  valueFor: (item: Item) => Value,
-): { key: Value; count: number }[] =>
-  values.map((value) => ({
-    key: value,
-    count: items.filter((item) => valueFor(item) === value).length,
-  }));
+  valuesFor: (item: Item) => Value | readonly Value[],
+): { key: Value; count: number }[] => {
+  const counts = new Map<Value, number>();
+  for (const item of items) {
+    const itemValues = valuesFor(item);
+    for (const value of new Set(
+      typeof itemValues === "string" ? [itemValues] : itemValues,
+    ))
+      counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return values.map((value) => ({ key: value, count: counts.get(value) ?? 0 }));
+};

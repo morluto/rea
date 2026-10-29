@@ -1,12 +1,11 @@
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import canonicalize from "canonicalize";
 import { describe, expect } from "vitest";
 
-import {
-  createHistoricalSourceManifest,
-  parseHistoricalSourceGraph,
-} from "../../../src/domain/referenceSourceGraph.js";
+import { parseHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -39,14 +38,45 @@ describe.skipIf(process.platform === "win32")(
         const complete = await run();
         expect(complete.exitCode).toBe(0);
         const graph = parseHistoricalSourceGraph(complete.json);
+        const graphJson = canonicalize(graph);
+        if (graphJson === undefined)
+          throw new TypeError("Unserializable complete graph");
+        const expectedSemantic = {
+          schema: "HistoricalSourceManifest",
+          authority: "historical-reference",
+          graph_sha256: createHash("sha256").update(graphJson).digest("hex"),
+          root_sha256: graph.root_sha256,
+          inventory_state: graph.inventory_state,
+          entry_count: 7,
+          relationship_count: 1,
+        };
+        const semanticJson = canonicalize(expectedSemantic);
+        if (semanticJson === undefined)
+          throw new TypeError("Unserializable manifest semantics");
+        const expectedManifest = {
+          ...expectedSemantic,
+          manifest_id: `hsm_${createHash("sha256").update(semanticJson).digest("hex")}`,
+        };
         expect((await run("--detail", "full")).stdout).toBe(complete.stdout);
-        for (const depth of [undefined, 0, 1, 10]) {
+        for (const { depth, token } of [
+          { depth: undefined, token: undefined },
+          { depth: 0, token: "0" },
+          { depth: 1, token: "1" },
+          { depth: 2, token: "2" },
+          { depth: 2, token: "02" },
+          { depth: 10, token: "10" },
+          {
+            depth: Number.MAX_SAFE_INTEGER,
+            token: String(Number.MAX_SAFE_INTEGER),
+          },
+        ]) {
           const result = await run(
             "--detail",
             "summary",
-            ...(depth === undefined ? [] : ["--outline-depth", String(depth)]),
+            ...(token === undefined ? [] : ["--outline-depth", token]),
           );
           expect(result.exitCode).toBe(0);
+          expect(result.json).toHaveProperty("manifest", expectedManifest);
           const selected = graph.entries.filter(
             (entry) => entry.path.split("/").length <= (depth ?? 2),
           );
@@ -54,7 +84,6 @@ describe.skipIf(process.platform === "win32")(
             schema: "HistoricalSourceSummary",
             authority: graph.authority,
             root_alias: graph.root_alias,
-            manifest: createHistoricalSourceManifest(graph),
             inventory_state: graph.inventory_state,
             provenance: graph.provenance,
             vcs: graph.vcs,
@@ -137,12 +166,55 @@ describe("compiled historical-source summary input boundaries", () => {
     },
   );
 
+  for (const [label, options] of [
+    ["--outline-depth=", ["--detail", "summary", "--outline-depth="]],
+    [
+      "an empty outline-depth argument",
+      ["--detail", "summary", "--outline-depth", ""],
+    ],
+    ...[
+      " ",
+      "\t",
+      "1\n",
+      "0x1",
+      "0b1",
+      "1e0",
+      "+1",
+      "1.0",
+      "-0",
+      "-1",
+      "1.5",
+      "NaN",
+      "9007199254740992",
+    ].map((value) => [
+      JSON.stringify(value),
+      ["--detail", "summary", "--outline-depth", value],
+    ]),
+  ] as const) {
+    cliTest(`rejects ${label} as an outline depth`, async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-reference-summary-input-",
+      );
+      const result = await cli.run({
+        arguments: ["import-reference-source", root, ...options, "--json"],
+        cwd: root,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: expect.arrayContaining([
+          expect.objectContaining({
+            path: expect.stringContaining("outlineDepth"),
+          }),
+        ]),
+      });
+      expect(result.stdout).not.toContain("HistoricalSourceGraph");
+      expect(result.stdout).not.toContain("HistoricalSourceSummary");
+    });
+  }
+
   for (const options of [
     ["--detail", "summry"],
-    ["--detail", "summary", "--outline-depth", "-1"],
-    ["--detail", "summary", "--outline-depth", "1.5"],
-    ["--detail", "summary", "--outline-depth", "NaN"],
-    ["--detail", "summary", "--outline-depth", "9007199254740992"],
     ["--outline-depth", "1"],
     ["--detail", "full", "--outline-depth", "1"],
   ]) {
