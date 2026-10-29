@@ -176,7 +176,10 @@ it("rejects unrequested bodies and a document for a different input", async () =
   };
   expect(await parseKunaCallGraph(wire(body), input)).toMatchObject({
     ok: false,
-    error: { reason: "functions row codeC must be null" },
+    error: {
+      reason: "row_must_be_null",
+      diagnostics: { member: "functions", field: "codeC" },
+    },
   });
 });
 

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { compareKunaAddresses } from "./KunaAddress.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 import { parseKunaJson } from "./KunaJson.js";
 import { KunaJsonDocumentReader, parseKunaRow } from "./KunaJsonStream.js";
 
@@ -149,7 +150,7 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     }
     const node = parseKunaRow(graphNode, "graph function", fields);
     if (this.#nodes.has(node.address))
-      throw new Error("graph repeats a function address");
+      throw new KunaDocumentError("repeated_function");
     this.#nodes.set(node.address, node);
     this.#hasIndirectCalls ||= node.hasIndirectCalls;
   }
@@ -174,12 +175,12 @@ export class KunaCallGraphReader extends KunaJsonDocumentReader<KunaCallGraph> {
     const { callerAddress: caller, calleeAddress: callee } = edge;
     this.#edgeCount += 1;
     const targets = this.#targets.get(caller) ?? new Set<string>();
-    if (targets.has(callee)) throw new Error("graph repeats an edge");
+    if (targets.has(callee)) throw new KunaDocumentError("repeated_edge");
     targets.add(callee);
     this.#targets.set(caller, targets);
     const order = this.#orders.get(caller) ?? new Set<number>();
     if (order.has(edge.calleeOrder))
-      throw new Error("graph repeats a callee order");
+      throw new KunaDocumentError("repeated_callee_order");
     order.add(edge.calleeOrder);
     this.#orders.set(caller, order);
     if (edge.kind !== "call") return;
@@ -259,13 +260,13 @@ export const parseKunaIncomingReferences = (
       document.target.address !== target ||
       document.target.address_hex !== target
     )
-      throw new Error("xref document names a different input or target");
+      throw new KunaDocumentError("xref_identity");
     if (document.count !== document.xrefs.length)
-      throw new Error("xref count disagrees with examined rows");
+      throw new KunaDocumentError("xref_count");
     const aliases = new Set([target]);
     for (const alias of document.target.aliases) {
       if (alias.address !== alias.address_hex)
-        throw new Error("xref alias address disagrees with its hex field");
+        throw new KunaDocumentError("xref_alias_hex");
       aliases.add(alias.address);
     }
     const addresses = new Set<string>();
@@ -278,16 +279,12 @@ export const parseKunaIncomingReferences = (
         row.from_address !== row.from_address_hex ||
         row.to_address !== row.to_address_hex
       )
-        throw new Error(
-          "xref endpoints disagree with numeric or directional fields",
-        );
+        throw new KunaDocumentError("xref_endpoints");
       for (const fn of [row.from_function, row.to_function])
         if (fn !== null && fn.address !== fn.address_hex)
-          throw new Error("xref function address disagrees with its hex field");
+          throw new KunaDocumentError("xref_function_hex");
       if (!aliases.has(row.to_address))
-        throw new Error(
-          "xref row targets neither the requested address nor an advertised alias",
-        );
+        throw new KunaDocumentError("xref_target");
       if (row.to_address === target) addresses.add(row.from_address);
       else excludedAliasRows += 1;
     }
