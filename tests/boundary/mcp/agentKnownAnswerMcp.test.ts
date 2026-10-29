@@ -382,7 +382,7 @@ const assertNotesAnswerFailures = (
       patch: {
         value: {
           paths: ["csv.js", "main.js", "preload.js", "renderer.js"],
-          coverage: "complete-within-source",
+          coverage: "partial",
         },
       },
       failure: "value_mismatch",
