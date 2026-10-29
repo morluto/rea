@@ -15,19 +15,23 @@ const decodeOptions = {
   allowUndefined: false,
   allowInfinity: false,
   allowNaN: false,
-  rejectDuplicateMapKeys: true,
+  rejectDuplicateMapKeys: false,
   retainStringBytes: true,
 } as const;
 
 /** Bound recursive decoder entry before collection interpretation/allocation. */
 class BoundedMetadataTokenizer extends Tokenizer {
   readonly remaining: number[] = [];
+  readonly #mapKeys: Array<Set<string> | undefined> = [];
   constructor(bytes: Uint8Array) {
     super(bytes, decodeOptions);
   }
 
   override next(): Token {
-    while (this.remaining.at(-1) === 0) this.remaining.pop();
+    while (this.remaining.at(-1) === 0) {
+      this.remaining.pop();
+      this.#mapKeys.pop();
+    }
     const token = super.next();
     if (
       Type.equals(token.type, Type.tag) ||
@@ -43,7 +47,20 @@ class BoundedMetadataTokenizer extends Tokenizer {
         throw new EvmAdmissionError("text_bytes_unavailable");
     }
     const parent = this.remaining.length - 1;
+    const mapKeys = parent >= 0 ? this.#mapKeys[parent] : undefined;
+    const onKey =
+      mapKeys !== undefined && parent >= 0 && this.remaining[parent]! % 2 === 0;
     if (parent >= 0) this.remaining[parent]!--;
+    if (
+      onKey &&
+      mapKeys !== undefined &&
+      !Type.equals(token.type, Type.map) &&
+      !Type.equals(token.type, Type.array)
+    ) {
+      const identity = keyIdentity(token.value);
+      if (mapKeys.has(identity)) throw repeatedMapKey(identity);
+      mapKeys.add(identity);
+    }
     if (
       Type.equals(token.type, Type.map) ||
       Type.equals(token.type, Type.array)
@@ -63,6 +80,9 @@ class BoundedMetadataTokenizer extends Tokenizer {
         throw new EvmAdmissionError("nesting_exceeds_profile", {
           max_depth: MAX_DEPTH,
         });
+      this.#mapKeys.push(
+        Type.equals(token.type, Type.map) ? new Set() : undefined,
+      );
       this.remaining.push(children);
     }
     return token;
@@ -96,19 +116,21 @@ const keyIdentity = (value: unknown): string => {
   return JSON.stringify(scalar(value));
 };
 
+const repeatedMapKey = (identity: string): EvmAdmissionError =>
+  new EvmAdmissionError(
+    "repeated_map_key",
+    identity.length <= 128
+      ? { key: identity }
+      : { key_length: identity.length },
+  );
+
 /** Check every map boundary, even when nested values remain uninterpreted. */
 const validateMapKeys = (value: unknown): void => {
   if (value instanceof Map) {
     const seen = new Set<string>();
     for (const [key, item] of value) {
       const identity = keyIdentity(key);
-      if (seen.has(identity))
-        throw new EvmAdmissionError(
-          "repeated_map_key",
-          identity.length <= 128
-            ? { key: identity }
-            : { key_length: identity.length },
-        );
+      if (seen.has(identity)) throw repeatedMapKey(identity);
       seen.add(identity);
       validateMapKeys(key);
       validateMapKeys(item);
@@ -135,14 +157,6 @@ const solidityFailure = (
         code: cause.code,
         ...(cause.detail === undefined ? {} : { detail: cause.detail }),
       },
-    };
-  if (
-    cause instanceof Error &&
-    cause.message.startsWith("CBOR decode error: found repeat map key")
-  )
-    return {
-      diagnostic: "repeated_map_key",
-      admission: { code: "repeated_map_key" },
     };
   return {
     diagnostic: (cause instanceof Error ? cause.message : String(cause)).slice(

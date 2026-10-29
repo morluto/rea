@@ -96,7 +96,11 @@ it.each([
       expect(metadata.compiler_version).toBeNull();
       expect(metadata.diagnostic).toBe("repeated_map_key");
       expect(metadata.admission).toMatchObject({ code: "repeated_map_key" });
-      if (kind === "duplicate nested byte keys")
+      if (kind === "duplicate nested text keys")
+        expect(metadata.admission?.detail).toEqual({
+          key: JSON.stringify({ kind: "text", value: "a" }),
+        });
+      else
         expect(
           metadata.admission?.detail?.key ??
             metadata.admission?.detail?.key_length,
