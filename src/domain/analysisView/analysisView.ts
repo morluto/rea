@@ -290,26 +290,6 @@ const retain = (
   project: RetainedViewProjector,
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
-/**
- * IL2CPP and Android symbol tests pass fresh rows with fields outside
- * AdmittedView. The request schema already admitted the view; only the
- * result is checked here.
- */
-const retainRecord = (
-  operation: string,
-  project: (
-    parent: AnalysisViewParent,
-    view: { readonly kind: string } & Record<string, unknown>,
-  ) => Result<UnsignedAnalysisView, AnalysisError>,
-): readonly [string, RetainedViewProjector] => [
-  operation,
-  (parent, view) =>
-    project(
-      parent,
-      view as { readonly kind: string } & Record<string, unknown>,
-    ),
-];
-
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
@@ -335,12 +315,12 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_managed_artifact", projectManagedArtifactView),
   retain("inspect_managed_members", projectManagedMemberView),
   retain("inspect_android_package", projectAndroidPackageView),
-  retainRecord("inspect_android_class", projectAndroidSymbolSummary),
-  retainRecord("inspect_android_method", projectAndroidSymbolSummary),
+  retain("inspect_android_class", projectAndroidSymbolSummary),
+  retain("inspect_android_method", projectAndroidSymbolSummary),
   retain("inspect_android_jni_bindings", projectAndroidJniView),
   retain("capture_browser_scenario", projectBrowserScenarioView),
   retain("inspect_dart_aot", projectDartAotView),
-  retainRecord("inspect_il2cpp_metadata", projectIl2cppMetadataView),
+  retain("inspect_il2cpp_metadata", projectIl2cppMetadataView),
   retain("inspect_apk_signature", projectApkSignatureView),
   retain("inspect_model_artifact", projectModelArtifactView),
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),

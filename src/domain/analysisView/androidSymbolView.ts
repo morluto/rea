@@ -53,12 +53,9 @@ const boundedSummary = <View extends { readonly parent_evidence_id: string }>(
 /** Reuse authenticated Android facts without reopening the APK, mapping or engine. */
 export const projectAndroidSymbolSummary = (
   parent: AnalysisViewParent,
-  admitted: { readonly kind: string } & Record<string, unknown>,
+  admitted: AdmittedView,
 ) => {
-  const view = ownedView<SummaryAnalysisView>(
-    admitted as AdmittedView,
-    "summary",
-  );
+  const view = ownedView<SummaryAnalysisView>(admitted, "summary");
   if (view === undefined)
     return err(
       analysisViewInputError([

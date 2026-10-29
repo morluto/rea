@@ -520,11 +520,11 @@ const selection = (view: Request, report: Report) => {
 /** Reuse retained facts; source indices stay distinct from filtered page offsets. */
 export const projectIl2cppMetadataView = (
   parent: AnalysisViewParent,
-  admitted: { readonly kind: string } & Record<string, unknown>,
+  admitted: AdmittedView,
 ) => {
   const view = ownedView<
     SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
-  >(admitted as AdmittedView, "summary", "il2cpp-metadata");
+  >(admitted, "summary", "il2cpp-metadata");
   if (view === undefined)
     return err(
       analysisViewInputError([
