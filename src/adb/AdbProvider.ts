@@ -409,9 +409,6 @@ const syncStagedAdbFile = async (
   if (primary !== undefined) throw primary;
 };
 
-type ClientIdentity = AdbClientResult;
-type ProviderIdentity = AdbProviderIdentity;
-
 /** Materialize the caller's output directory, refusing existing files inside. */
 const prepareOutputDirectory = async (
   operation: string,
@@ -1342,7 +1339,7 @@ export class AdbProvider {
       );
     }
     const client = clientIdentityResult(selection, identity);
-    const provider: ProviderIdentity = {
+    const provider: AdbProviderIdentity = {
       ...ADB_PROVIDER_IDENTITY,
       version: identity.version,
     };
@@ -1877,8 +1874,8 @@ export class AdbProvider {
   private async pullPackage(
     operation: "pull_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly package: string;
@@ -2274,8 +2271,8 @@ export class AdbProvider {
   private async pullFile(
     operation: "pull_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly device_path: string;
@@ -2371,8 +2368,8 @@ export class AdbProvider {
   private async pushFile(
     operation: "push_adb_file",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly local_path: string;
@@ -2580,8 +2577,8 @@ export class AdbProvider {
   private async installPackage(
     operation: "install_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly apk_path: string;
@@ -2681,8 +2678,8 @@ export class AdbProvider {
   private async uninstallPackage(
     operation: "uninstall_adb_package",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -2748,8 +2745,8 @@ export class AdbProvider {
   private async startApp(
     operation: "start_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -2804,8 +2801,8 @@ export class AdbProvider {
   private async startActivity(
     operation: "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: {
       readonly serial: string;
       readonly action: string;
@@ -2866,8 +2863,8 @@ export class AdbProvider {
   private async runAmStart(
     operation: "start_adb_app" | "start_adb_activity",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     serial: string,
     arguments_: readonly string[],
     resultFields: Record<string, unknown>,
@@ -2956,8 +2953,8 @@ export class AdbProvider {
   private async stopApp(
     operation: "stop_adb_app",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -2990,8 +2987,8 @@ export class AdbProvider {
   private async captureScreen(
     operation: "capture_adb_screen",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
@@ -3116,8 +3113,8 @@ export class AdbProvider {
   private async collectBugreport(
     operation: "collect_adb_bugreport",
     selection: AdbBinarySelection,
-    client: ClientIdentity,
-    provider: ProviderIdentity,
+    client: AdbClientResult,
+    provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
