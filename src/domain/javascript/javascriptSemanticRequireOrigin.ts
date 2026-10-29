@@ -14,13 +14,18 @@ import { javaScriptRuntimeContext } from "./javascriptSourceParser.js";
 import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
-  isUnmodifiedCommonJsWrapperBinding,
-  commonJsWrapperBindingDeclaration,
   semanticResolutionBlocked,
   semanticStableInitializer,
-  semanticBindingHasPriorValueWrite,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
+import {
+  commonJsWrapperBindingDeclaration,
+  isUnmodifiedCommonJsWrapperBinding,
+  semanticBindingAtRead,
+  semanticBindingHasPriorValueWrite,
+  semanticEffectTiming,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   semanticStaticPropertyKey,
   semanticMemberChain,
@@ -31,11 +36,6 @@ import {
   staticSourceRelativeUrlPath,
   stringValue,
 } from "./javascriptStaticAnalysisHelpers.js";
-import {
-  semanticEffectTiming,
-  semanticBindingAtRead,
-  semanticTopLevelEffectFollowsCapture,
-} from "./javascriptSemanticMutationInitializers.js";
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
@@ -54,21 +54,19 @@ import {
 } from "./javascriptSemanticAliasSelections.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
+  semanticRequireOriginReaders,
+  type JavaScriptRequireLoaderFact,
+  type JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
+import {
   isUnmodifiedGlobalReference,
   isUnmodifiedImportMetaUrl,
 } from "./javascriptSemanticAmbientWrites.js";
 
-export interface JavaScriptRequireOrigin {
-  readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
-}
-
-export type JavaScriptRequireLoaderFact =
-  | "commonjs-loader"
-  | "factory-loader"
-  | "create-require"
-  | "local"
-  | "unknown";
+export type {
+  JavaScriptRequireLoaderFact,
+  JavaScriptRequireOrigin,
+} from "./javascriptSemanticRequireOriginSlot.js";
 
 const possibleCommonJsDelegateWriteStates =
   new WeakSet<JavaScriptSemanticAnalysisState>();
@@ -1661,3 +1659,6 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
     ? { specifier, path }
     : undefined;
 };
+
+semanticRequireOriginReaders.origin = semanticRequireOrigin;
+semanticRequireOriginReaders.loader = semanticRequireLoaderAt;
