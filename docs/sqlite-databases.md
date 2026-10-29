@@ -204,10 +204,14 @@ tests. Directory-based selection includes new SQLite service and boundary
 tests automatically. `npm run test:sqlite:run` runs the same cases when the
 compiled runtime and generated test artifacts are already current.
 
-The reusable SQLite CI workflow consumes the shared build artifact and tests
-the latest Node 22.x unavailable-runtime diagnostics, the minimum supported
-24.15.0 release, and the latest 24.x and 26.x releases. The repository-pinned
-runtime also runs the full suite. CI's required gate waits for every selected
+The reusable SQLite CI workflow (`.github/workflows/sqlite-runtime.yml`)
+consumes the shared build artifact and tests the latest Node 22.x release for
+unavailable-runtime diagnostics, the repository-pinned Node 24 release from
+`.nvmrc`, and the latest 24.x and 26.x releases at or above the workflow's
+security floors. The pinned release also runs the full suite. The pinned
+release is the lowest Node 24 release CI tests; the native SQLite API minimum
+stated above is older than REA's supported Node 24 floor and has no CI lane.
+CI's required gate waits for every selected
 SQLite matrix job; a failed, cancelled, skipped or missing selected lane blocks
 the gate. Workflow changes themselves select the build and compatibility lane.
 

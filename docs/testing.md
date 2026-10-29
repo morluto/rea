@@ -935,8 +935,9 @@ memory usage, or billing. Step names identify samples, not complete transfer
 costs. Its queue, execution, and failures are independent of the required gate
 and publication. CPU time and peak process-family memory are not measured by this API.
 
-The build job saves portable Turbo outputs across runs. Eight Linux real-system
-lanes reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
+The build job saves portable Turbo outputs across runs. The Linux real-system
+lanes that `ci.yml` calls with `build_cache_artifact: rea-build-cache` reuse
+its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
 derives its key from `test:prepare --dry=json` task hashes, runner OS and
 architecture, `.npmrc`, `.nvmrc`, and the lockfile; test-only changes can reuse compiled outputs. Every
 build and verification command still runs, so Turbo checks task inputs and
@@ -1847,7 +1848,7 @@ Portable owner-based test selection remains observational. Its reports compare
 proposed omissions with the full run; incomplete or skipped observations do not
 establish that fewer tests would preserve regression detection.
 
-The nine automatic browser, binary-layout, EVM, JavaScript-recovery,
+The automatic browser, binary-layout, EVM, APK-signature, JavaScript-recovery,
 recorded-crash, web and environment-bundle provider lanes download
 `rea-build-cache` from their own run after the build and static jobs succeed. Their existing build commands still
 validate task hashes and rebuild mismatched inputs; provider observations always
