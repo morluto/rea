@@ -483,6 +483,68 @@ describe("later initializer mutation proof", () => {
     expect(result.parse_status).toBe("partial");
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
+
+  it("keeps the unknown when a safe argument inherits a loader member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      Object.prototype.load = require;
+      function register() {
+        late({})("electron").ipcMain.on("ping", () => {});
+      }
+      var late = value => value.load;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a destructuring projection inherits a loader", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      Object.prototype.load = require;
+      function register() {
+        load("electron").ipcMain.on("x", () => {});
+      }
+      var { load } = {};
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when a late function reads a loader through super", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      Object.prototype.r = require;
+      function register() {
+        load().ipcMain.on("x", () => {});
+      }
+      var load = ({ m() { return super.r(name); } }).m;
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when an ambient value receives a loader member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      String.load = require;
+      function register() {
+        load().ipcMain.on("x", () => {});
+      }
+      var load = () => String.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
 });
 
 describe("later initializer literal prototype proof", () => {
