@@ -24,6 +24,11 @@ it.each([
   ["a string execFile args slot", `execFile("git", "status")`],
   ["a string fork args slot", `fork("worker.js", "status")`],
   ["a string fork options slot", `fork("worker.js", [], "pipe")`],
+  ["a BigInt options slot", `spawn("git", [], 0n)`],
+  ["a negated-zero options slot", `spawn("git", [], -0)`],
+  ["an overflowing numeric options slot", `spawn("git", [], 1e400)`],
+  ["a negated numeric options slot", `spawn("git", [], -5)`],
+  ["a BigInt args slot", `spawn("git", 0n)`],
 ] as const)("emits no child-process fact for %s", (_name, call) => {
   expect(spawnsFor(call)).toEqual([]);
 });

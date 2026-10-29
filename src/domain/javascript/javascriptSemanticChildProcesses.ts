@@ -502,9 +502,22 @@ const rejectsOptionsShape = (
   const value = unwrapJavaScriptExpression(options).node;
   if (context.isArray(value)) return true;
   const literal = readExactJavaScriptLiteral(value);
-  return (
-    literal.found && !(candidate.method !== "spawn" && literal.value === null)
-  );
+  if (literal.found)
+    return !(candidate.method !== "spawn" && literal.value === null);
+  return isUnpricedPrimitiveLiteral(value);
+};
+
+/**
+ * The exact-value reader deliberately refuses to price a BigInt, a non-finite
+ * numeric literal such as `1e400`, and a negated numeric literal such as `-0`.
+ * All are primitive literals, so Node's options check rejects them the same way;
+ * read the shape directly here rather than widening the shared reader.
+ */
+const isUnpricedPrimitiveLiteral = (value: t.Node): boolean => {
+  if (t.isNumericLiteral(value) || t.isBigIntLiteral(value)) return true;
+  if (!t.isUnaryExpression(value)) return false;
+  const argument = unwrapJavaScriptExpression(value.argument).node;
+  return t.isNumericLiteral(argument) || t.isBigIntLiteral(argument);
 };
 
 /**
