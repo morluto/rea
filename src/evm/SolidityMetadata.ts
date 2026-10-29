@@ -186,9 +186,12 @@ export const inspectSolidityMetadata = (
       compiler_version: null,
       diagnostic: (cause instanceof EvmAdmissionError
         ? cause.code
-        : cause instanceof Error
-          ? cause.message
-          : String(cause)
+        : cause instanceof Error &&
+            cause.message.startsWith("CBOR decode error: found repeat map key")
+          ? "repeated_map_key"
+          : cause instanceof Error
+            ? cause.message
+            : String(cause)
       ).slice(0, 512),
     };
   }

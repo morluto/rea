@@ -94,7 +94,7 @@ it.each([
     if (kind.startsWith("duplicate nested")) {
       expect(metadata.entries).toEqual([]);
       expect(metadata.compiler_version).toBeNull();
-      expect(metadata.diagnostic).toContain("repeat map key");
+      expect(metadata.diagnostic).toBe("repeated_map_key");
       expect(metadata.bytecode_offset).toBe(1);
       expect(metadata.cbor_bytes).toBe(19);
     }
