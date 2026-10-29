@@ -1,6 +1,36 @@
 import { describe, expect, it } from "vitest";
 
-import { isProjectScopedAmpRegistration } from "../../../src/cliBuiltinArguments.js";
+import {
+  classifyMcpAddDiscovery,
+  isProjectScopedAmpRegistration,
+} from "../../../src/cliBuiltinArguments.js";
+
+describe("mcp add discovery classification", () => {
+  it("bypasses help and listing flags", () => {
+    for (const flag of ["--help", "-h", "--llms", "--llms-full"]) {
+      expect(classifyMcpAddDiscovery(new Set([flag]))).toBe("bypass");
+    }
+  });
+
+  it("answers version and schema inside the mcp add special-casing", () => {
+    expect(classifyMcpAddDiscovery(new Set(["--version"]))).toBe("version");
+    expect(classifyMcpAddDiscovery(new Set(["--schema"]))).toBe("schema");
+  });
+
+  it("keeps routing precedence when several discovery flags combine", () => {
+    expect(classifyMcpAddDiscovery(new Set(["--help", "--version"]))).toBe(
+      "bypass",
+    );
+    expect(classifyMcpAddDiscovery(new Set(["--version", "--schema"]))).toBe(
+      "version",
+    );
+  });
+
+  it("returns undefined for real registrations", () => {
+    expect(classifyMcpAddDiscovery(new Set(["--json"]))).toBeUndefined();
+    expect(classifyMcpAddDiscovery(new Set())).toBeUndefined();
+  });
+});
 
 describe("project-scoped Amp registration guard", () => {
   it("flags explicit Amp targets under --no-global", () => {
