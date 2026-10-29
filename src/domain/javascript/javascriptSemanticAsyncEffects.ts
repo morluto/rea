@@ -286,10 +286,48 @@ const emitterIdentity = (
   };
 };
 
+/**
+ * A timer schedule requires a function in argument 0. Node validates it before
+ * creating a handle, so a provable literal that is not a function throws
+ * ERR_INVALID_ARG_TYPE synchronously and no timer exists. Only literals the
+ * analyzer can read exactly are decided; an identifier or call may still be a
+ * function at runtime.
+ */
+const schedulesWithNonFunctionCallback = (node: t.Node): boolean => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const argument = node.arguments[0];
+  // No argument at all cannot be a function. A spread may still expand to one.
+  if (argument === undefined) return true;
+  if (t.isSpreadElement(argument)) return false;
+  const value = unwrapJavaScriptExpression(argument).node;
+  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+    return false;
+  if (
+    t.isStringLiteral(value) ||
+    t.isNumericLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isNullLiteral(value) ||
+    t.isTemplateLiteral(value) ||
+    t.isArrayExpression(value) ||
+    t.isObjectExpression(value)
+  )
+    return true;
+  // A class passes Node's own typeof check; invoking it is a separate failure,
+  // so the schedule itself still happens.
+  return t.isUnaryExpression(value) && value.operator === "void";
+};
+
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
   const method = timerMethod(node.callee, state);
   if (method === null) return;
+  if (
+    TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
+    schedulesWithNonFunctionCallback(node)
+  )
+    return;
   const kind = TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method)
     ? "schedule"
     : "cancel";
