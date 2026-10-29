@@ -62,6 +62,10 @@ import { createAnalysisExecution } from "../application/AnalysisProvider.js";
 import { AnalysisSnapshotCache } from "../application/binary/AnalysisSnapshotCache.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
+import {
+  admittedRawLoad,
+  rawLoadAtEntry,
+} from "../domain/rawBinary.fixture.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
 afterEach(() => vi.restoreAllMocks());
@@ -423,8 +427,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "6502",
       availableArchitectures: ["6502"],
-      entryPoint: "0x8001",
-      entryPointSource: "0x008001",
+      rawLoad: rawLoadAtEntry("0x008001"),
     };
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
     const resolved = await ghidra.resolveAnalysisProfile(target);
@@ -453,8 +456,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "arm",
       availableArchitectures: ["arm"],
-      entryPoint: "0x8000000",
-      entryPointSource: "0x08000000",
+      rawLoad: rawLoadAtEntry("0x08000000"),
     };
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
     const resolved = await ghidra.resolveAnalysisProfile(target);
@@ -473,8 +475,7 @@ describe("Ghidra raw-binary profile", () => {
     });
     const shifted = await ghidra.resolveAnalysisProfile({
       ...target,
-      entryPoint: "0x8001000",
-      entryPointSource: "0x8001000",
+      rawLoad: rawLoadAtEntry("0x8001000"),
     });
     expect(resolved.ok && shifted.ok).toBe(true);
     if (!resolved.ok || !shifted.ok || resolved.value.profile === null)
@@ -493,8 +494,7 @@ describe("Ghidra raw-binary profile", () => {
       format: "raw-binary",
       architecture: "m68k",
       availableArchitectures: ["m68k"],
-      entryPoint: "0x1000",
-      entryPointSource: "0x00001000",
+      rawLoad: rawLoadAtEntry("0x00001000"),
     };
     const ghidra = provider();
     expect(ghidra.inspectTargetSupport(target).status).toBe("supported");
@@ -3497,8 +3497,7 @@ describe("Ghidra disabled analyzer options", () => {
       format: "raw-binary",
       architecture: "x86",
       availableArchitectures: ["x86"],
-      entryPoint: "0x1000",
-      entryPointSource: "0x1000",
+      rawLoad: rawLoadAtEntry("0x1000"),
     };
     const resolved = await ghidra.resolveAnalysisProfile(target);
     if (!resolved.ok || resolved.value.profile === null)
@@ -3561,6 +3560,47 @@ describe("Ghidra disabled analyzer options", () => {
       if (!failed.ok) expect(failed.error._tag).toBe("ProviderAdapterError");
       expect(starts).toBe(0);
     }
+  });
+});
+
+describe("Ghidra raw-binary launch", () => {
+  it("hands the committed label policy to the launcher", async () => {
+    const launchers: GhidraHeadlessLauncher[] = [];
+    const ghidra = configuredProvider({}, (options) => {
+      launchers.push(options.launcher as GhidraHeadlessLauncher);
+      return {
+        start: () => Promise.resolve(ok(sessionInfo())),
+        callTool: () => Promise.resolve(ok(null)),
+        close: () => Promise.resolve(ok(null)),
+      };
+    });
+    const target: BinaryTarget = {
+      path: "/tmp/flash.bin",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "raw-binary",
+      architecture: "arm",
+      availableArchitectures: ["arm"],
+      rawLoad: admittedRawLoad({
+        architecture: "arm",
+        architectureVariant: "armv7-m",
+        baseAddress: "0x8000000",
+        entryPoint: "0x8000000",
+        fileBytes: 4,
+      }),
+    };
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a bound raw-binary profile");
+    expect(resolved.value.profile.parameters.processor_labels).toBe(
+      "not-applied-v1",
+    );
+    const client = ghidra.createClient(target, resolved.value.profile);
+    expect((await client.execute("health", {})).ok).toBe(true);
+    expect(launchers[0]?.options.rawBinary).toMatchObject({
+      applyProcessorLabels: false,
+    });
+    await client.close();
   });
 });
 
@@ -4537,8 +4577,7 @@ it("commits native coordinates independently of analyzer choices and preserves r
   const rawProfile = await resolve(defaultProvider, raw);
   const shifted = await resolve(defaultProvider, {
     ...raw,
-    entryPoint: "0x8001000",
-    entryPointSource: "0x8001000",
+    rawLoad: rawLoadAtEntry("0x8001000"),
   });
   expect(rawProfile.parameters.function_coordinate_context).toMatchObject({
     kind: "native-function-coordinate-context-v1",

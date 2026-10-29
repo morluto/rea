@@ -12,6 +12,7 @@ import {
   resolveHopperAnalysisProfile,
 } from "../../../../src/hopper/HopperAnalysisProfile.js";
 import { HOPPER_PROVIDER_IDENTITY } from "../../../../src/hopper/HopperProviderCapabilities.js";
+import { rawLoadAtEntry } from "../../../../src/domain/rawBinary.fixture.js";
 
 let inspectionResources = createInspectionResources();
 let directory: string | undefined;
@@ -44,8 +45,7 @@ describe("Hopper analysis profiles", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       ok: false,

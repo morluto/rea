@@ -599,7 +599,15 @@ headers), open with `format: "raw-binary"`, `architecture` (`x86`, `x86_64`,
 `arm`, `arm64`, `6502`, or `m68k`), and `entry_point` (`0x` hex). File offset 0 is mapped at
 that address. Hopper and IDA refuse this interpretation; Ghidra uses
 `BinaryLoader` with a generic language: big-endian for `m68k`, little-endian
-otherwise. Big-endian ARM, Thumb-only, and Cortex-M variants are unsupported.
+otherwise. For a Cortex-M dump, add `architecture_variant` (`armv6-m`,
+`armv7-m`, `armv7e-m`, `armv8-m.base`, `armv8-m.main` or `armv8.1-m.main`)
+and `base_address`, which maps file offset 0 separately; each requires the
+other. Omit `entry_point` to take Reset from the vector table, adding
+`vector_table_address` when a header precedes it. An odd entry is refused.
+Results report canonical addresses (`0x08000000` as `0x8000000`) and treat an
+omitted `vector_table_address` as one at the base; when your exact spelling
+matters, save your request beside the Evidence, together with its
+`evidence_id`. Big-endian ARM is unsupported.
 `6502` selects NMOS 6502; the entry and complete file mapping must fit within
 `0x0000..0xffff`. 65C02, 65816, cartridge containers, bank switching, and mapper
 semantics are unsupported. `m68k` requires an even entry and decodes the 68040

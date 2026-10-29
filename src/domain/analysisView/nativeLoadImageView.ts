@@ -6,6 +6,7 @@ import {
   nativeUnsupportedLoadImageSchema,
   nativeDosLoadImageSchema,
   nativeRawLoadImageSchema,
+  nativeSegmentsLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
@@ -125,6 +126,11 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       checks: true,
     }),
     nativeRawLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeSegmentsLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,

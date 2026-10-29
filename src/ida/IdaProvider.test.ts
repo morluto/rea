@@ -12,6 +12,7 @@ import {
   createIdaTarget,
 } from "../../tests/fixtures/idaMcp.js";
 import { IdaProvider } from "./IdaProvider.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 
 it.each([
   { state: "unconfigured", selected: false, content: undefined },
@@ -183,8 +184,7 @@ describe("IDA provider target support", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       status: "unsupported",

@@ -217,6 +217,7 @@
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",
     "verify:ghidra:raw": "npm run build:cached && node scripts/verify-real-ghidra-raw.mjs",
+    "verify:ghidra:cortex-m": "npm run build:cached && node scripts/verify-real-ghidra-cortex-m.mjs",
     "verify:ghidra:address-context": "npm run build:cached && node scripts/verify-real-ghidra-address-context.mjs",
     "verify:ghidra:aarch64-jump-table": "npm run build:cached && node scripts/verify-real-ghidra.mjs --aarch64-jump-table",
     "verify:interface-builder": "npm run build:cached && node scripts/verify/apple/interface-builder.mjs",

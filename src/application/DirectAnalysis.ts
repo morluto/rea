@@ -1,9 +1,6 @@
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../domain/rawBinary.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
@@ -130,9 +127,7 @@ export const runDirectAnalysis = async (
     readonly snapshotPath?: string | undefined;
     readonly signal?: AbortSignal;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
   } = {},
 ): Promise<Result<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
@@ -140,15 +135,9 @@ export const runDirectAnalysis = async (
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
-      ...(options.formatHint === undefined
+      ...(options.loadSelection === undefined
         ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+        : { loadSelection: options.loadSelection }),
       ...(options.providerId === undefined
         ? {}
         : { providerId: options.providerId }),
@@ -325,9 +314,7 @@ const runAnalysis = async (
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly providerId?: AnalysisProviderSelector;
-    readonly formatHint?: ExecutableFormatHint;
-    readonly architecture?: BinaryArchitecture;
-    readonly entryPoint?: string;
+    readonly loadSelection?: NativeLoadSelection;
   },
 ): Promise<Result<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
@@ -374,15 +361,9 @@ const runAnalysis = async (
       path,
       snapshotPath,
       signal,
-      ...(options.formatHint === undefined
+      ...(options.loadSelection === undefined
         ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+        : { loadSelection: options.loadSelection }),
     });
     if (!prepared.ok) return err(prepared.error);
     const { snapshot } = prepared.value;
@@ -391,15 +372,9 @@ const runAnalysis = async (
       const preview = await session.previewTarget(prepared.value.target, {
         signal,
         snapshot,
-        ...(options.formatHint === undefined
+        ...(options.loadSelection === undefined
           ? {}
-          : { formatHint: options.formatHint }),
-        ...(options.architecture === undefined
-          ? {}
-          : { architecture: options.architecture }),
-        ...(options.entryPoint === undefined
-          ? {}
-          : { entryPoint: options.entryPoint }),
+          : { loadSelection: options.loadSelection }),
         ...(options.providerId === undefined
           ? {}
           : { providerId: options.providerId }),
@@ -438,15 +413,9 @@ const runAnalysis = async (
     }
     const openOptions = {
       signal,
-      ...(options.formatHint === undefined
+      ...(options.loadSelection === undefined
         ? {}
-        : { formatHint: options.formatHint }),
-      ...(options.architecture === undefined
-        ? {}
-        : { architecture: options.architecture }),
-      ...(options.entryPoint === undefined
-        ? {}
-        : { entryPoint: options.entryPoint }),
+        : { loadSelection: options.loadSelection }),
       ...(snapshot === undefined ? {} : { snapshot }),
       ...(options.providerId === undefined
         ? {}
@@ -703,9 +672,7 @@ const prepareSnapshot = async (options: {
     "readAnalysisSnapshot" | "resolveTarget"
   >;
   readonly path: string;
-  readonly formatHint?: ExecutableFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly snapshotPath: string | undefined;
   readonly signal: AbortSignal;
 }): Promise<
@@ -724,15 +691,9 @@ const prepareSnapshot = async (options: {
   if (!loaded.ok) return loaded;
   const target = await session.resolveTarget(path, {
     signal: options.signal,
-    ...(options.formatHint === undefined
+    ...(options.loadSelection === undefined
       ? {}
-      : { formatHint: options.formatHint }),
-    ...(options.architecture === undefined
-      ? {}
-      : { architecture: options.architecture }),
-    ...(options.entryPoint === undefined
-      ? {}
-      : { entryPoint: options.entryPoint }),
+      : { loadSelection: options.loadSelection }),
   });
   if (!target.ok) return target;
   if (!snapshotMatchesTarget(loaded.value.target, target.value))

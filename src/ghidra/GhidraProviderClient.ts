@@ -113,7 +113,12 @@ import {
   ghidraExtensionLimitations,
 } from "./extensions/GhidraExtensions.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
-import { ghidraRawBinaryLanguage } from "./GhidraRawBinaryLanguage.js";
+import {
+  GHIDRA_RAW_ENTRY_CONTEXT,
+  ghidraRawBinaryLanguage,
+  ghidraRawBinaryLimitations,
+  GHIDRA_PROCESSOR_LABELS_NOT_APPLIED,
+} from "./GhidraRawBinaryLanguage.js";
 import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 
 /** Production seam for exercising provider projection without a real process. */
@@ -348,7 +353,10 @@ export const createGhidraProviderClient = (input: {
   const disabledAnalyzerLimitations: string[] = [];
   const rawLanguage =
     target.format === "raw-binary"
-      ? ghidraRawBinaryLanguage(target.architecture)
+      ? ghidraRawBinaryLanguage(
+          target.architecture,
+          target.rawLoad.architectureVariant,
+        )
       : undefined;
   const targetLimitations = [
     ...(target.format === "dos-mz"
@@ -364,12 +372,8 @@ export const createGhidraProviderClient = (input: {
           "BSS is mapped uninitialized only outside the data sections it overlaps. The DOL header is not an identification of the producing SDK, and no runtime initialization, OS, or hardware state is modeled.",
         ]
       : []),
-    ...(target.format === "raw-binary"
-      ? [
-          "Headerless raw-binary analysis uses the caller-supplied architecture and entry address; file offset 0 is mapped at that address. Headers are not discovered from file bytes.",
-          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502; m68k uses the big-endian 68000 default language, which decodes the 68040 superset. Big-endian ARM, Thumb-only, Cortex-M, 65C02, 65816, separate 68020/68030/CPU32/ColdFire variants, and other processor variants are unsupported in this increment.",
-          "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
-        ]
+    ...(target.format === "raw-binary" && rawLanguage !== undefined
+      ? ghidraRawBinaryLimitations(target.rawLoad, rawLanguage)
       : []),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),
     ...(committedProfile.parameters.mips_abi_basis ===
@@ -446,7 +450,19 @@ export const createGhidraProviderClient = (input: {
             rawBinary: {
               languageId: rawLanguage.languageId,
               compilerSpecId: rawLanguage.compilerSpecId,
-              baseAddr: target.entryPoint,
+              baseAddr: target.rawLoad.baseAddress,
+              entryPoint: target.rawLoad.entryPoint,
+              ...(target.rawLoad.entryIsaMode === undefined
+                ? {}
+                : {
+                    entryContext:
+                      GHIDRA_RAW_ENTRY_CONTEXT[target.rawLoad.entryIsaMode],
+                  }),
+              // The committed profile owns the label policy.
+              ...(committedProfile.parameters.processor_labels ===
+              GHIDRA_PROCESSOR_LABELS_NOT_APPLIED
+                ? { applyProcessorLabels: false as const }
+                : {}),
             },
           }),
       ...(target.format === "gamecube-dol"

@@ -39,7 +39,6 @@ import {
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import type {
   BinaryTarget,
-  BinaryArchitecture,
   PeCodeViewRecord,
   UniversalMachOSlice,
 } from "../domain/binaryTargetTypes.js";
@@ -50,13 +49,13 @@ import {
   resolveAppBundleExecutable,
   type ResolvedAppBundle,
 } from "./AppBundleExecutable.js";
-import {
-  validateDosComLength,
-  type ExecutableFormatHint,
-} from "../domain/dosCom.js";
+import { validateDosComLength } from "../domain/dosCom.js";
 import {
   admitRawBinary,
   rawBinarySelectionError,
+  type NativeLoadSelection,
+  type RawBinaryAdmission,
+  type RawBinaryAdmissionRejection,
 } from "../domain/rawBinary.js";
 import { admitGamecubeDol } from "../domain/gamecubeDolAdmission.js";
 import { DOL_HEADER_SIZE } from "../domain/gamecubeDol.js";
@@ -128,9 +127,7 @@ export interface BinaryTargetResolverOptions {
   readonly cwd?: string;
   readonly hostArchitecture?: NodeJS.Architecture;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly signal?: AbortSignal;
   readonly resources?: ArtifactResourceScope;
 }
@@ -266,7 +263,8 @@ const readOpenedBinaryTarget = async (
   const { path, sourcePath, selectedPath, bundleInfoPlist } = selected;
   const bundle = bundleInfoPlist === undefined ? {} : { bundleInfoPlist };
   const hostArchitecture = options.hostArchitecture ?? process.arch;
-  const { targetKind, formatHint, signal, architecture, entryPoint } = options;
+  const { targetKind, signal, loadSelection = {} } = options;
+  const formatHint = loadSelection.format;
   throwIfTargetResolutionCancelled(signal);
   if (formatHint === "raw-binary") {
     if (targetKind !== undefined && targetKind !== "executable")
@@ -277,15 +275,37 @@ const readOpenedBinaryTarget = async (
           { constraint: "load_selection_rejected" },
         ),
       );
-    const admitted = admitRawBinary({
-      architecture,
-      entryPoint,
+    const selected = admitRawBinary({
+      architecture: loadSelection.architecture,
+      entryPoint: loadSelection.entryPoint,
+      baseAddress: loadSelection.baseAddress,
+      architectureVariant: loadSelection.architectureVariant,
+      vectorTableAddress: loadSelection.vectorTableAddress,
       fileBytes: metadata.size,
     });
+    let admitted: Result<RawBinaryAdmission, RawBinaryAdmissionRejection>;
+    if (!selected.ok) admitted = selected;
+    // An omitted M-profile entry is the Reset word of the selected vector table.
+    else if ("admit" in selected.value)
+      admitted = selected.value.admit(
+        await readHandleRange(
+          handle,
+          selected.value.fileOffset,
+          selected.value.byteLength,
+          signal,
+        ),
+      );
+    else admitted = ok(selected.value);
     if (!admitted.ok)
       return err(
         new BinaryTargetError(path, admitted.error.reason, {
           constraint: admitted.error.constraint,
+          ...(admitted.error.field === undefined
+            ? {}
+            : { field: admitted.error.field }),
+          ...(admitted.error.diagnostics === undefined
+            ? {}
+            : { diagnostics: admitted.error.diagnostics }),
         }),
       );
     return ok({
@@ -297,19 +317,15 @@ const readOpenedBinaryTarget = async (
       format: "raw-binary",
       architecture: admitted.value.architecture,
       availableArchitectures: [admitted.value.architecture],
-      entryPoint: admitted.value.entryPoint,
-      entryPointSource: admitted.value.entryPointSource,
+      rawLoad: admitted.value.load,
     });
   }
-  const pairing = rawBinarySelectionError({
-    ...(formatHint === undefined ? {} : { format: formatHint }),
-    architecture,
-    entryPoint,
-  });
+  const pairing = rawBinarySelectionError(loadSelection);
   if (pairing !== undefined)
     return err(
-      new BinaryTargetError(path, pairing, {
+      new BinaryTargetError(path, pairing.message, {
         constraint: "load_selection_rejected",
+        field: pairing.field,
       }),
     );
   if (formatHint === "gamecube-dol") {
@@ -331,7 +347,7 @@ const readOpenedBinaryTarget = async (
     const admitted = admitGamecubeDol({
       bytes: headerBytes,
       fileSize: metadata.size,
-      entryPoint,
+      entryPoint: loadSelection.entryPoint,
     });
     if (!admitted.ok)
       return err(

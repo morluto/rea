@@ -13,6 +13,7 @@ import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
 import { toolContract } from "../contracts/toolContracts.js";
+import { openBinaryLoadSelection } from "../contracts/sessionLifecycleInputs.js";
 import { binaryTargetSummary } from "../application/binary/BinaryTargetSummary.js";
 import { UnknownRegistryError } from "../domain/unknownRegistryError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -185,13 +186,7 @@ const registerOpenLifecycleTool = ({
       const opened = await logToolExecution(logger, openContract.name, () =>
         session.open(input.path, {
           signal: context.mcpReq.signal,
-          ...(input.format === undefined ? {} : { formatHint: input.format }),
-          ...(input.architecture === undefined
-            ? {}
-            : { architecture: input.architecture }),
-          ...(input.entry_point === undefined
-            ? {}
-            : { entryPoint: input.entry_point }),
+          loadSelection: openBinaryLoadSelection(input),
           ...(input.provider_id === undefined
             ? {}
             : { providerId: input.provider_id }),

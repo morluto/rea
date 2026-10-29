@@ -1,10 +1,17 @@
-import { executableFormatHintSchema } from "../domain/dosCom.js";
+import {
+  executableFormatHintSchema,
+  type ExecutableFormatHint,
+} from "../domain/dosCom.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
+  rawBinaryBaseAddressSchema,
   rawBinaryEntryPointSchema,
   rawBinarySelectionError,
+  rawBinaryVectorTableAddressSchema,
+  type NativeLoadSelection,
 } from "../domain/rawBinary.js";
+import { architectureVariantSchema } from "../domain/architectureVariant.js";
 import { z } from "zod";
 import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
@@ -17,6 +24,33 @@ const snapshotPathSchema = absoluteLocalPathStringSchema.describe(
 const binaryTargetPathSchema = absoluteLocalPathStringSchema.describe(
   "Absolute local filesystem path for the analysis target; relative paths are rejected.",
 );
+
+/** Collect the open_binary load fields into the selection that target admission owns. */
+export const openBinaryLoadSelection = (input: {
+  readonly format?: ExecutableFormatHint | undefined;
+  readonly architecture?: NativeLoadSelection["architecture"] | undefined;
+  readonly entry_point?: string | undefined;
+  readonly base_address?: string | undefined;
+  readonly architecture_variant?:
+    | NativeLoadSelection["architectureVariant"]
+    | undefined;
+  readonly vector_table_address?: string | undefined;
+}): NativeLoadSelection => ({
+  ...(input.format === undefined ? {} : { format: input.format }),
+  ...(input.architecture === undefined
+    ? {}
+    : { architecture: input.architecture }),
+  ...(input.entry_point === undefined ? {} : { entryPoint: input.entry_point }),
+  ...(input.base_address === undefined
+    ? {}
+    : { baseAddress: input.base_address }),
+  ...(input.architecture_variant === undefined
+    ? {}
+    : { architectureVariant: input.architecture_variant }),
+  ...(input.vector_table_address === undefined
+    ? {}
+    : { vectorTableAddress: input.vector_table_address }),
+});
 
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z
@@ -35,33 +69,33 @@ export const openBinaryInputSchema = z
     entry_point: rawBinaryEntryPointSchema
       .optional()
       .describe(
-        "Caller-supplied load and entry address (0xhex). File offset 0 is mapped here. Required with format=raw-binary; rejected otherwise. Optional with format=gamecube-dol; must equal the DOL header entry.",
+        "Caller-supplied code entry address (0xhex). Without base_address, file offset 0 is also mapped here. Required with format=raw-binary unless architecture_variant is given; rejected otherwise. Optional with format=gamecube-dol; must equal the DOL header entry.",
+      ),
+    base_address: rawBinaryBaseAddressSchema
+      .optional()
+      .describe(
+        "Address of raw file offset 0 (0xhex), separate from entry_point. Only with architecture_variant.",
+      ),
+    architecture_variant: architectureVariantSchema
+      .optional()
+      .describe(
+        "ARM M-profile variant of a raw image (raw dumps do not record it), decoded in Thumb state. Requires format=raw-binary, architecture=arm and base_address; an odd entry_point is refused.",
+      ),
+    vector_table_address: rawBinaryVectorTableAddressSchema
+      .optional()
+      .describe(
+        "Address of the M-profile vector table (0xhex) when it is not at base_address, such as after a bootloader header. Only when entry_point is omitted.",
       ),
     provider_id: analysisProviderSelectorSchema.optional(),
     snapshot_path: snapshotPathSchema.optional(),
   })
   .superRefine((value, context) => {
-    const pairing = rawBinarySelectionError({
-      ...(value.format === undefined ? {} : { format: value.format }),
-      ...(value.architecture === undefined
-        ? {}
-        : { architecture: value.architecture }),
-      ...(value.entry_point === undefined
-        ? {}
-        : { entryPoint: value.entry_point }),
-    });
+    const pairing = rawBinarySelectionError(openBinaryLoadSelection(value));
     if (pairing === undefined) return;
     context.addIssue({
       code: "custom",
-      path:
-        value.format === "raw-binary"
-          ? value.architecture === undefined
-            ? ["architecture"]
-            : ["entry_point"]
-          : value.architecture === undefined
-            ? ["entry_point"]
-            : ["architecture"],
-      message: pairing,
+      path: [pairing.field],
+      message: pairing.message,
     });
   });
 

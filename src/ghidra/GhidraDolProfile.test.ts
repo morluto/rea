@@ -64,7 +64,7 @@ const dolTarget = async (
   await writeFile(join(directory, "game.dol"), buildGamecubeDol(options));
   const parsed = await parseBinaryTarget("game.dol", {
     cwd: directory,
-    formatHint: "gamecube-dol",
+    loadSelection: { format: "gamecube-dol" },
   });
   if (!parsed.ok) throw parsed.error;
   return parsed.value;

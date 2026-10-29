@@ -6,6 +6,7 @@ import { err, ok } from "../domain/result.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { HopperClient } from "./HopperClient.js";
 import { HopperProvider } from "./HopperProvider.js";
+import { rawLoadAtEntry } from "../domain/rawBinary.fixture.js";
 import { isSnapshotCacheable } from "../application/binary/AnalysisSnapshotCache.js";
 import { routeAllowsSnapshotReplay } from "../application/binary/SessionProviderPolicy.js";
 import type { SessionProviderRoute } from "../application/binary/SessionProviderRouter.js";
@@ -86,8 +87,7 @@ describe("Hopper provider capabilities", () => {
         format: "raw-binary",
         architecture: "arm",
         availableArchitectures: ["arm"],
-        entryPoint: "0x8000000",
-        entryPointSource: "0x8000000",
+        rawLoad: rawLoadAtEntry("0x8000000"),
       }),
     ).toMatchObject({
       status: "unsupported",

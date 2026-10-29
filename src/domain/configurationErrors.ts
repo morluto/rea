@@ -2,6 +2,7 @@ import {
   AnalysisError,
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
+import type { LoadSelectionIssue } from "./rawBinary.js";
 
 /** One rejected configuration setting and the constraint it failed. */
 export interface ConfigurationSettingIssue {
@@ -47,12 +48,15 @@ export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
     | "wasm_requires_static_inspection"
     | "file_format_rejected"
     | "load_selection_rejected";
+  /** The load-selection input to correct, when one input is to blame. */
+  readonly field?: LoadSelectionIssue["field"];
 }
 
 /** A supplied target path could not be safely opened as a supported app or binary. */
 export class BinaryTargetError extends AnalysisError {
   readonly _tag = "BinaryTargetError";
   readonly constraint: BinaryTargetErrorOptions["constraint"];
+  readonly field: BinaryTargetErrorOptions["field"];
   /** The OS read-permission code of the cause, when the host denied access. */
   readonly systemCode: "EACCES" | "EPERM" | undefined;
   constructor(
@@ -62,6 +66,7 @@ export class BinaryTargetError extends AnalysisError {
   ) {
     super(`Cannot open artifact: ${reason}`, options);
     this.constraint = options?.constraint;
+    this.field = options?.field;
     this.systemCode = readPermissionCode(options?.cause);
   }
 }

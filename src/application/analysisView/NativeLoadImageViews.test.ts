@@ -318,3 +318,74 @@ it("rejects collection-inapplicable fields and malformed sibling facts even for 
   Reflect.set(report.observations.relocations[1]!, "status", "");
   expect(projectNativeLoadImageView(parent, request).ok).toBe(false);
 });
+
+it("keeps the segments identity facts in a summary and pages its checks", async () => {
+  const observations = nativeLoadImageObservationFixture();
+  const report: NativeLoadImage = {
+    status: "verified",
+    layout: "segments",
+    version: 1,
+    format: "raw-binary",
+    target_sha256: "a".repeat(64),
+    architecture: "arm",
+    architecture_variant: "armv7-m",
+    language_id: "ARM:LE:32:Cortex",
+    compiler_spec_id: "default",
+    file_bytes: 512,
+    segments: [
+      {
+        name: "image",
+        address: "0x8000000",
+        size: 512,
+        backing: { kind: "source-range", source: 0, offset: 0 },
+      },
+    ],
+    entries: [
+      {
+        address: "0x80001c4",
+        isa_mode: "thumb",
+        role: "reset",
+        basis: "vector-table",
+      },
+    ],
+    vector_table: {
+      address: "0x8000000",
+      initial_stack_pointer: "0x20005000",
+      reset_vector: "0x080001c5",
+    },
+    observations,
+    checks: [
+      {
+        name: "entry_context.TMode",
+        matched: true,
+        expected: "0x1",
+        observed: "0x1",
+        file_offset: null,
+        address: null,
+      },
+    ],
+    limitations: ["The file is the only segment."],
+  };
+  const summary = await view(report, { kind: "summary" });
+  expect(summary).toMatchObject({
+    summary: {
+      verification: {
+        status: "verified",
+        layout: "segments",
+        version: 1,
+        segments: report.segments,
+        entries: report.entries,
+        vector_table: report.vector_table,
+      },
+      counts: { checks: 1 },
+    },
+  });
+  expect(
+    await view(report, {
+      kind: "native-load-image",
+      collection: "checks",
+    }),
+  ).toMatchObject({
+    items: { collection: "checks", rows: [{ source_index: 0 }] },
+  });
+});

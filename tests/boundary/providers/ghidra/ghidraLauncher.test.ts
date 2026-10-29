@@ -29,6 +29,7 @@ import {
   ghidraHeadlessCommand,
   GhidraHeadlessLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { GHIDRA_RAW_ENTRY_CONTEXT } from "../../../../src/ghidra/GhidraRawBinaryLanguage.js";
 
 const fixturePath = fileURLToPath(
   new URL(
@@ -141,6 +142,7 @@ describe("Ghidra raw-binary loader", () => {
         languageId: "ARM:LE:32:v7",
         compilerSpecId: "default",
         baseAddr: "0x8000000",
+        entryPoint: "0x8000000",
       },
     });
     expectOptions(arguments_, [
@@ -153,11 +155,51 @@ describe("Ghidra raw-binary loader", () => {
     expect(arguments_[prepare + 1]).toBe(
       join("/package/bridge", "ReaGhidraPrepareRaw.java"),
     );
-    expect(arguments_[prepare + 2]).toBe("ARM:LE:32:v7");
-    expect(arguments_[prepare + 3]).toBe("0x8000000");
+    expect(arguments_.slice(prepare + 2, prepare + 6)).toEqual([
+      "ARM:LE:32:v7",
+      "0x8000000",
+      "0x8000000",
+      "language-default",
+    ]);
     expect(prepare).toBeLessThan(arguments_.indexOf("-postScript"));
     expect(arguments_).toContain("-readOnly");
     expect(arguments_).toContain("-deleteProject");
+    // A load without a variant keeps the language's default labels.
+    expect(arguments_).not.toContain("-loader-applyLabels");
+  });
+
+  it("maps file offset 0 at the base and asks for the committed Thumb entry context", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/flash.bin",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+      rawBinary: {
+        languageId: "ARM:LE:32:v8-m",
+        compilerSpecId: "default",
+        baseAddr: "0x8000000",
+        entryPoint: "0x80001c4",
+        entryContext: { register: "TMode", value: "0x1" },
+        applyProcessorLabels: false,
+      },
+    });
+    expectOptions(arguments_, [
+      ["-loader", "BinaryLoader"],
+      ["-loader-baseAddr", "0x8000000"],
+      ["-loader-applyLabels", "false"],
+      ["-processor", "ARM:LE:32:v8-m"],
+      ["-cspec", "default"],
+    ]);
+    const prepare = arguments_.indexOf("-preScript");
+    expect(arguments_.slice(prepare + 1, prepare + 6)).toEqual([
+      join("/package/bridge", "ReaGhidraPrepareRaw.java"),
+      "ARM:LE:32:v8-m",
+      "0x8000000",
+      "0x80001c4",
+      "TMode=0x1",
+    ]);
   });
 });
 
@@ -243,6 +285,7 @@ describe("Ghidra GameCube DOL loader", () => {
           languageId: "ARM:LE:32:v7",
           compilerSpecId: "default",
           baseAddr: "0x8000000",
+          entryPoint: "0x8000000",
         },
       },
     ],
@@ -346,6 +389,7 @@ describe("Ghidra headless launcher", () => {
           languageId: "x86:LE:32:default",
           compilerSpecId: "default",
           baseAddr: "0x1000",
+          entryPoint: "0x1000",
         },
       },
     ])
@@ -422,6 +466,7 @@ describe("Ghidra configured import language and seeds", () => {
           languageId: "ARM:LE:32:v7",
           compilerSpecId: "default",
           baseAddr: "0x8000000",
+          entryPoint: "0x8000000",
         },
       }),
     ).toThrow(
@@ -607,6 +652,7 @@ describe("Ghidra existing project", () => {
           languageId: "ARM:LE:32:v7",
           compilerSpecId: "default",
           baseAddr: "0x8000000",
+          entryPoint: "0x8000000",
         },
       },
       "existing_project_raw_binary",
@@ -1199,6 +1245,89 @@ describe("Ghidra GameCube DOL section file", () => {
       expect(spawnProcess).toHaveBeenCalledOnce();
       const sectionPath = join(runtime.path, "gamecube-dol-sections.txt");
       expect(await readFile(sectionPath, "utf8")).toBe(sectionFile);
+    },
+  );
+});
+
+describe("Ghidra raw-binary entry context descriptor", () => {
+  // Like the DOL section file test, the launch stops before process creation
+  // after the descriptor is written.
+  it("lets the bridge accept exactly the registers the launcher can commit", async () => {
+    const bridge = await readFile(
+      fileURLToPath(
+        new URL(
+          "../../../../bridge/ghidra/ReaGhidraBridge.java",
+          import.meta.url,
+        ),
+      ),
+      "utf8",
+    );
+    const declared = /ENTRY_CONTEXT_REGISTERS = Set\.of\(([^)]*)\);/u.exec(
+      bridge,
+    )?.[1];
+    expect(
+      [...(declared ?? "").matchAll(/"([^"]+)"/gu)].map((match) => match[1]),
+    ).toEqual([
+      ...new Set(
+        Object.values(GHIDRA_RAW_ENTRY_CONTEXT).map(
+          (context) => context.register,
+        ),
+      ),
+    ]);
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    [undefined, undefined],
+    [{ register: "TMode", value: "0x1" }, "TMode"],
+  ] as const)(
+    "commits entry context %j to the bridge descriptor",
+    async (entryContext, register) => {
+      const parent = await createTestTempDirectory("rea-raw-context-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const javaHome = "/opt/fixture-jdk";
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        platform: "darwin",
+        configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+        analyzeHeadlessPath: fixturePath,
+        javaHome,
+        bridgeScriptPath: join(parent, "ReaGhidraBridge.java"),
+        javaLaunch: async () => ({
+          command: join(javaHome, "bin", "java"),
+          arguments: [],
+          environment: {},
+        }),
+        spawnProcess: vi.fn(async () => {
+          throw new Error("fixture stops before process creation");
+        }),
+        rawBinary: {
+          languageId: "ARM:LE:32:Cortex",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+          entryPoint: "0x80001c4",
+          ...(entryContext === undefined ? {} : { entryContext }),
+        },
+      });
+      await launcher.launch({
+        runtimeRoot: runtime.path,
+        transport: "unix-socket",
+        endpointPath: join(runtime.path, "bridge.sock"),
+        token: "token-for-context-test",
+        runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+        targetPath: "/tmp/flash.bin",
+        targetSha256: "c".repeat(64),
+        providerVersion: "12.1.4",
+        profileDigest: "a".repeat(64),
+      });
+      const descriptor = z
+        .record(z.string(), z.unknown())
+        .parse(
+          JSON.parse(
+            await readFile(join(runtime.path, "session.json"), "utf8"),
+          ),
+        );
+      expect(descriptor.entry_context_register).toEqual(register);
     },
   );
 });

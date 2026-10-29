@@ -269,7 +269,7 @@ try {
       fixture,
     );
     const resolved = await parseBinaryTarget(fixture.path, {
-      formatHint: "gamecube-dol",
+      loadSelection: { format: "gamecube-dol" },
     });
     if (!resolved.ok) throw resolved.error;
     assert.equal(resolved.value.format, "gamecube-dol");

@@ -47,6 +47,9 @@ import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
   binaryArchitectureSchema,
   rawBinaryEntryPointSchema,
+  rawLoadIdentity,
+  rawLoadIdentitySchema,
+  type RawLoadIdentity,
 } from "./rawBinary.js";
 import {
   relationshipCoverageSchema,
@@ -113,6 +116,8 @@ const targetSchema = z.discriminatedUnion("format", [
     kind: z.literal("executable"),
     architecture: binaryArchitectureSchema,
     entry_point: rawBinaryEntryPointSchema,
+    // Absent for a legacy-equivalent load, so earlier snapshots keep matching.
+    raw_load: rawLoadIdentitySchema.exactOptional(),
   }),
   targetIdentitySchema.extend({
     format: z.literal("gamecube-dol"),
@@ -373,13 +378,16 @@ const canonicalJson = (value: unknown): string => {
 /** Project a binary into the path-free identity used for cache invalidation. */
 export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
   target.format === "raw-binary"
-    ? {
-        sha256: target.sha256,
-        kind: target.kind,
-        architecture: target.architecture,
-        format: target.format,
-        entry_point: target.entryPoint,
-      }
+    ? withRawLoadIdentity(
+        {
+          sha256: target.sha256,
+          kind: target.kind,
+          architecture: target.architecture,
+          format: target.format,
+          entry_point: target.rawLoad.entryPoint,
+        },
+        rawLoadIdentity(target.rawLoad),
+      )
     : target.format === "gamecube-dol"
       ? {
           sha256: target.sha256,
@@ -394,6 +402,12 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           architecture: target.architecture ?? null,
           format: target.format,
         };
+
+const withRawLoadIdentity = <Target extends object>(
+  target: Target,
+  identity: RawLoadIdentity | undefined,
+): Target & { readonly raw_load?: RawLoadIdentity } =>
+  identity === undefined ? target : { ...target, raw_load: identity };
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -415,7 +429,9 @@ export const snapshotMatchesTarget = (
   snapshot.architecture === (target.architecture ?? null) &&
   (snapshot.format !== "raw-binary" ||
     (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
+      snapshot.entry_point === target.rawLoad.entryPoint &&
+      canonicalize(snapshot.raw_load) ===
+        canonicalize(rawLoadIdentity(target.rawLoad)))) &&
   (snapshot.format !== "gamecube-dol" ||
     (target.format === "gamecube-dol" &&
       snapshot.entry_point === target.entryPoint));

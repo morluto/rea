@@ -1483,6 +1483,39 @@ specifications, independent mappings, unchanged bytes, and decompilation of a
 known return value. AArch64 remains covered by deterministic tests rather than
 this real-provider lane. See [raw binary analysis](raw-binary.md).
 
+`npm run verify:ghidra:cortex-m` checks ARM M-profile raw images through the
+compiled CLI and stdio MCP server. It needs Ghidra 12.1.4, a full JDK 21, and
+LLVM with Thumb targets and the Cortex-M55 CPU (`clang` and `llvm-objdump`, or
+`REA_CLANG` and `REA_LLVM_OBJDUMP`). Its source-owned fixtures are:
+
+- a Cortex-M0 (`armv6-m`) image at bases `0x0` and `0x08000000`;
+- the same image after a 256-byte boot2-style header, opened with
+  `vector_table_address`;
+- a Thumb-2 image (`movw`, `movt`, `ldr.w`, `it`, `cbz`) opened as `armv7-m` at
+  `0x0` and as `armv7e-m` at `0x08000000`;
+- an `armv8-m.base` image with `movw`, `movt`, `cbz` and `udiv`;
+- an `armv8-m.main` image that sets `MSPLIM`;
+- an `armv8.1-m.main` (Cortex-M55) image at `0x0` with a `wls`/`le`
+  low-overhead loop around the MVE instructions `vldrw`, `vctp` and `vstrw`.
+  Ghidra 12.1.4 does not follow the loop's exits, so for this image the lane
+  requires the code after the loop to stay undisassembled, records both loop
+  branches' flow, and checks that the results report the limitation.
+
+LLVM assembles each fixture's annotated source to the same bytes and names each
+instruction, with `-mcpu=cortex-m55 -mfloat-abi=hard` for the MVE fixture;
+Ghidra must decode the same mnemonics in Thumb state. The lane
+also checks:
+
+- the Reset-derived entry, and that it is the only entry Ghidra reports;
+- the `segments` load image and its `TMode` check;
+- decompilation of the Cortex-M0 image;
+- refusal of an odd entry with its code address, while the session is kept;
+- CLI/MCP parity and unchanged legacy identity;
+- snapshot reuse across base spellings, and refusal across variants;
+- unchanged source bytes and owned cleanup.
+
+It does not execute target code, model peripherals, or qualify Windows.
+
 `npm run verify:ghidra:address-context` runs on Linux with a caller-installed
 Ghidra, full JDK, and an x86-64 ELF GCC toolchain (`CC` selects another compatible
 compiler). It builds

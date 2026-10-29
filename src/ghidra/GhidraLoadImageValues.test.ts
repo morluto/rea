@@ -343,7 +343,7 @@ it("rejects malformed coordinates in completed load-image checks and entries", (
     fixture.sha256,
     fixture.observation,
   );
-  if (!compared.ok || compared.value.status === "unsupported")
+  if (!compared.ok || !("load_segment" in compared.value))
     throw new Error("Expected a completed DOS load-image result");
   const malformedResults = [
     {

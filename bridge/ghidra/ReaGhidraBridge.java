@@ -180,6 +180,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private DecompInterface decompiler;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
     private int decompileTimeoutSeconds;
+    // Context registers whose entry values TypeScript committed for this import, such as TMode.
+    private List<String> entryContextRegisters = List.of();
+    // The registers GHIDRA_RAW_ENTRY_CONTEXT can commit; the launcher tests keep them equal.
+    private static final Set<String> ENTRY_CONTEXT_REGISTERS = Set.of("TMode");
     // DecompileProcess converts seconds to an int millisecond timer delay.
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
@@ -194,6 +198,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Path descriptorPath = Path.of(arguments[0]);
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
+        entryContextRegisters = descriptor.entryContextRegisters();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
         // the Windows file, while abrupt owner death can leave private residue.
@@ -710,7 +715,9 @@ public final class ReaGhidraBridge extends HeadlessScript {
             JsonObject context = new JsonObject();
             context.addProperty("address", canonicalAddress(entry));
             JsonArray registers = new JsonArray();
-            for (String name : new String[] { "CS", "DS", "ES", "SS" }) {
+            List<String> names = new ArrayList<>(List.of("CS", "DS", "ES", "SS"));
+            for (String name : entryContextRegisters) if (!names.contains(name)) names.add(name);
+            for (String name : names) {
                 Register register = currentProgram.getRegister(name);
                 if (register == null) continue;
                 JsonObject row = new JsonObject();
@@ -4768,7 +4775,16 @@ public final class ReaGhidraBridge extends HeadlessScript {
             keys.add("decompile_timeout_seconds");
         if (parsed.isJsonObject() && parsed.getAsJsonObject().has("existing_project"))
             keys.add("existing_project");
+        if (parsed.isJsonObject() && parsed.getAsJsonObject().has("entry_context_register"))
+            keys.add("entry_context_register");
         JsonObject object = requireObject(parsed, keys);
+        List<String> entryContext = List.of();
+        if (object.has("entry_context_register")) {
+            String register = requireString(object, "entry_context_register");
+            if (!ENTRY_CONTEXT_REGISTERS.contains(register))
+                throw new IllegalArgumentException("REA session descriptor is invalid");
+            entryContext = List.of(register);
+        }
         int decompileTimeout = 0;
         if (object.has("decompile_timeout_seconds")) {
             decompileTimeout = requireInteger(object, "decompile_timeout_seconds");
@@ -4785,7 +4801,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
             requireString(object, "profile_digest"),
             object.has("analysis_extensions") ? object.getAsJsonArray("analysis_extensions") : new JsonArray(),
             decompileTimeout,
-            object.has("existing_project") && requireBoolean(object, "existing_project")
+            object.has("existing_project") && requireBoolean(object, "existing_project"),
+            entryContext
         );
     }
 
@@ -5003,7 +5020,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
         String profileDigest,
         JsonArray analysisExtensions,
         int decompileTimeoutSeconds,
-        boolean existingProject
+        boolean existingProject,
+        List<String> entryContextRegisters
     ) {}
     private record Request(int id, String method, JsonObject params, Integer decompileTimeoutSeconds) {}
 

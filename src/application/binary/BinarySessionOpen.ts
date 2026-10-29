@@ -1,8 +1,5 @@
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
-import type {
-  BinaryArchitecture,
-  BinaryTarget,
-} from "../../domain/binaryTargetTypes.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import type { NativeLoadSelection } from "../../domain/rawBinary.js";
 import { artifactTargetSelectedPath } from "../../domain/binaryTargetTypes.js";
 import type { AnalysisProviderSelector } from "../../domain/providerSelection.js";
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
@@ -35,9 +32,7 @@ export type AnalysisSnapshotLoader = () => Promise<
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
-  readonly architecture?: BinaryArchitecture;
-  readonly entryPoint?: string;
+  readonly loadSelection?: NativeLoadSelection;
   readonly snapshot?: AnalysisSnapshot;
   /**
    * Load the snapshot inside the open's turn instead of before it, so calls
@@ -92,15 +87,9 @@ export const resolveSessionOpen = async (
     ...(options.targetKind === undefined
       ? {}
       : { targetKind: options.targetKind }),
-    ...(options.formatHint === undefined
+    ...(options.loadSelection === undefined
       ? {}
-      : { formatHint: options.formatHint }),
-    ...(options.architecture === undefined
-      ? {}
-      : { architecture: options.architecture }),
-    ...(options.entryPoint === undefined
-      ? {}
-      : { entryPoint: options.entryPoint }),
+      : { loadSelection: options.loadSelection }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!parsed.ok) return parsed;

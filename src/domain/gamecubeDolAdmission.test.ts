@@ -96,7 +96,7 @@ describe("gamecube-dol selection pairing", () => {
       rawBinarySelectionError({
         format: "gamecube-dol",
         architecture: "x86",
-      }),
+      })?.message,
     ).toContain("takes its architecture from the DOL header");
   });
 
@@ -111,8 +111,9 @@ describe("gamecube-dol selection pairing", () => {
   });
 
   it("keeps architecture and entry rejected without a format", () => {
-    expect(rawBinarySelectionError({ architecture: "powerpc" })).toBe(
-      "architecture and entry_point apply only with format=raw-binary",
-    );
+    expect(rawBinarySelectionError({ architecture: "powerpc" })).toEqual({
+      field: "architecture",
+      message: "architecture and entry_point apply only with format=raw-binary",
+    });
   });
 });
