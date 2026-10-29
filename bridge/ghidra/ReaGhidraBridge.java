@@ -210,11 +210,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (currentProgram.getExecutableFormat().equals("Raw Binary")) {
             boolean dosCom = currentProgram.getLanguageID().getIdAsString()
                 .equals("x86:LE:16:Real Mode");
-            String preparation = dosCom ? "REA DOS COM prepared" : "REA raw binary prepared";
+            boolean gameBoy = currentProgram.getLanguageID().getIdAsString().equals("SM83:LE:16:default");
+            String preparation = gameBoy ? "REA Game Boy prepared" : dosCom ? "REA DOS COM prepared" : "REA raw binary prepared";
             if (!currentProgram.getOptions(ghidra.program.model.listing.Program.PROGRAM_INFO)
                 .getBoolean(preparation, false)) {
                 throw new IllegalStateException(
-                    dosCom ? "REA DOS COM entry/context preparation failed" :
+                    gameBoy ? "REA Game Boy cartridge preparation failed" : dosCom ? "REA DOS COM entry/context preparation failed" :
                         "REA raw binary entry preparation failed"
                 );
             }

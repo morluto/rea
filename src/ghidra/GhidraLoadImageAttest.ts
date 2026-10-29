@@ -1,3 +1,5 @@
+import { attestGhidraGameBoyLoadImage } from "./GhidraGameBoyLoadImage.js";
+import { gameBoyRomBanks } from "../domain/gameBoyRom.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisOperation } from "../application/AnalysisProvider.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -90,7 +92,13 @@ const compareLoadImage = async (
   // These formats have no additional source work; retain already-derived PE facts.
   if (
     target.format === "pe" ||
-    !["dos-mz", "dos-com", "raw-binary", "gamecube-dol"].includes(target.format)
+    ![
+      "dos-mz",
+      "dos-com",
+      "raw-binary",
+      "gamecube-dol",
+      "gameboy-rom",
+    ].includes(target.format)
   ) {
     if (target.format === "pe" && nativeAotResult === undefined)
       return err(
@@ -147,6 +155,31 @@ const compareLoadImage = async (
         load_image_observations: jsonValueSchema.parse(observations),
       }),
     );
+  if (target.format === "gameboy-rom") {
+    if (client.hashTargetSnapshotRanges === undefined)
+      return err(
+        comparisonFailure(
+          input,
+          "The client cannot provide immutable Game Boy bank digests",
+        ),
+      );
+    const snapshot = await client.hashTargetSnapshotRanges(
+      gameBoyRomBanks(target.gameBoy).map((bank) => ({
+        start: bank.fileOffset,
+        end: bank.fileOffset + bank.size,
+      })),
+      signal,
+    );
+    if (!snapshot.ok) return err(sourceFailure(snapshot.error));
+    const attested = attestGhidraGameBoyLoadImage(
+      snapshot.value,
+      target,
+      observations,
+    );
+    return attested.ok
+      ? attested
+      : err(comparisonFailure(input, attested.error));
+  }
   if (target.format === "gamecube-dol") {
     if (client.hashTargetSnapshotRanges === undefined)
       return err(

@@ -464,7 +464,12 @@ export const ghidraMipsProfileMismatchReason = (
 export const ghidraPinnedMipsLanguage = (
   parameters: Readonly<Record<string, unknown>>,
 ): GhidraLanguageOverride | undefined => {
-  if (parameters.language_selection !== "provider-pinned-v1") return undefined;
+  if (
+    parameters.language_selection !== "provider-pinned-v1" ||
+    (parameters.mips_support_lane !== "elf32-exec-mips1-legacy-pinned-v1" &&
+      parameters.mips_support_lane !== "elf32-exec-arch32-legacy-pinned-v1")
+  )
+    return undefined;
   const languageId = parameters.language_id;
   const compilerSpecId = parameters.compiler_spec_id;
   if (typeof languageId !== "string" || typeof compilerSpecId !== "string")

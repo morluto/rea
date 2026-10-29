@@ -1,4 +1,8 @@
 import {
+  parseGameBoyHeader,
+  GAME_BOY_HEADER_SIZE,
+} from "../domain/gameBoyRom.js";
+import {
   artifactNameForClassification,
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
@@ -312,6 +316,41 @@ const readOpenedBinaryTarget = async (
         constraint: "load_selection_rejected",
       }),
     );
+  if (formatHint === "gameboy-rom") {
+    if (targetKind !== undefined && targetKind !== "executable")
+      return err(
+        new BinaryTargetError(
+          path,
+          "gameboy-rom requires an executable target kind",
+          { constraint: "load_selection_rejected" },
+        ),
+      );
+    const bytes = await readLeadingBytes(
+      handle,
+      Math.min(metadata.size, GAME_BOY_HEADER_SIZE),
+      path,
+      signal,
+    );
+    const parsed = parseGameBoyHeader(Buffer.from(bytes), metadata.size);
+    if (!parsed.ok)
+      return err(
+        new BinaryTargetError(path, parsed.error, {
+          constraint: "file_format_rejected",
+        }),
+      );
+    return ok({
+      path,
+      sourcePath,
+      ...bundle,
+      sha256: await sha256Handle(handle, path, metadata, signal),
+      kind: "executable",
+      format: "gameboy-rom",
+      architecture: "sm83",
+      availableArchitectures: ["sm83"],
+      entryPoint: "0x100",
+      gameBoy: parsed.value,
+    });
+  }
   if (formatHint === "gamecube-dol") {
     if (targetKind !== undefined && targetKind !== "executable")
       return err(
@@ -654,6 +693,7 @@ const detectArtifactFormat = async (
       | "dos-com"
       | "raw-binary"
       | "gamecube-dol"
+      | "gameboy-rom"
     >
   | undefined
 > => {
@@ -748,6 +788,7 @@ const isArchiveFormat = (
     | "dos-com"
     | "raw-binary"
     | "gamecube-dol"
+    | "gameboy-rom"
   >,
 ): format is Extract<BinaryTarget, { kind: "archive" }>["format"] =>
   isZipPackageFormat(format) ||

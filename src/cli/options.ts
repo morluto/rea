@@ -37,7 +37,7 @@ export const snapshotSelectionOption = z
 export const formatSelectionOption = executableFormatHintSchema
   .optional()
   .describe(
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
+    "Explicit interpretation: gameboy-rom (Game Boy/Color cartridge, SM83, entry 0x100), dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema

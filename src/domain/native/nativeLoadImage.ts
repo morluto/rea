@@ -152,12 +152,26 @@ export const nativeDolLoadImageSchema = z.strictObject({
   limitations: z.array(z.string().min(1)),
 });
 
+export const nativeGameBoyLoadImageSchema = z.strictObject({
+  status: z.enum(["verified", "mismatch"]),
+  format: z.literal("gameboy-rom"),
+  target_sha256: digest,
+  architecture: z.literal("sm83"),
+  file_bytes: integer.min(1),
+  rom_banks: integer.min(2).max(512),
+  entry: z.strictObject({ address: z.literal("0x100") }),
+  observations: nativeLoadImageObservationSchema,
+  checks: z.array(nativeLoadImageCheckSchema),
+  limitations: z.array(z.string().min(1)),
+});
+
 /** Read-only native image verification; verified applies only to declared coverage. */
 export const nativeLoadImageSchema = z.union([
   nativeUnsupportedLoadImageSchema,
   nativeDosLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeDolLoadImageSchema,
+  nativeGameBoyLoadImageSchema,
 ]);
 
 /** Provider-neutral native load-image result. */

@@ -161,6 +161,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: null,
         diagnostics,
       };
+    if (target.format === "gameboy-rom")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "Game Boy ROM analysis requires Ghidra with the installed SM83 language.",
+        diagnostics,
+      };
     if (target.format === "gamecube-dol")
       return {
         status: "unsupported",

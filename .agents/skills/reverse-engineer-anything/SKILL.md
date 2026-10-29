@@ -327,6 +327,12 @@ explicit path or endpoint and do not need it.
   no active target or engine; opaque payloads retain file ranges and SHA-256.
 - PE export directories and ELF dynamic-symbol exports: `inspect_native_exports`
   with an explicit path; portable, no active target or engine.
+- Game Boy or Game Boy Color cartridge ROM: `open_binary` with explicit
+  `format: "gameboy-rom"` and `provider_id: "ghidra"`. Requires a caller-installed
+  `SM83:LE:16:default` language; Z80 is not interchangeable. Entry is `0x100`;
+  later physical banks use `ROM_NNN:0x4000` overlays. Use address-space-qualified
+  analysis seeds for known bank code and retain unknown bank-switch/far-call
+  targets. See the [Game Boy ROM guide](https://github.com/morluto/rea/blob/main/docs/gameboy-roms.md).
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
   inventory context is useful and available from the selected provider.

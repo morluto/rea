@@ -88,6 +88,7 @@ import {
 } from "../process/WindowsAuthority.js";
 
 const SUPPORTED_ARCHITECTURES = new Set([
+  "sm83",
   "x86",
   "x86_64",
   "arm",

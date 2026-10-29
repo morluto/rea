@@ -1,3 +1,4 @@
+import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import { createHash } from "node:crypto";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -53,6 +54,7 @@ export type GhidraSeedReport = z.infer<typeof ghidraSeedReportSchema>;
 
 type SeedKind = "function" | "code" | "label";
 interface SeedEntry {
+  readonly space?: string;
   readonly address: bigint;
   readonly kind: SeedKind;
   readonly name?: string;
@@ -68,9 +70,24 @@ const seedLineError = (line: number, constraint: string) =>
     ],
   });
 
+const decodedAddressSpace = (space: string | null): string => {
+  if (space === null) return "";
+  const bytes: number[] = [];
+  for (let index = 0; index < space.length;) {
+    if (space[index] === "%") {
+      bytes.push(Number.parseInt(space.slice(index + 1, index + 3), 16));
+      index += 3;
+    } else {
+      bytes.push(space.charCodeAt(index));
+      index += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+};
+
 /**
  * Parse `address<TAB>kind[<TAB>name]` lines. Blank lines and `#` comments are
- * ignored. Addresses are hexadecimal offsets in the default address space.
+ * ignored. Addresses are hexadecimal offsets, optionally qualified by an encoded address space.
  */
 export const parseGhidraSeeds = (
   text: string,
@@ -86,8 +103,14 @@ export const parseGhidraSeeds = (
     if (fields.length < 2 || fields.length > 3)
       return err(seedLineError(number, "expected address<TAB>kind[<TAB>name]"));
     const [address, kind, name] = fields;
-    if (address === undefined || !/^0x[0-9a-fA-F]{1,16}$/u.test(address))
-      return err(seedLineError(number, "address must be 0x-prefixed hex"));
+    const coordinate = nativeAddressCoordinateInputSchema.safeParse(address);
+    if (!coordinate.success || coordinate.data.offset > 0xffffffffffffffffn)
+      return err(
+        seedLineError(
+          number,
+          "address must be 0x-prefixed hex, optionally qualified by an encoded address space",
+        ),
+      );
     if (kind !== "function" && kind !== "code" && kind !== "label")
       return err(seedLineError(number, "kind must be function, code or label"));
     if (
@@ -108,13 +131,16 @@ export const parseGhidraSeeds = (
       return err(
         seedLineError(number, "a code seed takes no name; add a label seed"),
       );
-    const value = BigInt(address);
-    const key = `${value.toString(16)}:${kind}`;
+    const value = coordinate.data.offset;
+    const key = `${decodedAddressSpace(coordinate.data.space)}:${value.toString(16)}:${kind}`;
     if (seen.has(key))
       return err(seedLineError(number, `duplicate ${kind} seed at ${address}`));
     seen.add(key);
     entries.push({
       address: value,
+      ...(coordinate.data.space === null
+        ? {}
+        : { space: coordinate.data.space }),
       kind,
       ...(name === undefined ? {} : { name }),
     });
@@ -134,7 +160,7 @@ const normalizedSeeds = (entries: readonly SeedEntry[]): string =>
   entries
     .map(
       (entry) =>
-        `0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
+        `${entry.space === undefined ? "" : `${entry.space}:`}0x${entry.address.toString(16)}\t${entry.kind}${entry.name === undefined ? "" : `\t${entry.name}`}\n`,
     )
     .join("");
 

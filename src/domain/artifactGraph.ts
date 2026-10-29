@@ -75,6 +75,7 @@ const artifactFormatSchema = z.enum([
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "gameboy-rom",
   "hopper",
   "analysis-database",
   "ipa",

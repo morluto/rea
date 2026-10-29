@@ -327,6 +327,16 @@ describe("recordless legacy MIPS admission", () => {
     );
   });
 
+  it("does not apply legacy MIPS policy to another pinned processor", () => {
+    expect(
+      ghidraPinnedMipsLanguage({
+        language_selection: "provider-pinned-v1",
+        language_id: "SM83:LE:16:default",
+        compiler_spec_id: "default",
+      }),
+    ).toBeUndefined();
+  });
+
   it("reads the pinned import language back only from pinned profiles", () => {
     const pinned = ghidraMipsProfileParameters(
       target({ flags: 0x50000001, abiFlags: null }),

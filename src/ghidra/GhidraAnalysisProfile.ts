@@ -1,3 +1,8 @@
+import { GHIDRA_GAME_BOY_LANGUAGE } from "./GhidraGameBoyProfile.js";
+import {
+  readGhidraLanguageCatalog,
+  readGhidraLanguageFingerprint,
+} from "./GhidraLanguageCatalog.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type {
   AnalysisProfileResolution,
@@ -78,6 +83,7 @@ const sharedAnalysisSemantics = {
 export const ghidraPinnedLanguage = (
   target: BinaryTarget,
 ): GhidraLanguageOverride | undefined =>
+  (target.format === "gameboy-rom" ? GHIDRA_GAME_BOY_LANGUAGE : undefined) ??
   ghidraMipsLanguageOverride(target) ??
   ghidraRiscvLanguageOverride(target) ??
   ghidraPowerPcLanguage(target);
@@ -105,7 +111,10 @@ const languageOverrideConflict = (
  * BinaryLoader. Each lane adds its own loader, language, and entry facts.
  */
 const binaryLoaderPolicy = (
-  target: Extract<BinaryTarget, { format: "raw-binary" | "gamecube-dol" }>,
+  target: Extract<
+    BinaryTarget,
+    { format: "raw-binary" | "gamecube-dol" | "gameboy-rom" }
+  >,
   installation: GhidraInstallationInspection,
 ): Readonly<Record<string, JsonValue>> => ({
   target_kind: target.kind,
@@ -179,6 +188,71 @@ export const resolveGhidraAnalysisProfile = async (
           analyzer_preset: ghidraDisabledAnalyzerPreset(disabledAnalyzers),
           analysis_options: { disabled_analyzers: [...disabledAnalyzers] },
         };
+  if (target.format === "gameboy-rom") {
+    if (
+      languageOverride !== undefined &&
+      (languageOverride.languageId !== GHIDRA_GAME_BOY_LANGUAGE.languageId ||
+        (languageOverride.compilerSpecId !== undefined &&
+          languageOverride.compilerSpecId !== "default"))
+    )
+      return err(
+        languageOverrideConflict(
+          languageOverride,
+          "Game Boy ROMs require SM83:LE:16:default with the default compiler specification.",
+          GHIDRA_GAME_BOY_LANGUAGE,
+        ),
+      );
+    const catalog = await readGhidraLanguageCatalog(
+      installation.installDir,
+      resources,
+      signal,
+    );
+    if (
+      !catalog.some(
+        (language) =>
+          language.id === GHIDRA_GAME_BOY_LANGUAGE.languageId &&
+          language.compilerSpecIds.includes("default"),
+      )
+    )
+      return err(
+        new AnalysisUnsupportedTargetError(
+          "resolve_analysis_profile",
+          target.path,
+          "Install a compatible SM83 language (SM83:LE:16:default, compiler default) in GHIDRA_INSTALL_DIR/Ghidra/Processors or Ghidra/Extensions. Stock Ghidra Z80 cannot decode Game Boy ROMs. REA does not install this prerequisite.",
+        ),
+      );
+    const languageFingerprint = await readGhidraLanguageFingerprint(
+      installation.installDir,
+      GHIDRA_GAME_BOY_LANGUAGE.languageId,
+      resources,
+      signal,
+    );
+    if (languageFingerprint === null)
+      return err(
+        new AnalysisUnsupportedTargetError(
+          "resolve_analysis_profile",
+          target.path,
+          "The installed SM83 language definition disappeared while the analysis profile was being resolved.",
+        ),
+      );
+    return ok({
+      profile: createProfile({
+        ...binaryLoaderPolicy(target, installation),
+        loader: "BinaryLoader",
+        language_id: GHIDRA_GAME_BOY_LANGUAGE.languageId,
+        compiler_spec_id: "default",
+        language_selection: "provider-pinned-v1",
+        language_fingerprint: languageFingerprint,
+        entry_point: "0x100",
+        gameboy_import: "physical-banks-overlays-v1",
+        gameboy_header: {
+          ...target.gameBoy,
+          limitations: [...target.gameBoy.limitations],
+        },
+        ...analyzerParameters,
+      }),
+    });
+  }
   if (target.format === "gamecube-dol") {
     // The DOL admission owns the processor family; only a BE32 PowerPC variant may replace the stock language.
     const reason = ghidraDolLanguageUnsupportedReason(languageOverride);

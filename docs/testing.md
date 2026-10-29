@@ -1463,6 +1463,11 @@ and runtime cleanup. Windows additionally requires the matching native addon;
 its verifier lineage remains explicitly unavailable outside the provider's
 retained Job Object, as in the other Windows lanes.
 
+`npm run verify:ghidra:gameboy` generates self-owned DMG and CGB cartridge
+fixtures and checks real CLI/MCP imports, physical-bank byte identity, SM83
+instructions, overlay seeds, decompilation, file-offset selection and cleanup.
+It requires a caller-installed SM83 language; see [Game Boy ROMs](gameboy-roms.md).
+
 `npm run verify:ghidra:m68k` needs no assembler: its 22-byte big-endian 68000
 fixture is source-owned annotated hex in the verifier, loaded at `0x1000`. With
 an installed Ghidra 12.1.4 and full JDK on Linux or macOS, it verifies the

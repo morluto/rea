@@ -4,10 +4,10 @@ import type {
 } from "./binaryTargetTypes.js";
 import { err, ok, type Result } from "./result.js";
 
-/** CPU families an ELF e_machine can name; arm64_32 is a Mach-O-only CPU type. */
+/** CPU families an ELF e_machine can name; exclude Mach-O and cartridge-only cores. */
 type ElfArchitecture = Exclude<
   BinaryArchitecture,
-  RawOnlyArchitecture | "arm64_32"
+  RawOnlyArchitecture | "arm64_32" | "sm83"
 >;
 
 /** Fixed declarations after common ELF framing, before consumer admission. */

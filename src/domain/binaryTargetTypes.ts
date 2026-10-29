@@ -1,7 +1,8 @@
+import type { GameBoyHeader } from "./gameBoyRom.js";
 import type { DolHeader } from "./gamecubeDol.js";
 import type { ZipPackageFormat } from "./zipPackageFormat.js";
 
-/** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
+/** Provider-neutral CPU families established by headers or explicit format/load selection. */
 export const BINARY_ARCHITECTURES = [
   "x86",
   "x86_64",
@@ -14,6 +15,7 @@ export const BINARY_ARCHITECTURES = [
   "powerpc",
   "m68k",
   "hexagon",
+  "sm83",
 ] as const;
 export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 
@@ -65,7 +67,11 @@ export const isElfMetadataArchitecture = (
 /** Recognized family with no ELF metadata member; the header alone is the fact. */
 export type HeaderArchitecture = Exclude<
   BinaryArchitecture,
-  ElfMetadataArchitecture | RawOnlyArchitecture | "hexagon" | "arm64_32"
+  | ElfMetadataArchitecture
+  | RawOnlyArchitecture
+  | "hexagon"
+  | "arm64_32"
+  | "sm83"
 >;
 
 /** Raw ELF facts; family recognition does not establish ISA or ABI support. */
@@ -150,6 +156,16 @@ type ExecutableTarget = BinaryTargetIdentity & {
  * Each variant carries only metadata established for that exact file kind.
  */
 export type BinaryTarget =
+  | (BinaryTargetIdentity & {
+      readonly kind: "executable";
+      readonly format: "gameboy-rom";
+      readonly architecture: "sm83";
+      readonly availableArchitectures: readonly ["sm83"];
+      readonly entryPoint: "0x100";
+      readonly gameBoy: GameBoyHeader;
+      readonly executableRole?: never;
+      readonly managed?: never;
+    })
   | (BinaryTargetIdentity & {
       readonly kind: "executable";
       readonly format: "elf";

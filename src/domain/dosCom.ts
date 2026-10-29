@@ -9,6 +9,7 @@ export const executableFormatHintSchema = z.enum([
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "gameboy-rom",
 ]);
 /** Explicit executable interpretation for formats with no identifying header. */
 export type ExecutableFormatHint = z.infer<typeof executableFormatHintSchema>;

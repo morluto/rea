@@ -1396,6 +1396,10 @@ Preparation time, disk copy/fingerprinting, engine startup and client deadlines
 are separate costs; reusing a project avoids import/analysis, not all startup.
 Use the [heap/CPU controls](#ghidra-heap-and-cpu-controls) appropriate to the target.
 
+For explicitly selected Game Boy and Game Boy Color cartridges, see
+[Game Boy ROMs](gameboy-roms.md). This route requires a caller-installed SM83
+processor language and preserves physical ROM banks as separate overlays.
+
 ### Ghidra import language and analysis seeds
 
 Ghidra detects the language from the executable header. To set it (for example, Borland C++ PE images):
@@ -1415,7 +1419,7 @@ To seed code that auto-analysis cannot reach (computed jumps, pointers in data):
 export REA_GHIDRA_SEED_FILE=/absolute/path/to/seeds.tsv
 ```
 
-Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or `label` (a label needs a name). Addresses are `0x` hex in the default space; `#` lines are comments. A pre-script applies seeds before auto-analysis: functions from the highest address down, then code, then labels. The seed digest is part of the analysis profile, and the session fails if the applied seeds differ. Result limitations report the outcome counts; a seed fails when it overlaps an instruction Ghidra already decoded.
+Each line is `address<TAB>kind[<TAB>name]`, where kind is `function`, `code` or `label` (a label needs a name). Addresses are `0x` hex in the default space or encoded space-qualified coordinates such as `ROM_002:0x4000`; `#` lines are comments. A pre-script applies seeds before auto-analysis: functions from the highest address down, then code, then labels. The seed digest is part of the analysis profile, and the session fails if the applied seeds differ. Result limitations report the outcome counts; a seed fails when it overlaps an instruction Ghidra already decoded.
 
 Label seeds can name mapped uninitialized storage such as `.bss`; function and code seeds require initialized bytes.
 

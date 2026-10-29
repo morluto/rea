@@ -46,12 +46,17 @@ public final class ReaGhidraApplySeeds extends GhidraScript {
         for (String line : new String(bytes, StandardCharsets.UTF_8).split("\n")) {
             if (line.isEmpty()) continue;
             String[] fields = line.split("\t", -1);
-            if (fields.length < 2 || fields.length > 3 || !fields[0].startsWith("0x")) {
+            if (fields.length < 2 || fields.length > 3) {
                 throw new IllegalArgumentException("REA seed snapshot is malformed");
             }
             Address address;
             try {
-                address = space.getAddress(Long.parseUnsignedLong(fields[0].substring(2), 16));
+                int separator = fields[0].lastIndexOf(":");
+                AddressSpace selectedSpace = separator < 0 ? space : currentProgram.getAddressFactory().getAddressSpace(
+                    java.net.URLDecoder.decode(fields[0].substring(0, separator), StandardCharsets.UTF_8));
+                String offset = fields[0].substring(separator + 1);
+                if (!offset.startsWith("0x")) throw new IllegalArgumentException("Malformed seed offset");
+                address = selectedSpace == null ? null : selectedSpace.getAddress(Long.parseUnsignedLong(offset.substring(2), 16));
             } catch (ghidra.program.model.address.AddressOutOfBoundsException e) {
                 address = null;
             }

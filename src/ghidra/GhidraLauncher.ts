@@ -233,6 +233,8 @@ export interface GhidraHeadlessLauncherOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  /** Physical Game Boy cartridge banks, using the installed SM83 language. */
+  readonly gameBoy?: { readonly romBanks: number };
   /** GameCube DOL import: committed language and the canonical section table text. */
   readonly gamecubeDol?: {
     readonly languageId: string;
@@ -430,6 +432,9 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
         ...(this.options.rawBinary === undefined
           ? {}
           : { rawBinary: this.options.rawBinary }),
+        ...(this.options.gameBoy === undefined
+          ? {}
+          : { gameBoy: this.options.gameBoy }),
         ...(this.options.gamecubeDol === undefined ||
         gamecubeDolSectionPath === undefined
           ? {}
@@ -773,6 +778,7 @@ export interface GhidraHeadlessArgumentOptions {
     readonly compilerSpecId: string;
     readonly baseAddr: string;
   };
+  readonly gameBoy?: { readonly romBanks: number };
   readonly gamecubeDol?: {
     readonly languageId: string;
     readonly compilerSpecId?: string;
@@ -861,6 +867,21 @@ export const ghidraHeadlessArguments = (
   const rawBinary = options.rawBinary;
   const existing = options.existingProject;
   const gamecubeDol = options.gamecubeDol;
+  const gameBoy = options.gameBoy;
+  if (
+    gameBoy !== undefined &&
+    (existing !== undefined ||
+      gamecubeDol !== undefined ||
+      options.psp === true ||
+      options.dosMz === true ||
+      options.dosCom === true ||
+      options.mipsSoftFloat === true ||
+      rawBinary !== undefined ||
+      override !== undefined)
+  )
+    throw new Error(
+      "Game Boy ROM import cannot be combined with another loader, language override or existing project",
+    );
   validateExistingProjectOptions(options);
   if (
     gamecubeDol !== undefined &&
@@ -922,68 +943,81 @@ export const ghidraHeadlessArguments = (
       ? [
           "-import",
           options.targetPath,
-          ...(gamecubeDol !== undefined
+          ...(gameBoy !== undefined
             ? [
-                // One BinaryLoader block at file offset 0; the pre-script rebuilds the DOL section map.
                 "-loader",
                 "BinaryLoader",
                 "-loader-baseAddr",
                 "0x0",
+                "-loader-length",
+                "0x4000",
                 "-processor",
-                gamecubeDol.languageId,
-                ...(gamecubeDol.compilerSpecId === undefined
-                  ? []
-                  : ["-cspec", gamecubeDol.compilerSpecId]),
+                "SM83:LE:16:default",
+                "-cspec",
+                "default",
               ]
-            : options.dosMz === true
+            : gamecubeDol !== undefined
               ? [
+                  // One BinaryLoader block at file offset 0; the pre-script rebuilds the DOL section map.
                   "-loader",
-                  "MzLoader",
+                  "BinaryLoader",
+                  "-loader-baseAddr",
+                  "0x0",
                   "-processor",
-                  "x86:LE:16:Real Mode",
-                  "-cspec",
-                  "default",
+                  gamecubeDol.languageId,
+                  ...(gamecubeDol.compilerSpecId === undefined
+                    ? []
+                    : ["-cspec", gamecubeDol.compilerSpecId]),
                 ]
-              : options.dosCom === true
+              : options.dosMz === true
                 ? [
                     "-loader",
-                    "BinaryLoader",
-                    "-loader-baseAddr",
-                    "1000:0100",
+                    "MzLoader",
                     "-processor",
                     "x86:LE:16:Real Mode",
                     "-cspec",
                     "default",
                   ]
-                : rawBinary === undefined
-                  ? options.psp === true
-                    ? [
-                        "-loader",
-                        "PspElfLoader",
-                        "-processor",
-                        "Allegrex:LE:32:default",
-                        "-cspec",
-                        "default",
-                      ]
-                    : override !== undefined
-                      ? [
-                          "-processor",
-                          override.languageId,
-                          ...(override.compilerSpecId === undefined
-                            ? []
-                            : ["-cspec", override.compilerSpecId]),
-                        ]
-                      : []
-                  : [
+                : options.dosCom === true
+                  ? [
                       "-loader",
                       "BinaryLoader",
                       "-loader-baseAddr",
-                      rawBinary.baseAddr,
+                      "1000:0100",
                       "-processor",
-                      rawBinary.languageId,
+                      "x86:LE:16:Real Mode",
                       "-cspec",
-                      rawBinary.compilerSpecId,
-                    ]),
+                      "default",
+                    ]
+                  : rawBinary === undefined
+                    ? options.psp === true
+                      ? [
+                          "-loader",
+                          "PspElfLoader",
+                          "-processor",
+                          "Allegrex:LE:32:default",
+                          "-cspec",
+                          "default",
+                        ]
+                      : override !== undefined
+                        ? [
+                            "-processor",
+                            override.languageId,
+                            ...(override.compilerSpecId === undefined
+                              ? []
+                              : ["-cspec", override.compilerSpecId]),
+                          ]
+                        : []
+                    : [
+                        "-loader",
+                        "BinaryLoader",
+                        "-loader-baseAddr",
+                        rawBinary.baseAddr,
+                        "-processor",
+                        rawBinary.languageId,
+                        "-cspec",
+                        rawBinary.compilerSpecId,
+                      ]),
         ]
       : ["-process", existing.programName]),
     // An existing project opens with -noanalysis: its auto-analysis was paid
@@ -1017,6 +1051,17 @@ export const ghidraHeadlessArguments = (
           "-preScript",
           scriptPath.join(bridgeDirectory, GHIDRA_BRIDGE_SOURCES.prepareDol),
           gamecubeDol.sectionFilePath,
+        ]),
+    ...(gameBoy === undefined
+      ? []
+      : [
+          "-preScript",
+          scriptPath.join(
+            bridgeDirectory,
+            GHIDRA_BRIDGE_SOURCES.prepareGameBoy,
+          ),
+          String(gameBoy.romBanks),
+          options.targetPath,
         ]),
     // Seeds follow any loader preparation and precede default auto-analysis.
     ...(options.seedPath === undefined

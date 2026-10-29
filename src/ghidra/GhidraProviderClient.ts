@@ -1,3 +1,4 @@
+import { ghidraGameBoyLimitations } from "./GhidraGameBoyProfile.js";
 import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
@@ -282,7 +283,15 @@ export const createGhidraProviderClient = (input: {
   if (
     !sameGhidraLanguageOverride(
       parameterLanguage,
-      config.ghidraLanguageOverride ?? targetLanguage,
+      config.ghidraLanguageOverride === undefined
+        ? targetLanguage
+        : target.format === "gameboy-rom"
+          ? {
+              ...config.ghidraLanguageOverride,
+              compilerSpecId:
+                config.ghidraLanguageOverride.compilerSpecId ?? "default",
+            }
+          : config.ghidraLanguageOverride,
     )
   )
     return err(
@@ -351,6 +360,9 @@ export const createGhidraProviderClient = (input: {
       ? ghidraRawBinaryLanguage(target.architecture)
       : undefined;
   const targetLimitations = [
+    ...(target.format === "gameboy-rom"
+      ? ghidraGameBoyLimitations(target)
+      : []),
     ...(target.format === "dos-mz"
       ? [
           "DOS MZ uses 16-bit x86 real mode with the Ghidra load segment 0x1000. Returned addresses are linear byte coordinates; they do not identify a unique segment:offset alias.",
@@ -449,16 +461,18 @@ export const createGhidraProviderClient = (input: {
               baseAddr: target.entryPoint,
             },
           }),
-      ...(target.format === "gamecube-dol"
-        ? {
-            gamecubeDol: {
-              ...ghidraDolLanguage(importLanguage),
-              sectionFile: ghidraDolSectionFile(target.dol),
-            },
-          }
-        : importLanguage === undefined
-          ? {}
-          : { languageOverride: importLanguage }),
+      ...(target.format === "gameboy-rom"
+        ? { gameBoy: { romBanks: target.gameBoy.romBanks } }
+        : target.format === "gamecube-dol"
+          ? {
+              gamecubeDol: {
+                ...ghidraDolLanguage(importLanguage),
+                sectionFile: ghidraDolSectionFile(target.dol),
+              },
+            }
+          : importLanguage === undefined
+            ? {}
+            : { languageOverride: importLanguage }),
       ...(config.ghidraDisabledAnalyzers === undefined
         ? {}
         : { disabledAnalyzers: config.ghidraDisabledAnalyzers }),

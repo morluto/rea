@@ -152,6 +152,11 @@ export const rawBinarySelectionError = (input: {
 }): string | undefined => {
   const hasArchitecture = input.architecture !== undefined;
   const hasEntry = input.entryPoint !== undefined;
+  if (input.format === "gameboy-rom") {
+    return hasArchitecture || hasEntry
+      ? "format=gameboy-rom fixes SM83 and entry 0x100; omit architecture and entry_point"
+      : undefined;
+  }
   if (input.format === "gamecube-dol") {
     // The DOL header fixes architecture; entry_point is checked against it at admission.
     return hasArchitecture
