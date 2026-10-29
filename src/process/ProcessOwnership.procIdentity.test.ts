@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 
 const filesystem = vi.hoisted(() => ({
   readFile: vi.fn(),
+  readlink: vi.fn(async (_path: string) => "user:[1]"),
   // Host procfs ownership must never leak into fixture PIDs.
   stat: vi.fn(async () => {
     throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
@@ -12,13 +13,20 @@ const filesystem = vi.hoisted(() => ({
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, readFile: filesystem.readFile, stat: filesystem.stat };
+  return {
+    ...original,
+    readFile: filesystem.readFile,
+    readlink: filesystem.readlink,
+    stat: filesystem.stat,
+  };
 });
 
 import {
   createSystemProcessOwnershipHost,
   readProcessOwnershipFacts,
 } from "./ProcessOwnershipObservation.js";
+import { verifyNoTokenOwnedProcesses } from "./ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import type {
   ProcessOwnershipHost,
   ProcessTableEntry,
@@ -157,6 +165,131 @@ it.each([
     if (expected === undefined)
       expect(identity).not.toHaveProperty("environmentRestriction");
     else expect(identity).toHaveProperty("environmentRestriction", expected);
+  },
+);
+
+it.each([
+  [
+    "different namespace",
+    "user:[2]",
+    "0 0 1\n",
+    42,
+    "environment_errno_EACCES",
+    true,
+  ],
+  [
+    "permission denied",
+    "user:[2]",
+    "0 0 1\n",
+    42,
+    "environment_errno_EPERM",
+    true,
+  ],
+  [
+    "same namespace",
+    "user:[1]",
+    "0 0 1\n",
+    42,
+    "environment_errno_EACCES",
+    false,
+  ],
+  [
+    "denied namespace lookup",
+    null,
+    "0 1000 1\n",
+    42,
+    "environment_errno_EACCES",
+    true,
+  ],
+  [
+    "equal maps after denied lookup",
+    null,
+    "0 0 1\n",
+    42,
+    "environment_errno_EACCES",
+    false,
+  ],
+  [
+    "unreadable namespace and map",
+    null,
+    null,
+    42,
+    "environment_errno_EACCES",
+    false,
+  ],
+  [
+    "owned group",
+    "user:[2]",
+    "0 0 1\n",
+    100,
+    "environment_errno_EACCES",
+    false,
+  ],
+  [
+    "other read failure",
+    "user:[2]",
+    "0 0 1\n",
+    42,
+    "environment_errno_EIO",
+    false,
+  ],
+] as const)(
+  "classifies an unreadable process with %s and %s",
+  async (
+    _case,
+    targetNamespace,
+    targetUidMap,
+    processGroupId,
+    diagnostic,
+    cleaned,
+  ) => {
+    const callerUid = process.getuid?.() ?? 1000;
+    const candidate = { ...entry, processGroupId };
+    filesystem.readFile.mockImplementation(async (path) => {
+      if (String(path) === "/proc/42/stat")
+        return procStat(100, 1, processGroupId);
+      if (String(path) === "/proc/42/status")
+        return `Uid:\t${callerUid}\t${callerUid}\t${callerUid}\t${callerUid}\nGid:\t1000\t1000\t1000\t1000\n`;
+      if (String(path) === "/proc/self/uid_map") return "0 0 1\n";
+      if (String(path) === "/proc/42/uid_map") {
+        if (targetUidMap === null) throw filesystemError("EACCES");
+        return targetUidMap;
+      }
+      throw new Error(`unexpected path: ${String(path)}`);
+    });
+    filesystem.stat.mockResolvedValue({ uid: callerUid } as never);
+    filesystem.readlink.mockImplementation(async (path) => {
+      if (String(path) === "/proc/self/ns/user") return "user:[1]";
+      if (targetNamespace === null) throw filesystemError("EACCES");
+      return targetNamespace;
+    });
+    const systemHost = createSystemProcessOwnershipHost("linux", {});
+    const host: ProcessOwnershipHost = {
+      ...systemHost,
+      listProcesses: async () => [candidate],
+      runTokens: async () =>
+        new Map([[42, { state: "unavailable", reason: diagnostic }]]),
+    };
+
+    const result = await withCaller(callerUid, 1000, () =>
+      verifyNoTokenOwnedProcesses("owned-run", host, undefined, {
+        leaderPid: 100,
+        processGroupId: 100,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+      }),
+    );
+
+    if (cleaned)
+      expect(result).toMatchObject({
+        cleaned: true,
+        unverified: [{ pid: 42, diagnostic }],
+      });
+    else
+      expect(result).toMatchObject({
+        cleaned: false,
+        failures: [{ pid: 42, reason: "environment-unreadable" }],
+      });
+    expect(filesystem.readlink).toHaveBeenCalledWith("/proc/42/ns/user");
   },
 );
 

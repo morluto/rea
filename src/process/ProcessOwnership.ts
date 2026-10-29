@@ -1503,8 +1503,9 @@ const currentProcessUid = (): number | undefined =>
  * CS_RESTRICT processes from KERN_PROCARGS2, and fails with EINVAL for
  * processes owned by another account. Linux denies `/proc/<pid>/environ` for
  * another account, mismatched real/saved IDs (setgid and setuid programs) and
- * non-dumpable processes. These classes cannot be token-verified by this
- * caller. An unrelated candidate is recorded as unverified instead of failing
+ * non-dumpable processes, and processes in other user namespaces when the
+ * environment read is permission-denied. These classes cannot be token-verified
+ * by this caller. An unrelated candidate is recorded as unverified instead of failing
  * an otherwise clean capture; every related or otherwise unreadable candidate
  * stays fail-closed.
  */
@@ -1513,6 +1514,8 @@ const environmentWithheldFromInspection = (
   observedUid: number | undefined,
   restriction?: LinuxEnvironmentRestriction,
 ): boolean => {
+  if (restriction === "user-namespace")
+    return /^(?:environment_errno_)?(?:EACCES|EPERM)(?::|\b)/u.test(diagnostic);
   if (restriction !== undefined) return true;
   const uid = currentProcessUid();
   if (uid !== undefined && observedUid !== undefined && observedUid !== uid)

@@ -1,4 +1,4 @@
-import { readFile, stat as statPath } from "node:fs/promises";
+import { readFile, readlink, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import {
@@ -11,6 +11,7 @@ import {
 import { parseLinuxProcessStat } from "./LinuxProcessStat.js";
 import {
   linuxEnvironmentRestriction,
+  linuxUidMapsDiffer,
   parseLinuxProcessIds,
   type LinuxEnvironmentRestriction,
 } from "./LinuxProcessStatus.js";
@@ -1138,7 +1139,23 @@ export const createSystemProcessOwnershipHost = (
     ProcessOwnershipHost["processIdentities"]
   > = async (processes, signal, credentialPids) => {
     if (processes.length === 0) return new Map();
-    if (platform === "linux")
+    if (platform === "linux") {
+      const callerUserNamespace =
+        credentialPids !== undefined && credentialPids.size > 0
+          ? readlink("/proc/self/ns/user").catch(() => undefined)
+          : undefined;
+      let callerUidMap: Promise<string | undefined> | undefined;
+      const readUidMap = async (path: string): Promise<string | undefined> => {
+        try {
+          return await readFile(path, {
+            encoding: "utf8",
+            ...(signal === undefined ? {} : { signal }),
+          });
+        } catch (cause: unknown) {
+          if (isExpectedAbort(cause, signal)) throw cause;
+          return undefined;
+        }
+      };
       return new Map<number, ProcessIdentityObservation>(
         await Promise.all(
           processes.map(async ({ pid }) => {
@@ -1223,13 +1240,49 @@ export const createSystemProcessOwnershipHost = (
                 void cause;
               }
               signal?.throwIfAborted();
-              const environmentRestriction = linuxEnvironmentRestriction({
+              const restrictionFacts = {
                 uids,
                 gids: parseLinuxProcessIds(status, "Gid"),
                 procfsOwnerUid,
                 callerUid: process.geteuid?.(),
                 callerGid: process.getegid?.(),
-              });
+              };
+              let environmentRestriction =
+                linuxEnvironmentRestriction(restrictionFacts);
+              if (environmentRestriction === undefined) {
+                let userNamespaceDiffers: boolean | undefined;
+                try {
+                  const targetUserNamespace = await readlink(
+                    `/proc/${String(pid)}/ns/user`,
+                  );
+                  const callerNamespace = await callerUserNamespace;
+                  if (callerNamespace !== undefined)
+                    userNamespaceDiffers =
+                      callerNamespace !== targetUserNamespace;
+                } catch (cause: unknown) {
+                  void cause;
+                }
+                signal?.throwIfAborted();
+                if (userNamespaceDiffers === undefined) {
+                  // ns/user readlink shares environ's ptrace check. A differing
+                  // readable UID map can still establish distinct namespaces.
+                  const targetUidMap = await readUidMap(
+                    `/proc/${String(pid)}/uid_map`,
+                  );
+                  if (targetUidMap !== undefined) {
+                    callerUidMap ??= readUidMap("/proc/self/uid_map");
+                    userNamespaceDiffers = linuxUidMapsDiffer(
+                      targetUidMap,
+                      await callerUidMap,
+                    );
+                  }
+                }
+                environmentRestriction = linuxEnvironmentRestriction({
+                  ...restrictionFacts,
+                  userNamespaceDiffers,
+                });
+              }
+              signal?.throwIfAborted();
 
               let afterStatus: string;
               try {
@@ -1311,6 +1364,7 @@ export const createSystemProcessOwnershipHost = (
           }),
         ),
       );
+    }
     if (darwinTokens === undefined) return new Map();
     try {
       return await darwinTokens.identities(processes, signal);
