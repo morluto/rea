@@ -95,6 +95,12 @@ export const buildCallPathEvidence = (
       parameters: {
         start: selected.value.input.start.address,
         goal: selected.value.input.goal.address,
+        // Omission and an explicit count preference are different requests, so
+        // record one only when the caller selected it. The effective default is
+        // applied by buildCallPath, where the count is consumed.
+        ...(selected.value.input.max_paths === undefined
+          ? {}
+          : { max_paths: selected.value.input.max_paths }),
       },
       result,
       confidence: "derived",
