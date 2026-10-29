@@ -141,6 +141,17 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       process.exitCode = 1;
     } else if (versionOutput !== undefined) {
       writeStdout(versionOutput);
+    } else if (
+      !isShellCompletion &&
+      builtinArguments.isProjectScopedAmpRegistration(cliArgs)
+    ) {
+      // Incur's Amp writer ignores --no-global and always writes the global
+      // settings file, so fail closed before it runs rather than reporting
+      // a project registration that never happened.
+      process.stderr.write(
+        `Amp does not support project-scoped registration: 'rea mcp add --no-global' with Amp would write the global Amp settings file instead of a project file. Run without --no-global to register Amp globally.\n`,
+      );
+      process.exitCode = 1;
     } else {
       const cliRuntime = await import("../dist/cli-runtime/cli.js");
       closeCliResources = cliRuntime.closeCliResources;
