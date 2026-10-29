@@ -275,7 +275,7 @@ const resolveLayoutExecutable = async (
     name = hasBinaryPlistSignature(plist)
       ? await (fileSystem.decodeBinaryPlist?.(plistPath) ??
           parseBinaryPlistExecutable(plist))
-      : parseXmlPlistExecutable(decodeXmlPlistText(plist));
+      : parseXmlPlistExecutableWithinBudget(plist);
   } catch (cause: unknown) {
     return err(
       new BinaryTargetError(
@@ -341,6 +341,13 @@ const parseXmlPlistExecutable = (plist: string): string => {
   // An unrelated `__proto__` entry must not make the bundle unreadable.
   const { value } = parseXmlPropertyList(plist);
   return executableName(value);
+};
+
+/** Apply the same decode budget the binary branch enforces before parsing XML. */
+const parseXmlPlistExecutableWithinBudget = (plist: Buffer): string => {
+  const xmlText = decodeXmlPlistText(plist);
+  preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES, xmlText);
+  return parseXmlPlistExecutable(xmlText);
 };
 
 const executableName = (value: unknown): string => {
