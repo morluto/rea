@@ -463,3 +463,66 @@ describe("executable dispatcher JavaScript shutdown", () => {
     },
   );
 });
+
+describe("project-scoped Amp registration dispatch", () => {
+  const runtimeReached = "cli-runtime reached";
+  const installGuardRuntime = async (workspace: TestWorkspace) =>
+    installCliRuntime(
+      workspace,
+      `export const closeCliJavaScriptResources = () => {}; export const createCli = () => ({ serve: (_args, options) => { options.stdout(${JSON.stringify(runtimeReached)}); } });\n`,
+    );
+  workspaceCliTest(
+    "rejects a real project-scoped Amp registration before the CLI runtime loads",
+    async ({ processes, workspace }) => {
+      await installGuardRuntime(workspace);
+      const result = await processes.run(
+        process.execPath,
+        [
+          workspace.path("scripts/rea.mjs"),
+          "mcp",
+          "add",
+          "--no-global",
+          "--agent",
+          "amp",
+        ],
+        {
+          cwd: workspace.root,
+          env: { ...process.env, REA_LOG_LEVEL: "silent" },
+        },
+      );
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.stderr).toContain(
+        "Amp does not support project-scoped registration",
+      );
+      expect(result.stdout).not.toContain(runtimeReached);
+    },
+  );
+
+  workspaceCliTest(
+    "passes discovery requests through to the CLI runtime",
+    async ({ processes, workspace }) => {
+      await installGuardRuntime(workspace);
+      const result = await processes.run(
+        process.execPath,
+        [
+          workspace.path("scripts/rea.mjs"),
+          "mcp",
+          "add",
+          "--no-global",
+          "--agent",
+          "amp",
+          "--help",
+        ],
+        {
+          cwd: workspace.root,
+          env: { ...process.env, REA_LOG_LEVEL: "silent" },
+        },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout).toContain(runtimeReached);
+      expect(result.stderr).not.toContain(
+        "Amp does not support project-scoped registration",
+      );
+    },
+  );
+});

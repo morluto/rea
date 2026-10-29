@@ -63,6 +63,31 @@ describe("project-scoped Amp registration guard", () => {
     ).toBe(false);
   });
 
+  it("passes discovery requests through, matching mcp add discovery", () => {
+    for (const discovery of [
+      "--help",
+      "-h",
+      "--llms",
+      "--llms-full",
+      "--version",
+      "--schema",
+    ]) {
+      expect(
+        isProjectScopedAmpRegistration([
+          "mcp",
+          "add",
+          "--no-global",
+          "--agent",
+          "amp",
+          discovery,
+        ]),
+      ).toBe(false);
+    }
+    expect(
+      isProjectScopedAmpRegistration(["mcp", "add", "--no-global", "--help"]),
+    ).toBe(false);
+  });
+
   it("passes other commands through", () => {
     expect(isProjectScopedAmpRegistration(["mcp", "doctor"])).toBe(false);
     expect(isProjectScopedAmpRegistration(["doctor"])).toBe(false);

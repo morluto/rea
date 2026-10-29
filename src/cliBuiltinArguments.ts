@@ -198,17 +198,31 @@ export const adaptCliOutputArgumentsForIncur = (
  * settings file and ignores the flag. The scan mirrors Incur's parsing: only
  * the spaced `--agent` form counts, `--command`/`-c` consumes its value, and
  * Amp registers by default when no agent is given, so a bare project-scoped
- * request would still write global Amp settings.
+ * request would still write global Amp settings. Discovery requests are not
+ * registrations: the same discovery flags `mcp add` itself exempts pass
+ * through instead of tripping the guard.
  */
 // ponytail: reject instead of implementing project-scoped Amp registration.
 // Ceiling: `mcp add --no-global` with Amp fails until Incur supports Amp
 // project scope. Upgrade: drop this guard and its rea.mjs wiring once the
 // dependency writes project Amp settings, and cover that path instead.
+/** Discovery flags `mcp add` answers instead of registering. */
+const MCP_ADD_DISCOVERY_FLAGS: ReadonlySet<string> = new Set([
+  "--help",
+  "-h",
+  "--llms",
+  "--llms-full",
+  "--version",
+  "--schema",
+]);
+
 export const isProjectScopedAmpRegistration = (
   arguments_: readonly string[],
 ): boolean => {
-  const { command } = splitIncurBuiltinArguments(arguments_);
+  const { command, flags } = splitIncurBuiltinArguments(arguments_);
   if (command[0] !== "mcp" || command[1] !== "add") return false;
+  if ([...flags].some((flag) => MCP_ADD_DISCOVERY_FLAGS.has(flag)))
+    return false;
   const rest = command.slice(2);
   if (!rest.includes("--no-global")) return false;
   const agents: string[] = [];
