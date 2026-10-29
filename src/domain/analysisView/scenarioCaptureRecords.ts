@@ -17,7 +17,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { analysisViewResultInputError } from "./analysisViewParent.js";
-import type { AnalysisViewParent } from "./analysisView.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import type { WebNetworkProjectionAccumulator } from "./WebNetworkProjectionAccumulator.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 

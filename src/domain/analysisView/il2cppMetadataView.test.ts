@@ -1,5 +1,6 @@
 import { createEmptyIl2cppMetadataFixture } from "../il2cpp/il2cppMetadata.fixture.js";
 import { afterEach, expect, it, vi } from "vitest";
+import { z } from "zod";
 import {
   il2cppMetadataParentSchema,
   type Il2cppMetadata,
@@ -7,7 +8,22 @@ import {
 import { createEvidence } from "../evidence.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { jsonObjectSchema } from "../jsonValue.js";
-import { projectIl2cppMetadataView } from "./il2cppMetadataView.js";
+import type { AdmittedView, SummaryAnalysisView } from "./analysisViewShape.js";
+import {
+  il2cppMetadataViewRequestSchema,
+  projectIl2cppMetadataView as projectAdmittedIl2cppMetadataView,
+} from "./il2cppMetadataView.js";
+
+type Il2cppMetadataViewInput =
+  | SummaryAnalysisView
+  | z.input<typeof il2cppMetadataViewRequestSchema>;
+
+/** Check a caller selection against the closed request, then pass the admitted view. */
+const projectIl2cppMetadataView = (
+  parent: Parameters<typeof projectAdmittedIl2cppMetadataView>[0],
+  view: Il2cppMetadataViewInput,
+): ReturnType<typeof projectAdmittedIl2cppMetadataView> =>
+  projectAdmittedIl2cppMetadataView(parent, view satisfies AdmittedView);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -638,7 +654,15 @@ const genericLinked = (): Il2cppMetadata => {
 
 it("pages generic method instances by definition, state, address, name and field", () => {
   const source = parent(freezeJsonSnapshot(genericLinked()), true);
-  const view = (filters: Record<string, unknown>) => {
+  const view = (
+    filters: Omit<
+      Extract<
+        Il2cppMetadataViewInput,
+        { collection: "generic_method_instances" }
+      >,
+      "kind" | "collection" | "offset" | "limit"
+    >,
+  ) => {
     const result = projectIl2cppMetadataView(source, {
       kind: "il2cpp-metadata",
       collection: "generic_method_instances",
@@ -649,7 +673,15 @@ it("pages generic method instances by definition, state, address, name and field
     if (!result.ok) throw result.error;
     return result.value;
   };
-  const items = (filters: Record<string, unknown>) => {
+  const items = (
+    filters: Omit<
+      Extract<
+        Il2cppMetadataViewInput,
+        { collection: "generic_method_instances" }
+      >,
+      "kind" | "collection" | "offset" | "limit"
+    >,
+  ) => {
     const value = view(filters);
     return "items" in value ? value.items : undefined;
   };

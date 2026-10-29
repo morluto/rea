@@ -114,3 +114,75 @@ export const CAPTURE_DECODER_SEMI_SPACE_MIB = 8;
  */
 export const MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB = 16_384;
 export const DEFAULT_JADX_OPERATION_TIMEOUT_MS = 120_000;
+
+/**
+ * Shared GDB and Rizin command deadline used when the setting is unset.
+ * Today's fixed 120 s constant.
+ */
+export const DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS = 120_000;
+
+/**
+ * Smallest command deadline. Zero is not a deadline. The maximum is the
+ * largest delay Node schedules exactly; a `setTimeout` delay above that
+ * signed 32-bit bound becomes 1 ms.
+ */
+export const MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 1;
+export const MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS = 2_147_483_647;
+
+/** Debugger sessions admitted when the setting is unset. Today's constant. */
+export const DEFAULT_DEBUGGER_MAX_SESSIONS = 8;
+
+/**
+ * Smallest useful session cap. Zero admits no session. 64 is REA's refusal
+ * so one process cannot spawn an unbounded set of debugger processes; it is
+ * not a measurement of host process capacity.
+ */
+export const MINIMUM_DEBUGGER_MAX_SESSIONS = 1;
+export const MAXIMUM_DEBUGGER_MAX_SESSIONS = 64;
+
+/** Queued commands admitted on one session when the setting is unset. */
+export const DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS = 16;
+
+/**
+ * Smallest useful queue. Zero admits no command. 256 is REA's refusal so
+ * one session cannot retain an unbounded command queue. Each queued command
+ * can also retain output up to the command-output cap.
+ */
+export const MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS = 1;
+export const MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS = 256;
+
+/** Command output retained when the setting is unset. Today's 16 MiB cap. */
+export const DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Node's single-string ceiling, in UTF-16 code units. This is the same V8
+ * bound `MAXIMUM_BRIDGE_MAX_REQUEST_BYTES` leaves room under.
+ */
+const NODE_MAX_STRING_LENGTH = 536_870_888;
+
+/**
+ * `JSON.stringify` encodes U+0000–U+001F as `\uXXXX` (6 code units). Evidence
+ * hashing stringifies the retained command output as one string. One mebibyte
+ * is reserved for the surrounding evidence document.
+ */
+const DEBUGGER_OUTPUT_JSON_ESCAPE_CODE_UNITS = 6;
+const DEBUGGER_OUTPUT_EVIDENCE_ENVELOPE_CODE_UNITS = 1024 * 1024;
+
+/**
+ * Largest configurable command-output retention. A lower value only retains
+ * less caller command output, so the floor is one byte. The maximum keeps
+ * the worst-case JSON expansion of that text under Node's string ceiling.
+ */
+export const MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = 1;
+export const MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES = Math.floor(
+  (NODE_MAX_STRING_LENGTH - DEBUGGER_OUTPUT_EVIDENCE_ENVELOPE_CODE_UNITS) /
+    DEBUGGER_OUTPUT_JSON_ESCAPE_CODE_UNITS,
+);
+
+/**
+ * Bytes reserved for debugger control replies (Rizin cleanup readback and
+ * GDB startup or detach MI). This is not `REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES`:
+ * a caller cap below this budget must not truncate those required replies.
+ */
+export const DEBUGGER_CONTROL_REPLY_BYTES =
+  DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES;
