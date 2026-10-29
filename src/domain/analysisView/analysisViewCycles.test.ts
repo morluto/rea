@@ -1,48 +1,16 @@
-import { parse } from "@babel/parser";
-import { traverseFast, type Node } from "@babel/types";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { readImportSpecifiers } from "../../../scripts/lib/import-specifiers.mjs";
+
 const root = dirname(fileURLToPath(import.meta.url));
 
-/** String specifiers only, matching scripts/lib/module-boundaries.mjs. */
-const literalValue = (node: Node | null | undefined): string | undefined => {
-  if (node?.type === "StringLiteral") return node.value;
-  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
-    return node.quasis[0]?.value.cooked ?? undefined;
-  return undefined;
-};
-
-const importSpecifier = (node: Node): string | undefined => {
-  switch (node.type) {
-    case "ImportDeclaration":
-    case "ExportAllDeclaration":
-    case "TSImportType":
-      return literalValue(node.source);
-    case "ExportNamedDeclaration":
-    case "ImportExpression":
-      return literalValue(node.source);
-    case "TSImportEqualsDeclaration":
-      return node.moduleReference.type === "TSExternalModuleReference"
-        ? literalValue(node.moduleReference.expression)
-        : undefined;
-    default:
-      return undefined;
-  }
-};
-
-/** Import and re-export specifiers, using the same Babel nodes as the module-boundary guard. */
-export const relativeSpecifiers = (source: string): readonly string[] => {
-  const specifiers: string[] = [];
-  const tree = parse(source, { sourceType: "module", plugins: ["typescript"] });
-  traverseFast(tree, (node) => {
-    const specifier = importSpecifier(node);
-    if (specifier?.startsWith(".") === true) specifiers.push(specifier);
-  });
-  return specifiers;
-};
+const relativeSpecifiers = (source: string): readonly string[] =>
+  readImportSpecifiers(source)
+    .map(({ specifier }) => specifier)
+    .filter((specifier) => specifier.startsWith("."));
 
 /**
  * Cycles that already existed outside the analysis-view hub. Membership is
@@ -137,25 +105,6 @@ const stronglyConnected = (
 };
 
 describe("analysis view import cycles", () => {
-  it("reads side-effect imports and ignores import-like text", () => {
-    expect(
-      relativeSpecifiers(`
-        // from "./commented.js"
-        /* import "./block-comment.js"; */
-        const text = "from './string.js'";
-        import "./side-effect.js";
-        import { value } from "./named.js";
-        export { value as again } from "./reexported.js";
-        const loaded = import("./dynamic.js");
-      `),
-    ).toEqual([
-      "./side-effect.js",
-      "./named.js",
-      "./reexported.js",
-      "./dynamic.js",
-    ]);
-  });
-
   it("keeps projectors from importing the request and result hub", () => {
     const cycles = stronglyConnected(importGraph()).map((cycle) =>
       cycle.join("\n"),
