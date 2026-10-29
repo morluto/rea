@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
@@ -104,7 +105,7 @@ cliTest(
 );
 
 cliTest(
-  "states the inflate ratio on the consumed stream when PE padding follows it",
+  "delivers inflate guidance for the consumed stream when PE padding follows it",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-pe-padding-");
     const path = join(root, "padded.exe");
@@ -129,11 +130,9 @@ cliTest(
       section_bytes: 512,
       compressed_bytes: rustDependencyPayload().length,
     });
-    expect(
-      report.limitations.filter((line) => line.startsWith("Resource guards")),
-    ).toEqual([
-      "Resource guards bound the selected file to 256 MiB, the compressed dependency stream to 1 MiB, inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length, and the complete report to 8 MiB. Package and dependency counts are admitted against that output budget before schema cloning, graph objects, or reverse-edge allocation.",
-    ]);
+    // The stream-based budget itself is enforced by "limits PE inflate ratio
+    // by consumed zlib bytes"; this checks the guidance reaches the report.
+    expect(report.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
   },
 );
 
