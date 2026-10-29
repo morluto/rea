@@ -1,5 +1,6 @@
 import { Cli } from "incur";
 import { expect, it, vi } from "vitest";
+import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
 import { registerCoreBinaryCommands } from "../../../src/cli/coreBinaryCommands.js";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
 import { registerManagedCommands } from "../../../src/cli/managedCommands.js";
@@ -19,6 +20,7 @@ const registry = () => {
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);
   registerManagedCommands(cli, silentLogger, runProviderAnalysis);
+  registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
   registerUtilityCommands(
     cli,
     silentLogger,
@@ -80,6 +82,11 @@ const commands: readonly (readonly string[])[] = [
   ["list-architectures"],
   ["inspect-plist"],
   ["demangle-swift", "$s4main"],
+  ["inspect-keyed-archive", "Contents/Resources/Archive.plist"],
+  ["trace-dylib-resolution"],
+  ["inspect-asset-catalog"],
+  ["decode-interface-builder"],
+  ["extract-artifact"],
 ];
 
 it.each(commands)(
