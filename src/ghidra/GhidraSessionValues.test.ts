@@ -240,6 +240,24 @@ describe("Ghidra mutation handshake", () => {
   });
 });
 
+describe("Ghidra ELF image base commitment", () => {
+  it("rejects a session Ghidra placed away from the committed link base", () => {
+    // Ghidra's default moves base-0 shared images to 0x10000.
+    const shifted = session();
+    shifted.target.image_base = "0x10000";
+    expect(
+      parseGhidraSessionInfo(session(), {
+        ...expected,
+        expectedImageBase: "0x0",
+      }).ok,
+    ).toBe(true);
+    expect(
+      parseGhidraSessionInfo(shifted, { ...expected, expectedImageBase: "0x0" })
+        .ok,
+    ).toBe(false);
+  });
+});
+
 it("admits unknown analysis completeness only for a committed read-only existing project", () => {
   const value = {
     ...session(),

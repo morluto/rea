@@ -14,6 +14,7 @@ import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import {
+  ghidraMipsElfImageBase,
   ghidraMipsProfileParameters,
   ghidraPinnedMipsLanguage,
 } from "./GhidraMipsProfile.js";
@@ -143,7 +144,7 @@ describe("bounded Ghidra MIPS admission", () => {
 
   it.each([
     [{ elfClass: 64 }, "ELF32"],
-    [{ type: 3 }, "ET_EXEC and ET_REL"],
+    [{ type: 3 }, "complete dynamic relocation inspection"],
     [{ type: 0xffa0 }, "ET_EXEC and ET_REL"],
     [{ flags: 0x10a23001 }, "separate MIPS ABI flags"],
     [{ flags: 0x70001021 }, "o32"],
@@ -517,6 +518,8 @@ describe("MIPS16 shared-image profile", () => {
         relocationCount: 14,
         relocationTypes: [0, 3],
         symbolRelativeCount: 0,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+        prelinkBase: null,
       },
       ...change,
     });
@@ -572,6 +575,8 @@ describe("MIPS16 shared-image profile", () => {
         relocationCount: 1,
         relocationTypes: [3],
         symbolRelativeCount: 1,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+        prelinkBase: null,
       },
     },
   ] satisfies Partial<MipsElfMetadata>[])(
@@ -635,6 +640,199 @@ describe("MIPS16 shared-image profile", () => {
       });
     }
   });
+});
+
+// Hard-float PIC library as GCC and LLD emit it: noreorder|pic|cpic, o32, r2.
+const library = (change: Partial<MipsElfMetadata> = {}) =>
+  target({
+    type: 3,
+    flags: 0x70001007,
+    ...abi({ fpAbi: 1, flags1: 1 }),
+    sharedLoad: {
+      status: "complete",
+      relocationCount: 314,
+      relocationTypes: [0, 3, 38],
+      symbolRelativeCount: 120,
+      loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+      prelinkBase: null,
+    },
+    ...change,
+  });
+
+describe("MIPS32 shared-image link base", () => {
+  it.each([
+    [[{ headerIndex: 19, virtualAddress: 0x10000 }], "10000"],
+    [
+      [
+        { headerIndex: 3, virtualAddress: 0x30000 },
+        { headerIndex: 19, virtualAddress: 0x20000 },
+        { headerIndex: 20, virtualAddress: 0x10000 },
+      ],
+      "20000",
+    ],
+    [[{ headerIndex: 20, virtualAddress: 0x10000 }], "0"],
+    [[], "0"],
+  ])(
+    "applies Ghidra's first-20-program-headers rule to the recorded loads %j",
+    (loadAddresses, base) => {
+      expect(
+        ghidraMipsElfImageBase(
+          library({
+            sharedLoad: {
+              status: "complete",
+              relocationCount: 1,
+              relocationTypes: [3],
+              symbolRelativeCount: 0,
+              loadAddresses,
+              prelinkBase: null,
+            },
+          }),
+        ),
+      ).toBe(base);
+    },
+  );
+  it("commits the ELF link base only for this lane and refuses a different one", async () => {
+    const highBase = library({
+      sharedLoad: {
+        status: "complete",
+        relocationCount: 2,
+        relocationTypes: [0, 3],
+        symbolRelativeCount: 1,
+        loadAddresses: [{ headerIndex: 0, virtualAddress: 0x2aaa0000 }],
+        prelinkBase: null,
+      },
+    });
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    for (const [value, offset] of [
+      [library(), "0x0"],
+      [highBase, "0x2aaa0000"],
+    ] as const) {
+      const resolved = await ghidra.resolveAnalysisProfile(value);
+      if (!resolved.ok || resolved.value.profile === null)
+        throw new Error("expected shared profile");
+      expect(resolved.value.profile.parameters.elf_image_base).toEqual({
+        offset,
+        selection: "elf-link-base-v1",
+      });
+    }
+    const mips16 = await ghidra.resolveAnalysisProfile(
+      target({
+        type: 3,
+        flags: 0x74001005,
+        abiFlags: null,
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      }),
+    );
+    if (!mips16.ok) throw mips16.error;
+    expect(mips16.value.profile?.parameters).not.toHaveProperty(
+      "elf_image_base",
+    );
+    const { counts, client } = await session(highBase, undefined, library());
+    const health = await client.execute("health", {});
+    expect(health.ok).toBe(false);
+    if (!health.ok)
+      expect(JSON.stringify(health.error.diagnostics)).toContain(
+        "shared-image link base",
+      );
+    expect(counts.starts).toBe(0);
+  });
+});
+
+describe("MIPS32 shared-image profile", () => {
+  it("admits a PIC library with symbol-bearing REL32 under its own lane", async () => {
+    const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+    expect(ghidra.inspectTargetSupport(library()).status).toBe("supported");
+    const resolved = await ghidra.resolveAnalysisProfile(library());
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected shared profile");
+    expect(resolved.value.profile.parameters).toMatchObject({
+      mips_support_lane: "elf32-dyn-o32-arch32r2-standard-v1",
+      language_id: "auto-from-header",
+      mips_elf: {
+        type: 3,
+        shared_load: { status: "complete", relocation_types: [0, 3, 38] },
+      },
+    });
+  });
+  it("reports GOT and TLS limitations only when TLS slots are declared", async () => {
+    const withTls = await session(library(), undefined);
+    const health = await withTls.client.execute("health", {});
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("External GOT bindings"),
+        expect.stringContaining("Ghidra fills local and global GOT entries"),
+        expect.stringContaining("TLS relocations"),
+      ]),
+    );
+    const withoutTls = await session(
+      library({
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 2,
+          relocationTypes: [0, 3],
+          symbolRelativeCount: 1,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      }),
+      undefined,
+    );
+    const plain = await withoutTls.client.execute("health", {});
+    if (!plain.ok) throw plain.error;
+    expect(plain.value.limitations.join(" ")).not.toContain("TLS relocations");
+  });
+  it.each([
+    [
+      { sharedLoad: { status: "unavailable", reason: "no PT_DYNAMIC" } },
+      "no PT_DYNAMIC",
+    ],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3, 5],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: null,
+        },
+      },
+      "other dynamic relocation types",
+    ],
+    [
+      {
+        sharedLoad: {
+          status: "complete",
+          relocationCount: 1,
+          relocationTypes: [3],
+          symbolRelativeCount: 0,
+          loadAddresses: [{ headerIndex: 0, virtualAddress: 0 }],
+          prelinkBase: 0x40000000,
+        },
+      },
+      "prelink trailer",
+    ],
+    [{ abiFlags: null }, "inspected ABI flags"],
+    [{ flags: 0x72001007 }, "ET_EXEC and ET_REL"],
+    [{ flags: 0x50001007 }, "32R2"],
+  ] satisfies [Partial<MipsElfMetadata>, string][])(
+    "refuses %j",
+    (change, reason) => {
+      const ghidra = new GhidraProvider(config, silentLogger, {}, host);
+      expect(ghidra.inspectTargetSupport(library(change))).toMatchObject({
+        status: "unsupported",
+        reason: expect.stringContaining(reason),
+      });
+    },
+  );
 });
 
 describe("soft-float MIPS storage", () => {

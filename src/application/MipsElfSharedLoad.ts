@@ -31,13 +31,14 @@ export const readMipsElfSharedLoad = async (
   sections: readonly MipsElfRelocationSection[],
 ): Promise<Result<SharedLoadFacts, string>> => {
   const loads: {
+    index: number;
     offset: number;
     address: number;
     size: number;
     memorySize: number;
   }[] = [];
   let dynamic: { offset: number; address: number; size: number } | undefined;
-  for (const program of programHeaders) {
+  for (const [index, program] of programHeaders.entries()) {
     checkCancelled();
     const { type } = program;
     const offset = Number(program.offset);
@@ -51,7 +52,7 @@ export const readMipsElfSharedLoad = async (
         address + memorySize > 0x100000000
       )
         return err("invalid or incomplete MIPS PT_LOAD range");
-      loads.push({ offset, address, size, memorySize });
+      loads.push({ index, offset, address, size, memorySize });
     }
     if (type === 2) {
       if (dynamic !== undefined) return err("duplicate MIPS PT_DYNAMIC tables");
@@ -64,6 +65,24 @@ export const readMipsElfSharedLoad = async (
     return err("invalid MIPS ELF32 dynamic table size");
   if (dynamic.offset > fileSize - dynamic.size)
     return err("MIPS PT_DYNAMIC range extends beyond the file");
+  // Source facts only: every PT_LOAD address with its program-header index.
+  // Providers apply their own image-base selection rules to these.
+  const loadAddresses = loads.map((load) => ({
+    headerIndex: load.index,
+    virtualAddress: load.address,
+  }));
+  // Android apriori prelink trailer: the prelinked base word, then the tag
+  // "PRE " (padding around the tag is tolerated).
+  let prelinkBase: number | null = null;
+  if (fileSize >= 8) {
+    const trailer = await read(fileSize - 8, 8, "MIPS prelink trailer");
+    if (!trailer.ok) return err(trailer.error);
+    const tag = trailer.value.subarray(4).toString("latin1");
+    if (tag.replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/gu, "") === "PRE")
+      prelinkBase = little
+        ? trailer.value.readUInt32LE(0)
+        : trailer.value.readUInt32BE(0);
+  }
   const ranges = loads
     .filter((load) => load.memorySize > 0)
     .sort((left, right) => left.address - right.address);
@@ -177,6 +196,8 @@ export const readMipsElfSharedLoad = async (
           relocationCount: 0,
           relocationTypes: [],
           symbolRelativeCount: 0,
+          loadAddresses,
+          prelinkBase,
         })
       : err(reason);
   };
@@ -233,5 +254,7 @@ export const readMipsElfSharedLoad = async (
     relocationCount: size / 8,
     relocationTypes: [...types].sort((left, right) => left - right),
     symbolRelativeCount,
+    loadAddresses,
+    prelinkBase,
   });
 };

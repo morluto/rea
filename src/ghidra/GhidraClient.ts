@@ -1133,6 +1133,9 @@ export class GhidraClient {
       ...(this.#options.expectedCompilerSpecId === undefined
         ? {}
         : { expectedCompilerSpecId: this.#options.expectedCompilerSpecId }),
+      ...(this.#options.expectedImageBase === undefined
+        ? {}
+        : { expectedImageBase: this.#options.expectedImageBase }),
     });
     if (parsed.ok) return parsed;
     return err(

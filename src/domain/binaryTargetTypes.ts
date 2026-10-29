@@ -83,6 +83,13 @@ export interface MipsElfMetadata extends ElfFamilyMetadata {
         readonly relocationCount: number;
         readonly relocationTypes: readonly number[];
         readonly symbolRelativeCount: number;
+        /** Every PT_LOAD virtual address with its program-header index, in header order. */
+        readonly loadAddresses: readonly {
+          readonly headerIndex: number;
+          readonly virtualAddress: number;
+        }[];
+        /** Android prelink trailer base; null when the file has no trailer. */
+        readonly prelinkBase: number | null;
       }
     | { readonly status: "unavailable"; readonly reason: string };
 }

@@ -47,6 +47,8 @@ export interface GhidraClientOptions {
   readonly profileDigest: string;
   readonly expectedLanguageId?: string;
   readonly expectedCompilerSpecId?: string;
+  /** Canonical `0x` image base the committed profile placed the target at. */
+  readonly expectedImageBase?: string;
   readonly startupTimeoutMs?: number;
   readonly readStartupTimeoutMs?: () => number;
   readonly onDiagnostic?: (event: GhidraDiagnostic) => void;

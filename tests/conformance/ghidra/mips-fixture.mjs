@@ -192,6 +192,51 @@ export async function buildMipsRelocatableFixture(
   };
 }
 
+/**
+ * Build the source-owned PIC shared library (ET_DYN) with LLD, which records
+ * the MIPS GOT layout in MIPS_LOCAL_GOTNO/MIPS_GOTSYM. `softFloat` builds the
+ * same library for a soft-float o32 system. Like GNU ld output, text shares
+ * the first segment (page zero, so its local GOT page entry is zero) and
+ * PIC calls stay `jalr $25` through the GOT instead of relaxing to `bal`.
+ */
+export async function buildMipsSharedFixture(
+  directory,
+  byteOrder,
+  softFloat = false,
+) {
+  if (byteOrder !== "little" && byteOrder !== "big")
+    throw new Error("MIPS fixture byte order must be little or big");
+  const target = byteOrder === "little" ? "mipsel-linux-gnu" : "mips-linux-gnu";
+  const source = fileURLToPath(new URL("../c/mips-shared.c", import.meta.url));
+  const path = join(directory, `${target}${softFloat ? "-soft-float" : ""}.so`);
+  const args = [
+    `--target=${target}`,
+    "-march=mips32r2",
+    "-mabi=32",
+    ...(softFloat ? ["-msoft-float"] : []),
+    "-mno-relax-pic-calls",
+    "-fPIC",
+    "-shared",
+    "-nostdlib",
+    "-fuse-ld=lld",
+    "-O1",
+    "-Wl,--build-id=none",
+    "-Wl,--no-rosegment",
+    source,
+    "-o",
+    path,
+  ];
+  return {
+    ...(await compileMipsFixture(path, byteOrder, 3, args, {
+      expectedFlags: 0x70001007,
+    })),
+    float_abi: softFloat ? "soft" : "hard",
+    source_sha256: createHash("sha256")
+      .update(await readFile(source))
+      .digest("hex"),
+  };
+}
+
 /** Compile and attest the shared ELF32/o32/MIPS32r2 fixture boundary. */
 async function compileMipsFixture(
   path,

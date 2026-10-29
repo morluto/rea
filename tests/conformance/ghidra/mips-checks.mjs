@@ -23,6 +23,13 @@ const SOFT_FLOAT_SYMBOLS = [
   "rea_mips_soft_caller",
 ];
 
+/** Expected ELF header facts per fixture kind; PIC shared objects add pic|cpic. */
+const OBJECT_TYPES = {
+  exec: { type: 2, header: /^EXEC\b/u, flags: 0x70001001 },
+  rel: { type: 1, header: /^REL\b/u, flags: 0x70001001 },
+  dyn: { type: 3, header: /^DYN\b/u, flags: 0x70001007 },
+};
+
 /** Complete indexed ELF32 section types shared by the independent fixture readers. */
 export function parseMipsReadelfSectionTypes(text) {
   const counts = [
@@ -84,7 +91,8 @@ export function expectedMipsElfProfile(mips) {
 
 /**
  * Parse only the documented GNU readelf fields needed by our tiny fixtures.
- * `rel` objects carry their own symbol checks in mips-relocatable-checks.mjs.
+ * `rel` and `dyn` objects carry their own symbol checks in
+ * mips-relocatable-checks.mjs and mips-shared-checks.mjs.
  */
 export function parseMipsReadelf(
   text,
@@ -93,7 +101,8 @@ export function parseMipsReadelf(
   objectType = "exec",
 ) {
   assert.ok(floatAbi === "hard" || floatAbi === "soft");
-  assert.ok(objectType === "exec" || objectType === "rel");
+  const kind = OBJECT_TYPES[objectType];
+  assert.ok(kind, `Unknown fixture object type ${objectType}`);
   language(byteOrder);
   const field = (expression, label) => {
     const matches = [...text.matchAll(expression)];
@@ -105,17 +114,14 @@ export function parseMipsReadelf(
     field(/^\s*Data:.*?,\s*(little|big) endian\s*$/gmu, "byte order"),
     byteOrder,
   );
-  assert.match(
-    field(/^\s*Type:\s*(.+)$/gmu, "type"),
-    objectType === "rel" ? /^REL\b/u : /^EXEC\b/u,
-  );
+  assert.match(field(/^\s*Type:\s*(.+)$/gmu, "type"), kind.header);
   assert.match(field(/^\s*Machine:\s*(.+)$/gmu, "machine"), /^MIPS\b/u);
   assert.ok(
     !parseMipsReadelfSectionTypes(text).includes("GNU_ATTRIBUTES"),
     "Fixture unexpectedly declares GNU attributes",
   );
   const flags = Number(field(/^\s*Flags:\s*(0x[\da-f]+),.*$/gmu, "flags"));
-  assert.equal(flags, 0x70001001, "Fixture ELF flags differ from build intent");
+  assert.equal(flags, kind.flags, "Fixture ELF flags differ from build intent");
   assert.equal(field(/^ISA:\s*(.+)$/gmu, "ISA"), "MIPS32r2");
   const registerSize = (name) => {
     const bits = Number(
@@ -160,7 +166,7 @@ export function parseMipsReadelf(
     ),
   };
   const symbols = {};
-  for (const name of objectType === "rel"
+  for (const name of objectType !== "exec"
     ? []
     : [
         "rea_mips_entry",
@@ -183,7 +189,7 @@ export function parseMipsReadelf(
     mips: {
       elfClass: 32,
       byteOrder,
-      type: objectType === "rel" ? 1 : 2,
+      type: kind.type,
       flags,
       abiFlags,
       gnuAttributes: null,

@@ -18,8 +18,8 @@ explicit o32 and `EF_MIPS_ARCH_32R2` flags and no machine-specific or ASE
 encoding flags. These are header declarations, not proof that every instruction
 conforms to that ISA. ELF64, n32/n64, unspecified ABI, microMIPS,
 machine-specific variants and PSP PRX are not covered by this standard-instruction
-lane. MIPS16 shared images have the separate bounded profile below; other shared
-or compressed images remain unsupported. Their family may be identified, but provider selection returns the
+lane. MIPS16 and plain MIPS32 shared images have the separate bounded profiles
+below; other shared or compressed images remain unsupported. Their family may be identified, but provider selection returns the
 specific unsupported constraint rather than guessing a compatible profile.
 
 A second admission covers recordless legacy firmware images
@@ -155,6 +155,41 @@ REA_MIPS_LD=/absolute/path/to/mips-linux-gnu-ld \
 GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra \
 npm run verify:ghidra:mips-shared
 ```
+
+### MIPS32 shared images
+
+A third profile admits plain MIPS32 position-independent shared images
+(`ET_DYN` with no ASE encoding flag): shared libraries and executables linked as
+`ET_DYN`, either byte order, with explicit o32 and MIPS32r2 and the same ABI
+flags record requirements as the executable lane. As for MIPS16, source
+inspection must examine the complete dynamic relocation declarations. This
+profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
+`R_MIPS_REL32`, and the TLS loader slots `R_MIPS_TLS_DTPMOD32`,
+`R_MIPS_TLS_DTPREL32` and `R_MIPS_TLS_TPREL32`; other relocation types remain
+refused. Images without an ABI flags record remain refused, as in the executable
+lane, and so do images ending in an Android prelink trailer, whose base Ghidra
+prefers over the program headers. The support lane is
+`elf32-dyn-o32-arch32r2-standard-v1`; Ghidra selects the language from the
+header, and the real-provider lane checks it.
+
+REA imports the image at its own ELF image base (`-loader-imagebase`, the
+lowest `PT_LOAD` address among the first 20 program headers, as Ghidra computes
+it) and commits that base in the analysis profile; the session handshake must
+report it. Ghidra's default moves a library linked at 0 to `0x10000` and then
+shifts only nonzero local GOT entries, so a GOT page entry for page zero (how
+GNU-ld-built libraries call static functions in their first 64 KiB) keeps the
+unshifted value and calls through it decompile to wrong addresses. At the link
+base nothing moves: returned addresses equal those readelf and objdump report,
+and every GOT entry is correct as stored. They are not a process's runtime
+addresses.
+
+Ghidra fills the global GOT itself. Entries for undefined symbols point into its
+`EXTERNAL` block, or, for imported functions with a `.MIPS.stubs` lazy-binding
+stub, hold the stub address as glibc does before the first call. Either way,
+calls through the GOT name the imported function without resolving its
+defining image. TLS slots hold values only the dynamic loader assigns (module
+index, TLS offsets); Ghidra reports those relocations `UNSUPPORTED` and leaves
+their bytes unchanged, and Evidence says so.
 
 MIPS header and ABI record facts are committed in the analysis profile so
 interpretation changes invalidate profile-bound snapshots. The support-lane
@@ -303,3 +338,32 @@ also calls `powf`, an external whose float prototype comes from Ghidra's C
 library archive; every variant must decompile `powf(1.5,2.5)` without FPU
 inputs, and the soft-float variant must report that the soft-float prototype
 covered it.
+
+### MIPS32 shared images
+
+```bash
+GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra npm run verify:ghidra:mips32-shared
+```
+
+It links `tests/conformance/c/mips-shared.c` with `-fPIC -shared` and LLD in
+both byte orders, plus a little-endian soft-float variant. Like GNU ld output,
+text shares the first segment and PIC calls keep `jalr $25` through the GOT, so
+the static call reads a zero-valued local GOT page entry. GNU readelf supplies
+the program headers, dynamic tags, dynamic symbols and REL entries. The lane
+requires every Ghidra block inside a `PT_LOAD` to agree on one placement offset,
+and this lane requires it to be zero, then checks every dynamic relocation and
+every non-reserved GOT entry through `read_bytes`: symbol-index-zero REL32 must
+equal the original word plus the offset; symbol-bearing REL32 must add the
+placed address of the defined symbol, or the `EXTERNAL` block address of an
+undefined one; global GOT entries must hold their symbol's placed or `EXTERNAL`
+address, or the lazy-binding stub address plus the offset for an imported
+function that has one, and local entries their original word plus the offset,
+zero included; TLS slots must stay `UNSUPPORTED` with unchanged bytes. The
+fixture covers a local, a defined and an undefined REL32 target, imported code
+and data, both local GOT page entries, general-dynamic DTPMOD32/DTPREL32 and
+initial-exec TPREL32. The lane also
+requires the entry function to name the static function called through the
+zero page entry and the import both through its GOT entry and through its REL32
+pointer, reach `__tls_get_addr`, and contain no FPU inputs, plus the committed
+link base, the shared support lane and the placement, GOT and TLS limitations
+in the snapshot and Evidence, CLI evidence and an unchanged source library.

@@ -412,6 +412,55 @@ describe("Ghidra configured import language and seeds", () => {
     ).toThrow(/cannot be combined with a raw-binary import/u);
   });
 
+  it("selects the ELF loader at the committed image base, with or without a language", () => {
+    expectOptions(ghidraHeadlessArguments({ ...base, elfImageBase: "0" }), [
+      ["-loader", "ElfLoader"],
+      ["-loader-imagebase", "0"],
+    ]);
+    const pinned = ghidraHeadlessArguments({
+      ...base,
+      elfImageBase: "2aaa0000",
+      languageOverride: { languageId: "MIPS:BE:32:default" },
+    });
+    expectOptions(pinned, [
+      ["-loader-imagebase", "2aaa0000"],
+      ["-processor", "MIPS:BE:32:default"],
+    ]);
+  });
+
+  it.each([
+    [{ psp: true as const }, /generic ELF import/u],
+    [{ dosMz: true as const }, /generic ELF import/u],
+    [
+      {
+        rawBinary: {
+          languageId: "ARM:LE:32:v7",
+          compilerSpecId: "default",
+          baseAddr: "0x8000000",
+        },
+      },
+      /generic ELF import/u,
+    ],
+    [
+      {
+        gamecubeDol: {
+          languageId: "PowerPC:BE:32:default",
+          sectionFilePath: "/tmp/gamecube-dol-sections.txt",
+        },
+      },
+      /generic ELF import/u,
+    ],
+    [{}, /bare 32-bit hex/u, "0x0"],
+    [{}, /bare 32-bit hex/u, "100000000"],
+  ])(
+    "refuses an image base it cannot apply %j",
+    (conflict, reason, value = "0") => {
+      expect(() =>
+        ghidraHeadlessArguments({ ...base, ...conflict, elfImageBase: value }),
+      ).toThrow(reason);
+    },
+  );
+
   it.each(["darwin", "win32"] as const)(
     "applies seeds after loader preparation and before analysis scripts on %s",
     (platform) => {

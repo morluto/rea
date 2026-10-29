@@ -209,6 +209,7 @@
     "verify:ghidra:6502": "npm run build:cached && node scripts/verify-real-ghidra-6502.mjs",
     "verify:ghidra:m68k": "npm run build:cached && node scripts/verify-real-ghidra-m68k.mjs",
     "verify:ghidra:mips-shared": "npm run build:cached && node scripts/verify-real-ghidra-mips-shared.mjs",
+    "verify:ghidra:mips32-shared": "npm run build:cached && node scripts/verify-real-ghidra-mips32-shared.mjs",
     "verify:ghidra:mips-relocatable": "npm run build:cached && node scripts/verify-real-ghidra-mips-relocatable.mjs",
     "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
