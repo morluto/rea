@@ -95,6 +95,12 @@ it.each([
       expect(metadata.entries).toEqual([]);
       expect(metadata.compiler_version).toBeNull();
       expect(metadata.diagnostic).toBe("repeated_map_key");
+      expect(metadata.admission).toMatchObject({ code: "repeated_map_key" });
+      if (kind === "duplicate nested byte keys")
+        expect(
+          metadata.admission?.detail?.key ??
+            metadata.admission?.detail?.key_length,
+        ).toBeDefined();
       expect(metadata.bytecode_offset).toBe(1);
       expect(metadata.cbor_bytes).toBe(19);
     }

@@ -44,6 +44,7 @@ import {
 } from "../artifacts/AnalysisCleanupLease.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
+import { StagedOutputError } from "../filesystem/StagedOutputError.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 /** Request control and its owning operation for an interruptible atomic write. */
@@ -399,6 +400,7 @@ const writeTextPartsOwned = async (
             path: requestedPath,
             cleanup,
             published: { ...cause.outcome.value, path: requestedPath },
+            ...stagedOutputDiagnostics(cause.cleanupCause),
           }),
           cause.lease,
         );
@@ -420,6 +422,12 @@ const writeTextPartsOwned = async (
           ...(failure.systemCode === undefined
             ? {}
             : { systemCode: failure.systemCode }),
+          ...stagedOutputDiagnostics(
+            !cause.outcome.ok &&
+              cause.outcome.error instanceof StagedOutputError
+              ? cause.outcome.error
+              : cause.cleanupCause,
+          ),
         }),
         cause.lease,
       );
@@ -445,6 +453,7 @@ const writeTextPartsOwned = async (
         ...(failure.systemCode === undefined
           ? {}
           : { systemCode: failure.systemCode }),
+        ...stagedOutputDiagnostics(cause),
       }),
     );
   }
@@ -611,6 +620,15 @@ class StagedOutputCleanupFailure extends Error {
     });
   }
 }
+
+const stagedOutputDiagnostics = (
+  cause: unknown,
+): {
+  readonly diagnostics?: Readonly<Record<string, string | number>>;
+} => {
+  if (!(cause instanceof StagedOutputError)) return {};
+  return { diagnostics: { code: cause.code, ...cause.detail } };
+};
 
 const failureMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message || cause.name : String(cause);

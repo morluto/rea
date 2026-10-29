@@ -172,21 +172,10 @@ const fingerprint = async (
   const parsedProperties = parseGhidraJavaProperties(
     properties.toString("latin1"),
   );
-  if (!parsedProperties.ok) {
-    const parserCode =
-      parsedProperties.error === "Trailing escape in Java properties value"
-        ? "trailing_escape"
-        : parsedProperties.error ===
-            "Malformed Unicode escape in Java properties file"
-          ? "malformed_unicode_escape"
-          : undefined;
-    throw new GhidraAdmissionError(
-      "properties_invalid",
-      parserCode === undefined
-        ? { parser: parsedProperties.error }
-        : { parser_code: parserCode },
-    );
-  }
+  if (!parsedProperties.ok)
+    throw new GhidraAdmissionError("properties_invalid", {
+      parser_code: parsedProperties.error,
+    });
   const property = (name: string): string | undefined =>
     parsedProperties.value.get(name);
   if (

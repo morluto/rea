@@ -164,8 +164,25 @@ it("rejects repeated deeply nested container keys promptly", () => {
   ).toMatchObject({
     status: "not-decoded",
     diagnostic: "repeated_map_key",
+    admission: {
+      code: "repeated_map_key",
+      detail: { key_length: expect.any(Number) },
+    },
   });
   expect(performance.now() - started).toBeLessThan(1000);
+});
+
+it("records the profile depth when CBOR nesting is refused", () => {
+  expect(
+    inspectSolidityMetadata(bytecode("a16178" + "81".repeat(65) + "00")),
+  ).toMatchObject({
+    status: "not-decoded",
+    diagnostic: "nesting_exceeds_profile",
+    admission: {
+      code: "nesting_exceeds_profile",
+      detail: { max_depth: 64 },
+    },
+  });
 });
 
 it.each(["", "60006000f3", "000000", "00010001"])(

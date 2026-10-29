@@ -118,6 +118,40 @@ const validateMapKeys = (value: unknown): void => {
   }
 };
 
+/** Keep the typed code and its detail; map only the decoder's duplicate-key throw. */
+const solidityFailure = (
+  cause: unknown,
+): {
+  readonly diagnostic: string;
+  readonly admission?: {
+    readonly code: string;
+    readonly detail?: Readonly<Record<string, string | number>>;
+  };
+} => {
+  if (cause instanceof EvmAdmissionError)
+    return {
+      diagnostic: cause.code,
+      admission: {
+        code: cause.code,
+        ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+      },
+    };
+  if (
+    cause instanceof Error &&
+    cause.message.startsWith("CBOR decode error: found repeat map key")
+  )
+    return {
+      diagnostic: "repeated_map_key",
+      admission: { code: "repeated_map_key" },
+    };
+  return {
+    diagnostic: (cause instanceof Error ? cause.message : String(cause)).slice(
+      0,
+      512,
+    ),
+  };
+};
+
 /** Parse only a plausible terminal root-map candidate; never establish absence. */
 export const inspectSolidityMetadata = (
   bytes: Uint8Array,
@@ -184,15 +218,7 @@ export const inspectSolidityMetadata = (
       status: "not-decoded",
       entries: [],
       compiler_version: null,
-      diagnostic: (cause instanceof EvmAdmissionError
-        ? cause.code
-        : cause instanceof Error &&
-            cause.message.startsWith("CBOR decode error: found repeat map key")
-          ? "repeated_map_key"
-          : cause instanceof Error
-            ? cause.message
-            : String(cause)
-      ).slice(0, 512),
+      ...solidityFailure(cause),
     };
   }
 };

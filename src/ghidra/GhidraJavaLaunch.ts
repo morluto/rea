@@ -133,6 +133,8 @@ export const ghidraJavaLaunch = async (options: {
     if (separator < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key))
       throw new GhidraAdmissionError("invalid_environment_entry", {
         check: separator < 1 ? "separator" : "key",
+        line: line.length <= 1024 ? line : line.slice(0, 1024),
+        ...(line.length <= 1024 ? {} : { line_truncated: 1 }),
       });
     if ((environment[key] ?? "") === "")
       environment[key] = line.slice(separator + 1);

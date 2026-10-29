@@ -452,6 +452,13 @@ describe.skipIf(process.platform === "win32")(
               cause: { code: 3 },
             },
           });
+        if (mode === "env-malformed")
+          expect(cause).toMatchObject({
+            cause: {
+              code: "invalid_environment_entry",
+              detail: { check: "separator", line: "invalid environment" },
+            },
+          });
         if (mode === "vm-malformed")
           expect(cause).toMatchObject({
             launch_support: expect.arrayContaining([

@@ -12,6 +12,7 @@ import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
+import { StagedOutputError } from "../../../src/filesystem/StagedOutputError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const allocation = vi.hoisted(() => ({
@@ -469,6 +470,37 @@ it("refuses to remove unexpected files from an owned staging directory", async (
   } finally {
     await fs.rm(unexpected, { force: true });
     await owner.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("keeps unexpected staging names on the publication error", async () => {
+  const root = await createTestTempDirectory("rea-staged-public-entries-");
+  const destination = join(root, "out.json");
+  const resources = new ArtifactResourceScope();
+  const close = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementation(async () => {
+      throw new StagedOutputError("unexpected_entries", {
+        count: 1,
+        entries: "unexpected",
+      });
+    });
+  try {
+    const result = await writeTextParts(["{}"], destination, false, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatchObject({
+      _tag: "EvidenceFileError",
+      diagnostics: {
+        code: "unexpected_entries",
+        count: 1,
+        entries: "unexpected",
+      },
+    });
+  } finally {
+    close.mockRestore();
+    await resources.close().catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   }
 });
