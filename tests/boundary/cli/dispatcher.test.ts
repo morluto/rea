@@ -525,4 +525,77 @@ describe("project-scoped Amp registration dispatch", () => {
       );
     },
   );
+
+  const installProductionOutputRuntime = async (workspace: TestWorkspace) => {
+    await installGuardRuntime(workspace);
+    // The guard's structured refusal renders through production output code.
+    await workspace.write(
+      "dist/cli-runtime/cliOutput.js",
+      `export * from ${JSON.stringify(pathToFileURL(resolve("dist/cli-runtime/cliOutput.js")).href)};\n`,
+    );
+  };
+
+  workspaceCliTest(
+    "renders the Amp scope refusal as a structured document when a structured format is requested",
+    async ({ processes, workspace }) => {
+      await installProductionOutputRuntime(workspace);
+      const invoke = (arguments_: readonly string[]) =>
+        processes.run(
+          process.execPath,
+          [workspace.path("scripts/rea.mjs"), ...arguments_],
+          {
+            cwd: workspace.root,
+            env: { ...process.env, REA_LOG_LEVEL: "silent" },
+          },
+        );
+      const registration = ["mcp", "add", "--no-global", "--agent", "amp"];
+      const jsonLines = await invoke([...registration, "--format", "jsonl"]);
+      expect(jsonLines.exitCode, jsonLines.stderr).toBe(1);
+      expect(JSON.parse(jsonLines.stdout)).toEqual({
+        $rea: "jsonl/v1",
+        type: "error",
+        ok: false,
+        result: {
+          ok: false,
+          error: {
+            code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
+            message: expect.stringContaining(
+              "Amp does not support project-scoped registration",
+            ),
+          },
+        },
+      });
+      expect(jsonLines.stdout).not.toContain(runtimeReached);
+      expect(jsonLines.stderr).toBe("");
+      const json = await invoke([...registration, "--json"]);
+      expect(json.exitCode, json.stderr).toBe(1);
+      expect(JSON.parse(json.stdout)).toEqual({
+        ok: false,
+        error: {
+          code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
+          message: expect.stringContaining(
+            "Amp does not support project-scoped registration",
+          ),
+        },
+      });
+      expect(json.stdout).not.toContain(runtimeReached);
+      expect(json.stderr).toBe("");
+      const yaml = await invoke([...registration, "--format", "yaml"]);
+      expect(yaml.exitCode, yaml.stderr).toBe(1);
+      expect(yaml.stdout).toContain("ok: false");
+      expect(yaml.stdout).toContain("AMP_PROJECT_SCOPE_UNSUPPORTED");
+      expect(yaml.stdout).toContain(
+        "Amp does not support project-scoped registration",
+      );
+      expect(yaml.stdout).not.toContain(runtimeReached);
+      expect(yaml.stderr).toBe("");
+      const plain = await invoke(registration);
+      expect(plain.exitCode, plain.stderr).toBe(1);
+      expect(plain.stdout).toBe("");
+      expect(plain.stderr).toContain(
+        "Amp does not support project-scoped registration",
+      );
+      expect(plain.stdout).not.toContain(runtimeReached);
+    },
+  );
 });
