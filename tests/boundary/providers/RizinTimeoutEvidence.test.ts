@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 
-import { resolveDebuggerSessionLimits } from "../../../src/config/debuggerSessionLimits.js";
+import {
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
+  resolveDebuggerSessionLimits,
+} from "../../../src/config/debuggerSessionLimits.js";
+import { DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS } from "../../../src/domain/analysisResourceLimits.js";
 import {
   createRizinCommandTimeoutEvidence,
   rizinCommandTimeoutLimitation,
@@ -39,11 +43,16 @@ it("preserves every field of partial Rizin timeout Evidence", () => {
   });
   expect(evidence.raw_result).toEqual(result);
   expect(evidence.normalized_result).toEqual(result);
+  const deadline = resolveDebuggerSessionLimits({}).commandDeadline;
+  expect(deadline).toMatchObject({
+    setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+    value: DEFAULT_DEBUGGER_COMMAND_DEADLINE_MS,
+    source: "default",
+    unit: "ms",
+  });
   expect(evidence.limitations).toEqual([
     "The current debugger target identity is not established by the Rizin session identifier.",
-    rizinCommandTimeoutLimitation(
-      resolveDebuggerSessionLimits({}).commandDeadline,
-    ),
+    rizinCommandTimeoutLimitation(deadline),
     "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
     "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
     "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",

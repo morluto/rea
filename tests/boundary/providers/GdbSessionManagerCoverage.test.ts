@@ -1541,8 +1541,11 @@ it("keeps inferior TTY readback when the caller output cap is smaller than that 
 
   const started = await manager.start(undefined, { inferiorTty: tty });
 
-  expect(started.ok).toBe(true);
   if (!started.ok) throw started.error;
+  expect(started.value.mi_version).toMatch(/^mi[23]$/u);
+  expect(started.value.session_id).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u,
+  );
 });
 
 it.each([
@@ -1895,24 +1898,22 @@ it("preserves a timeout while startup waits for the automatic-loading response",
 
   const started = await manager.start();
 
-  expect(started.ok).toBe(false);
-  if (!started.ok) {
-    expect(started.error._tag).toBe("AnalysisTimeoutError");
-    expect(started.error).toBeInstanceOf(AnalysisTimeoutError);
-    if (started.error instanceof AnalysisTimeoutError)
-      expect(started.error.operation).toBe("start_gdb_session");
-    expect(projectAnalysisError(started.error)).toMatchObject({
-      details: {
-        diagnostics: {
-          setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
-          effective_value: 25,
-          source: "runtime",
-          unit: "ms",
-          restart_required: true,
-        },
+  if (started.ok) throw new Error("expected startup to time out");
+  expect(started.error._tag).toBe("AnalysisTimeoutError");
+  if (!(started.error instanceof AnalysisTimeoutError)) throw started.error;
+  expect(started.error.operation).toBe("start_gdb_session");
+  expect(projectAnalysisError(started.error)).toMatchObject({
+    code: "provider_timeout",
+    details: {
+      diagnostics: {
+        setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+        effective_value: 25,
+        source: "runtime",
+        unit: "ms",
+        restart_required: true,
       },
-    });
-  }
+    },
+  });
   expect(fake.children[0]?.killSignals).toEqual(["SIGTERM"]);
 });
 

@@ -6,6 +6,7 @@ import {
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import {
   applyDebuggerAdmissionOverride,
+  DEBUGGER_COMMAND_DEADLINE_SETTING,
   resolveDebuggerSessionLimits,
 } from "../../../src/config/debuggerSessionLimits.js";
 import { rizinCommandTimeoutLimitation } from "../../../src/rizin/RizinDebugSessionManager.js";
@@ -27,31 +28,33 @@ it.skipIf(process.platform === "win32")(
       frameTimeoutMs: 10,
       stopProcess: async () => ({ status: "stopped" }),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
+    const deadline = applyDebuggerAdmissionOverride(
+      resolveDebuggerSessionLimits({}).commandDeadline,
+      10,
+    );
+    expect(deadline).toMatchObject({
+      setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
+      value: 10,
+      source: "runtime",
+      unit: "ms",
+    });
     const result = await manager.execute(started.value.session_id, "wait");
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value.result.completion_status).toBe("unknown");
-      expect(result.value.evidence.raw_result).toEqual(result.value.result);
-      expect(result.value.evidence.parameters.launch_provenance).toEqual({
-        caller_selected_path: "/tmp/injected",
-        resolved_path: "/tmp/injected",
-      });
-      expect(result.value.evidence.limitations).toEqual([
-        "The current debugger target identity is not established by the Rizin session identifier.",
-        rizinCommandTimeoutLimitation(
-          applyDebuggerAdmissionOverride(
-            resolveDebuggerSessionLimits({}).commandDeadline,
-            10,
-          ),
-        ),
-        "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
-        "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
-        "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
-      ]);
-    }
+    if (!result.ok) throw result.error;
+    expect(result.value.result.completion_status).toBe("unknown");
+    expect(result.value.evidence.raw_result).toEqual(result.value.result);
+    expect(result.value.evidence.parameters.launch_provenance).toEqual({
+      caller_selected_path: "/tmp/injected",
+      resolved_path: "/tmp/injected",
+    });
+    expect(result.value.evidence.limitations).toEqual([
+      "The current debugger target identity is not established by the Rizin session identifier.",
+      rizinCommandTimeoutLimitation(deadline),
+      "The owned debugger session was stopped because output correlation could no longer be guaranteed.",
+      "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
+      "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+      "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+    ]);
   },
 );
 
@@ -537,12 +540,12 @@ it.skipIf(process.platform === "win32")(
     });
     if (!started.ok) throw started.error;
     const executed = await manager.execute(started.value.session_id, "ok");
-    expect(executed.ok).toBe(true);
     if (!executed.ok) throw executed.error;
+    expect(executed.value.result.completion_status).toBe("complete");
     expect(Buffer.byteLength(cleanupReadback, "utf8")).toBeGreaterThan(8);
     const closed = await manager.close(started.value.session_id);
-    expect(closed.ok).toBe(true);
     if (!closed.ok) throw closed.error;
+    expect(closed.value).toEqual({ target_state: "unknown" });
   },
 );
 

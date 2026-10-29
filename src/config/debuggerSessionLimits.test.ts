@@ -109,13 +109,11 @@ it.each([
   "rejects invalid %s at the setting boundary",
   (setting, value, constraint) => {
     const parsed = parseDebuggerSessionLimits({ [setting]: value });
-    expect(parsed.ok).toBe(false);
-    if (parsed.ok) return;
+    if (parsed.ok) throw new Error(`${setting} was accepted`);
     expect(parsed.error).toBeInstanceOf(ConfigurationError);
     expect(parsed.error.settings).toEqual([{ setting, constraint }]);
     const startup = parseEnvironment({ [setting]: value });
-    expect(startup.ok).toBe(false);
-    if (startup.ok) return;
+    if (startup.ok) throw new Error(`${setting} was accepted at startup`);
     expect(projectAnalysisError(startup.error)).toMatchObject({
       code: "configuration_invalid",
       details: { settings: [{ setting, constraint }] },
@@ -136,7 +134,6 @@ it("names the session setting on a Rizin capacity refusal", async () => {
     path: "/tmp/rea-debugger-limit-2",
     inferior_tty: "/no/such/rea-debugger-tty",
   });
-  expect(blocked.ok).toBe(false);
   if (blocked.ok) throw new Error("expected the session cap to refuse");
   expect(projectAnalysisError(blocked.error)).toMatchObject({
     code: "resource_constraint",
@@ -196,7 +193,6 @@ it("does not let one Rizin manager consume another manager's session cap", async
   });
   try {
     const independentResult = await independent;
-    expect(independentResult.ok).toBe(false);
     if (independentResult.ok)
       throw new Error("expected the missing terminal to fail");
     expect(projectAnalysisError(independentResult.error)).toMatchObject({
@@ -206,7 +202,6 @@ it("does not let one Rizin manager consume another manager's session cap", async
       },
     });
     const blockedResult = await blocked;
-    expect(blockedResult.ok).toBe(false);
     if (blockedResult.ok)
       throw new Error("expected the first manager to stay capped");
     expect(projectAnalysisError(blockedResult.error)).toMatchObject({
@@ -239,8 +234,7 @@ it("refuses an invalid GDB deadline before a session starts", () => {
       environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
     });
   } catch (error) {
-    expect(error).toBeInstanceOf(ConfigurationError);
-    if (!(error instanceof ConfigurationError)) return;
+    if (!(error instanceof ConfigurationError)) throw error;
     expect(projectAnalysisError(error)).toMatchObject({
       code: "configuration_invalid",
       details: {
