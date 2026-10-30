@@ -594,7 +594,12 @@ const classifyTargetFilesystemFailure = (
     : new BinaryTargetError(
         path,
         targetFailureReason(code, cause.message, stage),
-        { cause },
+        {
+          cause,
+          // Windows reports a sharing violation as EBUSY: another process holds the file without
+          // read sharing, and the unchanged request succeeds once that process releases it.
+          ...(code === "EBUSY" ? { constraint: "target_in_use" } : {}),
+        },
       );
 };
 
@@ -626,6 +631,8 @@ const targetFailureReason = (
       return stage === "resolve"
         ? `target path could not be resolved: too many symbolic links or a symbolic link loop: ${detail}`
         : `target changed while being opened: ${detail}`;
+    case "EBUSY":
+      return `target is in use by another process (EBUSY): ${detail}`;
     default:
       return `target could not be read (${code}): ${detail}`;
   }

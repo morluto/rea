@@ -40,13 +40,18 @@ export class NoBinaryOpenError extends AnalysisError {
   }
 }
 
-/** Additional constraints identified while admitting a filesystem target. */
+/**
+ * Additional constraints identified while admitting a filesystem target.
+ * `target_in_use` names a transient refusal: another process holds the file
+ * without read sharing, and the unchanged request succeeds once it is released.
+ */
 export interface BinaryTargetErrorOptions extends AnalysisErrorOptions {
   readonly constraint?:
     | "directory_requires_file"
     | "wasm_requires_static_inspection"
     | "file_format_rejected"
-    | "load_selection_rejected";
+    | "load_selection_rejected"
+    | "target_in_use";
 }
 
 /** A supplied target path could not be safely opened as a supported app or binary. */
