@@ -293,7 +293,7 @@ const assertV8RuntimeParameters = (
     z
       .object({
         inspector_endpoint: browserEndpointSchema,
-        target_id: z.string().trim().min(1),
+        target_id: z.string().min(1),
         runtime_kind: javascriptRuntimeKindSchema.optional(),
       })
       .passthrough(),
@@ -456,7 +456,7 @@ const assertRuntimeParameters = (
   path: readonly (string | number)[],
 ): void => {
   const common = {
-    target_id: z.string().trim().min(1),
+    target_id: z.string().min(1),
     include_script_sources: z.boolean(),
   };
   if (expected.kind === "browser") {

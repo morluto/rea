@@ -10,7 +10,7 @@ import {
 } from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/ManagedNativeBoundaryInspector.js";
 
-import { verifyManagedNativeBoundariesEvidence } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
+import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import {
@@ -19,7 +19,7 @@ import {
 } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
-import { functionDossierSchema } from "../../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 
 import { verifyManagedNativeVerificationSource } from "../../../../src/domain/managed/managedNativeVerification.js";
 import { readManagedNativeVerificationSource } from "../../../../src/domain/managed/managedNativeVerificationSource.js";
@@ -92,6 +92,7 @@ const nativeFunctionEvidence = (
   modulePath: string,
   format: "elf" | "mach-o" | "pe" | "file",
   name = "open_native",
+  sha256 = "8".repeat(64),
 ) => {
   const native = exampleInput().native_observations[0];
   if (native === undefined) throw new Error("missing native provider");
@@ -123,16 +124,12 @@ const nativeFunctionEvidence = (
     native_value_flow: null,
     limitations: [],
   });
-  return createEvidence(
-    { path: modulePath, sha256: "8".repeat(64), format },
-    native.provider,
-    {
-      operation: "analyze_function",
-      parameters: {},
-      result: dossier,
-      rawResult: null,
-    },
-  );
+  return createEvidence({ path: modulePath, sha256, format }, native.provider, {
+    operation: "analyze_function",
+    parameters: {},
+    result: dossier,
+    rawResult: null,
+  });
 };
 
 const inputWithImportScope = (scope: string | null) => {
@@ -492,7 +489,7 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
     basis: "module-mismatch",
     matched_native: { module_path: "/examples/libCaseProbe.so" },
   });
-  const workflow = verifyManagedNativeBoundariesEvidence({
+  const workflow = executeManagedNativeBoundaries({
     ...linuxInput,
     native_observations: [
       nativeFunctionEvidence("/examples/libCaseProbe.so", "elf"),
@@ -500,7 +497,7 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
   });
   expect(workflow.ok).toBe(true);
   if (!workflow.ok) throw workflow.error;
-  expect(workflow.value.normalized_result).toMatchObject({
+  expect(workflow.value.evidence.normalized_result).toMatchObject({
     summary: { contradicted: 1, verified: 0 },
     pinvoke_imports: [
       expect.objectContaining({
@@ -647,6 +644,76 @@ it("keeps empty identities unknown and compares suffix-only identities as data",
   });
 });
 
+it("retains a decorated module match when another decorated candidate has unknown identity", () => {
+  const input = inputWithImportScope("nativehelper.dll");
+  const parent = input.managed_boundaries;
+  const normalized = managedNativeBoundaryInspectionSchema.parse(
+    parent.normalized_result,
+  );
+  const managed = createEvidence(undefined, parent.provider, {
+    operation: parent.operation,
+    parameters: parent.parameters,
+    result: {
+      ...normalized,
+      pinvoke_imports: normalized.pinvoke_imports.map((item) => ({
+        ...item,
+        char_set: "unicode",
+        no_mangle: false,
+      })),
+    },
+    rawResult: null,
+  });
+  const known = nativeFunctionEvidence(
+    "/examples/nativehelper.dll",
+    "pe",
+    "open_nativeW",
+  );
+  const subjectless = (name: string) => {
+    const source = nativeFunctionEvidence("/examples/unknown.dll", "pe", name);
+    return createEvidence(undefined, source.provider, {
+      operation: source.operation,
+      parameters: source.parameters,
+      result: source.normalized_result,
+      rawResult: null,
+    });
+  };
+  for (const name of ["open_nativeW", "open_native"]) {
+    const unknown = subjectless(name);
+    for (const observations of [
+      [known, unknown],
+      [unknown, known],
+    ]) {
+      const result = executeManagedNativeBoundaries({
+        managed_boundaries: managed,
+        native_observations: observations,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw result.error;
+      const output = managedNativeVerificationResultSchema.parse(
+        result.value.evidence.normalized_result,
+      );
+      expect(output.pinvoke_imports[0]).toMatchObject(
+        name === "open_nativeW"
+          ? {
+              status: "inferred",
+              basis: "decorated-name-candidate",
+              matched_native: { evidence_id: known.evidence_id },
+            }
+          : {
+              status: "unresolved",
+              basis: "module-identity-unknown",
+              matched_native: { evidence_id: unknown.evidence_id },
+            },
+      );
+      expect(output.pinvoke_imports[0]?.candidates).toHaveLength(2);
+      expect(output.evidence_links).toEqual(
+        expect.arrayContaining([known.evidence_id, unknown.evidence_id]),
+      );
+      expect(result.value.sourceEvidence).toEqual([managed, ...observations]);
+    }
+  }
+});
+
 it("matches versioned ELF SONAME variations without dropping their version", () => {
   const result = verifyManagedNativeVerificationSource(
     readFixtureSource({
@@ -707,6 +774,51 @@ it("keeps POSIX backslashes literal in absolute module paths", () => {
     status: "contradicted",
     basis: "module-mismatch",
   });
+});
+
+it.each([
+  { scope: "/examples/nativehelper.so", path: "/", format: "elf" as const },
+  { scope: "nativehelper.dll", path: "C:\\", format: "pe" as const },
+])(
+  "retains unknown identity for an empty module filename ($format)",
+  ({ scope, path, format }) => {
+    const unknown = nativeFunctionEvidence(path, format);
+    const mismatch = nativeFunctionEvidence(
+      "/examples/unrelated",
+      format,
+      "open_native",
+      "9".repeat(64),
+    );
+    for (const observations of [
+      [unknown],
+      [mismatch, unknown],
+      [unknown, mismatch],
+    ]) {
+      const result = verifyManagedNativeVerificationSource(
+        readFixtureSource({
+          ...inputWithImportScope(scope),
+          native_observations: observations,
+        }),
+      );
+      expect(result.pinvoke_imports[0]).toMatchObject({
+        status: "unresolved",
+        basis: "module-identity-unknown",
+        matched_native: { evidence_id: unknown.evidence_id },
+      });
+    }
+  },
+);
+
+it("retains a trailing POSIX backslash as module identity", () => {
+  const result = verifyManagedNativeVerificationSource(
+    readFixtureSource({
+      ...inputWithImportScope("nativehelper\\"),
+      native_observations: [
+        nativeFunctionEvidence("/examples/nativehelper\\", "elf"),
+      ],
+    }),
+  );
+  expect(result.pinvoke_imports[0]).toMatchObject({ status: "verified" });
 });
 
 it("applies Unix suffix variations even when the name already has the suffix", () => {
@@ -802,10 +914,10 @@ it("retains every observed native candidate", () => {
 });
 
 it("wraps verification in derived workflow Evidence", () => {
-  const evidence = verifyManagedNativeBoundariesEvidence(exampleInput());
+  const evidence = executeManagedNativeBoundaries(exampleInput());
 
   if (!evidence.ok) throw evidence.error;
-  expect(evidence.value).toMatchObject({
+  expect(evidence.value.evidence).toMatchObject({
     operation: "verify_managed_native_boundaries",
     provider: { id: "rea-dotnet-workflows" },
     confidence: "inferred",
@@ -814,7 +926,7 @@ it("wraps verification in derived workflow Evidence", () => {
       summary: { verified: 1 },
     },
   });
-  expect(evidence.value.evidence_links).toHaveLength(2);
+  expect(evidence.value.evidence.evidence_links).toHaveLength(2);
 });
 
 describe("managed/native verification result algebra", () => {

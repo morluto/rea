@@ -9,7 +9,6 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { lstat, stat } from "node:fs/promises";
 import { err, ok, type Result } from "../domain/result.js";
-import { isAbsolute } from "node:path";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -25,7 +24,6 @@ import {
   inspectClientRegistrationCommand,
   type ClientRegistrationCommandFacts,
   type ClientRegistrationCommandIdentity,
-  packageRunnerRegistrationCommand,
 } from "./ClientRegistrationIdentity.js";
 import {
   clientEvidencePaths,
@@ -42,6 +40,7 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 
 import {
   parseClientRegistration,
+  clientRegistrationOwnershipRemediation,
   setupPreservesDisabledActivation,
   type ClientRegistration,
 } from "./ClientRegistration.js";
@@ -333,7 +332,12 @@ export const readClientRegistrationInspections = async (
                 policyBlock === undefined
               ? "aligned"
               : "stale",
-          policyBlock ??
+          (parsed.dialect !== "dsh" && commandFacts.identity !== "owned"
+            ? clientRegistrationOwnershipRemediation(commandFacts.identity, [
+                configPath,
+              ])
+            : undefined) ??
+            policyBlock ??
             (packageVersionDrift
               ? packageVersionRemediation(packageReference ?? "", client)
               : alignment === "unknown"
@@ -442,8 +446,7 @@ const registrationAligned = ({
   if (identity === "foreign") return "stale";
   if (
     client.name === "grok_build" &&
-    registration.startup_timeout_sec !==
-      MCP_STARTUP_POLICY.codexStartupTimeoutSeconds
+    registration.startup_timeout_sec === undefined
   )
     return "stale";
   if (
@@ -466,21 +469,11 @@ const registrationAligned = ({
     (registration.serverName !== "rea" || registration.transport !== "stdio")
   )
     return "stale";
-  if (
-    (["npx", "bunx"] as const).some((runner) => {
-      const expected = packageRunnerRegistrationCommand(runner, platform);
-      return (
-        command.length === expected.length &&
-        command.every((argument, index) => argument === expected[index])
-      );
-    })
-  )
-    return "aligned";
-  // Other owned package references remain stale until pinned to this version.
+  // Legacy package runners remain owned, but setup migrates them to the selected installation.
   if (commandFacts.package !== undefined) return "stale";
-  // The identity owner already established an exact direct launcher match.
-  // A bare command still depends on the client's PATH, so cannot prove alignment.
-  return isAbsolute(command[0] ?? "") ? "aligned" : "stale";
+  // Owning the script does not establish how its shebang interpreter resolves
+  // in the client. Setup migrates these launchers without losing ownership.
+  return commandFacts.launch === "runtime_script" ? "aligned" : "stale";
 };
 
 /** A client that rewrites its file from memory must be quit before setup. */

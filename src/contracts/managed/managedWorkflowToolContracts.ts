@@ -1,3 +1,4 @@
+import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 import { z } from "zod";
 import { evidenceSchema } from "../../domain/evidence.js";
 import { compareManagedMembersInputSchema } from "../../domain/managed/managedMemberComparison.js";
@@ -13,7 +14,6 @@ import {
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "./managedWorkflowExamples.js";
 import { toolContractMetadata } from "../toolEffects.js";
-import { requireOutputSchema } from "../toolOutputSchemaPrimitives.js";
 
 const managedApplicationGraphReferenceShape = z.strictObject({
   managed_artifact: evidenceSchema.optional(),

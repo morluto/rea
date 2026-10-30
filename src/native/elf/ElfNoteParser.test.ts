@@ -5,6 +5,7 @@ import { inspectElfNotesInputSchema } from "../../domain/native/elfNotes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { decodeElfSectionNameTable } from "../metadata/ElfSectionNameTable.js";
+import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
 import {
   compressedElfNoteFixture,
   compressedElfNoteSectionFixture,
@@ -474,6 +475,54 @@ const unterminatedNoteSections = (
   return image;
 };
 
+it.each([
+  { offset: 2, name: "é", state: "known" },
+  { offset: 3, name: "", state: "known" },
+  { offset: 4, name: null, state: "unavailable" },
+])(
+  "retains ELF section-name offset $offset consistently across consumers",
+  ({ offset, name, state }) => {
+    const bytes = unterminatedNoteSections(1, 4);
+    bytes.set([0x41, 0x42, 0xe9, 0], bytes.length - 4);
+    bytes.writeUInt32LE(offset, 64 + 2 * 64);
+    const notes = parse(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes);
+    expect(notes.tables[0]?.name).toBe(name);
+    expect(directory.sections[2]).toMatchObject({ name, name_state: state });
+    if (name === null) {
+      expect(notes.coverage.status).toBe("complete");
+      expect(notes.limitations).toContain(
+        "ELF section names are incomplete because a name offset is outside its string table.",
+      );
+      expect(directory.section_names_limitation).toBe(
+        "ELF section names are incomplete because a name offset is outside its string table",
+      );
+    }
+  },
+);
+
+it.each([65535, 65536])(
+  "preserves consumer-specific section-name windows for NUL at byte %i",
+  (terminatorOffset) => {
+    const bytes = unterminatedNoteSections(1, terminatorOffset + 1);
+    bytes[bytes.length - 1] = 0;
+    const name = "A".repeat(terminatorOffset);
+    const notes = parse(bytes);
+    const directory = readElfDirectoryFromBuffer(bytes);
+    expect(notes.tables[0]?.name).toBe(name);
+    expect(notes.coverage.status).toBe("complete");
+    expect(directory.sections[2]).toMatchObject(
+      terminatorOffset === 65535
+        ? { name, name_state: "known" }
+        : { name: null, name_state: "truncated" },
+    );
+    if (terminatorOffset === 65536)
+      expect(directory.section_names_limitation).toBe(
+        "ELF section names are unavailable because a name is not NUL-terminated",
+      );
+  },
+);
+
 it("bounds repeated scans of an unterminated section name", () => {
   const report = parse(unterminatedNoteSections(2, 64));
   expect(report.tables.map(({ name }) => name)).toEqual([null, null]);
@@ -617,3 +666,54 @@ it("fails when the entry budget is exhausted", () => {
     ),
   ).toThrow(ArtifactReaderFailure);
 });
+
+it("keeps unsafe table offsets ahead of unsupported extended numbering", () => {
+  const bytes = elfExtendedSectionCountFixture();
+  bytes.writeBigUInt64LE(0xffffffffffffffffn, 32);
+  expect(() => parse(bytes)).toThrow(
+    "ELF offset or size exceeds a safe integer.",
+  );
+});
+
+it("does not apply note precision admission to unrelated program records", () => {
+  const bytes = elf64({ phoff: 64, phnum: 1 }, Buffer.alloc(56));
+  bytes.writeUInt32LE(0x70000001, 64);
+  for (const relative of [8, 16, 24, 32, 40, 48])
+    bytes.writeBigUInt64LE(0xffffffffffffffffn, 64 + relative);
+  expect(parse(bytes).tables).toEqual([]);
+  bytes.writeUInt32LE(4, 64);
+  expect(() => parse(bytes)).toThrow(
+    "ELF offset or size exceeds a safe integer.",
+  );
+});
+
+it("keeps compressed-note refusal ahead of alignment precision admission", () => {
+  const bytes = compressedElfNoteSectionFixture();
+  const sectionTable = Number(bytes.readBigUInt64LE(40));
+  bytes.writeBigUInt64LE(0xffffffffffffffffn, sectionTable + 64 + 48);
+  expect(() => parse(bytes)).toThrow(
+    "Compressed ELF note sections are unsupported",
+  );
+});
+
+it.each([
+  { bits: 32, little: true },
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+  { bits: 64, little: false },
+] as const)(
+  "rejects dangling section names with and without notes (ELF$bits $little)",
+  ({ bits, little }) => {
+    for (const ownership of ["program", "none"] as const) {
+      const bytes = elfNoteFixture({ bits, little, ownership });
+      const before = parse(bytes);
+      const nameOffset = bits === 64 ? 62 : 50;
+      if (little) bytes.writeUInt16LE(5, nameOffset);
+      else bytes.writeUInt16BE(5, nameOffset);
+      expect(() => parse(bytes)).toThrow("ELF section table is missing");
+      if (little) bytes.writeUInt16LE(0, nameOffset);
+      else bytes.writeUInt16BE(0, nameOffset);
+      expect(parse(bytes)).toEqual(before);
+    }
+  },
+);

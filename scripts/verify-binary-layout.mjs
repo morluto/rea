@@ -20,7 +20,10 @@ import {
   runOwnedCommand,
 } from "../dist/process/OwnedCommand.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
@@ -1549,14 +1552,12 @@ async function inspect(
       },
       { timeout: 300_000 },
     );
-    const value = JSON.parse(mcpTextValue(response));
     if (category !== undefined) {
-      assert.equal(response.isError, true);
-      assert.equal(value.error.category, category, JSON.stringify(value.error));
-      return value.error;
+      const error = requireMcpToolError(response);
+      assert.equal(error.category, category, JSON.stringify(error));
+      return error;
     }
-    assert.notEqual(response.isError, true, mcpTextValue(response));
-    envelope = value;
+    envelope = requireMcpOutput(response, "inspect_binary_layout");
   } else {
     let response;
     try {

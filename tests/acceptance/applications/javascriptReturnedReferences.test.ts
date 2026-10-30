@@ -183,7 +183,9 @@ cliTest(
 cliTest(
   "analyzes wide receiver returns without losing escaped reference facts",
   ({ cli }) => {
-    const width = 160_000;
+    // Exceed the argument limit with the worker's 2048 KiB stack as well as
+    // Node's default stack, so a spread into push still fails this regression.
+    const width = 300_000;
     const object = Array.from(
       { length: width },
       (_, index) => `p${index}:0`,

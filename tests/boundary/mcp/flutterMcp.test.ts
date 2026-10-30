@@ -10,7 +10,11 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createFlutterBuildAnalysisProvider } from "../../../src/composition/flutter.js";
-import { flutterResultSchemas } from "../../../src/domain/flutter/flutterBuildAnalysis.js";
+import {
+  ABI_SELECTOR_MESSAGE,
+  flutterResultSchemas,
+} from "../../../src/domain/flutter/flutterBuildAnalysis.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { aotFixtureImage } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { createFlutterApk } from "../../fixtures/flutterApk.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -241,26 +245,33 @@ it("advertises and enforces the same Unicode selector grammar through MCP", asyn
       ).isError,
     ).not.toBe(true);
   }
-  for (const abi of [
-    "",
-    "lib/x86_64",
-    "😀".repeat(1011),
+  for (const [abi, reason] of [
+    ["", "out_of_range"],
+    ["lib/x86_64", "invalid_format"],
+    ["😀".repeat(1011), "invalid_value"],
     ...["\n", "\r", "\u2028", "\u2029"].map(
-      (terminator) => "l".repeat(1010) + terminator,
+      (terminator) => ["l".repeat(1010) + terminator, "invalid_value"] as const,
     ),
-  ]) {
+  ] as const) {
     const arguments_ = { path: "/fixture.apk", abi };
     expect(ajv.validate(tool.inputSchema, arguments_)).toBe(false);
     const refused = await harness.client.callTool({
       name: "inspect_dart_aot",
       arguments: arguments_,
     });
-    expect(refused.isError).toBe(true);
-    expect(refused.content).toContainEqual({
-      type: "text",
-      text: expect.stringContaining(
-        "abi: ABI must be the exact lib/ directory label",
-      ),
+    expect(parseMcpToolError(refused).error).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        operation: "inspect_dart_aot",
+        issues: [
+          expect.objectContaining({
+            path: ["abi"],
+            reason,
+            message: ABI_SELECTOR_MESSAGE,
+          }),
+        ],
+      },
     });
   }
 });

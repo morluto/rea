@@ -11,7 +11,7 @@ import {
   type EvidenceSubjectTarget,
 } from "./evidence.js";
 import { createEvidenceBundle, parseEvidenceBundle } from "./evidenceBundle.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,

@@ -860,7 +860,7 @@ it.skipIf(process.platform === "win32").each(
     };
     const client = consumer === "health" ? fixture.open() : undefined;
     injected.fingerprintReads = 0;
-    injected.installationPath = fixture.kuna;
+    injected.installationPath = command;
     injected.abortOnClose = { stage, abort: () => controller.abort(reason) };
     injected.failCloseReadStage = closeRefusal ? stage : undefined;
     let failure: AnalysisError | undefined;

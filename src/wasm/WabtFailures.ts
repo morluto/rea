@@ -6,7 +6,10 @@ import {
 } from "../artifacts/ArtifactFileOperation.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisCancelledError,
@@ -24,6 +27,7 @@ import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
 } from "../process/RuntimeControlUnavailableError.js";
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import {
   DEFAULT_WASM_COMMAND_TIMEOUT_MS,
   MAX_WASM_COMMAND_TIMEOUT_MS,
@@ -48,6 +52,7 @@ type WabtFailureContext = {
   readonly commandTimeoutMs: number;
   readonly versionProbe?: WabtVersionProbe;
   readonly inputField?: readonly (string | number)[];
+  readonly observedOutput?: AnalysisCapturedOutput | undefined;
 };
 
 /** Configuration is captured by the server; fixing files and changing its environment are distinct repairs. */
@@ -99,8 +104,12 @@ const classifyWabtFailure = (
   if (cause instanceof AnalysisError) return cause;
   const artifactCleanup =
     cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
-  const cleanupOptions =
-    artifactCleanup === undefined ? {} : { cleanup: artifactCleanup };
+  const artifactOptions = {
+    ...(artifactCleanup === undefined ? {} : { cleanup: artifactCleanup }),
+    ...(execution?.observedOutput === undefined
+      ? {}
+      : { capturedOutput: execution.observedOutput }),
+  };
   const reason = cause instanceof Error ? cause.message : String(cause);
   if (
     (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled") ||
@@ -111,7 +120,7 @@ const classifyWabtFailure = (
         cause instanceof ArtifactReaderFailure
           ? artifactFileCancellationCause(cause)
           : cause,
-      ...cleanupOptions,
+      ...artifactOptions,
     });
   if (cause instanceof OwnedCommandFailure) {
     const capturedOutput =
@@ -224,23 +233,36 @@ const classifyWabtFailure = (
       cause.message,
       {
         cause,
-        ...cleanupOptions,
+        ...artifactOptions,
         userMessage: `Configured WABT tools exceed the ${String(WABT_LIMITS.toolBytes)}-byte tool allowance. This release has no runtime override.`,
         remediationAction: `The WABT tool allowance is ${String(WABT_LIMITS.toolBytes)} bytes. This release has no runtime override. command_timeout_ms and REA_WABT_BIN_DIRECTORY do not raise it. Select tools within the allowance. Do not repeat the unchanged call.`,
       },
     );
-  if (phase === "configuration")
+  if (phase === "configuration") {
+    const admission = cause instanceof WabtAdmissionError ? cause : undefined;
     return new AnalysisCapabilityUnavailableError(
       WABT_PROVIDER_IDENTITY.id,
       "inspect_wasm_artifact",
-      reason,
+      admission?.code ?? reason,
       {
         cause,
-        ...cleanupOptions,
-        userMessage: reason,
+        ...artifactOptions,
+        ...(admission === undefined
+          ? {}
+          : {
+              diagnostics: {
+                code: admission.code,
+                ...admission.detail,
+              },
+            }),
+        userMessage:
+          admission === undefined
+            ? reason
+            : "WABT configuration cannot be used",
         remediationAction: wabtConfigurationRecoveryAction(cause),
       },
     );
+  }
   if (
     phase === "artifact" &&
     cause instanceof ArtifactReaderFailure &&
@@ -254,7 +276,7 @@ const classifyWabtFailure = (
       { maximum_input_bytes: WABT_LIMITS.inputBytes },
       {
         cause,
-        ...cleanupOptions,
+        ...artifactOptions,
         retryable: false,
         remediationAction: `Select a suitable stable artifact within the reported ${String(WABT_LIMITS.inputBytes)}-byte input byte allowance. This release has no runtime override. command_timeout_ms does not raise it. Do not truncate required bytes; retrying the unchanged oversized input will fail again.`,
       },
@@ -268,7 +290,7 @@ const classifyWabtFailure = (
       "inspect_wasm_artifact",
       path,
       reason,
-      { cause, ...cleanupOptions },
+      { cause, ...artifactOptions },
     );
   if (
     phase === "artifact" &&
@@ -280,12 +302,12 @@ const classifyWabtFailure = (
       "inspect_wasm_artifact",
       path,
       cause.code,
-      { cause, ...cleanupOptions },
+      { cause, ...artifactOptions },
     );
   if (phase === "artifact")
     return new AnalysisInputError(
       "inspect_wasm_artifact",
-      { cause, ...cleanupOptions },
+      { cause, ...artifactOptions },
       [
         {
           path: [...(execution?.inputField ?? ["path"])],
@@ -296,6 +318,6 @@ const classifyWabtFailure = (
     );
   return new AnalysisOutputError("inspect_wasm_artifact", reason, {
     cause,
-    ...cleanupOptions,
+    ...artifactOptions,
   });
 };

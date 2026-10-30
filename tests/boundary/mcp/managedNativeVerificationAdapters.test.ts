@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, expect } from "vitest";
 
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import {
   MANAGED_APPLICATION_GRAPH_EXAMPLE,
   MANAGED_NATIVE_VERIFICATION_EXAMPLE,
@@ -16,7 +16,7 @@ import { managedNativeVerificationResultSchema } from "../../../src/domain/manag
 import { buildManagedPeFixture } from "../../../src/dotnet/ManagedPe.fixture.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const client = new Client({ name: "managed-native-adapters", version: "1" });
 const transport = new StdioClientTransport({
@@ -343,9 +343,13 @@ cliTest(
       );
       const request = join(root, `verify-${String(index)}.json`);
       await writeFile(request, JSON.stringify(input));
-      const cliRun = await cli.run({
+      const invocation = {
         arguments: ["verify-managed-native-boundaries", request, "--json"],
-      });
+      };
+      const cliRun =
+        index === 0
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(cliRun.exitCode, cliRun.stderr).toBe(0);
       const cliResult = managedNativeVerificationResultSchema.parse(
         parseEvidence(cliRun.json).normalized_result,

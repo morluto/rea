@@ -409,9 +409,19 @@ export const registerSessionTools = (
     }
   };
   registerProcessComparisonTool(server, session, compareContract);
-  registerArtifactComparisonTool(server, session, compareArtifactsContract);
+  registerArtifactComparisonTool(
+    server,
+    session,
+    compareArtifactsContract,
+    options.artifactResources,
+  );
   registerFunctionComparisonTool(server, session, compareFunctionsContract);
-  registerNativeFunctionMatchingTool(server, session, logger);
+  registerNativeFunctionMatchingTool(
+    server,
+    session,
+    logger,
+    options.environment,
+  );
   registerBundleComparisonTool(
     server,
     session,

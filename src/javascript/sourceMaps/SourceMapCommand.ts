@@ -14,13 +14,15 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { noRuntimeOverrideSentence } from "../../domain/browserDeadline.js";
 import {
   DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
   WEB_SOURCE_MAP_LIMITS,
   webSourceMapDecodeTimeoutRecovery,
+  type WebSourceMapReport,
 } from "../../domain/webSourceLocation.js";
+import { parseSourceMapReply } from "./SourceMapReply.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import {
   RuntimeControlUnavailableError,
@@ -99,7 +101,7 @@ export class SourceMapCleanupFailure extends ProviderCleanupError {
   }
 }
 
-/** Run a trusted codec command and release its process/root before returning output. */
+/** Interpret a trusted codec reply, then release its process and private root. */
 export const runSourceMapCommand = async (
   request: string,
   path: string,
@@ -107,7 +109,7 @@ export const runSourceMapCommand = async (
   dependencies: SourceMapDecoderDependencies,
   retainedCleanup: SourceMapCleanupRetention,
   decodeTimeoutMs: number = DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
-): Promise<Result<string, AnalysisError>> => {
+): Promise<Result<WebSourceMapReport, AnalysisError>> => {
   try {
     await (dependencies.prepareOwnership ?? prepareProcessOwnershipInspection)(
       options?.signal,
@@ -135,10 +137,14 @@ export const runSourceMapCommand = async (
     options?.signal,
   );
   const command = new OwnedCodec(path, dependencies, deadline, decodeTimeoutMs);
-  let result: Result<string, AnalysisError>;
+  let result: Result<WebSourceMapReport, AnalysisError>;
   try {
     await command.start(request);
-    result = ok(await command.collect());
+    result = parseSourceMapReply(
+      await command.collect(),
+      path,
+      SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+    );
   } catch (cause: unknown) {
     result = err(command.failure(cause));
   } finally {
@@ -146,15 +152,18 @@ export const runSourceMapCommand = async (
     deadline.dispose();
   }
   const cleanup = await command.close();
+  const observation = result.ok ? result.value : undefined;
   const completed =
     result.ok && options?.signal?.aborted
       ? err(
           new AnalysisCancelledError(OPERATION, {
             cause: options.signal.reason,
+            partialObservation: observation,
           }),
         )
       : result;
   if (cleanup === undefined) return completed;
+  if (observation !== undefined) cleanup.retainPartialObservation(observation);
   retainedCleanup.owner = command;
   return completed.ok
     ? err(cleanup)

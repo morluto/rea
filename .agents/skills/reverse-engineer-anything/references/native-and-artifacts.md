@@ -13,6 +13,13 @@ Select columns, batch IDs and page individual facts; aliases remain unresolved.
 Unpaired observations do not prove additions/removals. Existing matched dossier
 pairs include inputs for `compare_functions`; otherwise analyze just chosen pairs.
 
+For a matching representation refusal, inspect `details.limit` and raise
+`native.matching_representation_bytes` with `update_analysis_settings` before
+retrying the unchanged MCP request. CLI launch seed:
+`REA_NATIVE_MATCHING_REPRESENTATION_BYTES`. The default is 96 MiB; the policy
+range is 1 byte to 1 GiB and does not bound process RSS. Keep the complete
+inventories: splitting them changes global name/body uniqueness.
+
 ## Apple app resources
 
 Use `open_bundle_resources` with the selected app path, then `inspect_plist`,
@@ -340,6 +347,19 @@ operation's full ordered list. Candidate capabilities, returned with complete
 detail, describe possible providers. Top-level session capabilities describe the current route, and
 `analysis_provider_binding` identifies the selected provider.
 
+## Reuse caller-selected Ghidra analysis
+
+When the caller supplies an expanded project, configure `REA_GHIDRA_PROJECT_PATH`
+(the `.gpr` marker) and optionally `REA_GHIDRA_PROGRAM_NAME` (one root program),
+then restart/reconnect before `open_binary`. CLI uses the same configuration.
+REA opens only a fingerprint-bound owned copy with `-process -noanalysis -readOnly`;
+original project files are not opened by the engine or saved. Database edits,
+import overrides and repair scripts are unavailable in this mode. Treat original
+analysis completeness/settings as unknown and prior edits as caller-project state.
+The program's recorded import digest must match the target; changed project content
+requires reopening for a fresh profile. See the
+[setup and preparation guide](https://github.com/morluto/rea/blob/main/docs/installation.md#reuse-an-existing-ghidra-project).
+
 ## Ghidra startup deadline recovery
 
 `provider_timeout` during the first Ghidra query can cover import, auto-analysis,
@@ -402,6 +422,21 @@ longest prefix of connections that have terminated. Dense scalar replies are
 encoded in bounded batches.
 The 25000 ms Cutter request deadline and the 256-candidate discovery budget
 still have no runtime override.
+
+## Selected native facts and call graphs
+
+For a large `get_call_graph`, or repeated `procedure_address`,
+`procedure_callees`, `procedure_callers` and `resolve_containing_procedure`
+queries, select `detail: "summary"` when the first 64 recorded observations
+suffice. Read further `native-observation` pages from the returned parent Evidence
+ID. Graph message IDs index that page's exact-text dictionary; keep level,
+source index, failed nodes, and partial/unknown relationship coverage.
+Read referenced source context through `native-context` facets `overview`,
+`analysis-profile`, `limitations` and `result-limitations`. Reuse inspected
+context/profile values only for the same digest; until caveats are read,
+interpretation beyond the returned facts remains unknown. Complete Evidence
+remains retained and exportable. Small complete replies can cost fewer tokens
+than additional context/page calls; count the completed task and discovery.
 
 ## Static memory and original file bytes
 
@@ -481,6 +516,11 @@ names), coverage and per-collection counts. Page rows with
 `view: {kind: "managed-members", collection: "call_edges", offset: 0, limit: 64}`
 over `types`, `exported_types`, `fields`, `methods`, `member_refs`, `call_edges`,
 `field_accesses` or `user_strings`.
+Use exact `names` and `declaring_types` filters before paging supported
+collections. For a compact method lookup, request `fields: ["name",
+"declaring_type", "signature"]`; omit `body` to avoid anchors. Identity tokens,
+original `source_index`, module/MVID and source coverage remain. Check
+`unresolved_filter_rows` before interpreting an empty match as absence.
 
 ### .NET NativeAOT
 
@@ -568,6 +608,7 @@ discovery are unsupported. Windows Ghidra P0 admits raw images only for `6502`. 
 
 ### Function annotations in Ghidra
 
+Fresh-import sessions admit annotations; existing-project reuse is read-only.
 Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier.
 
 ## Offline PE resource inventory
@@ -616,3 +657,58 @@ page cannot prove absence in unknown coverage. Retained views are historical,
 not fresh filesystem checks. No decryption, Godot resource decoding, GDScript
 decompilation or target execution is provided. See
 [Godot PCK](https://github.com/morluto/rea/blob/main/docs/godot-pck.md).
+
+UnityFS AssetBundle containers (`.bundle`, `.ab`, YooAsset packages and other
+byte-identified files) list `CAB-*` SerializedFiles and `.resS` members with
+header and node facts; none/LZ4/LZ4HC member blocks stream on demand. Bundles
+declaring asset-bundle encryption keep header facts with unknown directory
+coverage; LZMA member bytes retain named occurrences with unavailable hashes.
+Virtual member offsets are not physical carrier locations. Format 6–8 readers
+cache one decoded block and support retained filtered/paged views. No
+decryption or SerializedFile object decoding is provided. See
+[UnityFS](https://github.com/morluto/rea/blob/main/docs/unityfs.md).
+
+U-Boot legacy uImages use the same inspection/extraction workflows. Prefer a
+retained summary and selected inventory views for header facts or component
+IDs. Header addresses/CPU/OS are declarations; payloads remain as stored.
+Multi-file components retain their aligned physical ranges; the full payload
+is also materialized. Unknown name text retains its original 32 bytes. See
+[U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
+
+## ESP images
+
+For an ESP32-family app or bootloader image, `open_binary` then
+`inspect_artifact` with `detail: "summary"`. `root_format_metadata` holds the
+observed `header` and `descriptor` (its `kind` is the app or bootloader role)
+and the derived `chip`, `checksum`, `appended_sha256` and
+`undescribed_trailing` ranges. Segment rows (`segment-NN.bin`) carry
+`load_addr`, `classification` (`mapped`, `loaded`, `not-loaded` or `unknown`,
+per ESP-IDF `should_map`/`should_load`; RAM ranges are not checked) and
+`source_location`; select them with `inspect_analysis_view` and
+`logical_paths`. Signature blocks are `unverified`; `public_key_sha256`
+matches eFuse key digests.
+
+Unknown `source_coverage` means truncation or undescribed trailing bytes, such
+as the flash segments of a `--ram-only-header` image; do not infer absence
+from it. Erased flash is described. Integrity mismatches are facts, not
+refusals. ESP8266 images are refused, and flash-encrypted images are not
+recognized. Segments are not disassembled, and RISC-V or Xtensa segments
+cannot be opened as raw-binary. See
+[ESP images](https://github.com/morluto/rea/blob/main/docs/esp-image.md).
+
+## Bun standalone executables
+
+A `bun build --compile` executable stores its module graph in Mach-O
+`__BUN,__bun`, a PE or ELF `.bun` section, or an appended trailer.
+`open_binary` then `inspect_artifact` reports root format `bun-standalone` with
+the carrier, structural layout, module count, entry point, raw flags and
+compile exec-argv; each module keeps its `/$bunfs/...` source name, loader,
+encoding, sizes and SHA-256, with sourcemap, bytecode and module-info regions as
+separate children. Use summary root metadata `entry_point_logical_path` as the
+exact inventory `logical_paths` selector, then read the selected content node by
+its artifact ID; the reader owns virtual-name normalization and indexed fallback. `extract-artifact` writes stored contents through the safe
+output tree; route extracted JavaScript to `analyze_javascript_application`.
+Layout labels describe record shapes, not a detected compiler version; unknown
+or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
+executable is never run. See
+[Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).

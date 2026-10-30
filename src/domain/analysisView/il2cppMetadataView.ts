@@ -24,12 +24,13 @@ import {
   il2cppMetadataTypeSchema,
 } from "../il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
+import {
+  ownedView,
+  type AdmittedView,
+  type SummaryAnalysisView,
+} from "./analysisViewShape.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -283,26 +284,21 @@ interface CheckedReport {
   readonly counts: z.infer<typeof countsSchema>;
 }
 
-// Authenticated, frozen parents own these facts. Cache validation/counts for
-// their lifetime without a second report copy or a live filesystem cache.
+const readMetadataReport = createAnalysisViewResultReader(
+  il2cppMetadataParentSchema,
+);
+// The validated immutable report owns its derived counts for its lifetime.
 const checkedReports = new WeakMap<object, CheckedReport>();
 
 const parseMetadataReport = (
   parent: AnalysisViewParent,
 ): Result<CheckedReport, AnalysisError> => {
-  const key = parent.normalizedResult;
-  const reusable =
-    parent.sealedResult === true &&
-    typeof key === "object" &&
-    key !== null &&
-    isImmutableJsonSnapshot(key);
-  const cached = reusable ? checkedReports.get(key) : undefined;
-  if (cached !== undefined) return ok(cached);
-  const parsed = parseAnalysisViewResult(il2cppMetadataParentSchema, parent);
+  const parsed = readMetadataReport(parent);
   if (!parsed.ok) return parsed;
-  // This schema has no coercions/transforms; the authenticated owner value is
-  // equivalent to the validated clone and remains immutable across pages.
-  const report = reusable ? (key as Report) : parsed.value;
+  const report = parsed.value;
+  const reusable = isImmutableJsonSnapshot(report);
+  const cached = reusable ? checkedReports.get(report) : undefined;
+  if (cached !== undefined) return ok(cached);
   const checked = {
     report,
     counts: {
@@ -355,7 +351,7 @@ const parseMetadataReport = (
         report.binary?.generic_methods?.issues.length ?? null,
     },
   };
-  if (reusable) checkedReports.set(key, checked);
+  if (reusable) checkedReports.set(report, checked);
   return ok(checked);
 };
 
@@ -524,9 +520,12 @@ const selection = (view: Request, report: Report) => {
 /** Reuse retained facts; source indices stay distinct from filtered page offsets. */
 export const projectIl2cppMetadataView = (
   parent: AnalysisViewParent,
-  view: AnalysisViewRequest,
-): Result<UnsignedAnalysisView, AnalysisError> => {
-  if (view.kind !== "summary" && view.kind !== "il2cpp-metadata")
+  admitted: AdmittedView,
+) => {
+  const view = ownedView<
+    SummaryAnalysisView | z.output<typeof il2cppMetadataViewRequestSchema>
+  >(admitted, "summary", "il2cpp-metadata");
+  if (view === undefined)
     return err(
       analysisViewInputError([
         {
@@ -540,11 +539,11 @@ export const projectIl2cppMetadataView = (
   const parsed = parseMetadataReport(parent);
   if (!parsed.ok) return parsed;
   const { report, counts } = parsed.value;
+  const subject = parent.subject;
   if (
-    parent.subject != null &&
-    (parent.subject.format !== "file" ||
-      parent.subject.local_path !== report.artifact.path ||
-      parent.subject.digest.sha256 !== report.artifact.sha256)
+    subject != null &&
+    (subject.format !== "file" ||
+      subject.digest.sha256 !== report.artifact.sha256)
   )
     return err(
       analysisViewInputError([
@@ -658,7 +657,7 @@ export const projectIl2cppMetadataView = (
                 }),
           }))(report.binary);
     return ok({
-      kind: "summary",
+      kind: "summary" as const,
       view,
       ...shared,
       summary: {
@@ -734,7 +733,7 @@ export const projectIl2cppMetadataView = (
     }
   }
   return ok({
-    kind: "il2cpp-metadata",
+    kind: "il2cpp-metadata" as const,
     view,
     ...shared,
     items,

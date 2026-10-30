@@ -12,7 +12,10 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { observeJavaScriptRuntimeInputSchema } from "../domain/javascript/javascriptRuntimeObservation.js";
-import { V8InspectorProvider } from "./V8InspectorProvider.js";
+import {
+  V8InspectorAdmission,
+  V8InspectorProvider,
+} from "./V8InspectorProvider.js";
 
 const inspectorCloseFixture = async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-inspector-close-owner-"));
@@ -60,6 +63,7 @@ const inspectorCloseFixture = async () => {
       ? Promise.resolve()
       : new Promise<void>((resolve) => connectionWaiters.set(count, resolve));
 
+  const admission = new V8InspectorAdmission();
   let resolveCloseStarted: (() => void) | undefined;
   const closeStarted = new Promise<void>((resolve) => {
     resolveCloseStarted = resolve;
@@ -87,7 +91,7 @@ const inspectorCloseFixture = async () => {
   onTestFinished(async () => {
     closeSpy.mockRestore();
     if (closeCalls > 0) rejectFirstClose?.(new Error("fixture finalization"));
-    await new V8InspectorProvider().close();
+    await new V8InspectorProvider(undefined, admission).close();
     for (const socket of sockets.clients) socket.terminate();
     await new Promise<void>((resolve) => sockets.close(() => resolve()));
     if (server.listening)
@@ -115,6 +119,7 @@ const inspectorCloseFixture = async () => {
     get acceptedConnections() {
       return acceptedConnections;
     },
+    admission,
   };
 };
 
@@ -128,10 +133,12 @@ it("retains cancelled final-close ownership and retries the exact transport befo
     closeSpy,
     waitForConnections,
     rejectFirstClose,
+    admission,
   } = fixture;
+  const provider = () => new V8InspectorProvider(undefined, admission);
   const controller = new AbortController();
   const cancellationReason = new Error("cancelled during transport close");
-  const observing = observeJavaScriptRuntime(new V8InspectorProvider(), input, {
+  const observing = observeJavaScriptRuntime(provider(), input, {
     signal: controller.signal,
   });
   await closeStarted;
@@ -161,30 +168,21 @@ it("retains cancelled final-close ownership and retries the exact transport befo
   });
   expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
 
-  const blocked = await observeJavaScriptRuntime(
-    new V8InspectorProvider(),
-    input,
-  );
+  const blocked = await observeJavaScriptRuntime(provider(), input);
   expect(blocked.ok).toBe(false);
   if (blocked.ok)
     throw new Error("Expected unresolved transport admission refusal");
   expect(blocked.error.cleanupIncomplete).toBe(true);
   expect(fixture.acceptedConnections).toBe(1);
 
-  const recovered = await observeJavaScriptRuntime(
-    new V8InspectorProvider(),
-    input,
-  );
+  const recovered = await observeJavaScriptRuntime(provider(), input);
   expect(recovered.ok).toBe(true);
   expect(error.cleanupIncomplete).toBe(false);
   expect(error.cleanupResources).toEqual([]);
   expect(fixture.acceptedConnections).toBe(2);
 
   closeFailures.add(5);
-  const cleanupOnly = await observeJavaScriptRuntime(
-    new V8InspectorProvider(),
-    input,
-  );
+  const cleanupOnly = await observeJavaScriptRuntime(provider(), input);
   expect(cleanupOnly.ok).toBe(false);
   if (cleanupOnly.ok) throw new Error("Expected close-only cleanup failure");
   expect(cleanupOnly.error.cleanupIncomplete).toBe(true);
@@ -201,21 +199,18 @@ it("retains cancelled final-close ownership and retries the exact transport befo
     observation_ms: 30_000,
   });
   const activeController = new AbortController();
-  const activeObservation = observeJavaScriptRuntime(
-    new V8InspectorProvider(),
-    activeInput,
-    { signal: activeController.signal },
-  );
+  const activeObservation = observeJavaScriptRuntime(provider(), activeInput, {
+    signal: activeController.signal,
+  });
   try {
     await waitForConnections(4);
     let shutdownSettled = false;
-    const shutdown = new V8InspectorProvider().close().then(() => {
-      shutdownSettled = true;
-    });
-    const queuedObservation = observeJavaScriptRuntime(
-      new V8InspectorProvider(),
-      input,
-    );
+    const shutdown = provider()
+      .close()
+      .then(() => {
+        shutdownSettled = true;
+      });
+    const queuedObservation = observeJavaScriptRuntime(provider(), input);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(shutdownSettled).toBe(false);
     expect(fixture.acceptedConnections).toBe(4);

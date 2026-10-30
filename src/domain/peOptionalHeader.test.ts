@@ -14,6 +14,10 @@ const header = (
 ): Buffer => {
   const bytes = Buffer.alloc(byteLength);
   bytes.writeUInt16LE(format.magic);
+  if (format.bits === 64) bytes.writeBigUInt64LE(0xfedcba9876540000n, 24);
+  else bytes.writeUInt32LE(0x87650000, 28);
+  bytes.writeUInt32LE(0x1000, 32);
+  bytes.writeUInt32LE(0x200, 36);
   bytes.writeUInt32LE(0x400, 60);
   bytes.writeUInt32LE(directoryCount, format.directoryOffset - 4);
   return bytes;
@@ -32,6 +36,9 @@ it.each(formats)(
     if (!result.ok) throw new Error(result.error.message);
     expect(result.value).toMatchObject({
       ...format,
+      imageBase: format.bits === 64 ? 0xfedcba9876540000n : 0x87650000n,
+      sectionAlignment: 0x1000,
+      fileAlignment: 0x200,
       sizeOfHeaders: 0x400,
       directoryCount: 5,
     });
@@ -54,7 +61,12 @@ it.each(formats)(
       ok: true,
       value: {
         ...format,
+        imageBase: format.bits === 64 ? 0xfedcba9876540000n : 0x87650000n,
+        sectionAlignment: 0x1000,
+        fileAlignment: 0x200,
+        sizeOfImage: 0,
         sizeOfHeaders: 0xffffffff,
+        directoryCountOffset: format.directoryOffset - 4,
         directoryCount: 0,
         dataDirectories: [],
       },
@@ -157,7 +169,12 @@ it("honors a Uint8Array window and detaches facts from later source changes", ()
   backing.fill(0);
   expect(result.value).toEqual({
     ...formats[1],
+    imageBase: 0xfedcba9876540000n,
+    sectionAlignment: 0x1000,
+    fileAlignment: 0x200,
+    sizeOfImage: 0,
     sizeOfHeaders: 0x400,
+    directoryCountOffset: formats[1].directoryOffset - 4,
     directoryCount: 1,
     dataDirectories: [{ address: 0x12345678, size: 0x90, offset: 112 }],
   });

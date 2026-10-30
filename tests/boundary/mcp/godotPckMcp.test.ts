@@ -1,13 +1,12 @@
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import type { ValidateFunction } from "ajv";
-import { expect, it } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { buildGodotPck } from "../../fixtures/godotPck.js";
+import { buildGodotPck, buildGodotPck1 } from "../../fixtures/godotPck.js";
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -21,6 +20,9 @@ import {
   immutableJsonSnapshotMember,
 } from "../../../src/domain/immutableJson.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 const viewValidators = async (client: Client) => {
   const catalog = await client.listTools();
   const contract = catalog.tools.find(
@@ -28,14 +30,12 @@ const viewValidators = async (client: Client) => {
   );
   if (contract?.outputSchema === undefined)
     throw new Error("Missing named view output contract");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const inputSchema: Record<string, unknown> = contract.inputSchema;
   const outputSchema: Record<string, unknown> = contract.outputSchema;
   expect(ajv.validateSchema(inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  const validateInput = ajv.compile(inputSchema);
-  const validateOutput = ajv.compile(outputSchema);
-  return { validateInput, validateOutput };
+  return { ajv, inputSchema, outputSchema };
 };
 
 const retainedInventoryView =
@@ -50,8 +50,8 @@ const retainedInventoryView =
       view: { kind: "inventory", ...query },
     };
     expect(
-      validators.validateInput(arguments_),
-      JSON.stringify(validators.validateInput.errors),
+      validators.ajv.validate(validators.inputSchema, arguments_),
+      JSON.stringify(validators.ajv.errors),
     ).toBe(true);
     const reply = await client.callTool({
       name: "inspect_analysis_view",
@@ -61,8 +61,8 @@ const retainedInventoryView =
       true,
     );
     expect(
-      validators.validateOutput(reply.structuredContent),
-      JSON.stringify(validators.validateOutput.errors),
+      validators.ajv.validate(validators.outputSchema, reply.structuredContent),
+      JSON.stringify(validators.ajv.errors),
     ).toBe(true);
     const evidence = parseEvidence(reply.structuredContent);
     expect(evidence.evidence_links).toContain(evidenceId);
@@ -72,14 +72,16 @@ const retainedInventoryView =
 const assertInvalidNodeField = async (
   client: Client,
   evidenceId: string,
-  validateFullInput?: ValidateFunction,
+  validators?: Awaited<ReturnType<typeof viewValidators>>,
 ) => {
   const arguments_ = {
     source: { kind: "retained-evidence", evidence_id: evidenceId },
     view: { kind: "inventory", collection: "nodes", fields: ["logical_path"] },
   };
-  if (validateFullInput !== undefined)
-    expect(validateFullInput(arguments_)).toBe(false);
+  if (validators !== undefined)
+    expect(validators.ajv.validate(validators.inputSchema, arguments_)).toBe(
+      false,
+    );
   const rejected = await client.callTool({
     name: "inspect_analysis_view",
     arguments: arguments_,
@@ -90,15 +92,21 @@ const assertInvalidNodeField = async (
 };
 
 const profiles = ["full", "compact"] as const;
-it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
+const inventoryCases = profiles.flatMap((profile) => [
+  { profile, version: 1 as const },
+  { profile, version: 4 as const },
+]);
+it.each(inventoryCases)("retains PCK ($profile/v$version)", async (input) => {
+  const { profile, version } = input;
   const root = await createTestTempDirectory("rea-pck-mcp-");
   const path = join(root, "game.pck");
+  const members = [
+    { path: "res://a.txt", data: "a" },
+    { path: "res://b.txt", data: "b" },
+  ];
   await writeFile(
     path,
-    buildGodotPck(4, [
-      { path: "res://a.txt", data: "a" },
-      { path: "res://b.txt", data: "b" },
-    ]),
+    version === 1 ? buildGodotPck1(members) : buildGodotPck(4, members),
   );
   const session = createTestBinarySession(new ArtifactProvider({}));
   const server = createServer(
@@ -107,7 +115,10 @@ it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
       environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
     },
   );
-  const client = new Client({ name: "pck-contract-test", version: "1" });
+  const client = new Client(
+    { name: "pck-contract-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -129,7 +140,7 @@ it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
     );
     expect(summary.summary.root_format_metadata).toMatchObject({
       kind: "godot-pck",
-      format_version: 4,
+      format_version: version,
       declared_file_count: 2,
     });
     const parent = session.evidenceForAnalysis(summary.parent_evidence_id);
@@ -151,7 +162,7 @@ it.each(profiles)("reuses retained PCK inventory (%s)", async (profile) => {
     await assertInvalidNodeField(
       client,
       parent.evidence_id,
-      profile === "full" ? validators.validateInput : undefined,
+      profile === "full" ? validators : undefined,
     );
     const wanted = graph.occurrences.filter((row) => row.logical_path !== ".");
     const occurrences = await view({

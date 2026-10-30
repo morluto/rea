@@ -4,11 +4,13 @@ import type { Evidence } from "../evidence.js";
 import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { readEvidencePayload } from "../evidenceValidation.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
 import {
+  availableFunctionBodySchema,
   functionBodySchema,
   functionBodyEntryAgrees,
-  functionDossierSchema,
-} from "../hopperValues.js";
+} from "../native/functionBody.js";
+import { unavailableNativeFactSchema } from "./nativeFactAvailability.js";
 import { nativeSymbolOrigin } from "./nativeSymbol.js";
 import {
   addressedValueSchema,
@@ -26,11 +28,10 @@ import {
 const matchingRowsSchema = nativeInventoryRowsSchemas.names.element
   .extend({ address: nativeAddressInputSchema })
   .array();
-const availableBodySchema = functionBodySchema.options[1];
 const matchingBodySchema = z.discriminatedUnion("available", [
-  functionBodySchema.options[0],
-  availableBodySchema.safeExtend({
-    ranges: availableBodySchema.shape.ranges.element
+  unavailableNativeFactSchema,
+  availableFunctionBodySchema.safeExtend({
+    ranges: availableFunctionBodySchema.shape.ranges.element
       .extend({
         start: nativeAddressInputSchema,
         end: nativeAddressInputSchema,

@@ -76,33 +76,35 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("marks an unusable system temporary parent unavailable when workspaceRoot is omitted", async () => {
-  if (process.platform === "win32") return;
-  const root = await mkdtemp(join(tmpdir(), "rea-ida-default-parent-"));
-  roots.push(root);
-  const path = join(root, "registration.json");
-  const unusableDefault = join(root, "not-a-directory");
-  await writeFile(unusableDefault, "file");
-  await writeFile(
-    path,
-    JSON.stringify({ command: "python", mode: "headless" }),
-  );
-  const previous = process.env.TMPDIR;
-  process.env.TMPDIR = unusableDefault;
-  try {
-    const inspection = await inspectIdaRegistration(path, resourceScope);
-    expect(inspection.available).toBe(false);
-    expect(
-      inspection.checks.find(({ name }) => name === "private_workspace"),
-    ).toMatchObject({
-      ok: false,
-      code: "invalid_configuration",
-    });
-  } finally {
-    if (previous === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = previous;
-  }
-});
+it.skipIf(process.platform === "win32")(
+  "marks an unusable system temporary parent unavailable when workspaceRoot is omitted",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "rea-ida-default-parent-"));
+    roots.push(root);
+    const path = join(root, "registration.json");
+    const unusableDefault = join(root, "not-a-directory");
+    await writeFile(unusableDefault, "file");
+    await writeFile(
+      path,
+      JSON.stringify({ command: "python", mode: "headless" }),
+    );
+    const previous = process.env.TMPDIR;
+    process.env.TMPDIR = unusableDefault;
+    try {
+      const inspection = await inspectIdaRegistration(path, resourceScope);
+      expect(inspection.available).toBe(false);
+      expect(
+        inspection.checks.find(({ name }) => name === "private_workspace"),
+      ).toMatchObject({
+        ok: false,
+        code: "invalid_configuration",
+      });
+    } finally {
+      if (previous === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previous;
+    }
+  },
+);
 it("keeps IDA configuration for setup without copying transport credentials or claiming runtime verification", async () => {
   const root = await mkdtemp(join(tmpdir(), "rea-ida-doctor-"));
   roots.push(root);

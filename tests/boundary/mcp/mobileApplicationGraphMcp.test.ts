@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -86,7 +87,11 @@ it("advertises and executes Android and Apple inventory projections", async () =
 
   const root = await createTestTempDirectory("rea-mobile-graph-mcp-");
   const apkInventory = parseEvidence(
-    await runProviderAnalysis(await writeApk(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const apkSources = fragmentInventoryEvidence(apkInventory, 2).toReversed();
   const android = await client.callTool({
@@ -135,7 +140,11 @@ it("advertises and executes Android and Apple inventory projections", async () =
   );
 
   const ipaInventory = parseEvidence(
-    await runProviderAnalysis(await writeIpa(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeIpa(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const apple = await client.callTool({
     name: "project_apple_application_graph",
@@ -152,7 +161,11 @@ it("projects a single inventory page as partial and links only that source", asy
   const client = await connect();
   const root = await createTestTempDirectory("rea-mobile-partial-page-mcp-");
   const inventory = parseEvidence(
-    await runProviderAnalysis(await writeApk(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const facts = artifactInventoryResultSchema.parse(
     inventory.normalized_result,
@@ -271,10 +284,18 @@ it("rejects authentic pages from different roots without retaining either", asyn
   const client = await connect();
   const root = await createTestTempDirectory("rea-mobile-mixed-pages-mcp-");
   const apk = parseEvidence(
-    await runProviderAnalysis(await writeApk(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeApk(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
   const ipa = parseEvidence(
-    await runProviderAnalysis(await writeIpa(root), "inventory_artifact", {}),
+    await runProviderAnalysis(
+      await writeIpa(root),
+      "inventory_artifact",
+      {},
+    ).then(projectCliAnalysisResult),
   );
 
   const rejected = await client.callTool({
@@ -337,7 +358,9 @@ it.each([
     });
     await writeFile(path, await writer.close());
     const inventory = parseEvidence(
-      await runProviderAnalysis(path, "inventory_artifact", {}),
+      await runProviderAnalysis(path, "inventory_artifact", {}).then(
+        projectCliAnalysisResult,
+      ),
     );
     const reply = await client.callTool({
       name: operation,

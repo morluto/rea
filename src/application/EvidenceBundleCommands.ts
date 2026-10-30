@@ -1,4 +1,4 @@
-import { readArtifactInspectionSources } from "../domain/artifactInspection.js";
+import { analysisEvidenceSources } from "./AnalysisEvidenceSources.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
@@ -31,26 +31,37 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   readEvidenceBundle,
   readImmutableEvidenceBundle,
+  readComparisonEvidenceBundles,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "./EvidenceBundleFiles.js";
+import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
+import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
 import { inspectAnalysisViewValidated } from "./analysisView/AnalysisViewService.js";
 
 /** Validate a standalone bundle and report its complete record/revision counts. */
 export const importEvidenceBundleCommand = async (
   path: string,
+  signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
-  const loaded = await readEvidenceBundle(
-    path,
-    undefined,
-    undefined,
+  return withBundleReadResources(
+    async (resources) => {
+      const loaded = await readEvidenceBundle(
+        path,
+        signal,
+        resources,
+        "import_evidence_bundle",
+      );
+      if (!loaded.ok) return loaded;
+      return ok({
+        imported: loaded.value.records.length,
+        unknowns_added: loaded.value.unknowns.length,
+        total: loaded.value.records.length,
+      });
+    },
     "import_evidence_bundle",
+    signal,
   );
-  if (!loaded.ok) return loaded;
-  return ok({
-    imported: loaded.value.records.length,
-    unknowns_added: loaded.value.unknowns.length,
-    total: loaded.value.records.length,
-  });
 };
 
 /** Validate a source bundle and atomically export canonical bytes. */
@@ -58,19 +69,37 @@ export const exportEvidenceBundleCommand = async (
   sourcePath: string,
   outputPath: string,
   overwrite: boolean,
+  signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   // The sealed snapshot lets the writer reuse this authentication.
-  const loaded = await readImmutableEvidenceBundle(
-    sourcePath,
-    undefined,
-    undefined,
+  const loaded = await withBundleReadResources(
+    (resources) =>
+      readImmutableEvidenceBundle(
+        sourcePath,
+        signal,
+        resources,
+        "export_evidence_bundle",
+      ),
     "export_evidence_bundle",
+    signal,
   );
   if (!loaded.ok) return loaded;
-  return projectWrite(
+  const written = await persistEvidenceBundleCommand(
     loaded.value,
-    await persistEvidenceBundleCommand(loaded.value, outputPath, overwrite),
+    outputPath,
+    overwrite,
+    signal,
+    "export_evidence_bundle",
   );
+  await dispatchQueuedInterrupts();
+  if (written.ok && signal?.aborted)
+    return err(
+      new AnalysisCancelledError("export_evidence_bundle", {
+        cause: signal.reason,
+        diagnostics: { evidence_bundle: { ...written.value } },
+      }),
+    );
+  return projectWrite(loaded.value, written);
 };
 
 /** Publish complete parent Evidence before delivering it or its linked summary. */
@@ -88,16 +117,9 @@ export const deliverAnalysisEvidence = async (
   });
   if (!headroom.ok)
     return err(headroom.error.retainPartialObservation(evidence));
-  const sourceEvidence =
-    evidence.operation === "inspect_artifact"
-      ? readArtifactInspectionSources(evidence.normalized_result)
-      : ok([]);
-  if (!sourceEvidence.ok)
-    return err(sourceEvidence.error.retainPartialObservation(evidence));
-  const bundle = createImmutableEvidenceBundle([
-    ...sourceEvidence.value,
-    evidence,
-  ]);
+  const sourceEvidence = analysisEvidenceSources(evidence);
+  if (!sourceEvidence.ok) return sourceEvidence;
+  const bundle = createImmutableEvidenceBundle(sourceEvidence.value);
   const delivered =
     detail === "summary"
       ? inspectAnalysisViewValidated(
@@ -215,9 +237,12 @@ const persistEvidenceBundleCommand = async (
   if (
     !written.error.cleanupIncomplete &&
     written.error instanceof EvidenceFileError &&
-    written.error.published
+    written.error.published?.path !== undefined
   ) {
-    return ok(written.error.published);
+    return ok({
+      path: written.error.published.path,
+      bytes: written.error.published.bytes,
+    });
   }
   return written;
 };
@@ -227,35 +252,32 @@ export const compareEvidenceBundlesCommand = async (input: {
   readonly leftPath: string;
   readonly rightPath: string;
   readonly recordPairs?: readonly BundleRecordPair[];
+  readonly signal?: AbortSignal;
 }): Promise<Result<JsonValue, AnalysisError>> => {
   // Sealed snapshots let comparison and its bundle digests reuse this
   // authentication instead of re-validating every record twice more.
-  const [left, right] = await Promise.all([
-    readImmutableEvidenceBundle(
-      input.leftPath,
-      undefined,
-      undefined,
-      "compare_bundles",
-    ),
-    readImmutableEvidenceBundle(
-      input.rightPath,
-      undefined,
-      undefined,
-      "compare_bundles",
-    ),
-  ]);
-  if (!left.ok) return left;
-  if (!right.ok) return right;
-  try {
-    return ok(
-      jsonValueSchema.parse(
-        compareBundles(left.value, right.value, input.recordPairs),
-      ),
-    );
-  } catch (cause: unknown) {
-    if (cause instanceof AnalysisInputError) return err(cause);
-    throw cause;
-  }
+  return withBundleReadResources(
+    async (resources) => {
+      const loaded = await readComparisonEvidenceBundles(
+        input.leftPath,
+        input.rightPath,
+        input.signal,
+        resources,
+      );
+      if (!loaded.ok) return loaded;
+      const { left, right } = loaded.value;
+      try {
+        return ok(
+          jsonValueSchema.parse(compareBundles(left, right, input.recordPairs)),
+        );
+      } catch (cause: unknown) {
+        if (cause instanceof AnalysisInputError) return err(cause);
+        throw cause;
+      }
+    },
+    "compare_bundles",
+    input.signal,
+  );
 };
 
 const projectWrite = (
@@ -263,9 +285,57 @@ const projectWrite = (
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
   written.ok
-    ? ok({
-        path: written.value.path,
-        bytes: written.value.bytes,
-        records: bundle.records.length,
-      })
+    ? ok(evidenceBundleExportReceipt(bundle, written.value))
     : err(written.error);
+
+/** Standalone bundle discovery shares the same read owner as import and comparison. */
+export const inspectEvidenceBundleCommand = async (
+  input: {
+    readonly path: string;
+    readonly detail: "complete" | "summary";
+    readonly filters?: EvidenceRecordFilters | undefined;
+  },
+  signal?: AbortSignal,
+) => {
+  return withBundleReadResources(
+    async (resources) => {
+      const loaded = await readEvidenceBundle(
+        input.path,
+        signal,
+        resources,
+        "get_evidence_bundle",
+      );
+      return loaded.ok ? inspectEvidenceBundle(loaded.value, input) : loaded;
+    },
+    "get_evidence_bundle",
+    signal,
+  );
+};
+
+/** Final read cleanup retries the exact leases already bound to a failed read. */
+const withBundleReadResources = async <Value extends JsonValue>(
+  read: (
+    resources: ArtifactResourceScope,
+  ) => Promise<Result<Value, AnalysisError>>,
+  operation: string,
+  signal?: AbortSignal,
+): Promise<Result<Value, AnalysisError>> => {
+  const resources = new ArtifactResourceScope();
+  let result: Result<Value, AnalysisError>;
+  try {
+    result = await read(resources);
+  } finally {
+    // Read errors own their retained leases and observe resolution or remaining
+    // failure in place. A retry must not replace the original read failure.
+    await resources.close().catch(() => undefined);
+    await dispatchQueuedInterrupts();
+  }
+  return result.ok && signal?.aborted
+    ? err(
+        new AnalysisCancelledError(operation, {
+          cause: signal.reason,
+          diagnostics: { completed_result: result.value },
+        }),
+      )
+    : result;
+};

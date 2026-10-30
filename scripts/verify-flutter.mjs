@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { toolContract } from "../dist/contracts/toolContracts.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
-import { mcpTextValue } from "./lib/mcp-verifier-results.mjs";
+import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
 import {
   closeVerifierResources,
   withVerifierCleanup,
@@ -234,8 +234,7 @@ async function run(operation, input) {
     { name: operation, arguments: input },
     { timeout: 60_000 },
   );
-  assert.notEqual(response.isError, true, mcpTextValue(response));
-  const mcp = contract.outputSchema.parse(JSON.parse(mcpTextValue(response)));
+  const mcp = requireMcpOutput(response, operation, contract);
   assert.deepEqual(cli.normalized_result, mcp.normalized_result);
   assert.deepEqual(cli.subject, mcp.subject);
   assert.equal(cli.subject.local_path, input.path);

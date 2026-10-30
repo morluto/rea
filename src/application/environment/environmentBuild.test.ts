@@ -416,29 +416,31 @@ describe("buildEnvironment cancellation and input checks", () => {
     });
   });
 
-  it("refuses an unreadable package tarball on a dry run as a build does", async () => {
-    if (process.getuid?.() === 0) return;
-    const root = await createTestTempDirectory("rea-environment-build-tgz-");
-    const tarball = join(root, "rea-agents.tgz");
-    await writeFile(tarball, "packed");
-    await chmod(tarball, 0o000);
-    try {
-      const planned = await buildEnvironment(
-        await buildInput(root, undefined, {
-          dryRun: true,
-          packageTarball: tarball,
-        }),
-      );
-      const built = await buildEnvironment(
-        await buildInput(root, undefined, { packageTarball: tarball }),
-      );
-      if (planned.ok || built.ok) throw new Error("Expected both refusals");
-      expect(projectAnalysisError(planned.error).code).toBe("access_denied");
-      expect(projectAnalysisError(built.error).code).toBe("access_denied");
-    } finally {
-      await chmod(tarball, 0o600);
-    }
-  });
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "refuses an unreadable package tarball on a dry run as a build does",
+    async () => {
+      const root = await createTestTempDirectory("rea-environment-build-tgz-");
+      const tarball = join(root, "rea-agents.tgz");
+      await writeFile(tarball, "packed");
+      await chmod(tarball, 0o000);
+      try {
+        const planned = await buildEnvironment(
+          await buildInput(root, undefined, {
+            dryRun: true,
+            packageTarball: tarball,
+          }),
+        );
+        const built = await buildEnvironment(
+          await buildInput(root, undefined, { packageTarball: tarball }),
+        );
+        if (planned.ok || built.ok) throw new Error("Expected both refusals");
+        expect(projectAnalysisError(planned.error).code).toBe("access_denied");
+        expect(projectAnalysisError(built.error).code).toBe("access_denied");
+      } finally {
+        await chmod(tarball, 0o600);
+      }
+    },
+  );
 
   it("refuses a loopback capture whose file name is too long, and quotes the next command", async () => {
     const root = await createTestTempDirectory("rea-environment-build-long-");

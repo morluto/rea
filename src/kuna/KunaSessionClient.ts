@@ -1,3 +1,9 @@
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { basename } from "node:path";
+import {
+  regularFileCancellation,
+  RegularFileCleanupFailure,
+} from "../filesystem/OwnedRegularFile.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -29,7 +35,7 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
-import { functionDossierSchema } from "../domain/hopperValues.js";
+import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -84,11 +90,7 @@ import {
   type KunaProjectFileSpan,
 } from "./KunaProjectReader.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import {
-  ArtifactResourceRetryFailure,
-  ArtifactResourceScope,
-} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
@@ -162,11 +164,13 @@ const waitFor = async <T>(
     : result;
 };
 
-/** A file the adopted export named is gone, e.g. evicted by another REA process. */
-const isMissing = (cause: unknown): boolean =>
+/** An adopted export file disappeared or changed since its digest was verified. */
+const isUnavailableProject = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
-  (cause.code === "ENOENT" || cause.code === "ENOTDIR");
+  (cause.code === "ENOENT" ||
+    cause.code === "ENOTDIR" ||
+    cause.code === "ESTALE");
 
 /** Read through a call so a check before an await does not narrow later ones. */
 const cancelled = (signal: AbortSignal | undefined): boolean =>
@@ -198,11 +202,7 @@ const descriptorCleanupError = (
     { reason: observation.reason },
     { cause, operation },
   );
-  if (
-    cause instanceof ArtifactResourceRetryFailure &&
-    cause.cleanupLeases.length > 0
-  )
-    new AnalysisCleanupLeaseGroup(error, cause.cleanupLeases);
+  bindArtifactFileCleanup(cause, error);
   return error;
 };
 
@@ -480,8 +480,14 @@ export class KunaSessionClient implements AnalysisClient {
         ),
       );
     } catch (cause: unknown) {
-      if (cancelled(options.signal))
-        return err(new AnalysisCancelledError(operation, { cause }));
+      if (cancelled(options.signal)) {
+        const cancellation = regularFileCancellation(cause);
+        return err(
+          new AnalysisCancelledError(operation, {
+            cause: cancellation === undefined ? cause : cancellation.reason,
+          }),
+        );
+      }
       return err(failure(operation, cause));
     }
   }
@@ -1030,7 +1036,7 @@ export class KunaSessionClient implements AnalysisClient {
             source: { kind: "project-export", project: reader.project },
           });
         } catch (cause: unknown) {
-          if (!isMissing(cause) || recovered) throw cause;
+          if (!isUnavailableProject(cause) || recovered) throw cause;
           recovered = true;
           this.#invalidateProject(reader);
           await this.#startProject(installation);
@@ -1486,14 +1492,34 @@ export class KunaSessionClient implements AnalysisClient {
         return err(error);
       }
       const committed = this.#profile?.parameters["kuna_sha256"];
-      if (committed !== undefined && committed !== inspected.value.sha256)
+      const committedCommand = this.#profile?.parameters["kuna_command"];
+      const committedExecutable = this.#profile?.parameters["kuna_executable"];
+      const identityChanged = [
+        [committed, inspected.value.sha256],
+        [committedCommand, inspected.value.configuration.command],
+        [committedExecutable, inspected.value.executable],
+      ].some(
+        ([expected, observed]) =>
+          expected !== undefined && expected !== observed,
+      );
+      if (identityChanged)
         return err(
           new ProviderAdapterError(KUNA_PROVIDER_ID, "health", {
             userMessage:
               "The Kuna executable changed after this target was opened; reopen the target to analyze it with the current executable.",
             diagnostics: {
-              committed_sha256: committed,
+              ...(committed === undefined
+                ? {}
+                : { committed_sha256: committed }),
               observed_sha256: inspected.value.sha256,
+              ...(committedCommand === undefined
+                ? {}
+                : { committed_command: committedCommand }),
+              observed_command: inspected.value.configuration.command,
+              ...(committedExecutable === undefined
+                ? {}
+                : { committed_executable: committedExecutable }),
+              observed_executable: inspected.value.executable,
             },
           }),
         );
@@ -1530,7 +1556,10 @@ export class KunaSessionClient implements AnalysisClient {
   async #lookupOrBuild(installation: KunaInstallation): Promise<void> {
     const key = kunaProjectKey({
       targetSha256: this.#target.sha256,
+      targetBasename: basename(this.#target.path),
       kunaSha256: installation.sha256,
+      kunaCommand: installation.configuration.command,
+      kunaExecutable: installation.executable,
       kunaVersion: installation.version,
       jobs: installation.configuration.jobs,
     });
@@ -1592,7 +1621,7 @@ export class KunaSessionClient implements AnalysisClient {
       try {
         return await read(reader.value);
       } catch (cause: unknown) {
-        if (!isMissing(cause) || attempt !== 0) throw cause;
+        if (!isUnavailableProject(cause) || attempt !== 0) throw cause;
         this.#invalidateProject(reader.value);
         await this.#startProject(installation);
       }

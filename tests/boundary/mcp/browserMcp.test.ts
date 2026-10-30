@@ -4,7 +4,8 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, expect, it } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
@@ -23,6 +24,9 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
 const browsers: FakeCdpBrowser[] = [];
@@ -746,6 +750,40 @@ it.each(["full", "compact"] as const)(
   },
 );
 
+it.each([
+  ["inspect_web_page", 0],
+  ["analyze_web_bundle", 0],
+  ["observe_web_session", 1],
+  ["discover_webmcp_tools", 0],
+  ["capture_web_screenshot", undefined],
+] as const)(
+  "selects the exact opaque target ID through %s",
+  async (name, observationMs) => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const { client } = await connectBrowser();
+    const args = {
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      ...(observationMs === undefined ? {} : { observation_ms: observationMs }),
+    };
+    const rejected = await client.callTool({
+      name,
+      arguments: { ...args, target_id: " allowed-page " },
+    });
+    expect(parseMcpToolError(rejected)).toMatchObject({
+      error: { details: { reason: "target_not_found" } },
+    });
+    expect(browser.commands).toHaveLength(0);
+    const accepted = await client.callTool({
+      name,
+      arguments: { ...args, target_id: "allowed-page" },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(browser.commands.length).toBeGreaterThan(0);
+  },
+);
+
 it("does not attach to a target outside the request's allowed origin scope", async () => {
   const browser = await startFakeCdpBrowser();
   browsers.push(browser);
@@ -824,7 +862,10 @@ const connectBrowser = async (profile?: "full" | "compact") => {
       }),
     },
   );
-  const client = new Client({ name: "browser-mcp-test", version: "1" });
+  const client = new Client(
+    { name: "browser-mcp-test", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server, session);

@@ -6,6 +6,7 @@ import {
   readFile,
   mkdtemp,
   realpath,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -14,12 +15,16 @@ import { createHash } from "node:crypto";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
+import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -34,6 +39,11 @@ const command = process.env.REA_VERIFY_QWEN_COMMAND ?? "qwen";
 // npm exposes only qwen.cmd on Windows. Resolve a selected JavaScript entry
 // before the verifier switches to its disposable workspace.
 const entryPoint = /\.(c|m)?js$/iu.test(command) ? resolve(command) : undefined;
+const reducedPath = process.env.REA_VERIFY_QWEN_REDUCED_PATH === "1";
+assert(
+  !reducedPath || (process.platform !== "win32" && entryPoint !== undefined),
+  "REA_VERIFY_QWEN_REDUCED_PATH=1 requires POSIX and a JavaScript REA_VERIFY_QWEN_COMMAND entry point",
+);
 const launch = (args) =>
   entryPoint === undefined
     ? [command, args]
@@ -51,12 +61,15 @@ let evidenceSeen = false;
 let skillSeen = false;
 let finalSeen = false;
 let skillRequested = false;
-let searchRequested = false;
+let searchCallId;
+let analysisCallId;
 let artifactReadByAgent = false;
 let artifactPath;
 let selectedSkillLoaded = false;
 let artifactDigest;
 let catalogSize = null;
+let registrationCommand = null;
+let clientPath = null;
 const commands = await createVerifierCommands();
 await withVerifierCleanup(async () => {
   await withVerifierCleanup(async () => {
@@ -139,44 +152,50 @@ await withVerifierCleanup(async () => {
     const configured = JSON.parse(
       await readFile(join(profile, "settings.json"), "utf8"),
     );
+    registrationCommand = [
+      configured.mcpServers.rea.command,
+      ...configured.mcpServers.rea.args,
+    ];
     assert.deepEqual(configured.model, { name: "rea-client-fixture" });
     assert.equal(configured.skills, undefined);
     assert.deepEqual(configured.mcpServers.other, {
       command: "unrelated-server",
       disabled: true,
     });
+    clientPath = baseEnvironment.PATH;
+    if (reducedPath) {
+      assert.equal(
+        configured.mcpServers.rea.env?.PATH,
+        undefined,
+        "Setup must not persist its ambient PATH into the registration",
+      );
+      clientPath = join(lab, "client-bin");
+      await mkdir(clientPath);
+      // Qwen's Evidence readback uses its shell tool, which launches bare bash.
+      // Keep that fixture dependency available without exposing node/npm/npx.
+      const bash = await commands.exec("bash", ["-c", "command -v bash"], {
+        env: baseEnvironment,
+        timeout: 5_000,
+      });
+      await symlink(
+        await realpath(bash.stdout.trim()),
+        join(clientPath, "bash"),
+      );
+      await commands.exec(
+        process.execPath,
+        [
+          "-e",
+          "const {spawnSync}=require('node:child_process');const assert=require('node:assert/strict');for(const command of ['node','npm','npx'])assert.equal(spawnSync(command,['--version'],{timeout:1000}).error?.code,'ENOENT',`${command} unexpectedly available on reduced PATH`);",
+        ],
+        {
+          env: { ...baseEnvironment, PATH: clientPath },
+          timeout: 5_000,
+        },
+      );
+    }
     const target = join(lab, "fixture α测试");
     await mkdir(target, { recursive: true });
-    await writeFile(
-      `${target}/app.js`,
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return null;
-        }
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const result = extractEvidence(item);
-          if (result) return result;
-        }
-      } else if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes?.length > 0
-        )
-          return value;
-        for (const nested of Object.values(value)) {
-          const result = extractEvidence(nested);
-          if (result) return result;
-        }
-      }
-      return null;
-    };
+    await writeFile(`${target}/app.js`, CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: `${client}-${mode}`,
@@ -184,15 +203,21 @@ await withVerifierCleanup(async () => {
         skillSeen ||= JSON.stringify(body.messages ?? []).includes(
           "reverse-engineer-anything",
         );
-        const messageText = (body.messages ?? [])
-          .map((message) =>
+        const messages = (body.messages ?? []).map((message) => ({
+          role: message.role,
+          callId: message.tool_call_id,
+          text:
             typeof message.content === "string"
               ? message.content
               : (message.content ?? [])
                   .map((part) => part.text ?? "")
                   .join("\n"),
-          )
-          .join("\n");
+        }));
+        const messageText = messages.map((message) => message.text).join("\n");
+        const toolResponseText = (callId) =>
+          messages.find(
+            (message) => message.role === "tool" && message.callId === callId,
+          )?.text ?? "";
         selectedSkillLoaded ||= messageText.includes(
           join(sharedSkills, "reverse-engineer-anything"),
         );
@@ -207,34 +232,9 @@ await withVerifierCleanup(async () => {
           assert(artifactPath);
           const artifact = await readFile(artifactPath);
           artifactDigest = createHash("sha256").update(artifact).digest("hex");
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(JSON.parse(artifact.toString("utf8")));
-          assert(extractEvidence(evidence));
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            JSON.parse(artifact.toString("utf8")),
+            target,
           );
           evidenceSeen = true;
           await writeFile(
@@ -244,12 +244,14 @@ await withVerifierCleanup(async () => {
         }
         for (const message of body.messages ?? []) {
           if (message.role !== "tool") continue;
-          const evidence = extractEvidence(message.content);
-          if (evidence) {
-            assert(
-              JSON.stringify(evidence.normalized_result).includes(
-                "REA_CLIENT_FIXTURE",
-              ),
+          const candidate = findClientResult(
+            message.content,
+            isClientJavaScriptEvidence,
+          );
+          if (candidate) {
+            const { evidence } = await assertClientJavaScriptFixtureEvidence(
+              candidate,
+              target,
             );
             evidenceSeen = true;
             await writeFile(
@@ -262,9 +264,7 @@ await withVerifierCleanup(async () => {
           t.name.includes("analyze_javascript_application"),
         );
         const reviewedNames = [
-          ...JSON.stringify(
-            (body.messages ?? []).filter((m) => m.role === "tool"),
-          ).matchAll(
+          ...toolResponseText(searchCallId).matchAll(
             /(?:\\?"name\\?"\s*:\s*\\?")([^"\\]*analyze_javascript_application)(?:\\?")/g,
           ),
         ]
@@ -274,7 +274,7 @@ await withVerifierCleanup(async () => {
         const invoke = tools.find((t) => t.name === "tool_call");
         const skill = tools.find((t) => t.name === "skill");
         const shell = tools.find((t) => t.name === "run_shell_command");
-        const persisted = messageText.match(
+        const persisted = toolResponseText(analysisCallId).match(
           /Full output saved to: ([^\r\n]+)/u,
         );
         const call = (name, args) => ({
@@ -308,26 +308,32 @@ await withVerifierCleanup(async () => {
           const script = `const fs=require('node:fs');const e=JSON.parse(fs.readFileSync(${JSON.stringify(artifactPath)},'utf8'));console.log(JSON.stringify({REA_CLIENT_FIXTURE:JSON.stringify(e.normalized_result).includes('REA_CLIENT_FIXTURE'),evidence_id:e.evidence_id,graph_nodes:e.normalized_result.graph.nodes.length}));`;
           // Keep paths and JSON quotes out of shell syntax on Windows and POSIX.
           const encodedScript = Buffer.from(script).toString("base64");
+          const nodeCommand =
+            process.platform === "win32"
+              ? "node"
+              : `'${process.execPath.replaceAll("'", "'\"'\"'")}'`;
           message = call(shell.name, {
-            command: `node -e "eval(Buffer.from('${encodedScript}','base64').toString('utf8'))"`,
+            command: `${nodeCommand} -e "eval(Buffer.from('${encodedScript}','base64').toString('utf8'))"`,
             description:
               "Read the complete saved REA Evidence and verify the fixture facts.",
           });
-        } else if (selected)
+        } else if (selected) {
           message = call(selected.name, {
             input_path: target,
             format: "directory",
           });
-        else if (reviewedNames.length && invoke)
+          analysisCallId = message.tool_calls[0].id;
+        } else if (reviewedNames.length && invoke) {
           message = call(invoke.name, {
             name: reviewedNames[0],
             arguments: { input_path: target, format: "directory" },
           });
-        else if (search && !searchRequested) {
-          searchRequested = true;
+          analysisCallId = message.tool_calls[0].id;
+        } else if (search && searchCallId === undefined) {
           message = call(search.name, {
             query: "analyze_javascript_application",
           });
+          searchCallId = message.tool_calls[0].id;
         } else
           throw new Error(
             `REA analysis tool not exposed; tools: ${tools.map((t) => t.name).join(", ")}`,
@@ -342,6 +348,7 @@ await withVerifierCleanup(async () => {
         : `Use REA to analyze the JavaScript directory ${target}. Report the result.`;
     const env = {
       ...baseEnvironment,
+      PATH: clientPath,
       OPENAI_API_KEY: "local-fixture-key",
       OPENAI_BASE_URL: endpoint,
     };
@@ -413,6 +420,9 @@ await withVerifierCleanup(async () => {
       client: "Qwen Code",
       clientVersion,
       mode,
+      reducedPath,
+      ...(reducedPath ? { clientPath } : {}),
+      registrationCommand,
       passed,
       artifacts: lab,
       runtimeRoot,

@@ -14,6 +14,7 @@ import { expect, it, onTestFinished } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import { PROMPT_CONTRACTS } from "../../../src/contracts/promptContracts.js";
+import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
@@ -217,6 +218,29 @@ it.each([
     expect(stderr()).toBe("");
   },
 );
+
+it("composes a scoped registration instead of serving the recorded catalog", async () => {
+  const { client, stderr } = await connect("legacy", {
+    REA_MCP_TOOL_FAMILIES: "session",
+  });
+  const advertised = (await client.listTools()).tools
+    .map(({ name }) => name)
+    .sort();
+  expect(advertised).toEqual(
+    TOOL_FAMILY_DEFINITIONS.filter(({ id }) => id === "session")
+      .flatMap(({ contracts }) => contracts.map(({ name }) => name))
+      .sort(),
+  );
+  expect(advertised).not.toContain("inspect_macho");
+  // The recorded catalog cannot verify a scoped identity, so the scope must
+  // serve real calls instead of failing every one after materialization.
+  const status = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(status.isError).not.toBe(true);
+  expect(stderr()).toBe("");
+});
 
 it("preserves connection creation time across deferred materialization", async () => {
   const directory = await createTestTempDirectory("rea-mcp-started-at-");
@@ -553,37 +577,29 @@ console.log("LATE_PUBLICATION_REFUSED");
   expect(child.stderr).toBe("");
 });
 
-it.each([
-  {},
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
-  { REA_MCP_INPUT_SCHEMA_PROFILE: "full" },
-  { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
-])("preserves the configured catalog profile %j", async (environment) => {
-  const { client } = await connect("legacy", environment);
-  const before = await client.listTools();
-  const catalog = JSON.parse(
-    await readFile(
-      environment.REA_MCP_INPUT_SCHEMA_PROFILE === "full"
-        ? "dist/mcp-catalog-full.json"
-        : "dist/mcp-catalog.json",
-      "utf8",
-    ),
-  );
-  expect(before.tools).toHaveLength(catalog.tools.length);
-  const expected =
-    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
-      ? catalog.tools.map(
-          ({ outputSchema: _output, ...tool }: Record<string, unknown>) => tool,
-        )
-      : catalog.tools;
-  expect(before.tools).toEqual(expected);
-  const result = await client.callTool({
-    name: "list_unknowns",
-    arguments: {},
-  });
-  expect(result.isError).not.toBe(true);
-  expect(await client.listTools()).toEqual(before);
-});
+it.each([{}, { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" }])(
+  "preserves the configured catalog profile %j",
+  async (environment) => {
+    const { client } = await connect("legacy", environment);
+    const before = await client.listTools();
+    const catalog = JSON.parse(await readFile("dist/mcp-catalog.json", "utf8"));
+    expect(before.tools).toHaveLength(catalog.tools.length);
+    const expected =
+      environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off"
+        ? catalog.tools.map(
+            ({ outputSchema: _output, ...tool }: Record<string, unknown>) =>
+              tool,
+          )
+        : catalog.tools;
+    expect(before.tools).toEqual(expected);
+    const result = await client.callTool({
+      name: "list_unknowns",
+      arguments: {},
+    });
+    expect(result.isError).not.toBe(true);
+    expect(await client.listTools()).toEqual(before);
+  },
+);
 
 it("runs the real static artifact workflow after deferred initialization", async () => {
   const { client } = await connect("legacy");

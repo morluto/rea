@@ -13,12 +13,14 @@ import { parseEvidence, createEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { cliTest } from "../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
 import {
   cudaFixture,
+  peGpuFixture,
   ccobFixture,
   ptxFixture,
   amdFixture,
+  amdNoteFixture,
   cubinFixture,
   hipFixture,
   elfFixture,
@@ -86,7 +88,7 @@ cliTest(
       const bytes = Buffer.concat([header, compressed]),
         path = join(root, `v${version}`);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -145,7 +147,7 @@ cliTest(
       const bytes = hipFixture(payload, bundleId),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -195,7 +197,7 @@ cliTest(
     }
     const path = join(root, "raw-bitcode");
     await writeFile(path, bitcode);
-    const raw = await cli.run({
+    const raw = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -233,7 +235,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -317,7 +319,7 @@ cliTest(
         ]),
         path = join(root, name);
       await writeFile(path, bytes);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -358,7 +360,7 @@ cliTest(
       ]),
       path = join(root, "large-parameter.cubin");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -395,7 +397,7 @@ cliTest(
     const bytes = hipFixture(payload, "hip-amdgcn-amd-amdhsa--gfx906+xnack"),
       path = join(root, "feature.bundle");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -440,7 +442,7 @@ cliTest(
       root = await createTestTempDirectory("rea-ptx-callprototype-"),
       path = join(root, "prototype.ptx");
     await writeFile(path, source);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -490,7 +492,7 @@ cliTest(
     const bytes = cubinFixture({ extendedSectionIndex: true });
     const path = join(root, "extended.cubin");
     await writeFile(path, bytes);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -538,7 +540,7 @@ cliTest(
     malformedBytes.writeBigUInt64LE(4n, sectionTable + indexTable! * 64 + 32);
     const malformedPath = join(root, "short-shndx.cubin");
     await writeFile(malformedPath, malformedBytes);
-    const malformed = await cli.run({
+    const malformed = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -569,7 +571,7 @@ cliTest(
       const text = `.version 7.0\n.target sm_80\n.address_size 64\n.visible .entry kernel() {\n.reg .b32 ${register};\nmov.u32 ${register}, 0;\nret;\n}\n`;
       const path = join(root, `${register.slice(1)}.ptx`);
       await writeFile(path, text);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -606,7 +608,7 @@ cliTest(
     const text = `.version 8.8\n.target sm_80\n.address_size 64\n.entry %kernel(.param .u32 input) {\nret;\n}\n`;
     const path = join(root, "identifiers.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -669,7 +671,7 @@ cliTest(
       const text = `${preamble}${declaration}\n`,
         path = join(root, `${name}.ptx`);
       await writeFile(path, text);
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: [
           "inspect-gpu-code-objects",
           path,
@@ -719,7 +721,7 @@ cliTest(
     const text = `.version 8.8\n.target compute_80\n.address_size 64\n.entry kernel() {\nret;\n}\n`;
     const path = join(root, "target.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -749,7 +751,7 @@ cliTest(
     const text = `.version 1.3\n.target sm_80\n.address_size 64\n.entry kernel {\n.param .u32 input;\nret;\n}\n`;
     const path = join(root, "legacy.ptx");
     await writeFile(path, text);
-    const response = await cli.run({
+    const response = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         path,
@@ -788,7 +790,7 @@ cliTest(
       malformedPath,
       `.version 1.3\n.target sm_80\n.entry kernel {\n.param .u32 input\n`,
     );
-    const malformed = await cli.run({
+    const malformed = await runFileCli(cli, {
       arguments: [
         "inspect-gpu-code-objects",
         malformedPath,
@@ -984,6 +986,36 @@ it("keeps unknown target discovery visible in the default MCP summary", async ()
   }
 });
 
+it("preserves omitted AMD metadata in selected MCP object pages", async () => {
+  const root = await createTestTempDirectory("rea-gpu-metadata-columns-"),
+    path = join(root, "amd");
+  await writeFile(path, amdFixture());
+  const { call } = await connectLocalToolsMcp();
+  const inspected = await call("inspect_gpu_code_objects", {
+    path,
+    analysis: "kernels",
+    view: { collection: "objects", fields: ["amd_target_metadata"] },
+  });
+  expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
+  const full = gpuCodeObjectsPageViewResultSchema.parse(
+    parseEvidence(inspected.structuredContent).normalized_result,
+  );
+  expect(full.items[0]).toHaveProperty(
+    "amd_target_metadata.processor",
+    "gfx900",
+  );
+  const selected = await call("inspect_analysis_view", {
+    source: { kind: "retained-evidence", evidence_id: full.parent_evidence_id },
+    view: { kind: "gpu-code-objects", collection: "objects", fields: ["kind"] },
+  });
+  expect(selected.isError, JSON.stringify(selected)).not.toBe(true);
+  const page = gpuCodeObjectsPageViewResultSchema.parse(
+    parseEvidence(selected.structuredContent).normalized_result,
+  );
+  expect(page.items).toHaveLength(1);
+  expect(page.items[0]).not.toHaveProperty("amd_target_metadata");
+});
+
 it("retains selected kernel facts and complete PTX for historical MCP pages after source removal", async () => {
   const root = await createTestTempDirectory("rea-gpu-mcp-"),
     path = join(root, "application");
@@ -1148,4 +1180,187 @@ it("rejects forged duplicate object IDs and mismatched Evidence subjects through
     }),
   );
   expect(identityFailure.error).toMatchObject({ code: "invalid_request" });
+});
+
+cliTest(
+  "uses DOS relocation ownership before GPU section discovery through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gpu-dos-relocations-cli-");
+    const path = join(root, "selected.exe");
+    const bytes = peGpuFixture();
+    bytes.writeUInt16LE(bytes.length % 512, 2);
+    bytes.writeUInt16LE(Math.ceil(bytes.length / 512), 4);
+    bytes.writeUInt16LE(2, 8);
+    await writeFile(path, bytes);
+    const args = [
+      "inspect-gpu-code-objects",
+      path,
+      "--analysis",
+      "inventory",
+      "--json",
+    ];
+    const valid = await cli.run({ arguments: args });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    bytes.writeUInt16LE(1, 6);
+    bytes.writeUInt16LE(4, 8);
+    bytes.writeUInt16LE(60, 24);
+    await writeFile(path, bytes);
+    const refused = await cli.run({ arguments: args });
+    expect(refused.exitCode).toBe(1);
+    expect(refused.json).toMatchObject({
+      code: "target_unavailable",
+      details: {
+        path,
+        constraint: "file_format_rejected",
+        reason: "MZ header does not declare a PE image",
+      },
+    });
+  },
+);
+
+cliTest(
+  "retains AMD target declarations and examined note coverage through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amd-target-sources-");
+    const { call } = await connectLocalToolsMcp();
+    const first = "amdgcn-amd-amdhsa--gfx900";
+    const second = "amdgcn-amd-amdhsa--gfx1100";
+    const legacyNote = Buffer.alloc(20);
+    legacyNote.writeUInt32LE(4, 0);
+    legacyNote.writeUInt32LE(4, 4);
+    legacyNote.writeUInt32LE(10, 8);
+    legacyNote.write("AMD\0", 12);
+    const headerConflict = amdFixture();
+    headerConflict.writeUInt32LE(0x141, 48);
+    for (const [name, bytes, declarations, coverage, effective] of [
+      [
+        "note-conflict",
+        amdFixture(false, amdNoteFixture(false, second)),
+        [first, second],
+        "complete",
+        null,
+      ],
+      ["header-conflict", headerConflict, [first], "complete", null],
+      [
+        "duplicate",
+        amdFixture(false, amdNoteFixture()),
+        [first, first],
+        "complete",
+        first,
+      ],
+      ["legacy-tail", amdFixture(false, legacyNote), [first], "partial", first],
+      [
+        "invalid-target",
+        amdFixture(false, undefined, 123),
+        [null],
+        "partial",
+        null,
+      ],
+      [
+        "absent-target",
+        amdFixture(false, undefined, null),
+        [null],
+        "complete",
+        "gfx900",
+      ],
+      [
+        "truncated-tail",
+        amdFixture(false, Buffer.alloc(3)),
+        [first],
+        "partial",
+        first,
+      ],
+    ] as const) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      const response = await runFileCli(cli, {
+        arguments: [
+          "inspect-gpu-code-objects",
+          path,
+          "--analysis",
+          "kernels",
+          "--detail",
+          "complete",
+          "--json",
+        ],
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      const reply = await call("inspect_gpu_code_objects", {
+        path,
+        analysis: "kernels",
+        detail: "complete",
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      for (const value of [response.json, reply.structuredContent]) {
+        const report = gpuCodeObjectsSchema.parse(
+          parseEvidence(value).normalized_result,
+        );
+        const row = report.objects[0]!;
+        expect(row).toMatchObject({
+          target: effective,
+          payload_target: effective,
+        });
+        const metadata = row.amd_target_metadata!;
+        expect(metadata).toMatchObject({
+          flags: name === "header-conflict" ? "0x00000141" : "0x0000012c",
+          processor: name === "header-conflict" ? "gfx1100" : "gfx900",
+          header_location: { container_id: row.id, offset: 0, size: 64 },
+          note_coverage: coverage,
+        });
+        expect(metadata.notes.map(({ target }) => target)).toEqual(
+          declarations,
+        );
+        expect(
+          new Set(metadata.notes.map(({ location }) => location.offset)).size,
+        ).toBe(declarations.length);
+        for (const note of metadata.notes) {
+          expect(note.location.container_id).toBe(row.id);
+          expect(note.location.section_name).toBe(".note");
+          const source = bytes.subarray(
+            note.location.offset,
+            note.location.offset + note.location.size,
+          );
+          if (note.target !== null)
+            expect(source.includes(Buffer.from(note.target))).toBe(true);
+          expect(note.target_state).toBe(
+            name === "invalid-target"
+              ? "invalid"
+              : name === "absent-target"
+                ? "absent"
+                : "declared",
+          );
+        }
+        expect(report.kernels).toHaveLength(declarations.length);
+        if (coverage === "partial")
+          expect(report.coverage.payloads).toBe("partial");
+      }
+    }
+  },
+);
+
+it("does not interpret non-AMD ELF flags as AMD processor declarations through MCP", async () => {
+  const root = await createTestTempDirectory("rea-amd-machine-");
+  const path = join(root, "wrong-machine");
+  const payload = amdFixture();
+  payload.writeUInt16LE(62, 18);
+  await writeFile(path, hipFixture(payload, "hip-amdgcn-amd-amdhsa--"));
+  const { call } = await connectLocalToolsMcp();
+  const reply = await call("inspect_gpu_code_objects", {
+    path,
+    analysis: "kernels",
+    detail: "complete",
+  });
+  expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+  const report = gpuCodeObjectsSchema.parse(
+    parseEvidence(reply.structuredContent).normalized_result,
+  );
+  expect(report.objects.find(({ kind }) => kind === "amdgpu")).toMatchObject({
+    target: null,
+    payload_target: null,
+    amd_target_metadata: null,
+    target_consistency: "unknown",
+    inspection: "malformed",
+  });
+  expect(report.kernels).toEqual([]);
+  expect(report.coverage.payloads).toBe("partial");
 });

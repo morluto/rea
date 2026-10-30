@@ -117,7 +117,7 @@ in the JSON for all groups inline. Import the bundle into MCP for views, or
 extract its matching Evidence record to a JSON file for the existing CLI
 `inspect-analysis-view` `evidence-file` source. Input bundles are unchanged.
 
-Representation admission is bounded at 96 MiB before cloning selected observations
+Representation admission is bounded before cloning selected observations
 and expanding matching indexes and repeated per-function source links. Each
 inventory row is charged before parsing for the member it becomes, including the
 report and Evidence copies that member is serialized into, so an oversized side
@@ -126,15 +126,28 @@ charged for the copies their authentication or loading creates. An exact
 session reference to retained Evidence is borrowed without a copy, so only
 what matching derives from it is charged; the inventory's own Evidence ID is
 charged once, not per function. Selected observations are charged in full.
-Measured with Ghidra-shaped rows, about 20-character names and no
-observations, about 22,000 rows per side fit through retained
+Measured under the 96 MiB default with Ghidra-shaped rows, about 20-character
+names and no observations, about 22,000 rows per side fit through retained
 `list_procedures` references, and about 10,000 through inline Evidence or CLI
 `source_bundle` inputs. Work yields to
 cancellation. No worker/provider concurrency is introduced; this budget is not
 a bound on total process RSS.
+
+The allowance defaults to 96 MiB and is the runtime setting
+`native.matching_representation_bytes`, from 1 byte to 1 GiB. On MCP, call
+`update_analysis_settings` with that setting and retry; it applies to the next
+operation without restarting REA. For CLI or future REA processes, set
+`REA_NATIVE_MATCHING_REPRESENTATION_BYTES` in the launch environment; `rea
+setup` copies it into client registrations. An invalid launch value is refused
+by matching only, and a runtime value repairs it. A refusal carries
+`details.limit` with the effective value, its source and bounds. Raising the
+allowance lets matching retain more in the REA process. The 1 GiB maximum is
+an REA policy, not a host-capacity claim, and peak heap during a request can
+exceed the allowance.
+
 Summary delivery happens after complete matching Evidence is constructed and
 retained. It reduces the initial reply, but does not avoid that construction or
-raise the allowance. There is no runtime override. Repeated provenance remains
+raise the allowance. Repeated provenance remains
 part of the complete member contract; splitting inventories into separate matches
 would change global name/body uniqueness and is not an equivalent workaround.
 

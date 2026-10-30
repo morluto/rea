@@ -101,7 +101,10 @@ export const completedModuleResolverLauncher =
     return {
       version: () => "controlled-browser",
       newContext: async () => ({
-        route: async () => {},
+        route: async () => ({
+          dispose: async () => undefined,
+          [Symbol.asyncDispose]: async () => undefined,
+        }),
         newPage: async () => ({
           on: () => {},
           goto: async () => null,

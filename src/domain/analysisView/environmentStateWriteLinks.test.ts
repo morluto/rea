@@ -1,3 +1,5 @@
+import { StateRecordChronology } from "./StateRecordChronology.js";
+import { parseOffsetDateTimeInstant } from "../offsetDateTime.js";
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
@@ -15,8 +17,13 @@ const record = (
   path,
   query: undefined,
   status: 200,
-  start,
-  end,
+  timing: {
+    start: {
+      instant: parseOffsetDateTimeInstant(new Date(start).toISOString()),
+      ms: start,
+    },
+    endMs: end,
+  },
 });
 
 /** The creation limit of `/api/projects` over list reads and a POST returning `created`, in ordinal order. */
@@ -35,6 +42,10 @@ const projectsLimit = (
   creationLimit(
     [{ record: post, ids: created }],
     {
+      chronology: new StateRecordChronology(
+        [...reads, post],
+        "recorded-start-time",
+      ),
       type: "/api/projects",
       tools: [
         {
@@ -52,6 +63,52 @@ const projectsLimit = (
     undefined,
   );
 
+describe("short-id creation limits", () => {
+  it("does not use an unknown completion as the prior read needed to link a short id", () => {
+    const prior = record(0, "GET", "/api/projects", [0, 5]);
+    const unknown = {
+      ...prior,
+      timing: { ...prior.timing, endMs: undefined },
+    };
+    const post = record(1, "POST", "/api/imports", [10, 11]);
+    const later = record(2, "GET", "/api/projects/7", [20, 21]);
+    const limit = (earlier: StateRecordFacts) =>
+      creationLimit(
+        [{ record: post, ids: ["7"] }],
+        {
+          type: "/api/projects",
+          chronology: new StateRecordChronology(
+            [earlier, post, later],
+            "recorded-start-time",
+          ),
+          tools: [
+            {
+              name: "list",
+              method: "GET",
+              path_template: "/api/projects",
+              record_ordinals: [0],
+            },
+            {
+              name: "item",
+              method: "GET",
+              path_template: "/api/projects/{id}",
+              record_ordinals: [2],
+            },
+          ],
+          records: new Map(
+            [earlier, post, later].map((entry) => [entry.ordinal, entry]),
+          ),
+          position: (entry) => entry.ordinal,
+          withBody: (ordinal, use) => use(ordinal === 0 ? [] : { id: "7" }),
+          retain: () => undefined,
+        },
+        undefined,
+      );
+    expect(limit(unknown)).toBeUndefined();
+    expect(limit(prior)).toBe(post);
+  });
+});
+
 describe("creation limits", () => {
   it("reads the ids of a list body longer than a call's arguments can spread", () => {
     // A million elements overflow the argument limit of a spread, here and in the test workers' larger stack.
@@ -67,6 +124,10 @@ describe("creation limits", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["1003"] }],
       {
+        chronology: new StateRecordChronology(
+          [list, post, later],
+          "recorded-start-time",
+        ),
         type: "/api/metrics",
         tools: [
           {
@@ -107,7 +168,9 @@ describe("creation limits", () => {
       }),
     ).toBeUndefined();
   });
+});
 
+describe("the entity identities creation limits use", () => {
   it("reads a list's ids from a suffix-named field when no identity name identifies its entities", () => {
     const [list, post, later] = [
       record(0, "GET", "/api/projects"),
@@ -163,6 +226,10 @@ describe("creation limits", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["proj-0002"] }],
       {
+        chronology: new StateRecordChronology(
+          [item, post, later],
+          "recorded-start-time",
+        ),
         type: "/api/projects",
         tools: [
           {
@@ -282,6 +349,10 @@ describe("the reads creation limits parse", () => {
     const limit = creationLimit(
       [{ record: post, ids: ["proj-0002"] }],
       {
+        chronology: new StateRecordChronology(
+          [...reads, post, until],
+          "recorded-start-time",
+        ),
         type: "/api/projects",
         tools: [
           {

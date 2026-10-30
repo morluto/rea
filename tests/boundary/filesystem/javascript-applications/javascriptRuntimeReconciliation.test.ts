@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -21,7 +21,10 @@ import {
   reconcileJavaScriptRuntimeInputSchema,
   javascriptRuntimeReconciliationResultSchema,
 } from "../../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { electronActiveObservationInputSchema } from "../../../../src/domain/javascript/electronActiveObservation.js";
+import {
+  electronActiveObservationInputSchema,
+  type ElectronActiveObservationInput,
+} from "../../../../src/domain/javascript/electronActiveObservation.js";
 import { createElectronActiveObservationFixtureResult } from "../../../../src/domain/javascript/electronActiveObservation.fixture.js";
 
 import {
@@ -42,43 +45,52 @@ const readInput = (input: unknown) => {
 const reconcileInput = (input: unknown) =>
   reconcileJavaScriptRuntime(readInput(input));
 
-it("preserves source-capture input paths for runtime Evidence", async () => {
-  const root = await applicationFixture();
-  const application = await analyzeFixture(root);
-  const runtime = electronRuntimeEvidence(root, SOURCE);
-  const invalidRuntime = createEvidence(undefined, runtime.provider, {
-    predicateType: runtime.predicate_type,
-    operation: runtime.operation,
-    parameters: { ...runtime.parameters, include_script_sources: false },
-    result: runtime.normalized_result,
-    confidence: runtime.confidence,
-    authority: runtime.authority,
-  });
+it.each([
+  {
+    parameter: "include_script_sources",
+    value: false,
+    message:
+      "Runtime Evidence contains source without source-capture selection",
+  },
+  {
+    parameter: "target_id",
+    value: " target-main ",
+    message: "Runtime Evidence target disagrees with its captured result",
+  },
+])(
+  "preserves $parameter input paths for runtime Evidence",
+  async ({ parameter, value, message }) => {
+    const root = await applicationFixture();
+    const application = await analyzeFixture(root);
+    const runtime = electronRuntimeEvidence(root, SOURCE);
+    const invalidRuntime = createEvidence(undefined, runtime.provider, {
+      predicateType: runtime.predicate_type,
+      operation: runtime.operation,
+      parameters: { ...runtime.parameters, [parameter]: value },
+      result: runtime.normalized_result,
+      confidence: runtime.confidence,
+      authority: runtime.authority,
+    });
 
-  const result = reconcileJavaScriptRuntimeEvidence({
-    static_layers: [{ role: "application", analysis: application }],
-    runtime_observations: [invalidRuntime],
-  });
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisInputError",
-      issues: [
-        {
-          path: [
-            "runtime_observations",
-            0,
-            "parameters",
-            "include_script_sources",
-          ],
-          reason: "invalid_value",
-          message:
-            "Runtime Evidence contains source without source-capture selection",
-        },
-      ],
-    },
-  });
-});
+    const result = reconcileJavaScriptRuntimeEvidence({
+      static_layers: [{ role: "application", analysis: application }],
+      runtime_observations: [invalidRuntime],
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["runtime_observations", 0, "parameters", parameter],
+            reason: "invalid_value",
+            message,
+          },
+        ],
+      },
+    });
+  },
+);
 
 it("reconciles runtime scripts inside dot-prefixed child directories", async () => {
   const root = await applicationFixture();
@@ -232,6 +244,49 @@ it("keeps static load states unknown when one scoped capture omits scripts", asy
   );
 });
 
+it("does not infer absence from an incomplete capture with no mapped entities", async () => {
+  const fixture = await applicationFixture();
+  const outside = await applicationFixture();
+  const analysis = await analyzeFixture(fixture);
+  const complete = electronRuntimeEvidence(fixture, SOURCE, {
+    includeWorker: false,
+    targetId: "complete",
+  });
+  const outsideCapture = (scriptsUnavailable: boolean) =>
+    electronRuntimeEvidence(outside, "export const unrelated = 1;", {
+      includeWorker: false,
+      scriptsUnavailable,
+      targetId: "outside",
+    });
+  const reconcile = (
+    runtime_observations: ReturnType<typeof electronRuntimeEvidence>[],
+  ) =>
+    reconcileInput({
+      static_layers: [{ role: "application", analysis }],
+      runtime_observations,
+    });
+
+  const control = reconcile([complete, outsideCapture(false)]);
+  expect(control.summary.static_not_observed).toBeGreaterThan(0);
+  const incomplete = outsideCapture(true);
+  for (const captures of [
+    [complete, incomplete],
+    [incomplete, complete],
+  ]) {
+    const result = reconcile(captures);
+    expect(result.summary.static_not_observed).toBe(0);
+    expect(result.static_load_states).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "loaded" }),
+        expect.objectContaining({
+          status: "unknown",
+          reason: "static-or-runtime-coverage-incomplete",
+        }),
+      ]),
+    );
+  }
+});
+
 it("preserves positive script matches without inventing worker absence when workers are unavailable", async () => {
   const fixture = await applicationFixture();
   const staticEvidence = await analyzeFixture(fixture);
@@ -345,48 +400,69 @@ it("preserves unknown Electron frame provenance without linking it to an authori
   ).toBe(false);
 });
 
-it("reconciles active Electron as a partial target-only runtime capture", async () => {
-  const fixture = await applicationFixture();
-  const staticEvidence = await analyzeFixture(fixture);
-  const applicationPath = join(fixture, "main.js");
-  const input = {
-    ...electronActiveObservationInputSchema.parse({
-      executable_path: process.execPath,
-      application_path: applicationPath,
+it.each(["historical", "selected-paths"] as const)(
+  "reconciles %s active Electron as a partial target-only runtime capture",
+  async (representation) => {
+    const fixture = await applicationFixture();
+    const staticEvidence = await analyzeFixture(fixture);
+    const applicationPath = join(fixture, "main.js");
+    const input = {
+      ...electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: applicationPath,
+        application_root: fixture,
+        actions: [],
+      }),
       application_root: fixture,
-      actions: [],
-    }),
-    application_root: fixture,
-  };
-  const runtimeEvidence = createElectronActiveEvidence(
-    input,
-    createElectronActiveObservationFixtureResult(applicationPath),
-    {
-      id: "rea-playwright-electron-active",
-      name: "REA Playwright active Electron observation provider",
-      version: "1",
-    },
-  );
+    };
+    const capture =
+      createElectronActiveObservationFixtureResult(applicationPath);
+    let selectedInput: ElectronActiveObservationInput = input;
+    let resolvedInput: typeof input | undefined;
+    if (representation === "selected-paths") {
+      const alias = join(fixture, "selected-main.js");
+      await symlink(applicationPath, alias);
+      selectedInput = electronActiveObservationInputSchema.parse({
+        executable_path: process.execPath,
+        application_path: alias,
+      });
+      resolvedInput = {
+        ...input,
+        executable_path: await realpath(process.execPath),
+      };
+      capture.application.executable_path = resolvedInput.executable_path;
+    }
+    const runtimeEvidence = createElectronActiveEvidence(
+      selectedInput,
+      capture,
+      {
+        id: "rea-playwright-electron-active",
+        name: "REA Playwright active Electron observation provider",
+        version: "1",
+      },
+      resolvedInput,
+    );
 
-  const result = reconcileInput({
-    static_layers: [{ role: "application", analysis: staticEvidence }],
-    runtime_observations: [runtimeEvidence],
-  });
+    const result = reconcileInput({
+      static_layers: [{ role: "application", analysis: staticEvidence }],
+      runtime_observations: [runtimeEvidence],
+    });
 
-  expect(result.runtime_captures).toMatchObject([
-    {
-      kind: "electron-active",
-      scripts: 0,
-      frames: 0,
-      workers: 0,
-      scripts_complete_within_scope: false,
-    },
-  ]);
-  expect(result.coverage.status).toBe("partial");
-  expect(result.limitations.join(" ")).toMatch(
-    /incomplete|not reported as executed/u,
-  );
-});
+    expect(result.runtime_captures).toMatchObject([
+      {
+        kind: "electron-active",
+        scripts: 0,
+        frames: 0,
+        workers: 0,
+        scripts_complete_within_scope: false,
+      },
+    ]);
+    expect(result.coverage.status).toBe("partial");
+    expect(result.limitations.join(" ")).toMatch(
+      /incomplete|not reported as executed/u,
+    );
+  },
+);
 
 it("commits complete Electron actions independently from selected arguments", async () => {
   const fixture = await applicationFixture();
@@ -562,6 +638,102 @@ const reconcileScriptLocation = (
     runtime_observations: [sourceFreeRuntime(runtimeRoot, scriptFile)],
   }).reconciliations.find(({ entity_kind }) => entity_kind === "script");
 };
+
+it("matches a source-free bundled script to its containing asset without suppressing independent layers", async () => {
+  const root = await createTestTempDirectory("rea-runtime-bundler-location-");
+  const source =
+    '(globalThis["webpackChunkfixture"] = globalThis["webpackChunkfixture"] || []).push([["main"],{1:(module)=>{module.exports=1;}},(__webpack_require__)=>{__webpack_require__(1);}]);\n';
+  await writeFile(join(root, "runtime.js"), source);
+  const application = await analyzeFixture(root);
+  const secondRoot = await createTestTempDirectory(
+    "rea-runtime-bundler-other-",
+  );
+  await writeFile(join(secondRoot, "runtime.js"), source);
+  const secondApplication = await analyzeFixture(secondRoot);
+  const reconcile = (sourceIncluded: boolean, twice = false) =>
+    reconcileInput({
+      static_layers: [
+        { role: "application", analysis: application },
+        ...(twice
+          ? [
+              {
+                role: "cache",
+                analysis: secondApplication,
+                runtime_mappings: [
+                  { kind: "file-root", root, artifact_prefix: "" },
+                ],
+              },
+            ]
+          : []),
+      ],
+      runtime_observations: [
+        sourceIncluded
+          ? electronRuntimeEvidence(root, source, {
+              scriptFile: "runtime.js",
+              includeWorker: false,
+            })
+          : sourceFreeRuntime(root, "runtime.js"),
+      ],
+    });
+  const withoutSource = reconcile(false);
+  const script = withoutSource.reconciliations.find(
+    ({ entity_kind }) => entity_kind === "script",
+  );
+  expect(script).toMatchObject({
+    status: "matched",
+    basis: "artifact-path",
+    confidence: "medium",
+    candidate_static_count: 1,
+  });
+  expect(
+    withoutSource.graph.nodes.find(
+      ({ node_id }) => node_id === script?.static_node_id,
+    )?.kind,
+  ).toBe("javascript-asset");
+  expect(withoutSource.static_load_states).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ status: "loaded" }),
+      expect.objectContaining({ status: "resident-in-loaded-asset" }),
+    ]),
+  );
+  expect(
+    reconcile(true).reconciliations.find(
+      ({ entity_kind }) => entity_kind === "script",
+    ),
+  ).toMatchObject({
+    status: "matched",
+    basis: "content-and-location",
+  });
+  const moduleCapture = reconcileInput({
+    static_layers: [{ role: "application", analysis: application }],
+    runtime_observations: [
+      electronRuntimeEvidence(root, "(module)=>{module.exports=1;}", {
+        scriptFile: "runtime.js",
+        includeWorker: false,
+      }),
+    ],
+  });
+  const moduleMatch = moduleCapture.reconciliations.find(
+    ({ entity_kind }) => entity_kind === "script",
+  );
+  expect(moduleMatch).toMatchObject({
+    status: "matched",
+    basis: "content-and-location",
+  });
+  expect(
+    moduleCapture.graph.nodes.find(
+      ({ node_id }) => node_id === moduleMatch?.static_node_id,
+    )?.kind,
+  ).toBe("javascript-module");
+  expect(
+    reconcile(false, true).reconciliations.find(
+      ({ entity_kind }) => entity_kind === "script",
+    ),
+  ).toMatchObject({
+    status: "ambiguous",
+    reason: "ambiguous-static-candidates",
+  });
+});
 
 it.skipIf(process.platform === "win32")(
   "keeps distinct POSIX backslash and slash script locations separate",

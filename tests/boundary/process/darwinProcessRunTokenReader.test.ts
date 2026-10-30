@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { _electron as electron } from "playwright-core";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -457,6 +457,84 @@ const existsPath = async (target: string) =>
     () => false,
   );
 
+it
+  .skipIf(process.platform === "win32")
+  .each([
+    "selected environment",
+    "selected environment and deadline",
+    "default environment",
+  ] as const)(
+  "captures the compiler and helper environment from %s",
+  async (selection) => {
+    const directory = await createTestTempDirectory(
+      "rea-process-token-selected-environment-",
+    );
+    const developerDirectory = join(directory, "selected Xcode.app");
+    const compileState = join(directory, "compile-environment.json");
+    const executable = join(directory, "fixture-xcrun");
+    const helper = `#!${process.execPath}
+console.log(JSON.stringify({ results: process.argv.slice(2).map(pid => ({
+  pid: Number(pid), state: "readable", run_id: process.env.DEVELOPER_DIR,
+})) }));
+`;
+    await writeFile(
+      executable,
+      `#!${process.execPath}
+const fs = process.getBuiltinModule("node:fs");
+fs.writeFileSync(${JSON.stringify(compileState)}, JSON.stringify({
+  developerDirectory: process.env.DEVELOPER_DIR ?? null,
+}));
+const output = process.argv[process.argv.indexOf("-o") + 1];
+fs.writeFileSync(output, ${JSON.stringify(helper)});
+fs.chmodSync(output, 0o755);
+`,
+      { mode: 0o755 },
+    );
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    vi.stubEnv("DEVELOPER_DIR", developerDirectory);
+    const environment = { ...process.env };
+    const compiler = { kind: "xcrun" as const, executable };
+    const reader =
+      selection === "default environment"
+        ? createDarwinProcessRunTokenReader({ compiler })
+        : createSystemProcessOwnershipHost("darwin", environment, {
+            darwinCompiler: compiler,
+            ...(selection === "selected environment and deadline"
+              ? { compileTimeoutMs: 15_000 }
+              : {}),
+          });
+    environment.DEVELOPER_DIR = join(directory, "later caller selection");
+    vi.stubEnv("DEVELOPER_DIR", join(directory, "later ambient selection"));
+    try {
+      await reader.prepare?.(AbortSignal.timeout(15_000));
+      expect(JSON.parse(await readFile(compileState, "utf8"))).toEqual({
+        developerDirectory,
+      });
+      const processes = [
+        {
+          pid: 123,
+          parentPid: 1,
+          processGroupId: 123,
+          state: "S",
+          command: "fixture",
+        },
+      ];
+      const observations =
+        "read" in reader
+          ? await reader.read(processes)
+          : await reader.runTokens?.(processes);
+      expect(observations?.get(123)).toEqual({
+        state: "readable",
+        runId: developerDirectory,
+      });
+    } finally {
+      await reader.close?.();
+    }
+  },
+);
+
 it.skipIf(process.platform === "win32")(
   "forwards a caller-owned module cache and keeps it after the helper root is removed",
   async () => {
@@ -735,9 +813,8 @@ const temporaryStateSchema = z.object({
 });
 
 /**
- * A compiler that behaves like swift-driver: a job in its own process group
- * writes an object under TMPDIR, SIGINT stops the job and deletes the object,
- * and any other signal leaves the job writing after the driver exits.
+ * A compiler whose detached job closes standard streams but retains fd 3,
+ * writes an object after the SIGINT-stopped driver exits, then closes fd 3.
  */
 const writeTemporaryObjectCompiler = async (directory: string) => {
   const executable = join(directory, "fake-temporary-xcrun");
@@ -750,14 +827,14 @@ const path = process.getBuiltinModule("node:path");
 const { spawn } = process.getBuiltinModule("node:child_process");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "TemporaryDirectory."));
 const object = path.join(temporary, "ProcessRunTokenReader-1.o");
+let lifetime = "ignore";
+try { if (fs.fstatSync(3).isSocket()) lifetime = 3; } catch {}
 const job = spawn(process.execPath, ["-e",
   "setTimeout(() => { const fs = process.getBuiltinModule('node:fs'); fs.mkdirSync(" + JSON.stringify(temporary) +
   ", { recursive: true }); fs.writeFileSync(" + JSON.stringify(object) + ", 'object'); }, 300)"],
-  { detached: true, stdio: "ignore" });
+  { detached: true, stdio: ["ignore", "ignore", "ignore", lifetime] });
 job.unref();
 process.on("SIGINT", () => {
-  job.kill("SIGKILL");
-  fs.rmSync(object, { force: true });
   process.exit(130);
 });
 const output = process.argv[process.argv.indexOf("-o") + 1];
@@ -963,7 +1040,10 @@ it.skipIf(process.platform === "win32")(
         throw new Error("closed reader compilation unexpectedly succeeded");
       expect(outcome.cause).toMatchObject({ name: "AbortError" });
       await expect(access(state.root)).rejects.toThrow();
-      await expect(reader.prepare()).rejects.toThrow(/reader is closed/u);
+      await expect(reader.prepare()).rejects.toMatchObject({
+        _tag: "ProcessAdmissionError",
+        code: "reader_closed",
+      });
       await expect(reader.close()).resolves.toBeUndefined();
     } finally {
       await Promise.allSettled([preparation]);
@@ -1232,6 +1312,11 @@ it.skipIf(!onDarwin)(
         duplicateTokenFailsClosed: true,
         finalAssignmentArgumentRead: true,
         missingAppleBoundaryFailsClosed: true,
+        malformedBuffersRejected: true,
+        malformedObservation: {
+          state: "unavailable",
+          reason: "malformed_procargs",
+        },
         nonAsciiPathRead: true,
         realTokenRead: true,
         reservedArgumentIgnored: true,
@@ -1361,7 +1446,9 @@ it.skipIf(!onDarwin)(
     const host = createSystemProcessOwnershipHost("darwin");
     const children: Awaited<ReturnType<typeof startNodeChild>>[] = [];
     try {
-      const executables = [join(root, "n"), join(root, "node")];
+      const executables = Array.from({ length: 8 }, (_, index) =>
+        join(root, "n".repeat(index + 1)),
+      );
       for (const executable of executables)
         await symlink(process.execPath, executable);
       for (let index = 0; index < executables.length; index += 1) {
@@ -1387,8 +1474,10 @@ it.skipIf(!onDarwin)(
       });
       const observations = await host.runTokens?.(entries);
       expect(children.map(({ pid }) => observations?.get(pid))).toEqual([
-        { state: "readable", runId: "synthetic-padding-0" },
-        { state: "readable", runId: "synthetic-padding-1" },
+        ...executables.map((_, index) => ({
+          state: "readable",
+          runId: `synthetic-padding-${String(index)}`,
+        })),
         { state: "readable" },
       ]);
     } finally {

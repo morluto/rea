@@ -3,7 +3,6 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DevicetreePort } from "./DevicetreePort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -13,9 +12,9 @@ import {
   devicetreeSchema,
   type Devicetree,
 } from "../../domain/firmware/devicetree.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_devicetree";
 
@@ -31,18 +30,14 @@ export class DevicetreeService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectDevicetreeInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectDevicetreeInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    if (!isAbsolute(input.value.path))
       return err(
         new AnalysisInputError(OPERATION, undefined, [
           {
@@ -52,15 +47,15 @@ export class DevicetreeService {
           },
         ]),
       );
-    const result = await this.provider.inspect(input.data, options);
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = devicetreeSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      report.data.artifact.bytes > input.data.max_file_bytes ||
-      report.data.nodes.length > input.data.max_nodes ||
-      report.data.coverage.examined_properties > input.data.max_properties ||
+      report.data.artifact.path !== input.value.path ||
+      report.data.artifact.bytes > input.value.max_file_bytes ||
+      report.data.nodes.length > input.value.max_nodes ||
+      report.data.coverage.examined_properties > input.value.max_properties ||
       !validReport(report.data)
     )
       return err(
@@ -83,7 +78,7 @@ export class DevicetreeService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

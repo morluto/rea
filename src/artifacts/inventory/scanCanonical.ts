@@ -1,4 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
@@ -46,52 +47,72 @@ import {
   scanReader,
   type PendingIntegrityContradiction,
 } from "./scanReader.js";
-import {
-  STRICT_INTEGRITY_POLICY,
-  type ArtifactInventoryOptions,
-} from "./types.js";
+import type { ArtifactInventoryOptions } from "./types.js";
 
-export interface TransferredZipInventorySource {
-  readonly source: RootInventorySource;
+export interface TransferredArtifactInventorySource {
   readonly owner: ArtifactResourceOwner;
+  readonly admission: NonNullable<Parameters<typeof createReader>[3]>;
 }
 
 export const scanCanonicalArtifactInventoryInScope = async (
   path: string,
   options: ArtifactInventoryOptions,
   readerFactory: typeof createReader = createReader,
+  selectedPath: string = path,
 ): Promise<ArtifactInventorySnapshot> =>
-  (await scanCanonical(path, options, readerFactory, "release")).snapshot;
+  (
+    await scanCanonical(
+      path,
+      options,
+      readerFactory,
+      "release",
+      undefined,
+      selectedPath,
+    )
+  ).snapshot;
 
-/** Keep the admitted ZIP descriptor alive for extraction of this inventory. */
+/** Keep the admitted source and parsed format facts alive for extraction of this inventory. */
 export const scanCanonicalArtifactInventoryForExtractionInScope = async (
   path: string,
   options: ArtifactInventoryOptions,
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
 ): Promise<{
   readonly snapshot: ArtifactInventorySnapshot;
-  readonly zipSource: TransferredZipInventorySource | undefined;
-}> => scanCanonical(path, options, createReader, "transfer-zip");
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
+}> =>
+  scanCanonical(
+    path,
+    options,
+    createReader,
+    "transfer-source",
+    probeFacts,
+    selectedPath,
+  );
 
 const scanCanonical = async (
   path: string,
   options: ArtifactInventoryOptions,
   readerFactory: typeof createReader,
-  rootDisposition: "release" | "transfer-zip",
+  rootDisposition: "release" | "transfer-source",
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
 ): Promise<{
   readonly snapshot: ArtifactInventorySnapshot;
-  readonly zipSource: TransferredZipInventorySource | undefined;
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
 }> => {
-  const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
   const metadata = await lstat(path);
   const {
     format: rootFormat,
     digest: rootDigest,
     rootSource,
+    readerAdmission,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
     metadata,
-    options,
+    { ...options, selectedPath },
+    probeFacts,
   );
   let reader: ArtifactReader | undefined;
   let readerCreationFailure: { readonly cause: unknown } | undefined;
@@ -100,8 +121,9 @@ const scanCanonical = async (
       path,
       rootFormat,
       options.environment ?? {},
-      rootSource,
+      readerAdmission,
       options.asarHeaderAdmission,
+      selectedPath,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -123,7 +145,7 @@ const scanCanonical = async (
       reader,
       ownedReaders,
       options.signal,
-      integrity,
+      options.integrity,
       options.asarHeaderAdmission,
     );
     outcome = {
@@ -201,6 +223,7 @@ const scanCanonical = async (
                   ),
             cleanup: cause.cleanup,
             cleanupLeases: cause.cleanupLeases,
+            userMessage: cause.userMessage,
             ...(retained === undefined
               ? {}
               : {
@@ -220,18 +243,23 @@ const scanCanonical = async (
     options,
     rootSource,
     ownedReaders,
+    readerAdmission,
     outcome,
     rootDisposition:
-      rootDisposition === "transfer-zip" &&
+      rootDisposition === "transfer-source" &&
       outcome.kind === "completed" &&
       rootSource !== undefined &&
-      isZipPackageFormat(rootFormat)
+      (isZipPackageFormat(rootFormat) ||
+        (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
   });
   if (cleanup.failure !== undefined) throw cleanup.failure;
-  if (outcome.kind === "failed") throw outcome.cause;
-  return { snapshot: outcome.snapshot, zipSource: cleanup.transferred };
+  if (cleanup.outcome.kind === "failed") throw cleanup.outcome.cause;
+  return {
+    snapshot: cleanup.outcome.snapshot,
+    transferredSource: cleanup.transferred,
+  };
 };
 
 type InventoryScanOutcome =
@@ -246,6 +274,7 @@ const cleanupInventoryOwners = async ({
   options,
   rootSource,
   ownedReaders,
+  readerAdmission,
   outcome,
   rootDisposition,
 }: {
@@ -253,13 +282,41 @@ const cleanupInventoryOwners = async ({
   readonly options: ArtifactInventoryOptions;
   readonly rootSource: RootInventorySource | undefined;
   readonly ownedReaders: readonly ArtifactReader[];
+  readonly readerAdmission: Parameters<typeof createReader>[3];
   readonly outcome: InventoryScanOutcome;
   readonly rootDisposition: "release" | "transfer";
 }): Promise<{
   readonly failure: ArtifactReaderFailure | undefined;
-  readonly transferred: TransferredZipInventorySource | undefined;
+  readonly transferred: TransferredArtifactInventorySource | undefined;
+  readonly outcome: InventoryScanOutcome;
 }> => {
+  let finalOutcome = outcome;
   let cleanupFailure: ArtifactReaderFailure | undefined;
+  // Finalization still belongs to this operation. Preserve completed facts when
+  // cancellation arrives while an owner is being released, but keep an earlier
+  // operation or cleanup failure primary.
+  const observeCancellation = (): void => {
+    if (
+      finalOutcome.kind === "completed" &&
+      cleanupFailure === undefined &&
+      options.signal?.aborted === true
+    )
+      finalOutcome = {
+        kind: "failed",
+        cause: new ArtifactReaderFailure(
+          "cancelled",
+          "Artifact inventory cancelled during finalization",
+          {
+            cause: options.signal.reason,
+            partialObservation: {
+              kind: "artifact-inventory",
+              inventory: finalOutcome.snapshot,
+            },
+          },
+        ),
+      };
+  };
+  observeCancellation();
   const readerOwners: ArtifactResourceOwner[] = [...ownedReaders]
     .reverse()
     .map((reader) => ({
@@ -277,10 +334,11 @@ const cleanupInventoryOwners = async ({
         };
   for (const owner of readerOwners) {
     const attempt = await options.resourceScope.release(owner);
+    observeCancellation();
     if (attempt.kind === "released") continue;
     cleanupFailure = options.resourceScope.cleanupFailure(
       cleanupFailure === undefined
-        ? outcome
+        ? finalOutcome
         : { kind: "failed", cause: cleanupFailure },
       [attempt],
       outcome.kind === "completed"
@@ -290,20 +348,24 @@ const cleanupInventoryOwners = async ({
   }
   if (
     rootDisposition === "transfer" &&
+    finalOutcome.kind === "completed" &&
     cleanupFailure === undefined &&
     rootSource !== undefined &&
-    rootOwner !== undefined
+    rootOwner !== undefined &&
+    readerAdmission !== undefined
   )
     return {
       failure: undefined,
-      transferred: { source: rootSource, owner: rootOwner },
+      transferred: { owner: rootOwner, admission: readerAdmission },
+      outcome: finalOutcome,
     };
   if (rootOwner !== undefined) {
     const attempt = await options.resourceScope.release(rootOwner);
+    observeCancellation();
     if (attempt.kind === "failed")
       cleanupFailure = options.resourceScope.cleanupFailure(
         cleanupFailure === undefined
-          ? outcome
+          ? finalOutcome
           : { kind: "failed", cause: cleanupFailure },
         [attempt],
         outcome.kind === "completed"
@@ -311,7 +373,11 @@ const cleanupInventoryOwners = async ({
           : undefined,
       );
   }
-  return { failure: cleanupFailure, transferred: undefined };
+  return {
+    failure: cleanupFailure,
+    transferred: undefined,
+    outcome: finalOutcome,
+  };
 };
 
 interface SnapshotBuildInput {

@@ -5,6 +5,64 @@ import {
 } from "./GhidraDiagnostics.js";
 import { expect, it } from "vitest";
 
+it("keeps request output and provenance without projecting launcher history", () => {
+  const output = { text: "launcher output", bytes: 15, observedBytes: 15 };
+  const options = {
+    targetPath: "./caller-selected/../target",
+    targetSha256: "a".repeat(64),
+    transport: "unix-socket" as const,
+    providerVersion: "12.1.4",
+    profileDigest: "b".repeat(64),
+    runtimeRoot: "/owned/runtime",
+    snapshot: { stdout: output, stderr: output, exitCode: null, signal: null },
+    previous: {},
+    failure_output: { stdout: { text: "query output" }, complete: false },
+  };
+  const request = createGhidraDiagnostics({ ...options, scope: "request" });
+  expect(request).toMatchObject({
+    diagnostic_scope: "request",
+    target_path: options.targetPath,
+    target_sha256: options.targetSha256,
+    profile_digest: options.profileDigest,
+    runtime_root: options.runtimeRoot,
+    failure_output: options.failure_output,
+  });
+  expect(request).not.toHaveProperty("stdout");
+  expect(request).not.toHaveProperty("stderr");
+  expect(createGhidraDiagnostics(options)).toMatchObject({
+    stdout: { text: output.text },
+    stderr: { text: output.text },
+    failure_output: options.failure_output,
+  });
+});
+
+it("keeps cached session output owned while projecting historical request coordinates", () => {
+  const previous = {
+    target_path: "/selected/target",
+    ghidra_log_path: "/owned/project/ghidra.log",
+    stdout: { text: "old launcher output" },
+    stderr: { text: "old launcher stderr" },
+    launch_support: [{ stdout: "JDK version" }],
+    failure_output: { stdout: { text: "old request" }, complete: true },
+  };
+  const request = createGhidraDiagnostics({
+    scope: "request",
+    targetPath: "/selected/target",
+    targetSha256: "a".repeat(64),
+    transport: "unix-socket",
+    providerVersion: "12.1.4",
+    profileDigest: "b".repeat(64),
+    previous,
+  });
+  expect(request).toEqual({
+    diagnostic_scope: "request",
+    target_path: previous.target_path,
+    ghidra_log_path: previous.ghidra_log_path,
+  });
+  expect(previous.stdout.text).toBe("old launcher output");
+  expect(previous.failure_output.stdout.text).toBe("old request");
+});
+
 it("does not reuse historical operation-scoped failure output without a current owner", () => {
   const diagnostics = createGhidraDiagnostics({
     targetPath: "/tmp/target",

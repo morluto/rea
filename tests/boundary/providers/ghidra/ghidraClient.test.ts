@@ -950,6 +950,71 @@ describe("GhidraClient captured source snapshot", () => {
   });
 });
 
+it("scopes authenticated input-failure diagnostics to the request while retaining session output", async () => {
+  const client = clientFor(new FixtureLauncher("remote_error"));
+
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "remote",
+      remoteCode: "not_found",
+      diagnostics: {
+        diagnostic_scope: "request",
+        remote_code: "not_found",
+        remote_message: "Unknown Ghidra procedure name",
+        failure_output: {
+          stdout: { text: "Fixture request rejected: missing procedure\n" },
+          complete: true,
+        },
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  expect(result.error.diagnostics).not.toHaveProperty("stdout");
+  expect(result.error.diagnostics).not.toHaveProperty("stderr");
+  expect(result.error.diagnostics).not.toHaveProperty("launch_support");
+  expect(client.diagnostics()).toMatchObject({
+    stdout: {
+      text: "Fixture launcher startup output\nFixture request rejected: missing procedure\n",
+    },
+  });
+  expect(client.isReady()).toBe(true);
+  await expect(
+    client.callTool("list_strings", { document: null }),
+  ).resolves.toMatchObject({ ok: true });
+  await client.close();
+  expect(client.diagnostics()).toMatchObject({
+    stdout: {
+      text: expect.stringContaining("Fixture launcher startup output"),
+    },
+  });
+});
+
+it("retains launcher diagnostics when an input error rejects the startup handshake", async () => {
+  const client = clientFor(new FixtureLauncher("remote_startup_error"));
+  const result = await client.start();
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "remote",
+      remoteCode: "invalid_request",
+      diagnostics: {
+        stdout: {
+          text: expect.stringContaining("Fixture launcher startup output"),
+        },
+      },
+    },
+  });
+  if (result.ok) throw new Error("Expected startup failure");
+  expect(result.error.diagnostics).not.toHaveProperty("diagnostic_scope");
+});
+
 describe("GhidraClient", () => {
   it("completes an exact, fragmented post-analysis handshake", async () => {
     const launcher = new FixtureLauncher("fragmented");
@@ -1048,28 +1113,6 @@ describe("GhidraClient", () => {
           procedure: { external: false, thunk: false },
         },
       ],
-    });
-  });
-
-  it("preserves an authenticated operation failure code and diagnostics", async () => {
-    const client = clientFor(new FixtureLauncher("remote_error"));
-
-    const result = await client.callTool("list_procedures", {
-      document: null,
-      offset: 0,
-      limit: 500,
-    });
-
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        kind: "remote",
-        remoteCode: "not_found",
-        diagnostics: {
-          remote_code: "not_found",
-          remote_message: "Unknown Ghidra procedure name",
-        },
-      },
     });
   });
 
@@ -2438,3 +2481,48 @@ it("preserves a producer failure while its result waits for the startup deadline
     error: { kind: "start", cause: physical },
   });
 });
+
+it.each(["search_procedures", "search_strings"] as const)(
+  "%s retains native candidate rows for normal and ready-only dispatch",
+  async (operation) => {
+    const client = clientFor(new FixtureLauncher("unicode_search"));
+    const query = {
+      pattern: "source",
+      mode: "literal",
+      case_sensitive: false,
+      document: null,
+    };
+    const expected = {
+      ok: true,
+      value: [
+        { address: "0x1000", value: "ſource" },
+        { address: "0x1001", value: "SOURCE" },
+        { address: "0x1002", value: "İource" },
+        { address: "0x1003", value: "unrelated" },
+      ],
+    };
+    await expect(client.callTool(operation, query)).resolves.toEqual(expected);
+    await expect(client.callToolIfReady(operation, query)).resolves.toEqual(
+      expected,
+    );
+    for (const pattern of ["ſOURCE", "Σ"]) {
+      await expect(
+        client.callTool(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+      await expect(
+        client.callToolIfReady(operation, { ...query, pattern }),
+      ).resolves.toEqual(expected);
+    }
+    const regex = await client.callTool(operation, { ...query, mode: "regex" });
+    expect(regex.ok && Array.isArray(regex.value) && regex.value.length).toBe(
+      4,
+    );
+    const sensitive = await client.callTool(operation, {
+      ...query,
+      case_sensitive: true,
+    });
+    expect(
+      sensitive.ok && Array.isArray(sensitive.value) && sensitive.value.length,
+    ).toBe(4);
+  },
+);

@@ -7,6 +7,7 @@ import {
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import {
   type MsixPackageView,
@@ -129,11 +130,26 @@ const vscodeUserDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  if (platform === "win32")
-    return join(windowsAppDataRoots(home, env).roaming, "Code", "User");
-  if (platform === "darwin")
-    return join(home, "Library", "Application Support", "Code", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Code", "User");
+  // Match VS Code's user-data selection before appending the User scope.
+  // Empty overrides are unset; portable storage takes precedence over appdata.
+  const userData = env.VSCODE_PORTABLE
+    ? join(env.VSCODE_PORTABLE, "user-data")
+    : env.VSCODE_APPDATA
+      ? join(env.VSCODE_APPDATA, "Code")
+      : platform === "win32"
+        ? join(windowsAppDataRoots(home, env).roaming, "Code")
+        : platform === "darwin"
+          ? join(home, "Library", "Application Support", "Code")
+          : join(xdgConfigHome({ home, platform, env }), "Code");
+  // The catalog can describe Windows clients on another host; retain its
+  // drive-absolute paths instead of resolving them against that host cwd.
+  const absoluteUserData =
+    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
+      ? userData
+      : isAbsolute(userData)
+        ? resolve(userData)
+        : resolve(env.VSCODE_CWD || process.cwd(), userData);
+  return join(absoluteUserData, "User");
 };
 
 const traeUserDirectory = ({
@@ -180,8 +196,9 @@ const kimiDirectory = ({ home, env }: ClientPathContext): string =>
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
 
-const factoryDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".factory");
+/** Droid's override selects the home containing .factory, including personal skills. */
+const factoryDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -524,7 +541,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "codex",
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
   },
@@ -668,9 +685,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "hermes",
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "skills"),
+      appendCallerPath(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "config.yaml"),
+      appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
   },
@@ -929,6 +946,7 @@ export const clientSkillDirectories = (
       : clientIds.length === 0
         ? ["shared"]
         : clientIds;
+  const sharedDirectory = appendCallerPath(home, ".agents/skills", platform);
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
@@ -944,7 +962,7 @@ export const clientSkillDirectories = (
     try {
       const resolved =
         definition?.skillPath === undefined
-          ? ok(join(home, ".agents", "skills"))
+          ? ok(sharedDirectory)
           : resolvePath(definition.skillPath, {
               home,
               platform,
@@ -968,8 +986,7 @@ export const clientSkillDirectories = (
     }
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client:
-          directory === join(home, ".agents", "skills") ? "shared" : client,
+        client: directory === sharedDirectory ? "shared" : client,
         directory,
       });
   }

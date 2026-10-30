@@ -43,6 +43,7 @@ import { ProviderStartupDeadline } from "../../../../src/process/ProviderDeadlin
 import {
   NativeFixtureRunner,
   nativeMachoTarget,
+  nativeResolvedToolFixture,
 } from "../../../fixtures/nativeCommands.js";
 
 const EVENT = {
@@ -72,7 +73,7 @@ const request: Parameters<NativeCallTracer["trace"]>[0] = {
   }),
 };
 
-const fakeTool = { path: "/usr/bin/lldb", sha256: "b".repeat(64) };
+const fakeTool = nativeResolvedToolFixture("/usr/bin/lldb", "b".repeat(64));
 const successfulTracerOutput = {
   status: "traced",
   version: "lldb-fixture",
@@ -251,7 +252,11 @@ describe("LLDB completed trace retention through finalization", () => {
           phase === "runtime cleanup failure" ? "cleanup-failure" : "cancelled",
       },
       target: { launch_identity: successfulTracerOutput.target_identity },
-      debugger: { ...fakeTool, version: successfulTracerOutput.version },
+      debugger: {
+        path: fakeTool.invocationPath,
+        sha256: fakeTool.sha256,
+        version: successfulTracerOutput.version,
+      },
       process: {
         outcome: "exited",
         exit_status: 0,
@@ -284,7 +289,8 @@ const expectCompletedCleanupFacts = (
   completed: typeof successfulTracerOutput,
 ) => {
   expect(partial.debugger).toEqual({
-    ...fakeTool,
+    path: fakeTool.invocationPath,
+    sha256: fakeTool.sha256,
     version: completed.version,
   });
   expect(partial.target.launch_identity).toEqual(completed.target_identity);
@@ -728,7 +734,7 @@ describe("LLDB primary outcome during owned process cleanup", () => {
           return observedStop;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "c".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
       );
 
       try {
@@ -821,7 +827,7 @@ describe("LLDB process exit while output is still open", () => {
           return stopReceipt;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "d".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "d".repeat(64))),
       );
 
       try {
@@ -950,7 +956,7 @@ describe("LLDB target proof published before interruption", () => {
                   )
               : undefined;
           const tracer = new LldbCallTracer({}, undefined, async () =>
-            ok({ path: fakeLldb, sha256: "c".repeat(64) }),
+            ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
           );
           let retainedRoot: string | undefined;
           try {
@@ -1032,7 +1038,7 @@ describe("LLDB target proof read by cleanup retry", () => {
               : originalStop.call(this, options);
           });
         const tracer = new LldbCallTracer({}, undefined, async () =>
-          ok({ path: fakeLldb, sha256: "c".repeat(64) }),
+          ok(nativeResolvedToolFixture(fakeLldb, "c".repeat(64))),
         );
         let retainedRoot: string | undefined;
         try {
@@ -1160,7 +1166,7 @@ describe("LLDB process exit at output-close loop completion", () => {
             return closed;
           });
         const tracer = new LldbCallTracer({}, undefined, async () =>
-          ok({ path: fixture.fakeLldb, sha256: "e".repeat(64) }),
+          ok(nativeResolvedToolFixture(fixture.fakeLldb, "e".repeat(64))),
         );
         try {
           const result = await tracer.trace(request, controller.signal);
@@ -1254,7 +1260,7 @@ describe("LLDB process exit at output-close loop completion", () => {
           return stopReceipt;
         });
       const tracer = new LldbCallTracer({}, undefined, async () =>
-        ok({ path: fakeLldb, sha256: "f".repeat(64) }),
+        ok(nativeResolvedToolFixture(fakeLldb, "f".repeat(64))),
       );
 
       try {

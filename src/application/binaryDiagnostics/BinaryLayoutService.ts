@@ -1,18 +1,15 @@
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { BinaryLayoutPort } from "./BinaryLayoutPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectBinaryLayoutInputSchema,
   binaryLayoutSchema,
 } from "../../domain/native/binaryLayout.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, ok, type Result } from "../../domain/result.js";
+import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_binary_layout";
 const EVIDENCE_ARCHITECTURES = {
@@ -57,20 +54,14 @@ export class BinaryLayoutService {
       input: Parameters<BinaryLayoutPort["inspect"]>[0],
     ) => ReturnType<BinaryLayoutPort["inspect"]>,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
-    const input = inspectBinaryLayoutInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    const inspected = await inspect(input.data);
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectBinaryLayoutInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    const inspected = await inspect(input.value);
     if (!inspected.ok) return inspected;
     const diagnostics = binaryLayoutSchema.shape.diagnostics.safeParse(
       inspected.value.diagnostics,
@@ -79,7 +70,7 @@ export class BinaryLayoutService {
       ? { capturedOutput: diagnostics.data }
       : undefined;
     const report = binaryLayoutSchema.safeParse(inspected.value);
-    if (!report.success || report.data.artifact.path !== input.data.path)
+    if (!report.success || report.data.artifact.path !== input.value.path)
       return err(
         new AnalysisOutputError(
           OPERATION,
@@ -100,10 +91,10 @@ export class BinaryLayoutService {
         {
           operation: OPERATION,
           parameters: {
-            path: input.data.path,
-            ...(input.data.pwntools_timeout_ms === undefined
+            path: input.value.path,
+            ...(input.value.pwntools_timeout_ms === undefined
               ? {}
-              : { pwntools_timeout_ms: input.data.pwntools_timeout_ms }),
+              : { pwntools_timeout_ms: input.value.pwntools_timeout_ms }),
           },
           result: value,
           // The decoded report is the only representation; do not repeat it.

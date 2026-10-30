@@ -5,14 +5,17 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
   BinaryTarget,
-  RiscvElfMetadata,
+  ElfFamilyMetadata,
 } from "../domain/binaryTargetTypes.js";
 import { silentLogger } from "../logger.js";
 import { HopperProvider } from "../hopper/HopperProvider.js";
 import { hopperLoaderArgsForTarget } from "../hopper/HopperAnalysisProfile.js";
 import { IdaProvider } from "../ida/IdaProvider.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
+import {
+  ghidraRiscvLimitations,
+  ghidraRiscvUnsupportedReason,
+} from "./GhidraRiscvProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
 import {
   ghidraPinnedLanguage,
@@ -60,7 +63,7 @@ const configOf = (
   if (!parsed.ok) throw parsed.error;
   return parsed.value;
 };
-const target = (change: Partial<RiscvElfMetadata> = {}): BinaryTarget => ({
+const target = (change: Partial<ElfFamilyMetadata> = {}): BinaryTarget => ({
   path: "/fixture.elf",
   sha256: "a".repeat(64),
   kind: "executable",
@@ -155,6 +158,43 @@ const registerRiscvLanguageCommitmentCases = () => {
       ).toBe(true);
     }
   });
+
+  it("names the pinned RISC-V language when the session readback refuses", async () => {
+    const value = target();
+    const resolved = await ghidra().resolveAnalysisProfile(value);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("expected a RISC-V profile");
+    const profile = resolved.value.profile;
+    const overridden = await ghidra({
+      REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:64:default",
+    })
+      .createClient(value, profile)
+      .execute("health", {});
+    const foreign = await ghidra()
+      .createClient(
+        {
+          path: "/fixture.elf",
+          sha256: "a".repeat(64),
+          kind: "executable",
+          format: "elf",
+          architecture: "x86_64",
+          availableArchitectures: ["x86_64"],
+        },
+        profile,
+      )
+      .execute("health", {});
+    if (overridden.ok || foreign.ok)
+      throw new Error("expected readback refusals");
+    for (const failed of [overridden, foreign]) {
+      expect(failed.error._tag).toBe("ProviderAdapterError");
+      expect(failed.error.diagnostics?.reason).toEqual(
+        expect.stringContaining("RISCV:LE:64:default"),
+      );
+    }
+    expect(overridden.error.diagnostics?.reason).toEqual(
+      expect.stringContaining("REA_GHIDRA_LANGUAGE_ID"),
+    );
+  });
 };
 
 const registerRiscvAdmissionAndCapabilityCases = () => {
@@ -170,16 +210,19 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     [{ flags: 0x7 }, "quad-float"],
     [{ flags: 0x8000_0005 }, "(0x80000000)"],
     [{ flags: 0x24 }, "bits outside the verified lane"],
-  ] satisfies [Partial<RiscvElfMetadata>, string][])(
+  ] satisfies [Partial<ElfFamilyMetadata>, string][])(
     "refuses an unverified RISC-V interpretation %j",
     async (change, reason) => {
       const provider = ghidra();
       const value = target(change);
+      // The provider delivers the lane's own refusal, which names the
+      // offending declaration or value.
       expect(provider.inspectTargetSupport(value)).toMatchObject({
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: expect.stringContaining(reason),
+        reason: ghidraRiscvUnsupportedReason(value),
       });
+      expect(ghidraRiscvUnsupportedReason(value)).toContain(reason);
       expect(await provider.resolveAnalysisProfile(value)).toEqual(
         expect.objectContaining({ ok: false }),
       );
@@ -257,7 +300,7 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
       expect.objectContaining({
         ok: false,
         error: expect.objectContaining({
-          message: expect.stringContaining("RISC-V"),
+          message: expect.stringContaining("riscv"),
         }),
       }),
     );

@@ -30,6 +30,7 @@ import {
   environmentStateCaptureFixture,
 } from "../../fixtures/analysisView.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
+import { evmInterfaceFixture } from "../../fixtures/evm/interface.js";
 import {
   createEvidence,
   parseEvidence,
@@ -851,6 +852,48 @@ cliTest(
         { kind: "address", address: "0x401000" },
       ],
     });
+  },
+);
+
+cliTest(
+  "keeps an inferred parent's confidence on every view through the compiled CLI",
+  async ({ cli }) => {
+    const value = evmInterfaceFixture();
+    const parent = createEvidence(
+      {
+        path: value.artifact.path,
+        sha256: value.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture-evm", name: "EVMole", version: "1" },
+      {
+        operation: "inspect_evm_interface",
+        parameters: { path: value.artifact.path, encoding: "hex" },
+        result: value,
+        confidence: "inferred",
+      },
+    );
+    for (const view of [
+      { kind: "summary" },
+      { kind: "evm", facet: "bytecode_hex", offset: 0, limit: 4 },
+    ]) {
+      const result = await cli.run({
+        arguments: [
+          "inspect-analysis-view",
+          JSON.stringify({
+            source: { kind: "inline", evidence: parent },
+            view,
+          }),
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(parseEvidence(result.json)).toMatchObject({
+        confidence: "inferred",
+        authority: parent.authority,
+        evidence_links: [parent.evidence_id],
+      });
+    }
   },
 );
 

@@ -7,7 +7,7 @@ import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { createFunctionCoordinateContext } from "./native/functionCoordinateContext.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import { createEvidence, type Evidence } from "./evidence.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { canonicalJson } from "./comparisonSemantics.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
@@ -1121,6 +1121,21 @@ const stringsDimension = (
   ).dimensions.find(({ dimension }) => dimension === "strings_names");
 
 describe("function comparison Swift string literals", () => {
+  it("retains literal comparisons when legacy dossiers omit facet declarations", () => {
+    const legacy = (base: "0x1000" | "0x2000", value: string) => {
+      const result = withLiterals(base, [value]);
+      delete result.facet_availability;
+      return result;
+    };
+    const left = legacy("0x1000", "SleepDisabled");
+    expect(
+      stringsDimension("1", left, "2", legacy("0x2000", "SleepDisabled")),
+    ).toMatchObject({ status: "unchanged" });
+    expect(
+      stringsDimension("1", left, "2", legacy("0x2000", "Holding awake")),
+    ).toMatchObject({ status: "changed" });
+  });
+
   it("treats differing decoded literals as a strings and names change", () => {
     expect(
       stringsDimension(

@@ -6,7 +6,9 @@ import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { asarHeaderBytes } from "../fixtures/asarHeader.js";
+import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching.js";
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
@@ -171,3 +173,148 @@ it.each(["0", "2147483648"])(
   },
   30000,
 );
+
+it("lowers, restores and seeds the native matching allowance over MCP", async () => {
+  const rows = Array.from({ length: 200 }, (_, i) => ({
+    address: `0x${(0x1000 + i * 16).toString(16)}`,
+    value: `function_${i}`,
+  }));
+  const request = {
+    left: nativeMatchingNamedInventory("1", rows),
+    right: nativeMatchingNamedInventory("2", rows),
+  };
+  const limitOf = (result: {
+    content: readonly { type: string; text?: string }[];
+  }) => {
+    const text = result.content.find((item) => item.type === "text")?.text;
+    if (text === undefined) throw new Error("Missing projected error");
+    return JSON.parse(text).error.details.limit as unknown;
+  };
+  const runtime = await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT);
+  try {
+    expect(
+      (await runtime.call("match_native_functions", request)).isError,
+    ).not.toBe(true);
+    await runtime.call("update_analysis_settings", {
+      changes: [
+        {
+          setting: "native.matching_representation_bytes",
+          action: "set",
+          value: 4096,
+        },
+      ],
+    });
+    const refused = await runtime.call("match_native_functions", request);
+    expect(refused.isError).toBe(true);
+    expect(limitOf(refused)).toMatchObject({
+      setting: "native.matching_representation_bytes",
+      effective_value: 4096,
+      source: "runtime",
+      agent_editable: true,
+    });
+    await runtime.call("update_analysis_settings", {
+      changes: [
+        { setting: "native.matching_representation_bytes", action: "reset" },
+      ],
+    });
+    expect(
+      (await runtime.call("match_native_functions", request)).isError,
+    ).not.toBe(true);
+  } finally {
+    await runtime.client.close();
+  }
+  const seeded = await connectLocalToolsMcp({
+    ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    REA_NATIVE_MATCHING_REPRESENTATION_BYTES: "4096",
+  });
+  try {
+    expect(
+      (
+        await seeded.call("inspect_analysis_settings", {
+          operation: "match_native_functions",
+        })
+      ).structuredContent,
+    ).toMatchObject({
+      settings: [
+        {
+          setting: "native.matching_representation_bytes",
+          value: 4096,
+          launch_value: 4096,
+          default_value: 100663296,
+          source: "setting",
+          environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
+        },
+      ],
+    });
+    const refused = await seeded.call("match_native_functions", request);
+    expect(refused.isError).toBe(true);
+    expect(limitOf(refused)).toMatchObject({
+      effective_value: 4096,
+      source: "setting",
+    });
+  } finally {
+    await seeded.client.close();
+  }
+  // An invalid seed is refused by matching alone; MCP stays available and a
+  // runtime override repairs the effective allowance.
+  const invalid = await connectLocalToolsMcp({
+    ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+    REA_NATIVE_MATCHING_REPRESENTATION_BYTES: "0",
+  });
+  try {
+    expect((await invalid.call("binary_session", {})).isError).not.toBe(true);
+    const inspected = analysisSettingsResultSchema.parse(
+      (
+        await invalid.call("inspect_analysis_settings", {
+          settings: ["native.matching_representation_bytes"],
+        })
+      ).structuredContent,
+    );
+    expect(inspected.settings[0]).toMatchObject({
+      source: "invalid",
+      configuration_error: {
+        code: "configuration_invalid",
+        remediation: {
+          action: expect.stringContaining("update_analysis_settings"),
+        },
+      },
+    });
+    expect(inspected.settings[0]).not.toHaveProperty("value");
+    const refused = await invalid.call("match_native_functions", request);
+    expect(refused.isError).toBe(true);
+    const text = refused.content.find((item) => item.type === "text");
+    if (text?.type !== "text") throw new Error("Missing projected error");
+    expect(JSON.parse(text.text).error).toMatchObject({
+      code: "configuration_invalid",
+      remediation: {
+        action: expect.stringContaining("update_analysis_settings"),
+      },
+      details: {
+        settings: [{ setting: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES" }],
+      },
+    });
+    const repaired = await invalid.call("update_analysis_settings", {
+      changes: [
+        {
+          setting: "native.matching_representation_bytes",
+          action: "set",
+          value: 100663296,
+        },
+      ],
+    });
+    expect(repaired.structuredContent).toMatchObject({
+      settings: [
+        {
+          source: "runtime",
+          value: 100663296,
+          configuration_error: inspected.settings[0]!.configuration_error,
+        },
+      ],
+    });
+    expect(
+      (await invalid.call("match_native_functions", request)).isError,
+    ).not.toBe(true);
+  } finally {
+    await invalid.client.close();
+  }
+}, 30000);

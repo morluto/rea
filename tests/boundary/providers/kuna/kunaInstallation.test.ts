@@ -400,3 +400,29 @@ it("preserves an already-cancelled caller before admitting a lookup", async () =
   );
   expect(kunaInstallationCancellation(cause)?.reason).toBe(reason);
 });
+
+it.each(["darwin", "linux"] as const)(
+  "preserves native traversal in default cache roots on %s",
+  (platform) => {
+    const home = "/workspace/alias/../home";
+    const environment = { REA_KUNA_COMMAND: "/tools/kuna", HOME: home };
+    const configured = readKunaConfiguration(environment, platform);
+    expect(configured).toMatchObject({
+      value: {
+        cacheRoot:
+          platform === "darwin"
+            ? `${home}/Library/Caches/rea/kuna`
+            : `${home}/.cache/rea/kuna`,
+      },
+    });
+    if (platform === "linux")
+      expect(
+        readKunaConfiguration(
+          { ...environment, XDG_CACHE_HOME: "/workspace/alias/../cache" },
+          platform,
+        ),
+      ).toMatchObject({
+        value: { cacheRoot: "/workspace/alias/../cache/rea/kuna" },
+      });
+  },
+);

@@ -6,11 +6,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { expect, it } from "vitest";
 
+import { regexMatchingDeadlineRecovery } from "../../../src/config/regexMatchingDeadline.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-  regexMatchingDeadlineRecovery,
-} from "../../../src/config/regexMatchingDeadline.js";
-import { MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB } from "../../../src/config/regexWorkerHeapRequest.js";
+  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ok } from "../../../src/domain/result.js";
 import { HopperRegexSearch } from "../../../src/hopper/HopperRegexSearch.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";

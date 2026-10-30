@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { expect, it, onTestFinished } from "vitest";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { z } from "zod";
 
 import type {
   JebAnalysisPort,
@@ -12,6 +13,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import {
   expandToolAvailability,
   toolAvailabilityInventory,
@@ -24,6 +26,8 @@ import {
 } from "../../fixtures/jebMcp.js";
 
 const identity = { id: "jeb", name: "JEB", version: "5.48.0" } as const;
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
 
 it("discovers current JEB operation support and recovery through binary_session", async () => {
   let availability: JebAnalysisAvailability = {
@@ -50,7 +54,10 @@ it("discovers current JEB operation support and recovery through binary_session"
     { kind: "session", session },
     { environment: {}, jebAnalysis: provider },
   );
-  const client = new Client({ name: "jeb-availability", version: "1" });
+  const client = new Client(
+    { name: "jeb-availability", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -147,7 +154,10 @@ it("advertises exact valid JEB schemas and records inline evidence through MCP",
     { kind: "session", session },
     { jebAnalysis: provider },
   );
-  const client = new Client({ name: "jeb-contract", version: "1" });
+  const client = new Client(
+    { name: "jeb-contract", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -235,7 +245,10 @@ it("preserves JEB provider failure reasons through the MCP boundary", async () =
     { kind: "session", session },
     { jebAnalysis: unavailable },
   );
-  const client = new Client({ name: "jeb-failure", version: "1" });
+  const client = new Client(
+    { name: "jeb-failure", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -265,7 +278,10 @@ it("keeps the MCP server usable when REA_JEB_MCP_URL is invalid", async () => {
     { kind: "session", session },
     { environment: { REA_JEB_MCP_URL: "http://localhost:8425/mcp" } },
   );
-  const client = new Client({ name: "jeb-invalid-endpoint", version: "1" });
+  const client = new Client(
+    { name: "jeb-invalid-endpoint", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -326,11 +342,20 @@ it.each(
   "preserves requested $operation through MCP with metadata $metadata",
   async ({ operation, tool, input, metadata }) => {
     let informationCalls = 0;
+    const refusal = {
+      success: false,
+      message: "Client information temporarily refused",
+      error: {
+        code: "future_metadata_code",
+        recovery_required_before_retry: true,
+        recovery_tool: "get_client_information",
+      },
+    };
     const fixture = await startJebMcpFixture((name) => {
       if (name !== "get_client_information") return jebPrimaryResponses[name]!;
       informationCalls++;
       return metadata === "refusal" || informationCalls > 1
-        ? { success: false, message: "Client information temporarily refused" }
+        ? refusal
         : { success: true, gui_client: false };
     });
     const provider = new JebProvider({
@@ -343,7 +368,10 @@ it.each(
       { kind: "session", session },
       { jebAnalysis: provider, environment: {} },
     );
-    const client = new Client({ name: "jeb-attribution", version: "1" });
+    const client = new Client(
+      { name: "jeb-attribution", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
     try {
       const [clientTransport, serverTransport] =
         InMemoryTransport.createLinkedPair();
@@ -376,12 +404,38 @@ it.each(
           .join("");
         expect(JSON.parse(text)).toMatchObject({
           error: {
-            code: "unsupported_target",
+            code: "execution_failure",
+            message: refusal.message,
             details: {
+              provider_id: "jeb",
               operation,
-              reason: "Client information temporarily refused",
+              diagnostics: {
+                endpoint: fixture.endpoint,
+                upstream_response: refusal,
+              },
+              partial_observation: {
+                kind: "retained-evidence",
+                evidence_id: expect.any(String),
+              },
             },
           },
+        });
+        const partial = z
+          .object({
+            error: z.object({
+              details: z.object({
+                partial_observation: z.object({
+                  kind: z.literal("retained-evidence"),
+                  evidence_id: z.string(),
+                }),
+              }),
+            }),
+          })
+          .parse(JSON.parse(text)).error.details.partial_observation;
+        expect(session.evidenceById(partial.evidence_id)).toMatchObject({
+          evidence_id: partial.evidence_id,
+          operation,
+          raw_result: jebPrimaryResponses[tool],
         });
         expect(fixture.calls).toEqual([tool, "get_client_information"]);
       }

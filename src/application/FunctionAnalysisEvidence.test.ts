@@ -2,11 +2,12 @@ import { expect, it } from "vitest";
 import { createAnalysisExecution } from "./AnalysisProvider.js";
 import { executeFunctionAnalysisEvidence } from "./FunctionAnalysisEvidence.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { parseEvidence } from "../domain/evidence.js";
+import { createEvidence, parseEvidence } from "../domain/evidence.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { ghidraFunctionDossier } from "../domain/ghidraValues.fixture.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { err, ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 
 const provider = {
   id: "dossier-fixture",
@@ -62,6 +63,16 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       path: "/observed/provider.elf",
       sha256: "b".repeat(64),
     };
+    const source = createEvidence(
+      undefined,
+      provider,
+      {
+        operation: "health",
+        parameters: { facet: "historical-report" },
+        result: { original: "unknown" },
+      },
+      { immutable: true },
+    );
     for (const aborted of [false, true]) {
       const controller = new AbortController();
       const execution = createAnalysisExecution(dossier, provider, {
@@ -73,6 +84,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         rawResult: { provider_text: "preserved" },
         limitations: ["Synthetic provider observation"],
         locations: [{ kind: "address", address: "0x401000" }],
+        sourceEvidence: [source],
       });
       const result = await executeFunctionAnalysisEvidence(
         {
@@ -85,6 +97,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
         target,
         { signal: controller.signal },
       );
+      expect(result.sourceEvidence).toEqual([source]);
       if (aborted) {
         if (result.ok) throw new Error("Expected late cancellation");
         expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
@@ -100,6 +113,7 @@ it.each(["selected-target", "no-subject", "provider-subject"] as const)(
       expect(evidence.provider).toEqual(provider);
       expect(evidence.analysis_profile).toEqual(analysisProfile);
       expect(evidence.relationship_coverage).toEqual(relationshipCoverage);
+      expect(evidence.evidence_links).toEqual([source.evidence_id]);
       expect(evidence.limitations).toContain("Synthetic provider observation");
       expect(evidence.locations).toContainEqual({
         kind: "address",
@@ -144,6 +158,49 @@ it.each(["provider-failure", "invalid-dossier"] as const)(
         _tag: "AnalysisOutputError",
         operation: "analyze_function",
       });
-    expect(result.error.partialObservation).toBeUndefined();
+    if (kind === "provider-failure")
+      expect(result.error.partialObservation).toBeUndefined();
+    else {
+      const retained = parseEvidence(result.error.partialObservation);
+      expect(retained.normalized_result).toEqual({ procedure: "incomplete" });
+      expect(retained.subject?.local_path).toBe(target.path);
+    }
   },
 );
+
+it("retains malformed dossier facts and source links through public error projection", async () => {
+  const source = createEvidence(undefined, provider, {
+    operation: "health",
+    parameters: {},
+    result: "retained source",
+  });
+  const malformed = { procedure: "incomplete", partial: ["caller fact"] };
+  const result = await executeFunctionAnalysisEvidence(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution(malformed, provider, {
+            subject: null,
+            rawResult: { text: "original provider output" },
+            limitations: ["Incomplete provider response"],
+            locations: [{ kind: "address", address: "0x401000" }],
+            sourceEvidence: [source],
+          }),
+        ),
+    },
+    parameters,
+    target,
+  );
+  if (result.ok) throw new Error("Expected invalid dossier failure");
+  expect(result.sourceEvidence).toEqual([source]);
+  const projected = projectAnalysisError(result.error);
+  const retained = parseEvidence(projected.details?.partial_observation);
+  expect(retained.normalized_result).toEqual(malformed);
+  expect(retained.raw_result).toEqual({ text: "original provider output" });
+  expect(retained.subject).toBeNull();
+  expect(retained.evidence_links).toEqual([source.evidence_id]);
+  expect(retained.locations).toEqual([
+    { kind: "address", address: "0x401000" },
+  ]);
+  expect(retained.limitations).toContain("Incomplete provider response");
+});

@@ -1,3 +1,4 @@
+import { isNativeObservationOperation } from "../domain/native/nativeObservation.js";
 import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
@@ -24,7 +25,9 @@ const retainedEvidenceContinuation = (
       ? { kind: "native", facet: "pseudocode", offset: 0 }
       : isNativeInventoryOperation(evidence.operation)
         ? { kind: "native-inventory", offset: 0, limit: 64 }
-        : undefined;
+        : isNativeObservationOperation(evidence.operation)
+          ? { kind: "native-observation", offset: 0, limit: 64 }
+          : undefined;
   if (view === undefined) return {};
   const input = inspectAnalysisViewInputSchema.safeParse({
     source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },

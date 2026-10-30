@@ -30,6 +30,7 @@ export const parseXmlDocument = (
 ): Result<Document, XmlDocumentParseError> => {
   try {
     const syntax = new SaxesParser({
+      xmlns: true,
       defaultXMLVersion: "1.0",
       forceXMLVersion: true,
     });

@@ -1,3 +1,7 @@
+import {
+  BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
+  type BinarySessionDetail,
+} from "../contracts/sessionStatusContract.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
@@ -8,11 +12,9 @@ import {
   buildCapabilityInventory,
   compactToolAvailability,
 } from "../application/CapabilityInventory.js";
+import { restrictAdvertisedCapabilities } from "../application/binary/BinarySessionStatus.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import {
-  BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
-  type BinarySessionDetail,
-} from "../contracts/sessionStatusContract.js";
+import type { ToolFamilyId } from "../contracts/toolFamilyIds.js";
 import type {
   ClientFeatureAvailability,
   ToolAvailability,
@@ -53,22 +55,38 @@ export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
   readonly availabilityPolicy: () => AvailabilityPolicy;
 }
 
+/**
+ * Probe only families this registration advertises. Scoped-out providers keep
+ * the established not-configured shape instead of launching probes whose tools
+ * cannot appear in the response.
+ */
 const probeSessionAvailability = (
   probes: SessionAvailabilityProbes,
   signal: AbortSignal,
+  advertisesFamily: (family: ToolFamilyId) => boolean,
 ): Promise<{
-  readonly android: ProviderAvailability;
+  readonly android: ProviderAvailability | undefined;
   readonly adb: ProviderAvailability | undefined;
   readonly apktool: ProviderAvailability | undefined;
   readonly jeb: JebAnalysisAvailability | undefined;
   readonly evmLimiter: ProviderAvailability | undefined;
 }> =>
   Promise.all([
-    probes.androidAnalysisAvailability(signal),
-    probes.adbAnalysisAvailability?.(signal) ?? undefined,
-    probes.apktoolAnalysisAvailability?.(signal) ?? undefined,
-    probes.jebAnalysisAvailability?.(signal) ?? undefined,
-    probes.evmLimiterAvailability?.(signal) ?? undefined,
+    advertisesFamily("android")
+      ? probes.androidAnalysisAvailability(signal)
+      : undefined,
+    advertisesFamily("adb")
+      ? (probes.adbAnalysisAvailability?.(signal) ?? undefined)
+      : undefined,
+    advertisesFamily("apktool")
+      ? (probes.apktoolAnalysisAvailability?.(signal) ?? undefined)
+      : undefined,
+    advertisesFamily("jeb")
+      ? (probes.jebAnalysisAvailability?.(signal) ?? undefined)
+      : undefined,
+    advertisesFamily("artifact")
+      ? (probes.evmLimiterAvailability?.(signal) ?? undefined)
+      : undefined,
   ] as const).then(([android, adb, apktool, jeb, evmLimiter]) => ({
     android,
     adb,
@@ -98,6 +116,7 @@ export const registerSessionStatusTool = (
         availabilityResults = await probeSessionAvailability(
           options,
           context.mcpReq.signal,
+          (family) => server.advertisesFamily(family),
         );
         status = await session.status({
           signal: context.mcpReq.signal,
@@ -108,26 +127,27 @@ export const registerSessionStatusTool = (
         return server.delivery.toCallToolResult(err(cause), contract);
       }
       const statusObject = jsonObjectSchema.parse(status);
-      const toolAvailability = buildCapabilityInventory(
-        status,
-        {
-          ...availabilityPolicy(),
-          androidAnalysisAvailability: availabilityResults.android,
-          ...(availabilityResults.adb === undefined
-            ? {}
-            : { adbAnalysisAvailability: availabilityResults.adb }),
-          ...(availabilityResults.apktool === undefined
-            ? {}
-            : { apktoolAnalysisAvailability: availabilityResults.apktool }),
-          ...(availabilityResults.jeb === undefined
-            ? {}
-            : { jebAnalysisAvailability: availabilityResults.jeb }),
-          ...(availabilityResults.evmLimiter === undefined
-            ? {}
-            : { evmLimiterAvailability: availabilityResults.evmLimiter }),
-        },
-        clientFeatures,
-      );
+      // Availability must be derived from the complete provider facts: an
+      // advertised composed tool still depends on direct operations the
+      // registration hides. Narrow the public report only after this.
+      const toolAvailability = buildCapabilityInventory(status, {
+        ...availabilityPolicy(),
+        ...(availabilityResults.android === undefined
+          ? {}
+          : { androidAnalysisAvailability: availabilityResults.android }),
+        ...(availabilityResults.adb === undefined
+          ? {}
+          : { adbAnalysisAvailability: availabilityResults.adb }),
+        ...(availabilityResults.apktool === undefined
+          ? {}
+          : { apktoolAnalysisAvailability: availabilityResults.apktool }),
+        ...(availabilityResults.jeb === undefined
+          ? {}
+          : { jebAnalysisAvailability: availabilityResults.jeb }),
+        ...(availabilityResults.evmLimiter === undefined
+          ? {}
+          : { evmLimiterAvailability: availabilityResults.evmLimiter }),
+      }).filter(({ name }) => server.advertisesTool(name));
       const serverIdentity = createServerIdentity({
         startedAt,
         commandPath: CURRENT_ENTRYPOINT_PATH,
@@ -151,7 +171,12 @@ export const registerSessionStatusTool = (
           ok: true,
           value: projectSessionStatus({
             detail: input.detail,
-            status: statusObject,
+            status:
+              server.advertisedToolFamilies === undefined
+                ? statusObject
+                : restrictAdvertisedCapabilities(statusObject, (operation) =>
+                    server.advertisesTool(operation),
+                  ),
             toolAvailability,
             serverIdentity,
             clientFeatures,

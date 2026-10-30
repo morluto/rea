@@ -5,7 +5,7 @@ import {
   MAXIMUM_ASAR_MAX_HEADER_BYTES,
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
-  MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  MAX_NODE_TIMER_DELAY_MS,
   MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
@@ -16,6 +16,8 @@ import {
   CAPTURE_DECODER_SEMI_SPACE_MIB,
   MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
   DEFAULT_JADX_OPERATION_TIMEOUT_MS,
+  DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+  MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
 } from "./analysisResourceLimits.js";
 import {
   JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
@@ -40,7 +42,7 @@ interface SettingDefinition {
 }
 const timer = {
   minimum: 1,
-  maximum: MAX_PROVIDER_STARTUP_TIMEOUT_MS,
+  maximum: MAX_NODE_TIMER_DELAY_MS,
   unit: "ms",
   appliesAt: "next_operation",
 } as const;
@@ -191,6 +193,16 @@ export const ANALYSIS_SETTINGS = {
     provider: "wabt-artifact",
     operations: ["inspect_wasm_artifact"],
     parameter: "command_timeout_ms",
+  },
+  "native.matching_representation_bytes": {
+    environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
+    defaultValue: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+    minimum: 1,
+    maximum: MAXIMUM_NATIVE_MATCHING_REPRESENTATION_BYTES,
+    unit: "bytes",
+    appliesAt: "next_operation",
+    provider: "rea-function-comparison",
+    operations: ["match_native_functions"],
   },
 } as const satisfies Record<AnalysisSettingId, SettingDefinition>;
 export const analysisSettingIds = Object.keys(

@@ -8,13 +8,10 @@ import {
   compareWasmInterfacesInputSchema,
   wasmInterfaceComparisonSchema,
 } from "../../contracts/wasm/wasmComparisonContracts.js";
-import {
-  createEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   wasmArtifactSchema,
+  wasmArtifactMatchesSubject,
   type WasmArtifact,
 } from "../../domain/wasm/wasmArtifact.js";
 import type { WasmInterfaceEntry } from "../../domain/wasm/wasmInterface.js";
@@ -26,33 +23,58 @@ import {
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
-import { err, type Result } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import {
   resolvePairedEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { z } from "zod";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const OPERATION = "compare_wasm_interfaces";
 const parseInspection = (
   raw: unknown,
-): { evidence: Evidence; result: WasmArtifact } => {
-  const evidence = parseEvidence(raw);
+): Result<{ evidence: Evidence; result: WasmArtifact }, AnalysisInputError> => {
+  const authenticated = safeParseEvidence(raw);
+  if (!authenticated.ok) return inspectionInputFailure(authenticated.error);
+  const evidence = authenticated.value;
   if (evidence.operation !== "inspect_wasm_artifact")
-    throw new TypeError("Expected complete inspect_wasm_artifact Evidence");
-  const result = wasmArtifactSchema.parse(evidence.normalized_result);
+    return inspectionInputFailure(
+      new TypeError("Expected complete inspect_wasm_artifact Evidence"),
+    );
+  const parsed = wasmArtifactSchema.safeParse(evidence.normalized_result);
+  if (!parsed.success) return inspectionInputFailure(parsed.error);
+  const result = parsed.data;
   if (
-    evidence.subject?.digest.sha256 !== result.artifact.sha256 ||
-    evidence.subject.local_path !== result.artifact.path ||
+    !wasmArtifactMatchesSubject(
+      result.artifact,
+      evidence.subject === null
+        ? null
+        : {
+            sha256: evidence.subject.digest.sha256,
+            format: evidence.subject.format,
+          },
+    ) ||
     evidence.parameters.path !== result.artifact.path
   )
-    throw new TypeError(
-      "WASM Evidence subject/selection does not match normalized artifact identity",
+    return inspectionInputFailure(
+      new TypeError(
+        "WASM Evidence subject/selection does not match normalized artifact identity",
+      ),
     );
-  return { evidence, result };
+  return ok({ evidence, result });
 };
+
+const inspectionInputFailure = (
+  cause: Error,
+): Result<never, AnalysisInputError> =>
+  err(
+    new AnalysisInputError(OPERATION, { cause }, [
+      { path: [], reason: "invalid_value", message: cause.message },
+    ]),
+  );
 
 /** Compare only producer-owned typed facts; no raw WAT or original file is reread. */
 export const compareWasmInterfaces = async (
@@ -80,8 +102,12 @@ export const compareWasmInterfaces = async (
   try {
     await setImmediate();
     assertActive();
-    const left = parseInspection(resolved.value.left);
-    const right = parseInspection(resolved.value.right);
+    const parsedLeft = parseInspection(resolved.value.left);
+    if (!parsedLeft.ok) return parsedLeft;
+    const parsedRight = parseInspection(resolved.value.right);
+    if (!parsedRight.ok) return parsedRight;
+    const left = parsedLeft.value;
+    const right = parsedRight.value;
     const scope = parsed.data.scope;
     const selected = (entry: WasmInterfaceEntry): boolean =>
       scope === "both" ||
@@ -247,14 +273,6 @@ export const compareWasmInterfaces = async (
     return completeProviderEvidence(evidence, options?.signal);
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
-    return err(
-      new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: [],
-          reason: "invalid_value",
-          message: cause instanceof Error ? cause.message : String(cause),
-        },
-      ]),
-    );
+    throw cause;
   }
 };

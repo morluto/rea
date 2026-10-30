@@ -40,8 +40,6 @@ import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   ModelFormatFailure,
-  rejectModel,
-  rejectPickle,
   MODEL_REPORT_BYTES,
   modelCapacityRemediation,
   modelCapacityReportedLimits,
@@ -255,7 +253,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     const reader = new ModelHeaderReader(file, Number(initial.size), signal);
     const first = await reader.take(4);
-    if (first.equals(Buffer.from([0x50, 0x4b, 3, 4]))) rejectPickle();
     const format = first.equals(Buffer.from("GGUF")) ? "gguf" : "safetensors";
     const partial: ModelArtifactPartial = {
       kind: "model-artifact-partial",
@@ -311,15 +308,6 @@ export class ModelArtifactProvider implements ModelArtifactPort {
             onLimitation: (message) => partial.limitations.push(message),
           })
         : await readSafetensorsHeader(reader, first);
-    const intervals = parsed.tensors
-      .filter((row) => row.byte_length !== null)
-      .sort((a, b) => a.file_offset - b.file_offset);
-    let end = parsed.tensor_data_offset;
-    for (const row of intervals) {
-      if (row.file_offset < end && row.byte_length !== 0)
-        rejectModel(`Overlapping tensor byte ranges at ${row.name}`);
-      end = Math.max(end, row.file_offset + (row.byte_length ?? 0));
-    }
     partial.version = parsed.version;
     partial.byte_order = parsed.byte_order;
     partial.alignment = parsed.alignment;

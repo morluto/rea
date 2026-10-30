@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { utcDateTimeSchema } from "./offsetDateTime.js";
 
 import { browserCompletenessSchema } from "./browserCompleteness.js";
 import {
-  cdpDomNodeSchema,
+  cdpDomSnapshotSchema,
   cdpScriptSourceSchema,
   cdpScriptMetadataSchema,
 } from "./cdpObservationSchemas.js";
@@ -266,16 +267,13 @@ export const webPageInspectionSchema = z.object({
   browser: browserVersionSchema,
   target: browserTargetSchema,
   capture_window: z.object({
-    started_at: z.iso.datetime(),
-    ended_at: z.iso.datetime(),
+    started_at: utcDateTimeSchema,
+    ended_at: utcDateTimeSchema,
     observation_ms: z.int().min(0),
   }),
   completeness: browserCompletenessSchema,
   frames: z.array(browserFrameSchema),
-  dom: z.object({
-    total_nodes: z.int().min(0),
-    nodes: z.array(cdpDomNodeSchema),
-  }),
+  dom: cdpDomSnapshotSchema,
   accessibility: z.object({
     total_nodes: z.int().min(0),
     text_capture: z.object({
@@ -293,12 +291,12 @@ export const webPageInspectionSchema = z.object({
   network: z.object({
     requests: z.array(browserNetworkRequestSchema),
     websocket_connections: z.array(browserWebSocketConnectionSchema),
-    coverage_started_at: z.iso.datetime(),
+    coverage_started_at: utcDateTimeSchema,
     prior_activity_available: z.literal(false),
   }),
   console: z.object({
     events: z.array(browserConsoleEventSchema),
-    coverage_started_at: z.iso.datetime(),
+    coverage_started_at: utcDateTimeSchema,
     prior_activity_available: z.literal(false),
   }),
   workers: z.array(browserWorkerSchema),

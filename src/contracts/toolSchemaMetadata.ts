@@ -6,10 +6,7 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import {
-  fitAdvertisedInputSchema,
-  presentInputJsonSchema,
-} from "./inputSchemaPresentation.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -78,17 +75,17 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
         libraryOptions: { ...options.libraryOptions, reused: "inline" },
       });
       const examples = advertisedInputExamples(contract);
-      // Keep advertised parameters self-contained for clients that do not
-      // resolve local references, within the per-tool client size limit. The
-      // registered canonical schema remains responsible for runtime validation.
-      return fitAdvertisedInputSchema({
+      return {
+        // Keep advertised parameters self-contained for clients that do not
+        // resolve local references. The registered canonical schema remains
+        // responsible for runtime validation.
         ...presentInputJsonSchema(inline, fallbackPropertyDescription),
         ...(examples.length === 0 ? {} : { examples }),
-      });
+      };
     },
   );
 
-/** Return the same complete input JSON Schema projection registered on MCP. */
+/** Return the full-profile advertised input JSON Schema registered on MCP. */
 export const advertisedInputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
 ): Record<string, unknown> =>

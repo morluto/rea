@@ -1,3 +1,4 @@
+import { PCAP_HTTP_URI_FIELDS } from "./PcapHttpUri.js";
 import {
   type ExecutionOptions,
   type ProviderAvailability,
@@ -15,8 +16,12 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
   AnalysisProtocolError,
+  AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -41,6 +46,7 @@ import {
 import {
   runPcapCommand,
   type PcapCommandCleanup,
+  type PcapCommandOutput,
   type PcapCommandLimits,
   type PcapCommandLauncher,
 } from "./PcapCommand.js";
@@ -54,7 +60,12 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResources.js";
 import { readLinuxResourceLimits } from "../process/LinuxResourceLimits.js";
-import { realpath } from "node:fs/promises";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  assertArtifactCommandPath,
+  selectArtifactCommandPath,
+  type ArtifactCommandPath,
+} from "../process/ArtifactCommandPath.js";
 
 export const PCAP_PROVIDER_IDENTITY = {
   id: "pcap",
@@ -70,12 +81,20 @@ const FIELDS = [
   "ipv6.dst",
   "dns.flags.response",
   "dns.qry.name",
+  "dns.qry.type",
+  "dns.qry.class",
+  "dns.count.queries",
+  "dns.count.answers",
+  "dns.count.auth_rr",
+  "dns.count.add_rr",
+  "dns.resp.name",
+  "dns.resp.type",
+  "dns.resp.class",
+  "dns.cname",
   "dns.a",
   "dns.aaaa",
   "tls.handshake.extensions_server_name",
-  "http.request.full_uri",
-  "http.request.uri",
-  "http2.request.full_uri",
+  ...Object.keys(PCAP_HTTP_URI_FIELDS),
   "http2.headers.path",
 ];
 
@@ -109,7 +128,7 @@ class PcapCommandCleanupError extends ProviderCleanupError {}
 const probeCleanupFailure = (
   operation: PcapOperation,
   cleanup: PcapCommandCleanup,
-  output: { readonly stdout: string; readonly stderr: string },
+  output: AnalysisCapturedOutput,
 ): ProviderCleanupError =>
   new ProviderCleanupError(
     "pcap",
@@ -118,9 +137,7 @@ const probeCleanupFailure = (
       reason: cleanup.reason,
       previous_error: null,
       captured_output: {
-        stdout: output.stdout,
-        stderr: output.stderr,
-        truncated: cleanup.capturedOutput.truncated,
+        ...output,
       },
     },
     { operation },
@@ -130,7 +147,7 @@ const pcapCommandCleanupError = (
   operation: PcapOperation,
   snapshotPath: string | undefined,
   cleanup: PcapCommandCleanup,
-  capturedOutput: { readonly stdout: string; readonly stderr: string },
+  capturedOutput: AnalysisCapturedOutput,
   partialObservation?: ReturnType<typeof pcapPartialEvidence>,
 ) =>
   new PcapCommandCleanupError(
@@ -145,9 +162,7 @@ const pcapCommandCleanupError = (
       reason: cleanup.reason,
       previous_error: null,
       captured_output: {
-        stdout: capturedOutput.stdout,
-        stderr: capturedOutput.stderr,
-        truncated: cleanup.capturedOutput.truncated,
+        ...capturedOutput,
       },
     },
     {
@@ -166,10 +181,8 @@ const assertValidPcapCommandText = (
     operation,
     `${stage} output is not valid UTF-8; retained text contains replacement characters.`,
     {
-      capturedOutput: {
-        stdout: output.stdout,
-        stderr: output.stderr,
-        truncated: output.cleanup?.capturedOutput.truncated ?? false,
+      get capturedOutput() {
+        return output.capturedOutput;
       },
       diagnostics: {
         stage,
@@ -208,7 +221,7 @@ export class PcapProvider {
   private readonly launcher: PcapCommandLauncher | undefined;
   private readonly wiresharkIdentities = new Map<
     string,
-    { readonly path: string; readonly identity: WiresharkExecutableIdentity }
+    ArtifactCommandPath & { readonly identity: WiresharkExecutableIdentity }
   >();
   private readonly snapshots = new Set<PcapSnapshot>();
   private readonly snapshotFailures = new Map<
@@ -221,7 +234,7 @@ export class PcapProvider {
   >();
 
   constructor(options: PcapProviderOptions = {}) {
-    this.environment = options.environment ?? process.env;
+    this.environment = snapshotEnvironment(options.environment ?? process.env);
     this.launcher = options.launcher;
     this.#resources = new ArtifactAnalysisResources(
       "pcap",
@@ -282,21 +295,24 @@ export class PcapProvider {
     const selected = this.wiresharkIdentities.get(command);
     try {
       if (selected !== undefined) {
+        await assertArtifactCommandPath(selected, operation, { signal });
         const before = await this.readToolIdentity(
           operation,
-          selected.path,
+          selected.resolvedPath,
           signal,
         );
         assertWiresharkExecutableIdentity(
           operation,
-          selected.path,
+          selected.resolvedPath,
           selected.identity,
           wiresharkExecutableIdentity(before),
         );
       }
       output = await runPcapCommand({
         operation,
-        command: selected?.path ?? command,
+        redactHttpTransportCredentials:
+          stage === "tshark" && operation === "inspect_pcap_capture",
+        command: selected?.invocationPath ?? command,
         arguments: args,
         limits,
         signal,
@@ -327,17 +343,23 @@ export class PcapProvider {
       });
       commandReturned = true;
       if (selected !== undefined) {
-        const after = await this.readToolIdentity(operation, selected.path);
+        await assertArtifactCommandPath(selected, operation, {
+          get capturedOutput() {
+            return output.capturedOutput;
+          },
+        });
+        const after = await this.readToolIdentity(
+          operation,
+          selected.resolvedPath,
+        );
         assertWiresharkExecutableIdentity(
           operation,
-          selected.path,
+          selected.resolvedPath,
           selected.identity,
           wiresharkExecutableIdentity(after),
           {
-            capturedOutput: {
-              stdout: output.stdout,
-              stderr: output.stderr,
-              truncated: output.cleanup?.capturedOutput.truncated ?? false,
+            get capturedOutput() {
+              return output.capturedOutput;
             },
           },
         );
@@ -353,15 +375,18 @@ export class PcapProvider {
         retainedCommand.failure = cause;
         throw cause;
       }
-      // A returned probe has no snapshot to carry its pending command cleanup,
-      // so a later failure (such as the post-run identity check) must carry it.
-      // Failures raised by the command itself keep their own cleanup outcome.
-      if (commandReturned && inputPath === undefined && cleanup !== undefined) {
-        const pending = probeCleanupFailure(
-          operation,
-          cleanup,
-          cleanup.capturedOutput,
-        );
+      // Post-run validation can fail before the caller receives the command
+      // output. Carry its retained cleanup for both probes and capture reads.
+      if (commandReturned && cleanup !== undefined) {
+        const pending =
+          inputPath === undefined
+            ? probeCleanupFailure(operation, cleanup, cleanup.capturedOutput)
+            : pcapCommandCleanupError(
+                operation,
+                snapshot?.path,
+                cleanup,
+                cleanup.capturedOutput,
+              );
         if (retainedCommand !== undefined) retainedCommand.failure = pending;
         // The classified failure may own its own cleanup, such as an
         // executable re-read whose file close failed; keep both live.
@@ -375,7 +400,11 @@ export class PcapProvider {
       throw cause;
     }
     if (inputPath === undefined && cleanup !== undefined) {
-      const failure = probeCleanupFailure(operation, cleanup, output);
+      const failure = probeCleanupFailure(
+        operation,
+        cleanup,
+        output.capturedOutput,
+      );
       if (retainedCommand !== undefined) retainedCommand.failure = failure;
       throw failure;
     }
@@ -385,10 +414,28 @@ export class PcapProvider {
   private nativeBound: Parameters<typeof runPcapCommand>[0]["nativeBound"];
   private nativeLimitations: readonly string[] = [];
 
-  private async prepareCaptureBound(): Promise<void> {
+  private async prepareCaptureBound(
+    operation: PcapOperation,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const prepared = await preparePcapNativeBound(
       this.environment,
       this.#resources,
+      async (selected, arguments_) => {
+        await assertArtifactCommandPath(selected, operation, { signal });
+        const output = await this.run(
+          operation,
+          "version",
+          selected.invocationPath,
+          arguments_,
+          { timeoutMs: 20_000, maxOutputBytes: 64 * 1024 },
+          signal,
+        );
+        await assertArtifactCommandPath(selected, operation, { signal });
+        return output;
+      },
+      signal,
+      operation,
     );
     this.nativeBound = prepared.nativeBound;
     this.nativeLimitations = prepared.limitations;
@@ -403,9 +450,9 @@ export class PcapProvider {
     ] as const) {
       const path = locateWiresharkTool(selected, this.environment);
       if (path === undefined) continue;
-      let resolvedPath: string;
+      let commandPath: ArtifactCommandPath;
       try {
-        resolvedPath = await realpath(path);
+        commandPath = await selectArtifactCommandPath(path, signal);
       } catch (cause) {
         if (
           cause instanceof Error &&
@@ -422,11 +469,11 @@ export class PcapProvider {
       }
       const snapshot = await this.readToolIdentity(
         operation,
-        resolvedPath,
+        commandPath.resolvedPath,
         signal,
       );
       this.wiresharkIdentities.set(selected.command, {
-        path: resolvedPath,
+        ...commandPath,
         identity: wiresharkExecutableIdentity(snapshot),
       });
     }
@@ -461,7 +508,8 @@ export class PcapProvider {
         tshark_source: selection.tshark.source,
         tshark_version: identity.tsharkVersion,
         tshark_resolved_path:
-          this.wiresharkIdentities.get(selection.tshark.command)?.path ?? null,
+          this.wiresharkIdentities.get(selection.tshark.command)
+            ?.resolvedPath ?? null,
         tshark_sha256:
           this.wiresharkIdentities.get(selection.tshark.command)?.identity
             .sha256 ?? null,
@@ -474,8 +522,8 @@ export class PcapProvider {
         capinfos_source: selection.capinfos.source,
         capinfos_version: identity.capinfosVersion,
         capinfos_resolved_path:
-          this.wiresharkIdentities.get(selection.capinfos.command)?.path ??
-          null,
+          this.wiresharkIdentities.get(selection.capinfos.command)
+            ?.resolvedPath ?? null,
         capinfos_sha256:
           this.wiresharkIdentities.get(selection.capinfos.command)?.identity
             .sha256 ?? null,
@@ -513,7 +561,7 @@ export class PcapProvider {
             "No enforceable native memory boundary is available for capture summaries on this host.",
           diagnostics: client,
         };
-      await this.prepareCaptureBound();
+      await this.prepareCaptureBound("inspect_pcap_client", signal);
       return {
         status: "available",
         code: null,
@@ -765,7 +813,7 @@ export class PcapProvider {
           ),
         );
       else {
-        await this.prepareCaptureBound();
+        await this.prepareCaptureBound(request.operation, signal);
         snapshot = await PcapSnapshot.create();
         this.snapshots.add(snapshot);
         const identity = await snapshot.capture(request.input.path, signal);
@@ -857,7 +905,7 @@ export class PcapProvider {
           pendingCommand.resources,
           {
             reason: pendingCommand.reason,
-            captured_output: pendingCommand.capturedOutput,
+            captured_output: { ...pendingCommand.capturedOutput },
           },
           { operation: request.operation },
         );
@@ -941,6 +989,26 @@ export class PcapProvider {
     },
     client: unknown,
   ) {
+    const withOutputCleanup = (
+      cause: unknown,
+      command: PcapCommandOutput,
+    ): unknown => {
+      if (command.cleanup === undefined) return cause;
+      return analysisErrorWithCleanupFailure(
+        cause instanceof AnalysisError
+          ? cause
+          : new AnalysisProtocolError("Packet capture output parsing failed", {
+              cause,
+            }),
+        pcapCommandCleanupError(
+          request.operation,
+          snapshot.path,
+          command.cleanup,
+          command.capturedOutput,
+        ),
+        request.operation,
+      );
+    };
     const info = await this.run(
       "inspect_pcap_capture",
       "capinfos",
@@ -951,17 +1019,29 @@ export class PcapProvider {
       snapshot,
       path,
     );
-    const metadata = parseCapinfosOutput(info.stdout);
-    if (metadata.sha256 !== null && metadata.sha256 !== identity.sha256)
-      throw new AnalysisProtocolError(
-        "capinfos SHA256 disagrees with the owned capture snapshot",
-      );
+    let metadata: ReturnType<typeof parseCapinfosOutput>;
+    try {
+      metadata = parseCapinfosOutput(info.stdout);
+      if (metadata.sha256 !== null && metadata.sha256 !== identity.sha256)
+        throw new AnalysisProtocolError(
+          "capinfos SHA256 disagrees with the owned capture snapshot",
+          {
+            diagnostics: {
+              reason: "capture_sha256_mismatch",
+              capinfos_sha256: metadata.sha256,
+              snapshot_sha256: identity.sha256,
+            },
+          },
+        );
+    } catch (cause) {
+      throw withOutputCleanup(cause, info);
+    }
     if (info.cleanup !== undefined)
       throw pcapCommandCleanupError(
         request.operation,
         snapshot.path,
         info.cleanup,
-        info,
+        info.capturedOutput,
         pcapPartialEvidence(
           request,
           provider,
@@ -1003,11 +1083,74 @@ export class PcapProvider {
       snapshot,
       path,
     );
-    const fields = await parseTsharkJsonOutput(dissected.stdout, signal);
+    const parseOutput = async (
+      command: typeof dissected,
+      dnsStdout?: string,
+    ) => {
+      try {
+        return await parseTsharkJsonOutput(dissected.stdout, signal, dnsStdout);
+      } catch (cause) {
+        throw withOutputCleanup(cause, command);
+      }
+    };
+    let fields = await parseOutput(dissected);
+    let dnsDissected: typeof dissected | undefined;
+    let dnsLimitation: string | undefined;
+    if (dissected.cleanup === undefined) {
+      try {
+        dnsDissected = await this.run(
+          "inspect_pcap_capture",
+          "tshark",
+          selection.tshark.command,
+          [
+            "-n",
+            "-r",
+            snapshot.path,
+            "-T",
+            "json",
+            "--no-duplicate-keys",
+            `--temp-dir=${snapshot.configurationPath}`,
+            "-Y",
+            "dns || mdns || llmnr",
+            "-x",
+            "-J",
+            "frame dns mdns llmnr",
+          ],
+          { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
+          signal,
+          snapshot,
+          path,
+        );
+        fields = await parseOutput(dnsDissected, dnsDissected.stdout);
+      } catch (cause) {
+        if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+          throw cause;
+        if (
+          !(
+            cause instanceof AnalysisResourceConstraintError ||
+            cause instanceof AnalysisProtocolError ||
+            cause instanceof AnalysisOutputError
+          )
+        )
+          throw cause;
+        dnsLimitation = `DNS wire identity extraction was unavailable: ${cause.message}; producer queries and addresses are retained without inferred ownership`;
+      }
+    } else {
+      dnsLimitation =
+        "DNS wire identity extraction was not run because first-pass process cleanup remains unconfirmed; DNS coverage remains unknown";
+    }
+    if (dnsLimitation !== undefined) fields = { ...fields, partial: true };
     await snapshot.verify(identity, path, signal);
     if (fields.packetCount !== metadata.packetCount)
       throw new AnalysisProtocolError(
         `capinfos counted ${String(metadata.packetCount)} packets but tshark returned ${String(fields.packetCount)}`,
+        {
+          diagnostics: {
+            reason: "packet_count_mismatch",
+            capinfos_packet_count: metadata.packetCount,
+            tshark_packet_count: fields.packetCount,
+          },
+        },
       );
     const captured = {
       result: {
@@ -1020,7 +1163,9 @@ export class PcapProvider {
         capture_duration_seconds: metadata.captureDurationSeconds,
         diagnostics: {
           capinfos_stderr: info.stderr,
-          tshark_stderr: dissected.stderr,
+          tshark_stderr: [dissected.stderr, dnsDissected?.stderr ?? ""]
+            .filter(Boolean)
+            .join("\n"),
         },
         snapshot_length: metadata.snapshotLength,
         endpoints: fields.endpoints,
@@ -1040,9 +1185,11 @@ export class PcapProvider {
         coverage: fields.partial ? "partial" : "complete",
       },
       limitations: [
+        ...fields.dnsLimitations.map((reason) => `DNS wire parsing: ${reason}`),
+        ...(dnsLimitation === undefined ? [] : [dnsLimitation]),
         ...this.nativeLimitations,
         "Both tools read one owned snapshot; target identity comes from its admitted source descriptor",
-        "DNS address values are associated only with a single question in the same response packet; values may include additional DNS records, not only final resolution answers",
+        "DNS address attribution requires one wire-identified question in one complete DNS message; only matching answer owners or unambiguous answer-section CNAME chains are associated. Authority, additional, unrelated and ambiguous addresses are retained separately as unattributed; these packet-local relationships do not prove final resolution",
         "Only bytes present in the saved capture are examined; encryption and capture truncation can hide higher-level fields",
         "HTTP URI inventory examines decoded HTTP/1 and HTTP/2 request fields; HTTP/3 URI semantics are outside this profile",
         ...(fields.partial
@@ -1062,7 +1209,9 @@ export class PcapProvider {
           : []),
       ],
     };
-    if (dissected.cleanup !== undefined) {
+    const cleanupCommand =
+      dissected.cleanup !== undefined ? dissected : dnsDissected;
+    if (cleanupCommand?.cleanup !== undefined) {
       const full = pcapResultSchemas.inspect_pcap_capture.parse({
         client,
         ...captured.result,
@@ -1070,8 +1219,8 @@ export class PcapProvider {
       throw pcapCommandCleanupError(
         request.operation,
         snapshot.path,
-        dissected.cleanup,
-        dissected,
+        cleanupCommand.cleanup,
+        cleanupCommand.capturedOutput,
         pcapPartialEvidence(
           request,
           provider,

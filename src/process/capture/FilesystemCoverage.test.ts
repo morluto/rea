@@ -632,3 +632,107 @@ it.skipIf(process.platform === "win32")(
     expect(snapshot.coverage.enumeration_truncated).toBe(false);
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "preserves non-UTF-8 symlink target bytes through snapshot effects and schema parsing",
+  async () => {
+    const { processFilesystemSnapshotSchema } =
+      await import("../../domain/process/processCapture.js");
+    const root = await createTestTempDirectory("rea-fs-symlink-bytes-");
+    const path = join(root, "link");
+    const first = Buffer.from([0x61, 0xff]);
+    const second = Buffer.from([0x61, 0xfe]);
+    await symlink(first, path);
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    const before = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    await rm(path);
+    await symlink(second, path);
+    const after = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    const link = before.files.find((file) => file.type === "symlink");
+    expect(link).toMatchObject({
+      symlink_target: null,
+      symlink_target_hex: "61ff",
+    });
+    expect(
+      classifyFilesystemEffects(before, after).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("modified");
+    expect(
+      classifyFilesystemEffects(before, before).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("unchanged");
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target: "a�" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: "f" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: undefined }],
+      }).success,
+    ).toBe(false);
+    const legacy = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [{ ...link, symlink_target: "a�", symlink_target_hex: undefined }],
+    });
+    expect(classifyFilesystemEffects(legacy, legacy)[0]?.status).toBe(
+      "unknown",
+    );
+    const differentLegacy = processFilesystemSnapshotSchema.parse({
+      ...legacy,
+      files: legacy.files.map((file) => ({ ...file, symlink_target: "b�" })),
+    });
+    expect(classifyFilesystemEffects(legacy, differentLegacy)[0]?.status).toBe(
+      "modified",
+    );
+    const valid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        {
+          ...link,
+          symlink_target: "a�",
+          symlink_target_hex: Buffer.from("a�").toString("hex"),
+        },
+      ],
+    });
+    expect(classifyFilesystemEffects(valid, valid)[0]?.status).toBe(
+      "unchanged",
+    );
+    const oldValid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        { ...link, symlink_target: "target", symlink_target_hex: undefined },
+      ],
+    });
+    const newValid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        {
+          ...link,
+          symlink_target: "target",
+          symlink_target_hex: Buffer.from("target").toString("hex"),
+        },
+      ],
+    });
+    expect(classifyFilesystemEffects(oldValid, newValid)[0]?.status).toBe(
+      "unchanged",
+    );
+  },
+);

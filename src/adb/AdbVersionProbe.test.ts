@@ -13,6 +13,7 @@ vi.mock("../process/ExecFileOutput.js", async (importOriginal) => ({
 const selection = {
   binary: "/host/adb",
   pathSource: "environment",
+  environment: {},
 } as const;
 
 it("reports the fixed adb version-probe deadline", async () => {

@@ -1,4 +1,5 @@
 import {
+  lstat,
   mkdir,
   readdir,
   readFile,
@@ -11,7 +12,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
+import {
+  inventoryArtifact,
+  withArtifactResourceScope,
+} from "../../fixtures/artifactInventory.js";
+import { createArtifactInspection } from "../../../src/domain/artifactInspection.js";
 
 import {
   readEvidenceBundle,
@@ -41,8 +46,12 @@ import {
   createEvidenceBundle,
   parseEvidenceBundle,
   serializeEvidenceBundle,
+  DuplicateEvidenceRecordError,
 } from "../../../src/domain/evidenceBundle.js";
 import { analysisViewLayoutEvidence } from "../../fixtures/analysisView.js";
+import { publishCliAnalysisEvidence } from "../../../src/cli/analysisEvidenceDelivery.js";
+import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/processCaptureExample.js";
+import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 
 const bundle = (result = true) =>
   createEvidenceBundle([
@@ -52,6 +61,110 @@ const bundle = (result = true) =>
       { operation: "health", parameters: {}, result },
     ),
   ]);
+
+it("preserves tagged refusal JSON without interpreting Evidence-shaped fields", async () => {
+  const root = await createTestTempDirectory("rea-refused-delivery-");
+  const refusal = {
+    code: "unreadable_output",
+    evidence_id: "caller-selected diagnostic",
+    normalized_result: { partial: true },
+  };
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: false, error: refusal },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "summary",
+      evidenceOutput: join(root, "refused.json"),
+    },
+  );
+  expect(delivered).toBe(refusal);
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("preserves direct duplicate rejection and CLI identity merging for repeated inspection sources", async () => {
+  const root = await createTestTempDirectory("rea-repeated-delivery-");
+  const input = join(root, "input.txt");
+  await writeFile(input, "artifact contents");
+  const inventory = await inventoryArtifact(input);
+  const source = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: inventory,
+    },
+  );
+  const inspection = createArtifactInspection(source);
+  const complete = withEvidenceCallerInputPath(
+    createEvidence(undefined, source.provider, {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: {
+        ...inspection,
+        substeps: [...inspection.substeps, ...inspection.substeps],
+      },
+    }),
+    "./selected",
+  );
+  await expect(
+    deliverAnalysisEvidence(complete, join(root, "direct.json")),
+  ).rejects.toBeInstanceOf(DuplicateEvidenceRecordError);
+  const path = join(root, "cli.json");
+  const delivered = await publishCliAnalysisEvidence(
+    { ok: true, value: complete },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: path,
+      sourceEvidence: [withEvidenceCallerInputPath(complete, "./old"), source],
+    },
+  );
+  expect(delivered).toEqual(complete);
+  const saved = await readEvidenceBundle(path);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.records).toHaveLength(2);
+  expect(
+    saved.value.records.find(
+      (record) => record.evidence_id === complete.evidence_id,
+    )?.caller_input_path,
+  ).toBe("./selected");
+  await expect(stat(join(root, "direct.json"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it("retains a malformed artifact parent and refuses publication through both delivery paths", async () => {
+  const root = await createTestTempDirectory("rea-malformed-delivery-");
+  const evidence = createEvidence(
+    undefined,
+    { id: "fixture", name: "Fixture", version: "1" },
+    { operation: "inspect_artifact", parameters: {}, result: {} },
+  );
+  const direct = await deliverAnalysisEvidence(
+    evidence,
+    join(root, "direct.json"),
+  );
+  if (direct.ok) throw new Error("Expected invalid artifact closure");
+  const projected = projectAnalysisError(direct.error);
+  const cli = await publishCliAnalysisEvidence(
+    { ok: true, value: evidence },
+    {
+      providerId: "fixture",
+      operation: "inspect_artifact",
+      signal: new AbortController().signal,
+      detail: "complete",
+      evidenceOutput: join(root, "cli.json"),
+    },
+  );
+  expect(cli).toEqual(projected);
+  expect(JSON.stringify(projected)).toContain(evidence.evidence_id);
+  expect(await readdir(root)).toEqual([]);
+});
 
 it.each([undefined, "../selected-link/./artifact"])(
   "keeps same-invocation caller input on delivered summary and saved parent (%s)",
@@ -646,6 +759,169 @@ it("reuses authenticated file snapshots while isolating mutable public reads", a
   ledger.clear();
 });
 
+it.skipIf(process.platform === "win32")(
+  "rejects a regular-file parent traversal without writing to its lexical sibling",
+  async () => {
+    const directory = await createTestTempDirectory("rea-evidence-parent-");
+    const blocker = join(directory, "file");
+    await writeFile(blocker, "unchanged");
+    const selected = `${blocker}/../bundle.json`;
+    expect(await writeBundle(bundle(), selected, false)).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceFileError", path: selected },
+    });
+    expect(await readdir(directory)).toEqual(["file"]);
+    expect(await readFile(blocker, "utf8")).toBe("unchanged");
+    const corrected = join(directory, "bundle.json");
+    expect(await writeBundle(bundle(), corrected, false)).toMatchObject({
+      ok: true,
+      value: { path: corrected },
+    });
+    expect(await readEvidenceBundle(corrected)).toEqual({
+      ok: true,
+      value: bundle(),
+    });
+  },
+);
+
+describe("evidence bundle process-capture payloads", () => {
+  it.each([false, true])(
+    "rejects semantically invalid capture export before publication (overwrite: %s)",
+    async (overwrite) => {
+      const directory = await createTestTempDirectory(
+        "rea-invalid-capture-bundle-",
+      );
+      const path = join(directory, "bundle.json");
+      if (overwrite) await writeFile(path, "original");
+      // Authenticate the enclosing Evidence correctly while breaking its
+      // capture commitment, so generic bundle authentication still succeeds.
+      const capture = EMPTY_PROCESS_CAPTURE_EXAMPLE;
+      const record = createEvidence(undefined, PROCESS_PROVIDER, {
+        predicateType: "rea.process-capture",
+        operation: "capture_process_scenario",
+        parameters: {},
+        result: {
+          ...capture,
+          manifest: {
+            ...capture.manifest,
+            full_scenario_sha256: "0".repeat(64),
+          },
+        },
+      });
+      const value = createEvidenceBundle([record]);
+      const rejected = await writeBundle(value, path, overwrite);
+      if (rejected.ok) throw new Error("Expected invalid capture rejection");
+      expect(rejected.error).toMatchObject({
+        _tag: "EvidenceIntegrityError",
+        userMessage: expect.stringContaining(
+          `Process capture record ${record.evidence_id} has an invalid normalized_result`,
+        ),
+      });
+      expect(await readdir(directory)).toEqual(
+        overwrite ? ["bundle.json"] : [],
+      );
+      if (overwrite) expect(await readFile(path, "utf8")).toBe("original");
+      // Existing files and inline authentication use the same rejection facts.
+      await writeFile(path, serializeEvidenceBundle(value));
+      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle]) {
+        const loaded = await read(path);
+        if (loaded.ok) throw new Error("Expected invalid capture rejection");
+        expect(projectAnalysisError(loaded.error)).toEqual(
+          projectAnalysisError(rejected.error),
+        );
+      }
+    },
+  );
+
+  it.each([
+    {
+      label: "current provider",
+      provider: PROCESS_PROVIDER,
+      operation: "capture_process_scenario",
+      predicateType: "rea.process-capture",
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    },
+    {
+      label: "historical provider name",
+      provider: {
+        ...PROCESS_PROVIDER,
+        name: "REA deterministic process harness",
+      },
+      operation: "capture_process_scenario",
+      predicateType: "rea.process-capture",
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    },
+    {
+      label: "foreign provider and operation",
+      provider: { id: "foreign", name: "Foreign capture", version: "1" },
+      operation: "historical_capture",
+      predicateType: "rea.process-capture",
+      result: EMPTY_PROCESS_CAPTURE_EXAMPLE,
+    },
+    {
+      label: "unrelated predicate",
+      provider: PROCESS_PROVIDER,
+      operation: "capture_process_scenario",
+      predicateType: "foreign.payload",
+      result: {},
+    },
+  ])(
+    "round trips capture-related records without narrowing their identities ($label)",
+    async ({ provider, operation, predicateType, result }) => {
+      const directory = await createTestTempDirectory(
+        "rea-capture-bundle-identity-",
+      );
+      const path = join(directory, "bundle.json");
+      const value = createEvidenceBundle([
+        createEvidence(undefined, provider, {
+          operation,
+          predicateType,
+          result,
+          parameters: {},
+        }),
+      ]);
+      expect(await writeBundle(value, path, false)).toMatchObject({ ok: true });
+      for (const read of [readEvidenceBundle, readImmutableEvidenceBundle])
+        expect(await read(path)).toEqual({ ok: true, value });
+    },
+  );
+});
+
+it.each([true, false])(
+  "refuses symlink exports in both overwrite modes (target exists: %s)",
+  async (targetExists) => {
+    const directory = await createTestTempDirectory("rea-evidence-link-");
+    const outside = join(directory, "outside");
+    await mkdir(outside);
+    const outsidePath = join(outside, "bundle.json");
+    const encoded = serializeEvidenceBundle(bundle());
+    if (targetExists) await writeFile(outsidePath, encoded);
+    const link = join(directory, "escaped.json");
+    await symlink(outsidePath, link);
+    if (targetExists)
+      expect(await readEvidenceBundle(link)).toMatchObject({
+        ok: true,
+        value: bundle(),
+      });
+    for (const overwrite of [false, true]) {
+      expect(await writeBundle(bundle(), link, overwrite)).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceFileError", reason: "not-file", path: link },
+      });
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect((await readdir(directory)).sort()).toEqual([
+        "escaped.json",
+        "outside",
+      ]);
+      expect(await readdir(outside)).toEqual(
+        targetExists ? ["bundle.json"] : [],
+      );
+      if (targetExists)
+        expect(await readFile(outsidePath, "utf8")).toBe(encoded);
+    }
+  },
+);
+
 describe("evidence bundle filesystem adapter", () => {
   it.skipIf(process.platform === "win32").each(["/", "/."])(
     "preserves the directory requirement of a missing output ending in %s",
@@ -693,24 +969,6 @@ describe("evidence bundle filesystem adapter", () => {
     });
     expect(await writeBundle(evidenceBundle, path, true)).toMatchObject({
       ok: true,
-    });
-  });
-
-  it("reads the caller-selected symlink target and refuses to replace a symlink", async () => {
-    const directory = await createTestTempDirectory("rea-evidence-");
-    const outside = join(directory, "outside");
-    await mkdir(outside);
-    const outsidePath = join(outside, "bundle.json");
-    await writeFile(outsidePath, serializeEvidenceBundle(bundle()));
-    const link = join(directory, "escaped.json");
-    await symlink(outsidePath, link);
-    expect(await readEvidenceBundle(link)).toMatchObject({
-      ok: true,
-      value: bundle(),
-    });
-    expect(await writeBundle(bundle(), link, true)).toMatchObject({
-      ok: false,
-      error: { _tag: "EvidenceFileError", reason: "not-file" },
     });
   });
 

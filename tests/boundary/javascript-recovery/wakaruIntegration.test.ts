@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
@@ -415,6 +422,54 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
       await expect(
         access(join(fixture.output, "manifest.json")),
       ).resolves.toBeUndefined();
+      await assertRecoveryCleanup(fixture.launches);
+    });
+  },
+);
+
+describe.skipIf(process.platform !== "linux" || process.arch !== "x64")(
+  "Wakaru selected input layout",
+  () => {
+    it("preserves selected source identities and layout through a symlink followed by ..", async () => {
+      const fixture = await recoveryFixture();
+      await mkdir(join(fixture.root, "target/child"), { recursive: true });
+      await symlink("target/child", join(fixture.root, "link"));
+      const selected = `${fixture.root}/link/../selected.js`;
+      await writeFile(selected, "export const selected = true;\n");
+      const result = await fixture.service.recover({
+        path: selected,
+        additional_paths: [fixture.path],
+        output_directory: fixture.output,
+      });
+      if (!result.ok) throw result.error;
+      const value = javascriptRecoveryResultSchema.parse(
+        result.value.normalized_result,
+      );
+      const sources = [value.source, ...(value.additional_sources ?? [])];
+      expect(sources.map(({ path }) => path)).toEqual([selected, fixture.path]);
+      expect(sources.map(({ published_copy }) => published_copy.path)).toEqual([
+        join(fixture.output, "inputs/target/selected.js"),
+        join(fixture.output, "inputs/selected.js"),
+      ]);
+      expect(await readFile(sources[0]!.published_copy.path, "utf8")).toBe(
+        "export const selected = true;\n",
+      );
+      expect(await readFile(sources[1]!.published_copy.path, "utf8")).toBe(
+        "module.exports = 42;",
+      );
+      expect(result.value.parameters).toMatchObject({
+        path: selected,
+        additional_paths: [fixture.path],
+      });
+      expect(result.value.subject).toMatchObject({
+        local_path: selected,
+        digest: { sha256: sources[0]!.sha256 },
+      });
+      for (const [index, module] of value.modules.entries())
+        expect(module.provenance).toMatchObject({
+          original_path: sources[index]!.path,
+          original_sha256: sources[index]!.sha256,
+        });
       await assertRecoveryCleanup(fixture.launches);
     });
   },

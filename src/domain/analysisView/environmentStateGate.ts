@@ -2,16 +2,19 @@ import { identifierWords } from "./environmentStateWords.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   at,
   collectionPathOf,
   isObject,
   lastSegmentValue,
   listItems,
+  markedDeleted,
   renderStateEntity,
   renderStateList,
   same,
   scalarText,
   type JsonObject,
+  type ListedIds,
   type RecordedViewReason,
   type ReplayKey,
   type StateEntity,
@@ -63,6 +66,10 @@ export interface StatePlan {
   readonly projected?: readonly number[];
   /** Item lines first recorded after the initial reads whose identity they show, decided against the lines left once variants are dropped. */
   readonly late?: readonly LateLine[];
+  /** The members later plain item reads show of the entity they name. */
+  readonly laterFields?: readonly string[];
+  /** The member the tool's reads set `true` on an entity the application soft-deleted. */
+  readonly deletedFlag?: StateItemView["deleted_flag"];
   /** The query keys that pick calls of the replayed reads out. */
   readonly projectedKeys?: readonly ReplayKey[];
 }
@@ -93,6 +100,8 @@ export interface StateGateContext {
     id: string,
   ) => StateEntity | undefined;
   readonly inCollection: (type: string, collection: string) => StateEntity[];
+  /** Every field an initial entity of the type holds, from any view. */
+  readonly heldFields?: (type: string) => ReadonlySet<string>;
   readonly volatileOf: (type: string) => ReadonlySet<string>;
   readonly idField: (type: string) => string;
   /** By path, the top-level members each response there mints; views of other paths keep them. */
@@ -117,6 +126,13 @@ class FieldUnion {
       this.#required === undefined
         ? keys
         : new Set([...this.#required].filter((key) => keys.has(key)));
+  }
+
+  /** Add a field some object showed without changing which fields every object carries. */
+  note(key: string): void {
+    if (this.#seen.has(key)) return;
+    this.#seen.add(key);
+    this.fields.push(key);
   }
 
   get required(): string[] {
@@ -193,6 +209,11 @@ export const checkItemPlan = (
       const object = body === undefined ? undefined : at(body, plan.pointer);
       if (isObject(object)) union.add(object);
     });
+  // A field only later reads show, which no initial entity holds, is the view's too.
+  const held = context.heldFields?.(plan.type);
+  if (held !== undefined)
+    for (const member of plan.laterFields ?? [])
+      if (!held.has(member)) union.note(member);
   context.retain(union.bytes);
   const view = { tool: plan.tool.name, fields: union.fields };
   const envelope: { skeleton?: string; members?: string[] } = {};
@@ -215,6 +236,9 @@ export const checkItemPlan = (
     fields: union.fields,
     required_fields: union.required,
     envelope_ordinal: plan.latest[0]!.ordinal,
+    ...(plan.deletedFlag === undefined
+      ? {}
+      : { deleted_flag: plan.deletedFlag }),
     ...declaredMembers(envelope.members, context.retain),
     checked_record_ordinals: plan.latest.map((record) => record.ordinal),
     ...replayedReads(plan),
@@ -246,7 +270,7 @@ const listQuery = (
         ordinal: record.ordinal,
         values,
         choices,
-        listed: items.map((item) => scalarText(item[field]) ?? ""),
+        listed: items.map((item) => scalarText(ownMember(item, field)) ?? ""),
         entities: context.inCollection(
           plan.type,
           collectionPathOf(record, false),
@@ -302,6 +326,7 @@ const listReproduces = (
       readonly fields: string[];
       readonly pointer: string;
       readonly counters: string[];
+      readonly listed_ids: ListedIds[];
       readonly whole: ReadonlySet<number>;
       readonly query: ListQuery | undefined;
     };
@@ -317,7 +342,7 @@ const listReproduces = (
       body === undefined ? undefined : listItems(body, plan.pointer);
     if (body === undefined || items === undefined) return false;
     const observed = new Map(
-      items.map((item) => [scalarText(item[field]) ?? "", item]),
+      items.map((item) => [scalarText(ownMember(item, field)) ?? "", item]),
     );
     const computed = view.query?.record_ordinals.includes(record.ordinal)
       ? evaluateQuery(
@@ -333,9 +358,11 @@ const listReproduces = (
           const entity = context.entity(
             plan.type,
             collection,
-            scalarText(item[field]) ?? "",
+            scalarText(ownMember(item, field)) ?? "",
           );
-          return entity === undefined ? [] : [entity];
+          return entity === undefined || markedDeleted(entity.fields)
+            ? []
+            : [entity];
         }));
     const rendered = members.map((entity) => {
       const item = observed.get(entity.id);
@@ -367,13 +394,18 @@ export const checkListPlan = (
   plan: StatePlan,
 ): StateView => {
   const union = new FieldUnion();
-  const { whole, counters, minted } = listFacts(context, plan, union);
+  const { whole, counters, minted, listedIds } = listFacts(
+    context,
+    plan,
+    union,
+  );
   context.retain(union.bytes);
   const base = {
     tool: plan.tool.name,
     fields: union.fields,
     pointer: plan.pointer,
     counters,
+    listed_ids: listedIds,
     whole,
   };
   let query = listQuery(context, plan, whole);
@@ -414,6 +446,7 @@ export const checkListPlan = (
             .filter((ordinal) => whole.has(ordinal)),
         }),
     counters,
+    ...(listedIds.length === 0 ? {} : { listed_ids: listedIds }),
     ...(query === undefined ? {} : { query }),
     ...declaredMembers(minted, context.retain),
     checked_record_ordinals: plan.latest.map((record) => record.ordinal),

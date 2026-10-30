@@ -7,8 +7,8 @@ import { EvidenceIntegrityError } from "../evidenceErrors.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { readEvidence, readEvidencePayload } from "../evidenceValidation.js";
 import { err, ok, type Result } from "../result.js";
-import { functionDossierSchema } from "../hopperValues.js";
-import { inspectMachoSchema } from "../native/nativeInspection.js";
+import { functionDossierSchema } from "../native/functionDossier.js";
+import { retainedInspectMachoSchema } from "../native/nativeInspection.js";
 import {
   managedNativeBoundaryInspectionSchema,
   type ManagedNativeBoundaryInspection,
@@ -55,7 +55,7 @@ const readNativeObservation = (
   const evidence = read.value;
   if (evidence.operation === "inspect_macho") {
     const payload = readEvidencePayload(
-      inspectMachoSchema,
+      retainedInspectMachoSchema,
       evidence.normalized_result,
     );
     if (!payload.ok) return payload;

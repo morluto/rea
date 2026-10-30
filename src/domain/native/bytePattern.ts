@@ -3,6 +3,9 @@ import { addressCoordinate } from "./addressCoordinate.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
 
+/** Maximum matches delivered by one byte-search page. */
+export const MAX_BYTE_SEARCH_MATCHES = 1000;
+
 /** Exact grammar belongs to the object refinement, not a repeating advertised regex. */
 export const bytePatternFields = {
   pattern: z
@@ -152,7 +155,7 @@ export const byteSearchResultSchema = z
             .nullable(),
         }),
       )
-      .max(1000),
+      .max(MAX_BYTE_SEARCH_MATCHES),
     searched: z.strictObject({
       blocks: z.array(coverageBlock),
       bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),

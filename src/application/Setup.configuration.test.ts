@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
-import { setupRegistrationCommand } from "./SetupHost.js";
+import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
@@ -414,13 +414,23 @@ describe("setup workflow action selection", () => {
 
     expect(result.status).toBe("ready");
     expect(host.configuredCommands).toEqual([
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ]);
     expect(
-      setupRegistrationCommand("win32", undefined, CURRENT_ENTRYPOINT_PATH),
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: CURRENT_ENTRYPOINT_PATH,
+      }),
     ).toEqual([process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"]);
-    expect(setupRegistrationCommand("win32", undefined, undefined)).toEqual([]);
-    expect(setupRegistrationCommand("win32", "npx", undefined)).not.toEqual([]);
+    expect(
+      currentClientRegistrationCommand({
+        platform: "win32",
+        entrypointPath: undefined,
+      }),
+    ).toEqual([]);
   });
 });
 
@@ -586,5 +596,62 @@ describe("MSIX Claude Desktop setup", () => {
     );
     expect(skillOnly.status).toBe("ready");
     expect(host.skillInstalls).toBe(1);
+  });
+});
+
+describe("setup tool family scope", () => {
+  it("writes the requested scope into the registration environment", async () => {
+    const host = new FakeSetupHost();
+    host.doctorHealthy = true;
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const plan = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(plan.plannedActions[0]?.detail).toContain(
+      "REA_MCP_TOOL_FAMILIES=session,application",
+    );
+
+    const applied = await runSetup(
+      {
+        ...options(true),
+        clientIds: ["cursor"],
+        toolFamilies: "session,application",
+      },
+      host,
+    );
+    expect(applied.status).toBe("ready");
+    expect(host.configuredProviderEnvironments).toContainEqual({
+      REA_MCP_TOOL_FAMILIES: "session,application",
+    });
+  });
+
+  it("still offers Hopper on an unconfigured machine when a scope is set", async () => {
+    const host = new FakeSetupHost("darwin");
+    host.version = "14.5";
+    host.skill = "unchanged";
+    host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+
+    const result = await runSetup(
+      {
+        ...options(false),
+        clientIds: ["cursor"],
+        toolFamilies: "session",
+        proposeHopper: true,
+      },
+      host,
+    );
+
+    // The advertised family scope is a registration setting, not provider
+    // discovery; it must not suppress the Hopper installation offer.
+    expect(result.plannedActions.map(({ kind }) => kind)).toContain(
+      "install_hopper",
+    );
   });
 });

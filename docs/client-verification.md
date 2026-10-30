@@ -11,6 +11,16 @@ and provider lanes. Each record below states its host, client version, model
 fixture, and remaining coverage; a native-client run with a loopback model does
 not establish live model-service acceptance.
 
+## Launch environment verification
+
+`rea mcp doctor --json` starts the production MCP adapter with the current runtime
+executable and environment. A healthy result establishes that adapter's
+initialization, discovery and target-free request flow; it does not verify a
+client's configured launcher or its inherited environment. Test the generated
+registration through the actual client, including a reduced `PATH` when checking
+desktop or service startup. Record the client version and launch environment
+separately from terminal doctor results. See [launcher troubleshooting](client-configuration.md#launchers-and-path).
+
 ## Published Pi code-mode renderer limit
 
 A separate probe of the published `@earendil-works/pi-codemode` 1.1.0 and 1.2.0
@@ -52,6 +62,14 @@ the shared personal skill through their default search paths without an explicit
 skill setting; Hermes discovers it through the selected `HERMES_HOME`.
 Set `REA_VERIFY_HERMES_STICKY_PROFILE=1` to exercise native Hermes selection of
 a named sticky profile with `HERMES_HOME` still pointing to its root.
+
+For Qwen on POSIX, set `REA_VERIFY_QWEN_REDUCED_PATH=1` and select its JavaScript
+entry point with `REA_VERIFY_QWEN_COMMAND` to test a restricted client environment.
+Setup retains the caller's `PATH`; the native Qwen `chat` or `call` run then uses
+an isolated `PATH` containing only Bash for the shell-tool fixture. The lane
+checks that `node`, `npm` and `npx` cannot be found and uses the generated REA
+registration unchanged. Its receipt records `reducedPath`, `clientPath` and
+`registrationCommand`; the option alone does not establish a passing native run.
 
 The Qwen lane also supports native Windows (verified with Qwen Code 0.25.1 and
 Node 24.19.0 for both `chat` and `call`). With Node 24.18.0, the same `call`

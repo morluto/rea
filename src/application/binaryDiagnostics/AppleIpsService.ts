@@ -3,7 +3,6 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AppleIpsPort } from "./AppleIpsPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
@@ -14,9 +13,9 @@ import {
   inspectAppleIpsInputSchema,
   type AppleIps,
 } from "../../domain/native/appleIps.js";
-import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, type Result } from "../../domain/result.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 const OPERATION = "inspect_apple_ips";
 
@@ -32,18 +31,14 @@ export class AppleIpsService {
     rawInput: unknown,
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
-    if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, { cause: options.signal.reason }),
-      );
-    const input = inspectAppleIpsInputSchema.safeParse(rawInput);
-    if (!input.success)
-      return err(
-        analysisInputErrorFromIssues(OPERATION, input.error.issues, rawInput, {
-          cause: input.error,
-        }),
-      );
-    if (!isAbsolute(input.data.path))
+    const input = parseAnalysisInput(
+      OPERATION,
+      rawInput,
+      inspectAppleIpsInputSchema,
+      options?.signal,
+    );
+    if (!input.ok) return input;
+    if (!isAbsolute(input.value.path))
       return err(
         new AnalysisInputError(OPERATION, undefined, [
           {
@@ -53,13 +48,13 @@ export class AppleIpsService {
           },
         ]),
       );
-    const result = await this.provider.inspect(input.data, options);
+    const result = await this.provider.inspect(input.value, options);
     if (!result.ok) return result;
     const report = appleIpsSchema.safeParse(result.value);
     if (
       !report.success ||
-      report.data.artifact.path !== input.data.path ||
-      !validReport(report.data, input.data)
+      report.data.artifact.path !== input.value.path ||
+      !validReport(report.data, input.value)
     )
       return err(
         new AnalysisOutputError(
@@ -78,7 +73,7 @@ export class AppleIpsService {
         this.provider.identity,
         {
           operation: OPERATION,
-          parameters: input.data,
+          parameters: input.value,
           result: value,
           confidence: "observed",
           limitations: value.limitations,

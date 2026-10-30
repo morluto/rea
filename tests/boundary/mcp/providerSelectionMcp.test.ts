@@ -7,6 +7,7 @@ import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -46,6 +47,57 @@ afterEach(async () => {
   if (directory !== undefined)
     await rm(directory, { recursive: true, force: true });
   directory = undefined;
+});
+
+it("delivers provider-owned diagnostic keys without narrowing their JSON facts", async () => {
+  const diagnostics = jsonObjectSchema.parse(
+    JSON.parse(
+      '{"__proto__":{"observed":true},"constructor":null,"empty":"","count":0}',
+    ),
+  );
+  const provider = candidate("alpha", []);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...provider,
+        inspectAvailability: () => ({
+          status: "available",
+          code: null,
+          reason: null,
+          diagnostics,
+        }),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "provider-diagnostics", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  const response = await mcp.callTool({
+    name: "binary_session",
+    arguments: { detail: "complete" },
+  });
+  expect(response.isError).toBeFalsy();
+  const payload = toolContract("binary_session").outputSchema.parse(
+    response.structuredContent,
+  );
+  const found = analysisProviderCandidate
+    .array()
+    .parse(payload.result.analysis_provider_candidates)
+    .find((entry) => entry.provider.id === "alpha");
+  if (found === undefined) throw new Error("Missing provider candidate");
+  expect(found.availability.diagnostics).toEqual(diagnostics);
+  expect(Object.hasOwn(found.availability.diagnostics, "__proto__")).toBe(true);
+  const text = response.content.find((item) => item.type === "text");
+  if (text?.type !== "text")
+    throw new Error("Missing serialized session status");
+  expect(JSON.parse(text.text)).toEqual(response.structuredContent);
 });
 
 describe("provider selection over MCP", () => {

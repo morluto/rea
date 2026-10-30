@@ -13,8 +13,12 @@ export const GHIDRA_PROCESS_DIAGNOSTIC_BYTES = 8 * 1024 * 1024;
 /** JVM error class located in all launcher output, beyond the retention budget. */
 export const GHIDRA_JVM_OOME_MARKER = "java.lang.OutOfMemoryError";
 
+/** A rejected caller input owns request output, not the launcher's history. */
+export type GhidraDiagnosticsScope = "session" | "request";
+
 /** Inputs needed to project bounded diagnostics for one Ghidra runtime. */
 export interface GhidraDiagnosticsOptions {
+  readonly scope?: GhidraDiagnosticsScope;
   readonly targetPath: string;
   readonly targetSha256: string;
   readonly targetAdmission?: JsonValue;
@@ -43,9 +47,16 @@ export const createGhidraDiagnostics = (
   ) {
     const history: Record<string, JsonValue> = { ...options.previous };
     delete history.failure_output;
+    if (options.scope === "request") {
+      delete history.stdout;
+      delete history.stderr;
+      delete history.launch_support;
+      history.diagnostic_scope = "request";
+    }
     return history;
   }
   return {
+    ...(options.scope === "request" ? { diagnostic_scope: "request" } : {}),
     target_path: options.targetPath,
     target_sha256: options.targetSha256,
     ...(options.targetAdmission === undefined
@@ -71,7 +82,8 @@ export const createGhidraDiagnostics = (
           ghidra_log_path: options.launch.ghidraLogPath,
           script_log_path: options.launch.scriptLogPath,
           process_id: options.launch.process.pid ?? null,
-          ...(options.launch.launchSupport === undefined
+          ...(options.scope === "request" ||
+          options.launch.launchSupport === undefined
             ? {}
             : {
                 launch_support: options.launch.launchSupport.map((output) => ({
@@ -90,14 +102,18 @@ export const createGhidraDiagnostics = (
           stop_requested: options.snapshot.stopRequested === true,
           diagnostic_truncated: options.snapshot.diagnosticTruncated === true,
           output_incomplete: options.snapshot.outputIncomplete === true,
-          stdout: ghidraDiagnosticStream(
-            options.snapshot.stdout,
-            options.token,
-          ),
-          stderr: ghidraDiagnosticStream(
-            options.snapshot.stderr,
-            options.token,
-          ),
+          ...(options.scope === "request"
+            ? {}
+            : {
+                stdout: ghidraDiagnosticStream(
+                  options.snapshot.stdout,
+                  options.token,
+                ),
+                stderr: ghidraDiagnosticStream(
+                  options.snapshot.stderr,
+                  options.token,
+                ),
+              }),
         }),
     ...(options.failure_output === undefined
       ? {}

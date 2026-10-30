@@ -78,6 +78,15 @@ classification, and unavailable sources never establish route reachability or
 the complete application route denominator. See the
 [route inventory guide](https://github.com/morluto/rea/blob/main/docs/javascript-route-inventory.md).
 
+For captured endpoint observations and inference facts, `analyze_web_bundle`
+also accepts `view: {kind: "web-bundle", collection: "endpoints", limit: 32}`
+with `detail: "summary"`. Read later `endpoints`, `inferences`, or `summary`
+pages from the retained parent. Filter before requesting detail; retain
+`source_index` together with parent ID and collection, and request `location`
+or `basis` when tracing sources. Page exhaustion does not mean producer
+completeness: check `completeness`, structured `source_unknowns`, and limitations.
+Endpoint candidates remain inferences rather than confirmed network behavior.
+
 ## Read a module without repeating analysis
 
 Use the actual returned parent ID, on the same connection, as `source.evidence_id`.

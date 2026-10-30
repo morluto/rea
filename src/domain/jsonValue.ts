@@ -204,3 +204,8 @@ objectValidation._zod.toJSONSchema = objectProjection;
 /** JSON object boundary for caller-visible parameter maps. */
 export const jsonObjectSchema = jsonValueSchema.pipe(objectValidation);
 jsonObjectSchema._zod.toJSONSchema = objectProjection;
+
+/** Validate an exclusively owned JSON object while retaining its existing tree. */
+export const ownedJsonObjectSchema =
+  ownedJsonValueSchema.pipe(objectValidation);
+ownedJsonObjectSchema._zod.toJSONSchema = objectProjection;

@@ -96,61 +96,70 @@ cliTest(
   },
 );
 
+const keyedNibIdentityFixture = (format: "xml" | "binary"): Buffer => {
+  // Source-derived keyed-nib records, not output from an Apple compiler.
+  const uid = (value: number) =>
+    format === "binary" ? { UID: value } : { CF$UID: value };
+  const source = {
+    $archiver: "NSKeyedArchiver",
+    $version: 100000,
+    $objects: [
+      "$null",
+      {
+        $class: uid(4),
+        id: "2",
+        archiveUID: 2,
+        objectID: uid(8),
+        "object-id": uid(9),
+        title: "Root",
+        proto_key: { constructor: "authored", kept: true },
+        NSSubviews: [uid(2)],
+      },
+      {
+        $class: uid(4),
+        objectID: uid(8),
+        "object-id": uid(9),
+        title: "Child",
+      },
+      {
+        $class: uid(5),
+        objectID: uid(8),
+        UISource: uid(2),
+        UIDestination: uid(1),
+        UILabel: "parent",
+      },
+      {
+        $classname: "ArchiveProbeView",
+        $classes: ["ArchiveProbeView", "UIView", "NSObject"],
+      },
+      {
+        $classname: "UIRuntimeOutletConnection",
+        $classes: [
+          "UIRuntimeOutletConnection",
+          "UIRuntimeConnection",
+          "NSObject",
+        ],
+      },
+      { $class: uid(7), "NS.objects": [uid(1)] },
+      { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
+      "2",
+      "shared:hierarchy:authored",
+    ],
+    $top: { UINibTopLevelObjectsKey: uid(6) },
+  };
+  const bytes = Buffer.from(
+    format === "binary" ? buildBinary(source) : build(source),
+  );
+  const keyOffset = bytes.indexOf("proto_key");
+  expect(keyOffset).toBeGreaterThanOrEqual(0);
+  Buffer.from("__proto__").copy(bytes, keyOffset);
+  return bytes;
+};
+
 cliTest.for(["xml", "binary"] as const)(
   "preserves UID identity despite colliding authored IDs in %s through CLI and MCP",
   async (format, { cli }) => {
-    // Source-derived keyed-nib records, not output from an Apple compiler.
-    const uid = (value: number) =>
-      format === "binary" ? { UID: value } : { CF$UID: value };
-    const source = {
-      $archiver: "NSKeyedArchiver",
-      $version: 100000,
-      $objects: [
-        "$null",
-        {
-          $class: uid(4),
-          id: "2",
-          archiveUID: 2,
-          objectID: uid(8),
-          "object-id": uid(9),
-          title: "Root",
-          NSSubviews: [uid(2)],
-        },
-        {
-          $class: uid(4),
-          objectID: uid(8),
-          "object-id": uid(9),
-          title: "Child",
-        },
-        {
-          $class: uid(5),
-          objectID: uid(8),
-          UISource: uid(2),
-          UIDestination: uid(1),
-          UILabel: "parent",
-        },
-        {
-          $classname: "ArchiveProbeView",
-          $classes: ["ArchiveProbeView", "UIView", "NSObject"],
-        },
-        {
-          $classname: "UIRuntimeOutletConnection",
-          $classes: [
-            "UIRuntimeOutletConnection",
-            "UIRuntimeConnection",
-            "NSObject",
-          ],
-        },
-        { $class: uid(7), "NS.objects": [uid(1)] },
-        { $classname: "NSArray", $classes: ["NSArray", "NSObject"] },
-        "2",
-        "shared:hierarchy:authored",
-      ],
-      $top: { UINibTopLevelObjectsKey: uid(6) },
-    };
-    const bytes = Buffer.from(
-      format === "binary" ? buildBinary(source) : build(source),
-    );
+    const bytes = keyedNibIdentityFixture(format);
     const app = await writeUIKitApp("rea-keyed-nib-hierarchy-", bytes);
     const path = join(app, "Contents/Resources/Main.nib");
     const output = await cli.run({
@@ -180,8 +189,10 @@ cliTest.for(["xml", "binary"] as const)(
         objectID: "2",
         "object-id": "shared:hierarchy:authored",
         title: "Root",
+        ["__proto__"]: { constructor: "authored", kept: true },
       },
     });
+    expect(Object.hasOwn(root!.attributes, "__proto__")).toBe(true);
     const child = report.graph.nodes.find(
       ({ attributes }) => attributes.interface_builder_object_id === "2",
     );

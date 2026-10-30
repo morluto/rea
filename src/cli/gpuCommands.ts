@@ -99,6 +99,7 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
             );
           const service = createGpuCodeObjectsService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

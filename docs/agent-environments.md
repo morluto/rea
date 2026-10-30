@@ -1,5 +1,12 @@
 # Agent environments from recorded captures
 
+For a first environment, start with the
+[quickstart](agent-environments-quickstart.md): record an app or use a saved
+session, build and run the environment, and add tasks and reward checks.
+The [implementation index](specs/agent-environments/README.md) links
+the contributing PRs and their verification records. This page is the detailed
+command and behavior reference.
+
 Use `rea environment-build` to turn one recorded capture into an agent
 environment bundle in one offline step: a folder `agent-env run` builds and
 runs, whose MCP server answers from what the capture observed. See
@@ -79,8 +86,9 @@ name it `.har`.
   manifest's, unless the capture's origin is a loopback name or an IP literal:
   the capture file then names it (`grafana.har` and `grafana.capture.json`
   become `grafana`) and a `name-from-file` warning says so. A file name that
-  yields no portable label (kebab-case, at most 64 characters, not a Windows
-  device name) is refused; pass `--name`.
+  yields no portable label (kebab-case, at most 63 characters for a DNS service
+  label, not a Windows device name or a label interpreted as an IP address) is
+  refused; pass `--name`.
 - `--package-tarball` works as for the export, and `--capture-timeout-ms`
   as for `inspect-web-network-capture`.
 - `--dry-run` runs every stage and prints the report with `status: "planned"`
@@ -166,7 +174,7 @@ what to record next; hints never change what is served:
 
 | Reason                | Hint                                                                                                                                                                                                                                             |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `no-state-target`     | The write's path names no collection or item the capture reads. Read the collection or item it changes.                                                                                                                                          |
+| `no-state-target`     | The write could not be linked to a modelled target. Check the path template and recorded views; record missing reads. Some route forms may not be supported.                                                                                     |
 | `no-call`             | No recorded call of this tool was modelled, for example because every call failed. Record a successful call.                                                                                                                                     |
 | `body-unusable`       | The retained request or response cannot be modelled. Record a successful call with a complete supported request and reproducible response.                                                                                                       |
 | `no-observation`      | Nothing showed the entity or document this write changed. Read a created entity back by id right after the write; for an update or delete the state must already hold the entity, so read it before the write or record the create that made it. |
@@ -175,6 +183,7 @@ what to record next; hints never change what is served:
 | `side-effect`         | The write changed something besides its own entity, which the environment does not model.                                                                                                                                                        |
 | `unconfirmed`         | No later read showed the effect. Read the entity and its list after the write.                                                                                                                                                                   |
 | `incomplete-entities` | The write is confirmed, but the views that show its entity cannot render it in full. Read the written entity through every view that lists it.                                                                                                   |
+| `unknown-clock`       | The learned rules generate timestamps, but the capture establishes no global served clock start. Record usable start times and completed durations for every request.                                                                            |
 
 The bundle ships `evidence.json`, the whole capture Evidence, response bodies
 included. Inspection excludes the values of the standard authentication headers
@@ -196,7 +205,10 @@ attached and a transaction no record represents, and each transaction URL's
 query once. Bodies larger than 4 MiB of UTF-8 text are not
 scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
 event pointers, including base64 bodies whose decoded scan was cut. An empty name
-warning does not establish that these bodies were checked. Names do not establish sensitivity,
+warning does not establish that these bodies were checked. A browser scenario's
+saved values (`save` and `save_response`) named like credentials but not marked
+`secret: true` are recorded unredacted; `credential-named-saved-values` lists up
+to 20 of them by parameter pointer. Names do not establish sensitivity,
 so the build never refuses on them. Capture
 
 Evidence also records the capture file's absolute path (`subject.local_path`,
@@ -394,7 +406,8 @@ returns that record's recorded response. Selection compares the supplied path
 parameters against the record's path segments at the parameter indexes, then
 the supplied query values against the record's query string, and keeps the
 record with the most matches; ties keep manifest order. A query argument accepts
-one string or an array of strings for repeated values; the array is matched
+one string, a number or boolean sent as its JSON text, or an array of strings for
+repeated values; the array is matched
 against every occurrence in captured order. The raw recorded query remains the
 replay evidence. The result reports
 where the answer came from:
@@ -601,8 +614,9 @@ shape and carries no annotations.
 Path parameters are required strings whose
 description names the segment index, the templating rule and the observed
 values (sampled within the list budget above; the manifest keeps them all);
-query parameter names accept an optional string or array of strings (for
-repeated values in captured order); write methods accept an
+query parameter names accept an optional string, number or boolean (a number or
+boolean is sent as its JSON text) or array of strings (for repeated values in
+captured order); write methods accept an
 optional `body` object described by the recorded top-level key types. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
@@ -709,6 +723,8 @@ and `POST` tools the capture shows only reading (a lookup answering as a `GET`
 did, an RPC tunnel naming read operations, a session renewal), stay served and
 answer from their recordings with the reason `query-body`; they are not write
 tools.
+`HEAD`, `OPTIONS` and `TRACE` tools also replay their captured responses; their
+state views report `method-replay` and coverage counts them as recorded reads.
 
 A line establishes whole-collection membership only from the beginning:
 `offset`, `start`, `_start` and `page` must be zero when present. Positive or
@@ -723,14 +739,14 @@ tools are not served, so no call claims a change it does not make; each one's
 plan states why in its `reason`. A served write changes the live state, which
 every MCP session and `data/get` then see:
 
-| Effect                    | Call                                                                                                                                                                                                                                                                                                                 |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                 |
-| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                    |
-| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), with any sent members; it is served only when a recorded call found those fields already set, so a toggle never is. |
-| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                   |
-| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).             |
-| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                           |
+| Effect                    | Call                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create`                  | Adds an entity to the collection the path names, built from the observed entity with each ruled field taken from the call or generated, at the plan's `insert` position. A plan tied to its exemplar's collection writes only there.                                                                                                                                                                |
+| `update`                  | Sets the sent members on the entity the path names, constants for members accepted only with their recorded value, and the clock, nested clock, increment, slug, stamp, derived, composed, reference, unique and renewed changes the plan models.                                                                                                                                                   |
+| `update` (action)         | A `POST`, `PUT` or `PATCH` to an item path plus an action segment (`/{type}/{id}/archive`) sets, on the entity before the segment, each scalar the recorded calls showed the action set (`set`), or flips each boolean they showed it flipping both ways (`toggle`), with any sent members; it is served only when a recorded call found what it sets already set, or flipped back what it toggles. |
+| `delete`                  | Removes the entity the path names.                                                                                                                                                                                                                                                                                                                                                                  |
+| bulk `update` or `delete` | A `DELETE`, `PUT` or `PATCH` at a collection, or a `POST` to it plus `delete`, `remove` or `destroy`, applies its effect to every entity the body names, as recorded: an array of ids or of objects carrying the id field, at the root or as the body's one array member (`{"IDs": […], "Read": true}`).                                                                                            |
+| `document`                | Merges the body into the plan's document object, or replaces it for `PUT`.                                                                                                                                                                                                                                                                                                                          |
 
 An update's unsent changes follow the plan's rules. A `held-clock` is a clock
 the client sends back as it read it and the application stamps anew (Ghost's
@@ -741,7 +757,9 @@ the entity already names under its `created…by` counterpart into a
 `modified…by` or `updated…by` field. A `derived` field takes a value showing
 the one sent member's text that the entity stores nowhere (a field Ghost
 derives from `html`), only with that member's recorded value. An action's
-`set` rule sets a scalar to the value the recorded calls left it at.
+`set` rule sets a scalar to the value the recorded calls left it at, and its
+`toggle` rule flips a boolean, refusing a call on an entity that holds none
+there (Miniflux's `PUT /v1/entries/{id}/bookmark` stars and unstars).
 
 Its answer has the status and content type of the plan's recorded response,
 with the written entity or its identity rendered in, no body, or the recorded
@@ -756,11 +774,19 @@ sending a `derived` rule's member to an entity that does not hold the value the
 recorded call found, a nested clock on an entity holding no such object, and a
 rendered answer missing a field the recorded response carried, and an update or delete of an entity the state does not hold answers
 the recorded 400, 404 or 410 of the tool or of an item view of the type, if
-any. A refused call leaves the state unchanged. Values a write generates are
+any. A served delete of a type whose item view has a `deleted_flag` (the
+member, `deleted`, `isDeleted` or `is_deleted`, its reads set `true` on a
+record the application soft-deleted, as EspoCRM does) keeps the entity until
+`data/reset` or `data/add`, within the size `data/add` loads, so a read of it by
+id answers its last fields with that flag `true`. A refused call leaves the
+state unchanged. Values a write generates are
 deterministic: the clock starts at `write_clock` and advances one second per
 served write, sequences take one past both the largest held value and the
 largest they generated, and UUIDs and tokens derive from the state Evidence
-id, tool, field and write count, skipping held values. `data/reset` and
+id, tool, field and write count, skipping held values. If `write_clock` is null,
+plans needing `clock`, `held-clock`, or `nested-clock` retain their learned rules
+but are withheld with `unknown-clock`; other confirmed plans can still be served.
+`data/reset` and
 `data/add` restart the clock, counter and sequences, so the same calls after a
 reset give the same state. Answers carry `state: {"source": "state", "view":
 "create" | "update" | "delete", …}` or `"document-write"`; a bulk answer adds
@@ -864,8 +890,9 @@ names a `document` view once, at its initial document's `path`. The `version`,
 and the `state_evidence_id` and `types` that `data/get` reports, must match
 the served state, so a `data/get` result loads back unchanged. A number without
 an exact native value, or whose serialized spelling would not be read as exact
-(an integer from 2^53 below 1e21, such as `1e20`, in any spelling), or a
-`__proto__` member is refused rather than altered.
+(an integer from 2^53 below 1e21, such as `1e20`, in any spelling), is refused
+rather than altered. Caller data preserves all own JSON members, including
+`__proto__`; unknown members of the state document's structure are refused.
 An invalid document is `-32602` naming the first problem by JSON pointer, as in
 `/rea_state/entities/3/collection` (also in `error.data.path`); a problem
 inside caller data (`fields`, `value`, `types`) is located at that member, so
@@ -974,7 +1001,8 @@ serves replay. The complete tool catalog the bundle serves must also fit the
 server's advertised catalog budget before any files are written. Privately parsed JSON is sealed once so authentication
 and replay share immutable response trees rather than copying the capture repeatedly.
 `--name` replaces the manifest's portable kebab-case name as the env folder and env id
-(Windows device names such as `con` and `lpt1` are refused);
+(at most 63 characters for its DNS service label; Windows device names and
+labels interpreted as IP addresses are refused);
 `--package-tarball <path>` copies a packed `rea-agents` tarball into the env
 folder and makes the Dockerfile install it instead of the registry package and
 remove it in the same layer, which is how a checkout rather than a release is
@@ -992,7 +1020,12 @@ Windows inherits ACLs and REA does not establish owner-only access there. Choose
 an already private Windows destination when captured content needs it.
 
 The Dockerfile sets `MCP_HOST=0.0.0.0` and `MCP_PORT=18765`, the port the
-framework maps for an MCP server env; the framework's own deploy supplies
+framework maps for an MCP server env, and `MCP_ALLOWED_HOSTS` naming the loopback
+addresses and the environment name, because the container binds outside loopback
+and the server refuses to serve on such a bind without an operator-declared
+allowlist: the framework's published port is reached over loopback and its
+gateway proxies to the env container by the compose service name (the
+environment name). The framework's own deploy supplies
 `MCP_HOST`, `MCP_PORT` and `ENVIRONMENT_NAME`, so the served card carries the
 env's name. It installs Debian's `python3` because the framework's local
 sandbox probes a container's readiness with `python3` inside it, which the slim

@@ -170,13 +170,26 @@ type CapturedOutputRead =
 
 /** One completed LLDB observation, before projection into the result contract. */
 export interface NativeCallTrace {
-  readonly debugger: ResolvedTool & { readonly version: string | null };
+  readonly debugger: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly version: string | null;
+  };
   readonly run: z.infer<typeof tracedSchema>;
   readonly stdout: CapturedOutput;
   readonly stderr: CapturedOutput;
   /** REA confirmed the traced process no longer exists. */
   readonly terminated: boolean;
 }
+
+const debuggerIdentity = (
+  tool: ResolvedTool,
+  version: string | null,
+): NativeCallTrace["debugger"] => ({
+  path: tool.invocationPath,
+  sha256: tool.sha256,
+  version,
+});
 
 /** Launch one owned process under a debugger and record calls. */
 export interface NativeCallTracer {
@@ -628,7 +641,7 @@ export class LldbCallTracer implements NativeCallTracer {
     retained.targetStopped = false;
     this.#pendingCleanup = retained;
     const exited = await this.launch(
-      lldb.path,
+      lldb.invocationPath,
       [
         "--batch",
         "--no-lldbinit",
@@ -737,7 +750,7 @@ export class LldbCallTracer implements NativeCallTracer {
             },
             request.input,
             {
-              debugger: { ...lldb, version: output.version },
+              debugger: debuggerIdentity(lldb, output.version),
               run: output,
               stdout: stdout.ok ? stdout.value : (stdout.partial ?? null),
               stderr: stderr.ok ? stderr.value : (stderr.partial ?? null),
@@ -892,7 +905,7 @@ export class LldbCallTracer implements NativeCallTracer {
             },
             request.input,
             {
-              debugger: { ...lldb, version: output.version },
+              debugger: debuggerIdentity(lldb, output.version),
               run: output,
               stdout: stdout.ok ? stdout.value : (stdout.partial ?? null),
               stderr: stderr.ok ? stderr.value : (stderr.partial ?? null),
@@ -919,7 +932,7 @@ export class LldbCallTracer implements NativeCallTracer {
       );
     }
     const trace: NativeCallTrace = {
-      debugger: { ...lldb, version: output.version },
+      debugger: debuggerIdentity(lldb, output.version),
       run: output,
       stdout: stdout.value,
       stderr: stderr.value,
@@ -1404,7 +1417,9 @@ const runLldb = async (
       command: executable,
       arguments: arguments_,
       runId: randomUUID(),
-      expectedCommand: executable,
+      // xcrun-selected toolchains may supply interpreter or exec launchers.
+      // Cleanup still requires native generation and run-token ownership.
+      expectedCommand: null,
       signal: deadline.signal,
       hostEnvironment: options.environment,
     });

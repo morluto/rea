@@ -82,6 +82,11 @@ Published file `relative_path` preserves producer spelling for lineage; `path`
 uses the writer's actual normalized filename. An extracted filename that cannot
 be represented losslessly as UTF-8 fails publication explicitly with its raw
 name bytes in hexadecimal instead of silently omitting the entry.
+Unpublished symlinks retain the extracted tree's target bytes in lowercase
+`link_target_hex`; `link_target` is null when those bytes are not valid UTF-8.
+Older retained Evidence may omit the hexadecimal field. Unblob may have rewritten
+the target before REA observed it, so these bytes are not necessarily those stored
+in the firmware image.
 
 ## CLI and MCP
 
@@ -275,7 +280,7 @@ Additional lanes are explicit, so the base lane stays small:
 REA_FIRMWARE_VERIFY_EXT4=1 npm run fixtures:firmware
 REA_FIRMWARE_VERIFY_EXT4=1 npm run verify:firmware
 
-# Existing Ghidra 12.1.x and its declared JDK required.
+# Existing Ghidra 12.x (>=12.1) and its declared JDK required.
 REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 ```
 
@@ -286,9 +291,48 @@ REA_FIRMWARE_VERIFY_GHIDRA=1 npm run verify:firmware
 generated gzip/USTAR/ext4 with a Linux x64 ELF child; SquashFS, UBIFS, proprietary
 firmware, other hosts and architectures remain unverified.
 
+## Inspect ESP images
+
+Use `inspect-artifact` / `inspect_artifact` on an ESP32-family app or
+bootloader image, such as an OTA download or app partition, for its chip,
+classified segments, checksum and SHA-256 results, descriptor and Secure Boot
+v2 signature blocks. `extract-artifact` / `extract_artifact` writes one file
+per segment and signature block. Reading is portable and needs no external
+tool. See [ESP images](esp-image.md).
+
 ## Inspect extracted devicetrees
 
 Use [`inspect_devicetree`](devicetree.md) / `rea inspect-devicetree` on an
 extracted DTB for its node/property tree, reservations, hardware summary and
 selected phandle relationships. FDT v16/v17 inspection is portable and requires
 no external tool or disassembler.
+
+## Inspect Intel HEX and S-record images
+
+Use `inspect-artifact` / `inspect_artifact` on an Intel HEX or Motorola S-record
+file for its address regions, declared start address and record facts, then
+`extract-artifact` / `extract_artifact` for one raw file per region. Decoding is
+portable and requires no external tool. See
+[Intel HEX and S-record images](hex-records.md).
+
+## Inspect U-Boot legacy uImages
+
+`inspect-artifact` / `extract-artifact` recognize a legacy uImage by its
+`0x27051956` magic and inventory it without running or decompressing it.
+The root facts record the 64-byte header (architecture, OS, type, and
+compression as raw values and names, load and entry addresses, image name,
+and timestamp) with the header and data CRC32 verified; the stored payload
+is extractable as `payload.bin`, and multi-file and script images additionally
+expose each sub-image as `image-<n>.bin` from the stored size table. Declared
+addresses are facts from the header, not proven entry points, and compressed
+payloads stay as stored. Intel HEX/S-record and FIT images are separate
+readers and are not covered here. See [U-Boot legacy uImage](uimage.md) for
+component padding, preserved names, resource policies and verification scope.
+
+## Inspect U-Boot FIT images
+
+Use `inspect-artifact` / `inspect_artifact` on a U-Boot FIT (`.itb`) for its
+images, declared load and entry addresses, configurations and verified hashes,
+then `extract-artifact` / `extract_artifact` for one raw file per image.
+Decoding is portable and requires no external tool. See
+[U-Boot FIT images](fit-images.md).

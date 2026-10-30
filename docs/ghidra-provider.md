@@ -30,6 +30,17 @@ signal. Confirm resource causes from process output or host/container records;
 operation-scoped JVM `OutOfMemoryError` observations retain their separate resource
 classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
+After the authenticated startup handshake, rejected inputs (`invalid_request`,
+`not_found`, `ambiguous`, or an invalid function name) use
+`diagnostics.diagnostic_scope: "request"` when their active output checkpoint is
+available. They preserve the active request's
+`failure_output`, target/profile identity and runtime/log coordinates, while
+omitting cumulative launcher stdout/stderr and launch-support output. Startup,
+process, protocol and other remote failures retain full session diagnostics.
+The Ghidra client still owns its bounded cumulative output; this projection does
+not clear it or alter session readiness. Log paths refer to the owned ephemeral
+runtime and are removed by normal cleanup.
+
 Provider selection and profile identity follow
 [MCP contracts](mcp-contracts.md#identity-and-discovery). One deep
 provider stays bound to the target; runtime failure never selects another
@@ -288,7 +299,7 @@ host/provider acceptance run with only the host compiler.
 `--dll`. These static fixtures contain source-owned encoded instructions; they
 are not compiler-produced programs. See the [Windows verification scope](windows-ghidra-p0.md#native-authority-and-target-identity)
 for real-provider coverage and exclusions.
-These lanes check all 26 read-only operations, target/snapshot/import SHA-256 linkage,
+These lanes check all 27 read-only operations, target/snapshot/import SHA-256 linkage,
 and project, endpoint, process, and runtime cleanup. The independent native
 lane checks DACLs, handle admission, cancellation, and Job Object lifecycle.
 `npm run verify:ghidra:windows:package` packs and installs REA into an isolated

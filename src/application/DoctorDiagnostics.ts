@@ -3,6 +3,7 @@ import {
   supportsJavaScriptRuntime,
 } from "../domain/runtimeVersion.js";
 import { hopperLauncherDiscovery } from "./HopperLauncherDiscovery.js";
+import { macosMajorVersion } from "../domain/macosVersion.js";
 import { LINUX_HOPPER_SETUP_HOSTS, supportsReaHost } from "./LinuxHopper.js";
 import type {
   DoctorCheck,
@@ -129,8 +130,22 @@ const hostCheck = async (host: DoctorHost): Promise<DoctorCheck> => {
     host.platform === "darwin" ? await host.macosVersion() : undefined;
   const linuxDistribution =
     host.platform === "linux" ? await host.linuxDistribution() : undefined;
+  const macosMajor = macosMajorVersion(macosVersion);
+  if (host.platform === "darwin" && macosMajor === undefined)
+    return {
+      name: "host",
+      ok: false,
+      classification: "unknown",
+      detail:
+        macosVersion === undefined
+          ? "The macOS version could not be determined."
+          : `The macOS version probe returned an unrecognized value: ${JSON.stringify(macosVersion)}.`,
+      remediation: "Check /usr/bin/sw_vers -productVersion and rerun doctor.",
+    };
   const supported =
-    (host.platform === "darwin" && parseMajor(macosVersion) >= 12) ||
+    (host.platform === "darwin" &&
+      macosMajor !== undefined &&
+      macosMajor >= 12) ||
     (host.platform === "linux" && supportsReaHost(linuxDistribution)) ||
     (host.platform === "win32" && host.architecture === "x64");
   const detail =
@@ -358,9 +373,6 @@ const unsupportedHopperRemediation = (configured: boolean): string =>
   configured
     ? "Check HOPPER_LAUNCHER_PATH and its publisher verification evidence. Run rea setup to install and retain an authenticated official Hopper package for offline use."
     : "Run rea setup to install and retain an authenticated official Hopper package for offline use.";
-
-const parseMajor = (version: string | undefined): number =>
-  Number.parseInt(version?.split(".")[0] ?? "0", 10);
 
 const providerCheckName = (providerId: string, name: string): boolean =>
   name === providerId || name.startsWith(`${providerId}-`);

@@ -20,7 +20,6 @@ import {
   toolAvailabilitySummaryInventory,
   TOOL_ANNOTATION_NAMES,
   TOOL_EFFECT_NAMES,
-  type ClientFeatureAvailability,
   type ProviderCapability,
   type ToolAvailabilityInventory,
   type ToolAvailabilitySummaryInventory,
@@ -42,11 +41,8 @@ import type {
 import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
-import {
-  clientRequirementsFor,
-  NO_CLIENT_FEATURES,
-} from "./CapabilityClientRequirements.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -54,6 +50,7 @@ const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
 
 const statusSchema = z.object({
   open: z.boolean(),
+  session_kind: z.literal("bundle_resources").optional(),
   kind: z.enum(["executable", "database", "archive", "artifact"]).optional(),
   format: z.string().optional(),
   capabilities: z
@@ -76,6 +73,7 @@ export const HOST_RESTRICTED_FEATURES = [
   "firmwareInspection",
   "firmwareExtraction",
   "javascriptRecovery",
+  "persistentDebugger",
 ] as const;
 export type HostRestrictedFeature = (typeof HOST_RESTRICTED_FEATURES)[number];
 
@@ -132,6 +130,7 @@ type AvailabilityContext = {
   readonly name: string;
   readonly kind: ToolKind;
   readonly targetOpen: boolean;
+  readonly resourceSession: boolean;
   readonly requiresActiveTarget: boolean;
   readonly targetKind:
     | "executable"
@@ -254,7 +253,6 @@ const NAVIGATION_CONTEXT_MODES = [
 export const buildCapabilityInventory = (
   sessionStatus: JsonValue,
   policy: AvailabilityPolicy,
-  clientFeatures: ClientFeatureAvailability = NO_CLIENT_FEATURES,
 ): readonly ToolAvailability[] => {
   const status = statusSchema.parse(sessionStatus);
   const descriptors = new Map<string, ProviderDescriptor>(
@@ -265,6 +263,7 @@ export const buildCapabilityInventory = (
       name: contract.name,
       kind: contract.kind,
       targetOpen: status.open,
+      resourceSession: status.session_kind === "bundle_resources",
       requiresActiveTarget:
         "requiresActiveTarget" in contract &&
         contract.requiresActiveTarget === true,
@@ -273,11 +272,6 @@ export const buildCapabilityInventory = (
       descriptors,
       policy,
     });
-    const clientRequirements = clientRequirementsFor(
-      contract.name,
-      clientFeatures,
-    );
-    const clientBlocked = clientRequirements.missing_required.length > 0;
     const effects = composedEffects(
       contract.name,
       contract.effects,
@@ -293,7 +287,7 @@ export const buildCapabilityInventory = (
       ...(availability.modes === undefined
         ? {}
         : { modes: [...availability.modes] }),
-      client_requirements: clientRequirements,
+      client_requirements: emptyClientRequirements(),
       effects,
       annotations: {
         read_only: annotations.readOnlyHint,
@@ -302,13 +296,6 @@ export const buildCapabilityInventory = (
         open_world: annotations.openWorldHint,
       },
     };
-    if (clientBlocked)
-      return {
-        ...facts,
-        available: false,
-        reason: "client_capability_missing",
-        remediation: `Use an MCP client that supports: ${clientRequirements.missing_required.join(", ")}.`,
-      };
     return availability.reason === "available"
       ? {
           ...facts,
@@ -327,12 +314,13 @@ export const buildCapabilityInventory = (
 
 type ClientRequirements = ToolAvailability["client_requirements"];
 
-const EMPTY_CLIENT_REQUIREMENTS: ClientRequirements = {
+// Current workflows do not require negotiated MCP client features.
+const emptyClientRequirements = (): ClientRequirements => ({
   required: [],
   optional: [],
   missing_required: [],
   missing_optional: [],
-};
+});
 
 /**
  * Group every operation's current availability inline. Complete detail also
@@ -352,7 +340,7 @@ export function compactToolAvailability(
   detail: BinarySessionDetail = "complete",
 ): ToolAvailabilityInventory | ToolAvailabilitySummaryInventory {
   const clientRequirements =
-    availability[0]?.client_requirements ?? EMPTY_CLIENT_REQUIREMENTS;
+    availability[0]?.client_requirements ?? emptyClientRequirements();
   const groups = new Map<string, { names: string[] }>();
 
   for (const entry of availability) {
@@ -396,6 +384,19 @@ export function compactToolAvailability(
 }
 
 const availabilityFor = (context: AvailabilityContext): Availability => {
+  const workflowAvailability = workflowAvailabilityFor(context);
+  if (
+    context.targetOpen &&
+    context.resourceSession &&
+    context.requiresActiveTarget &&
+    !isBundleResourceOperation(context.name) &&
+    (workflowAvailability === null || context.kind === "session")
+  )
+    return {
+      reason: "target_unsupported",
+      remediation:
+        "This resource-only session cannot execute this operation. Call open_binary with an executable analysis target.",
+    };
   // These built-in workflows accept a caller-selected endpoint; they do not load the optional passive provider.
   if (
     context.name === "inspect_byte_entropy" ||
@@ -419,7 +420,6 @@ const availabilityFor = (context: AvailabilityContext): Availability => {
       reason: "provider_unavailable",
       remediation: `Adapter ${failure.providerId} could not load: ${failure.reason}. Repair the adapter installation and restart REA; other capabilities remain available.`,
     };
-  const workflowAvailability = workflowAvailabilityFor(context);
   if (workflowAvailability !== null) return workflowAvailability;
   const hostDecision = hostAvailability(context);
   if (hostDecision !== null) return hostDecision;
@@ -461,7 +461,15 @@ const workflowAvailabilityFor = ({
   kind,
   policy,
 }: AvailabilityContext): Availability | null => {
+  if (name === "start_gdb_session" || name === "start_rizin_debug_session")
+    return hostRestrictedAvailability(
+      policy,
+      "persistentDebugger",
+      true,
+      "Run persistent debugger sessions on Linux with /proc descriptor readback.",
+    );
   if (
+    name === "inspect_apk_signature" ||
     name === "inspect_desktop_application" ||
     name === "inspect_go_binary" ||
     name === "inspect_il2cpp_metadata" ||

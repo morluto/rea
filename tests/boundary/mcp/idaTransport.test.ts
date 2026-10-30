@@ -214,6 +214,20 @@ it("uses the pinned SDK for a local Streamable HTTP handshake, paged discovery, 
   ).toBe(true);
 });
 
+it("retains own structured fields through the SDK before scalar-wrapper selection", async () => {
+  const structuredContent = {
+    ["__proto__"]: { observed: true },
+    result: "ordinary field",
+    nested: [{ ["__proto__"]: "nested fact" }],
+  };
+  const { connection } = await fixture({
+    toolResult: { content: [], structuredContent },
+  });
+  await connection.connect();
+  const result = await connection.call("first", {});
+  expect(JSON.stringify(result)).toBe(JSON.stringify(structuredContent));
+});
+
 it("omits an oversized HTTP error body before retaining or redacting it", async () => {
   const { connection } = await fixture({
     toolStatus: 500,

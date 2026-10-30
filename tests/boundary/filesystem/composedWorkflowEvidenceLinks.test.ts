@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { executeComposedWorkflow } from "../../../src/application/WorkflowEvidence.js";
 import { parseAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { ok } from "../../../src/domain/result.js";
@@ -24,7 +25,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(current.evidence_links).toHaveLength(1);
     const snapshot = parseAnalysisSnapshot(
@@ -42,7 +43,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(unique.evidence_id).toBe(current.evidence_id);
     expect(unique.evidence_links).toEqual(current.evidence_links);
@@ -77,7 +78,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(delivered.normalized_result).toEqual(current.normalized_result);
     expect([current.evidence_id, historical.evidence_id]).not.toContain(
@@ -98,7 +99,7 @@ it.each([0, 1, 12])(
         "binary_overview",
         {},
         { snapshotPath },
-      ),
+      ).then(projectCliAnalysisResult),
     );
     expect(refreshed.evidence_id).toBe(delivered.evidence_id);
     expect(refreshed.evidence_links).toEqual(delivered.evidence_links);
@@ -134,7 +135,9 @@ it.each([false, true])(
     };
     try {
       const evidence = parseEvidence(
-        await runDirectAnalysis(dependencies, path, "binary_overview", {}),
+        await runDirectAnalysis(dependencies, path, "binary_overview", {}).then(
+          projectCliAnalysisResult,
+        ),
       );
       expect(evidence.normalized_result).toEqual(summary);
       expect(evidence.confidence).toBe("derived");
@@ -289,13 +292,29 @@ it.each(["profileless", "uncacheable"] as const)(
           {},
         );
         if (!execution.ok) return execution;
-        expect(execution.value.evidenceId).toBeUndefined();
+        if (mode === "profileless")
+          expect(execution.value.evidenceId).toBeUndefined();
+        else {
+          expect(execution.value.evidenceId).toEqual(expect.any(String));
+          expect(execution.value.evidenceId).not.toBe(spoofedEvidenceId);
+        }
         return ok(execution.value.result);
       },
     );
     if (!composed.ok) throw composed.error;
-    expect(composed.value.evidenceLinks).toBeUndefined();
-    expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    if (mode === "profileless") {
+      expect(composed.value.evidenceLinks).toBeUndefined();
+      expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
+    } else {
+      const evidenceId = composed.value.evidenceLinks?.[0];
+      expect(evidenceId).toEqual(expect.any(String));
+      expect(evidenceId).not.toBe(spoofedEvidenceId);
+      expect(
+        fixture.session
+          .exportEvidenceBundle()
+          .records.map((record) => record.evidence_id),
+      ).toEqual([evidenceId]);
+    }
   },
 );
 
@@ -317,7 +336,7 @@ it("does not manufacture links for empty or failed composed calls", async () => 
   expect(fixture.session.exportEvidenceBundle().records).toEqual([]);
 });
 
-it("drops an old cached ID rather than guessing after an ambiguous snapshot replacement", async () => {
+it("reruns an ambiguous snapshot binding before selecting composed Evidence links", async () => {
   const fixture = await composedWorkflowFixture();
   const target = await fixture.open();
   const initial = await fixture.session.execute(
@@ -352,6 +371,7 @@ it("drops an old cached ID rather than guessing after an ambiguous snapshot repl
   );
   if (!before.ok) throw before.error;
   expect(before.value.evidenceId).toBe(initial.value.evidenceId);
+  expect(replay.calls).not.toContain("read_binary_inventory_summary");
   expect(replay.session.importAnalysisSnapshot(ambiguous.value).ok).toBe(true);
   const after = await replay.session.execute(
     "read_binary_inventory_summary",
@@ -359,8 +379,47 @@ it("drops an old cached ID rather than guessing after an ambiguous snapshot repl
   );
   if (!after.ok) throw after.error;
   expect(after.value.result).toEqual(fixture.summary);
-  expect(after.value.evidenceId).toBeUndefined();
-  expect(replay.calls).not.toContain("read_binary_inventory_summary");
+  expect(
+    replay.calls.filter(
+      (operation) => operation === "read_binary_inventory_summary",
+    ),
+  ).toHaveLength(1);
+  expect(after.value.limitations).not.toContain(
+    "Loaded from a local REA analysis snapshot; this call did not re-run the provider.",
+  );
+  if (after.value.evidenceId === undefined)
+    throw new Error("Fresh provider observation was not committed");
+  // Unchanged facts reproduce their deterministic identity. The provider call,
+  // rather than a choice between historical records, establishes this binding.
+  expect(after.value.evidenceId).toBe(initial.value.evidenceId);
+  expect(after.value.evidenceId).not.toBe(alternative.evidence_id);
+  const originalRecord = snapshot.value.evidence_bundle.records.find(
+    ({ evidence_id }) => evidence_id === initial.value.evidenceId,
+  );
+  expect(replay.session.evidenceById(after.value.evidenceId)).toEqual(
+    originalRecord,
+  );
+  expect(replay.session.evidenceById(alternative.evidence_id)).toEqual(
+    alternative,
+  );
+
+  const composed = await executeComposedWorkflow(
+    replay.session,
+    async (observed) => {
+      const execution = await observed.execute(
+        "read_binary_inventory_summary",
+        {},
+      );
+      return execution.ok ? ok(execution.value.result) : execution;
+    },
+  );
+  if (!composed.ok) throw composed.error;
+  expect(composed.value.evidenceLinks).toEqual([after.value.evidenceId]);
+  expect(
+    replay.calls.filter(
+      (operation) => operation === "read_binary_inventory_summary",
+    ),
+  ).toHaveLength(1);
 });
 
 it("replaces provider-supplied identity with the record actually committed by the session", async () => {

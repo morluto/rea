@@ -5,14 +5,14 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
-import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 
@@ -80,10 +80,7 @@ await withVerifierCleanup(async () => {
       timeout: 30_000,
       stdin: "pipe",
     });
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const environment = {
       PATH: process.env.PATH,
       NODE_OPTIONS: process.env.NODE_OPTIONS,
@@ -246,43 +243,7 @@ await withVerifierCleanup(async () => {
             format: "directory",
           });
         }
-        const evidence = toolContract(
-          "analyze_javascript_application",
-        ).outputSchema.parse(JSON.parse(last));
-        await assertJavaScriptApplicationInputPaths(evidence, target);
-        const shapes = evidence.normalized_result.graph.nodes
-          .flatMap((node) => node.observations)
-          .map((observation) => observation.properties)
-          .filter(
-            (properties) =>
-              properties.semantic_role === "export-return-shapes" &&
-              properties.exported_name === "result",
-          );
-        assert(
-          shapes.length > 0 &&
-            shapes.every(
-              (shape) => shape.return_shape_coverage?.projection_complete,
-            ),
-        );
-        const fields = shapes.flatMap((shape) =>
-          shape.static_return_shapes.flatMap((item) => item.fields),
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/clientCompatibility" &&
-              field.state === "literal" &&
-              field.value === "REA_CLIENT_FIXTURE",
-          ),
-        );
-        assert(
-          fields.some(
-            (field) =>
-              field.path === "/count" &&
-              field.state === "literal" &&
-              field.value === 7,
-          ),
-        );
+        await assertClientJavaScriptFixtureEvidence(JSON.parse(last), target);
         evidenceBytes = Buffer.byteLength(last);
         await writeFile(join(lab, "native-evidence.json"), last);
         evidenceSeen = true;

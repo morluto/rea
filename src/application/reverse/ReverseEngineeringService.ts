@@ -47,6 +47,7 @@ import {
 } from "../../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 
 export type ReverseEngineeringOperation =
   | "inspect_with_objdump"
@@ -214,21 +215,17 @@ export class ReverseEngineeringService {
       recordEvidence: undefined,
     },
   ): Promise<Result<Evidence, AnalysisError>> {
-    const parsed = objdumpInputSchema.safeParse(rawInput);
-    if (!parsed.success)
-      return err(
-        analysisInputErrorFromIssues(
-          "inspect_with_objdump",
-          parsed.error.issues,
-          rawInput,
-          { cause: parsed.error },
-        ),
-      );
+    const parsed = parseAnalysisInput(
+      "inspect_with_objdump",
+      rawInput,
+      objdumpInputSchema,
+    );
+    if (!parsed.ok) return parsed;
     const {
       detail,
       command_timeout_ms: commandTimeoutMs,
       ...input
-    } = parsed.data;
+    } = parsed.value;
     if (detail === "summary") {
       const ready = requireAnalysisViewRetention(
         "inspect_with_objdump",

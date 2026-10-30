@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, open, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPackage } from "@electron/asar";
@@ -13,11 +14,13 @@ import { parseEnvironment } from "../../../src/config/environment.js";
 import { createDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
-  MAXIMUM_ASAR_MAX_HEADER_BYTES,
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
-  DEFAULT_ASAR_MAX_HEADER_BYTES,
 } from "../../../src/config/asarHeaderAdmission.js";
+import {
+  MAXIMUM_ASAR_MAX_HEADER_BYTES,
+  DEFAULT_ASAR_MAX_HEADER_BYTES,
+} from "../../../src/domain/analysisResourceLimits.js";
 import { ArtifactOperationError } from "../../../src/domain/artifactOperationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
@@ -291,7 +294,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
   vi.stubEnv("REA_ASAR_MAX_HEADER_BYTES", "1");
   for (const operation of ["inventory_artifact", "inspect_artifact"] as const) {
     await expect(
-      createDirectAnalysis(lowered).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis(lowered)
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({
       code: "truncated",
       message: recovery,
@@ -302,7 +307,9 @@ it("applies the caller-selected environment, not the ambient one, to inventory a
       },
     });
     await expect(
-      createDirectAnalysis({}).runProviderAnalysis(archive, operation, {}),
+      createDirectAnalysis({})
+        .runProviderAnalysis(archive, operation, {})
+        .then(projectCliAnalysisResult),
     ).resolves.toMatchObject({ operation });
   }
   const refused = await analyzeJavaScriptApplication(
@@ -363,11 +370,9 @@ it("refuses invalid settings at startup validation and at each owner", async () 
   const { archive } = await createFixture();
   const invalid = { REA_ASAR_MAX_HEADER_BYTES: "0" };
   await expect(
-    createDirectAnalysis(invalid).runProviderAnalysis(
-      archive,
-      "inventory_artifact",
-      {},
-    ),
+    createDirectAnalysis(invalid)
+      .runProviderAnalysis(archive, "inventory_artifact", {})
+      .then(projectCliAnalysisResult),
   ).resolves.toMatchObject({ code: "configuration_invalid" });
   const analyzed = await analyzeJavaScriptApplication(
     { input_path: archive },

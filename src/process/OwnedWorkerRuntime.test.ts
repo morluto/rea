@@ -331,9 +331,10 @@ it("runs deferred delegated cleanup before registering a pending start acquisiti
     expect(stopped.status).not.toBe("incomplete");
     runtime.retainForCleanup();
 
-    await expect(runtime.start(startOptions())).rejects.toThrow(
-      "Owned worker runtime is closing",
-    );
+    await expect(runtime.start(startOptions())).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "runtime_closing",
+    });
     expect(delegateTimedOut).toBe(false);
     await delegatedClose;
     expect(runtime.rootPath).toBeUndefined();

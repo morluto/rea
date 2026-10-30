@@ -13,13 +13,15 @@ import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   DEFAULT_REGEX_WORKER_HEAP_REQUEST,
-  MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
-  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   parseRegexWorkerHeapRequest,
   REGEX_WORKER_HEAP_REQUEST_SETTING,
   regexWorkerHeapRequestConstraint,
   regexWorkerHeapRequestRecovery,
 } from "./regexWorkerHeapRequest.js";
+import {
+  MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+} from "../domain/analysisResourceLimits.js";
 
 const configured = (heapMiB: number) =>
   ({ heapMiB, source: "setting" }) as const;

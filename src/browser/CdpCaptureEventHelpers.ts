@@ -1,152 +1,12 @@
 import { err, ok, type Result } from "../domain/result.js";
+import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
 import {
   admitRecords,
   isHttpUrl,
-  numberValue,
   recordValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import type { CdpEvent } from "./CdpConnection.js";
-
-export type FrameSelection = "main" | "other" | "unknown";
-export type FrameParentRelation =
-  | "root"
-  | "child"
-  | "unknown"
-  | "not_applicable";
-
-/** Normalized frame identity facts shared by all selected-frame consumers. */
-export interface CdpFrameIdentity {
-  readonly applicability: "applicable" | "not_applicable";
-  readonly selection: FrameSelection;
-  readonly isRootReplacement: boolean;
-  readonly frameId: string | null;
-  readonly identityIssue:
-    | "missing_params"
-    | "invalid_params"
-    | "missing_frame"
-    | "missing_id"
-    | "invalid_id"
-    | null;
-  readonly parentRelation: FrameParentRelation;
-  readonly parentId: string | null;
-  readonly parentIssue:
-    | "invalid_parent_id"
-    | "self_parent"
-    | "main_frame_has_parent"
-    | null;
-}
-
-const nonEmptyString = (value: unknown): string | undefined =>
-  typeof value === "string" && value.length > 0 ? value : undefined;
-
-const identityIssueFor = (
-  navigated: boolean,
-  frame: UnknownRecord | undefined,
-  rawId: unknown,
-): CdpFrameIdentity["identityIssue"] => {
-  if (navigated && frame === undefined) return "missing_frame";
-  if (rawId === undefined) return "missing_id";
-  return nonEmptyString(rawId) === undefined ? "invalid_id" : null;
-};
-
-const parentFacts = (
-  navigated: boolean,
-  frame: UnknownRecord | undefined,
-): Pick<CdpFrameIdentity, "parentRelation" | "parentId" | "parentIssue"> => {
-  if (!navigated)
-    return {
-      parentRelation: "not_applicable",
-      parentId: null,
-      parentIssue: null,
-    };
-  if (frame === undefined)
-    return { parentRelation: "unknown", parentId: null, parentIssue: null };
-  if (!("parentId" in frame))
-    return { parentRelation: "root", parentId: null, parentIssue: null };
-  const parentId = nonEmptyString(frame.parentId);
-  return parentId === undefined || parentId === nonEmptyString(frame.id)
-    ? {
-        parentRelation: "unknown",
-        parentId: null,
-        parentIssue:
-          parentId === undefined ? "invalid_parent_id" : "self_parent",
-      }
-    : { parentRelation: "child", parentId, parentIssue: null };
-};
-
-/** Parse a frame record's identity without inferring its selected-target role. */
-export const cdpFrameRecordIdentity = (
-  frame: UnknownRecord | undefined,
-): Pick<
-  CdpFrameIdentity,
-  "frameId" | "identityIssue" | "parentRelation" | "parentId" | "parentIssue"
-> => ({
-  frameId: nonEmptyString(frame?.id) ?? null,
-  identityIssue: identityIssueFor(true, frame, frame?.id),
-  ...parentFacts(true, frame),
-});
-
-/** Parse required frame identity separately from the optional parent fact. */
-export const cdpFrameIdentity = (
-  event: CdpEvent,
-  mainFrameId: string,
-): CdpFrameIdentity => {
-  const navigated = event.method === "Page.frameNavigated";
-  const requested = event.method === "Page.frameRequestedNavigation";
-  const sameDocument = event.method === "Page.navigatedWithinDocument";
-  if (!navigated && !requested && !sameDocument)
-    return {
-      applicability: "not_applicable",
-      selection: "unknown",
-      isRootReplacement: false,
-      frameId: null,
-      identityIssue: null,
-      parentRelation: "not_applicable",
-      parentId: null,
-      parentIssue: null,
-    };
-  const params = recordValue(event.params);
-  if (params === undefined)
-    return {
-      applicability: "applicable",
-      selection: "unknown",
-      isRootReplacement: false,
-      frameId: null,
-      identityIssue:
-        event.params === undefined ? "missing_params" : "invalid_params",
-      parentRelation: "not_applicable",
-      parentId: null,
-      parentIssue: null,
-    };
-  const identity = navigated
-    ? cdpFrameRecordIdentity(recordValue(params.frame))
-    : {
-        frameId: nonEmptyString(params.frameId) ?? null,
-        identityIssue: identityIssueFor(false, undefined, params.frameId),
-        ...parentFacts(false, undefined),
-      };
-  const selection =
-    identity.frameId === null
-      ? "unknown"
-      : identity.frameId === mainFrameId
-        ? "main"
-        : "other";
-  return {
-    applicability: "applicable",
-    selection,
-    isRootReplacement:
-      selection === "other" && identity.parentRelation === "root",
-    ...identity,
-    parentIssue:
-      selection === "main" &&
-      (identity.parentRelation === "child" ||
-        identity.parentIssue === "self_parent")
-        ? "main_frame_has_parent"
-        : identity.parentIssue,
-  };
-};
 
 export interface MalformedCdpCallFrame {
   readonly _tag: "MalformedCdpCallFrame";
@@ -197,16 +57,19 @@ export const exclusionReasonForUrl = (
       ? "disallowed_origin"
       : "unsupported_url";
 
-export const integerOrNull = (value: unknown): number | null => {
-  const number = numberValue(value);
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
-};
-
-export const executionContextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
+/** Preserve omitted and invalid protocol offsets as unknown, never invented coordinates. */
+export const cdpSourceCoordinates = (frame: UnknownRecord | undefined) => {
+  const valid = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const line = frame?.lineNumber;
+  const column = frame?.columnNumber;
+  return {
+    line: valid(line) ? line : null,
+    column: valid(column) ? column : null,
+    invalid:
+      (line !== undefined && !valid(line)) ||
+      (column !== undefined && !valid(column)),
+  };
 };
 
 export const isJsonContentType = (
@@ -223,7 +86,10 @@ export const isJsonContentType = (
 };
 
 export const isJsonMediaType = (value: string | null | undefined): boolean => {
-  const mediaType = value?.split(";", 1)[0]?.trim().toLowerCase();
+  const mediaType =
+    value === null || value === undefined ? null : mediaTypeEssence(value);
+  // CDP shape collection accepts structured JSON suffixes on any media type;
+  // replay's application-only JSON policy is a separate consumer decision.
   return (
     mediaType === "application/json" || mediaType?.endsWith("+json") === true
   );

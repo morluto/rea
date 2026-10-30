@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 import canonicalize from "canonicalize";
 
+import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
+import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
 import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
 import type { PromptContract } from "./contracts/promptContracts.js";
 import { TOOL_CONTRACTS } from "./contracts/toolContracts.js";
@@ -12,24 +14,25 @@ import {
   advertisedInputJsonSchema,
   toolOutputSchemaWithMetadata,
 } from "./contracts/toolSchemaMetadata.js";
-import type { CompactInputSchemaPresentation } from "./contracts/compactInputSchema.js";
-import { presentAdvertisedInputProfile } from "./contracts/inputSchemaPresentation.js";
-import type { McpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
+import {
+  presentAdvertisedInputSchema,
+  type CompactInputSchemaPresentation,
+} from "./contracts/compactInputSchema.js";
+import {
+  presentAdvertisedOutputSchema,
+  type CompactOutputSchemaPresentation,
+} from "./contracts/compactOutputSchema.js";
+import {
+  COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  compactPresentationForMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+} from "./config/mcpOutputSchemaProfile.js";
 import {
   COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   compactPresentationForMcpInputSchemaProfile,
   type McpInputSchemaProfile,
 } from "./config/mcpInputSchemaProfile.js";
 import { RECORDED_CATALOG_DIGEST_PROFILES } from "./recordedCatalogDigests.js";
-
-const sortByName = (
-  contracts: readonly ToolContract[],
-): readonly ToolContract[] =>
-  [...contracts].sort((left, right) =>
-    compareUnicodeCodePoints(left.name, right.name),
-  );
-
-const sortedToolContracts = sortByName(TOOL_CONTRACTS);
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -55,15 +58,28 @@ const createToolCatalog = (contracts: readonly ToolContract[]) =>
 const presentToolCatalog = (
   catalog: ReturnType<typeof createToolCatalog>,
   presentation: CompactInputSchemaPresentation | undefined,
+  outputPresentation: CompactOutputSchemaPresentation | undefined = undefined,
 ) =>
-  presentation === undefined
+  presentation === undefined && outputPresentation === undefined
     ? catalog
     : catalog.map((tool) => ({
         ...tool,
-        input_schema: presentAdvertisedInputProfile(
-          tool.input_schema,
-          presentation,
-        ),
+        ...(presentation === undefined
+          ? {}
+          : {
+              input_schema: presentAdvertisedInputSchema(
+                tool.input_schema,
+                presentation,
+              ),
+            }),
+        ...(outputPresentation === undefined
+          ? {}
+          : {
+              output_schema: presentAdvertisedOutputSchema(
+                tool.output_schema,
+                outputPresentation,
+              ),
+            }),
       }));
 
 const createPromptCatalog = (contracts: readonly PromptContract[]) =>
@@ -78,7 +94,12 @@ const createPromptCatalog = (contracts: readonly PromptContract[]) =>
     }))
     .sort((left, right) => compareUnicodeCodePoints(left.name, right.name));
 
-const promptCatalog = createPromptCatalog(PROMPT_CONTRACTS);
+const sortByName = (
+  contracts: readonly ToolContract[],
+): readonly ToolContract[] =>
+  [...contracts].sort((left, right) =>
+    compareUnicodeCodePoints(left.name, right.name),
+  );
 
 const digest = (value: unknown): string => {
   const encoded = canonicalize(value);
@@ -122,6 +143,7 @@ export const createCatalogDigests = (
     presentToolCatalog(
       createToolCatalog(sortByName(contracts)),
       compactPresentation,
+      compactPresentationForMcpOutputSchemaProfile(outputSchemaProfile),
     ),
     createPromptCatalog(promptContracts),
     outputSchemaProfile,
@@ -135,7 +157,7 @@ export type CatalogDigestProfiles = Readonly<
   >
 >;
 
-/** Build-time identities share schema conversion across the four supported profiles. */
+/** Build-time identities share schema conversion across the six supported profiles. */
 export const createCatalogDigestProfiles = (
   contracts: readonly ToolContract[] = TOOL_CONTRACTS,
   promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
@@ -145,17 +167,36 @@ export const createCatalogDigestProfiles = (
     budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
   });
   const prompts = createPromptCatalog(promptContracts);
+  const compactOutput: CompactOutputSchemaPresentation = {
+    budgetBytes: COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES,
+  };
   const outputProfiles = (catalog: typeof full) => ({
     full: digestCatalogs(catalog, prompts, "full"),
+    compact: digestCatalogs(
+      presentToolCatalog(catalog, undefined, compactOutput),
+      prompts,
+      "compact",
+    ),
     off: digestCatalogs(catalog, prompts, "off"),
   });
   return { full: outputProfiles(full), compact: outputProfiles(compact) };
 };
 
-export const createCatalogIdentity = (
-  compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-  outputSchemaProfile: McpOutputSchemaProfile = "full",
-) => {
+/** One catalog identity: advertised presentation, contract and prompt scope, output profile. */
+export interface CatalogIdentityOptions {
+  readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+  readonly contracts?: readonly ToolContract[] | undefined;
+  readonly outputSchemaProfile?: McpOutputSchemaProfile | undefined;
+  readonly promptContracts?: readonly PromptContract[] | undefined;
+}
+
+export const createCatalogIdentity = (options: CatalogIdentityOptions = {}) => {
+  const {
+    compactPresentation,
+    contracts = TOOL_CONTRACTS,
+    outputSchemaProfile = "full",
+    promptContracts = PROMPT_CONTRACTS,
+  } = options;
   const selectedPresentation =
     compactPresentation === undefined
       ? undefined
@@ -168,20 +209,24 @@ export const createCatalogIdentity = (
       : selectedPresentation.budgetBytes === COMPACT_INPUT_SCHEMA_BUDGET_BYTES
         ? "compact"
         : undefined;
+  // Recorded digests describe the complete default catalog only; a scoped tool
+  // or prompt set always computes from its own inputs.
   let catalogDigests: CatalogDigests | undefined =
-    inputProfile === undefined
+    inputProfile === undefined ||
+    contracts !== TOOL_CONTRACTS ||
+    promptContracts !== PROMPT_CONTRACTS
       ? undefined
       : RECORDED_CATALOG_DIGEST_PROFILES?.[inputProfile][outputSchemaProfile];
   return {
     counts: {
       cli_commands: CLI_COMMAND_NAMES.length,
-      mcp_tools: sortedToolContracts.length,
-      mcp_prompts: promptCatalog.length,
+      mcp_tools: contracts.length,
+      mcp_prompts: promptContracts.length,
     },
     get digests() {
       return (catalogDigests ??= createCatalogDigests(
-        TOOL_CONTRACTS,
-        PROMPT_CONTRACTS,
+        contracts,
+        promptContracts,
         selectedPresentation,
         outputSchemaProfile,
       ));
@@ -196,6 +241,30 @@ export const createCatalogIdentity = (
 export const FULL_CATALOG_IDENTITY = createCatalogIdentity();
 
 /** Default MCP advertisement; explicit full/custom selections have their own identity. */
-export const DEFAULT_CATALOG_IDENTITY = createCatalogIdentity(
-  compactPresentationForMcpInputSchemaProfile(undefined),
-);
+export const DEFAULT_CATALOG_IDENTITY = createCatalogIdentity({
+  compactPresentation: compactPresentationForMcpInputSchemaProfile(undefined),
+});
+
+/**
+ * Identity whose digests cover exactly the contracts a registration advertises.
+ * Composition reuses it when a deferred server attaches its runtime, so both
+ * paths derive the same value from the same scope.
+ */
+export const catalogIdentityForToolFamilies = (
+  compactPresentation: CompactInputSchemaPresentation | undefined,
+  outputSchemaProfile: McpOutputSchemaProfile,
+  advertisedToolFamilies: ReadonlySet<string> | undefined,
+): ReturnType<typeof createCatalogIdentity> =>
+  compactPresentation === undefined &&
+  outputSchemaProfile === "full" &&
+  advertisedToolFamilies === undefined
+    ? FULL_CATALOG_IDENTITY
+    : createCatalogIdentity({
+        compactPresentation:
+          compactPresentation === undefined
+            ? undefined
+            : { budgetBytes: compactPresentation.budgetBytes },
+        contracts: contractsForToolFamilies(advertisedToolFamilies),
+        outputSchemaProfile,
+        promptContracts: promptsForToolFamilies(advertisedToolFamilies),
+      });

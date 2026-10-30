@@ -92,7 +92,7 @@ export const decodeXmlPropertyList = (
         }
         if (key !== undefined)
           throw new TypeError("Missing value for key while parsing <dict/>");
-        // Define own properties safely, including __proto__; the caller owns omission accounting.
+        // Dictionary names are data, including __proto__.
         const value = Object.fromEntries(entries);
         // XML archives use Foundation's CF$UID convention; a UID key is data.
         const keys = Object.keys(value);
@@ -110,8 +110,6 @@ export const decodeXmlPropertyList = (
         // The pinned decoder also accepted key elements as scalars. Keep their
         // first-child interpretation separate from dictionary key identities.
         const value = node.firstChild === null ? "" : node.firstChild.nodeValue;
-        if (value === "__proto__")
-          throw new TypeError("__proto__ is not a scalar plist key");
         return value;
       }
       case "string":

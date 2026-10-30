@@ -3,7 +3,8 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import { evidenceSchema, type Evidence } from "../domain/evidence.js";
+import type { Evidence } from "../domain/evidence.js";
+import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   projectAnalysisError,
   type AnalysisErrorProjection,
@@ -155,9 +156,9 @@ export class ToolResultDelivery {
   ): CallToolResult {
     if (recordEvidence === undefined)
       return this.toErrorToolResult(error, targetContent);
-    const partial = evidenceSchema.safeParse(error.partialObservation);
-    if (!partial.success) return this.toErrorToolResult(error, targetContent);
-    const recorded = recordEvidence(partial.data);
+    const partial = safeParseEvidence(error.partialObservation);
+    if (!partial.ok) return this.toErrorToolResult(error, targetContent);
+    const recorded = recordEvidence(partial.value);
     if (!recorded.ok) return this.toErrorToolResult(error, targetContent);
     const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
@@ -167,7 +168,7 @@ export class ToolResultDelivery {
           ...projected.details,
           partial_observation: {
             kind: "retained-evidence",
-            evidence_id: partial.data.evidence_id,
+            evidence_id: partial.value.evidence_id,
           },
         },
       },
@@ -220,16 +221,18 @@ export class ToolResultDelivery {
     const retainedEvidence = recovery.evidence_reference !== undefined;
     const nextStep =
       recovery.committed_unknown !== undefined
-        ? "Export this session with export_evidence_bundle to inspect the committed unknown and its mutation Evidence, or page list_unknowns using the reported identity. Do not repeat the completed mutation."
+        ? "Export this session with export_evidence_bundle to inspect the committed unknown and its mutation Evidence. Do not repeat the completed mutation; an individual unknown may be too large for a list_unknowns page."
         : recovery.continuation !== undefined
           ? "Call inspect_analysis_view with the supplied continuation arguments to read retained analysis. Follow coverage.next_offset for subsequent pages; reduce the page limit if needed, or export the complete retained Evidence."
           : retainedEvidence
             ? "Export retained evidence to consume the complete analysis, or use complete CLI JSON output."
-            : contract.name === "get_evidence_bundle"
-              ? evidenceBundleSummary(value)
-                ? MCP_TRANSPORT_EVIDENCE_EXPORT
-                : MCP_TRANSPORT_EVIDENCE_DISCOVERY
-              : "Use complete CLI JSON output to consume the analysis.";
+            : contract.name === "list_unknowns"
+              ? "Call list_unknowns on this same connection with the same filters and offset, using a smaller limit, then follow next_offset. If a single unknown cannot fit, export the session with export_evidence_bundle to recover it."
+              : contract.name === "get_evidence_bundle"
+                ? evidenceBundleSummary(value)
+                  ? MCP_TRANSPORT_EVIDENCE_EXPORT
+                  : MCP_TRANSPORT_EVIDENCE_DISCOVERY
+                : "Use complete CLI JSON output to consume the analysis.";
     const projected = mcpResponseOverflowProjection({
       completed: true,
       constraint: encoded.constraint,

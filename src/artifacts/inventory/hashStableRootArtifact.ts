@@ -19,6 +19,47 @@ import {
   type HashResult,
 } from "../ArtifactHash.js";
 import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+
+/** Finalize the admitted root while preserving its completed identity and exact owner. */
+export const releaseRootArtifact = async (
+  path: string,
+  owner: OwnedFileHandle,
+  resourceScope: ArtifactResourceScope,
+  outcome:
+    | { readonly kind: "completed"; readonly digest: HashResult | null }
+    | { readonly kind: "failed"; readonly cause: unknown },
+  signal?: AbortSignal,
+): Promise<void> => {
+  const cleanup = await resourceScope.release({
+    kind: "file-handle",
+    resource: `root artifact descriptor for ${path}`,
+    handle: owner,
+  });
+  const observation =
+    outcome.kind === "completed" && outcome.digest !== null
+      ? fileSnapshotPartialObservationSchema.parse({
+          kind: "file-snapshot-hash",
+          path,
+          sha256: outcome.digest.sha256,
+          bytes: outcome.digest.bytes,
+        })
+      : undefined;
+  const finalOutcome =
+    outcome.kind === "completed" && signal?.aborted
+      ? {
+          kind: "failed" as const,
+          cause: new ArtifactReaderFailure(
+            "cancelled",
+            "Root artifact inventory cancelled during descriptor finalization",
+            { cause: signal.reason, partialObservation: observation },
+          ),
+        }
+      : outcome;
+  if (cleanup.kind === "failed")
+    throw resourceScope.cleanupFailure(finalOutcome, [cleanup], observation);
+  if (finalOutcome.kind === "failed") throw finalOutcome.cause;
+};
 
 /** Admit a root descriptor without losing ownership when validation cleanup fails. */
 export const openRootArtifact = async (
@@ -87,14 +128,15 @@ export const hashStableRootArtifact = async (
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
   }
-  const resource = `root artifact descriptor for ${path}`;
-  const cleanup = await resourceScope.release({
-    kind: "file-handle",
-    resource,
-    handle: owner,
-  });
-  if (cleanup.kind === "failed")
-    throw resourceScope.cleanupFailure(outcome, [cleanup]);
+  await releaseRootArtifact(
+    path,
+    owner,
+    resourceScope,
+    outcome.kind === "completed"
+      ? { kind: "completed", digest: outcome.value }
+      : outcome,
+    signal,
+  );
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;
 };

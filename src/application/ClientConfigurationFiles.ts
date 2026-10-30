@@ -22,11 +22,34 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-): ClientConfigurationFileError => ({
-  kind: "malformed",
-  path,
-  detail: `Configuration ${path} has an invalid REA server environment: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. Repair it before rerunning setup.`,
-});
+  overrides: Readonly<Record<string, string>> = {},
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationFileError => {
+  const constraints = error.settings
+    .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+    .join("; ");
+  const overrideNames = new Set(
+    Object.keys(overrides).map((name) =>
+      platform === "win32" ? name.toUpperCase() : name,
+    ),
+  );
+  const overrideSettings = error.settings
+    .map(({ setting }) => setting)
+    .filter((setting) =>
+      overrideNames.has(platform === "win32" ? setting.toUpperCase() : setting),
+    );
+  const location =
+    overrideSettings.length > 0
+      ? `The proposed registration environment includes launch overrides (${overrideSettings.join(", ")}) that do not satisfy the effective REA configuration constraints`
+      : overrideNames.size > 0
+        ? `The effective REA server environment for ${path} is invalid; check the client configuration and proposed launch overrides`
+        : `Configuration ${path} has an invalid REA server environment`;
+  return {
+    kind: "malformed",
+    path,
+    detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before rerunning setup.`,
+  };
+};
 
 /** A named source failure that setup can explain without losing the bad path. */
 export interface ClientConfigurationFileError {
@@ -85,11 +108,12 @@ export const readConfigurationFile = async (
   }
 };
 
-/** Read every applicable user file; malformed lower-priority files also stop setup. */
+/** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
+  writeOverrides?: Readonly<Record<string, string>>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -104,23 +128,37 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
-        {},
+        path === client.configPath ? writeOverrides : undefined,
         "fragment",
         platform,
       );
       if (!environment.ok)
-        return err(invalidEnvironment(path, environment.error));
+        return err(
+          invalidEnvironment(
+            path,
+            environment.error,
+            path === client.configPath ? writeOverrides : undefined,
+            platform,
+          ),
+        );
       documents.push({ ...document.value, sourcePath: path });
     }
   }
   const environment = clientRegistrationEnvironment(
     effectiveClientConfiguration(documents, undefined, platform),
-    {},
+    writeOverrides,
     "effective",
     platform,
   );
   if (!environment.ok)
-    return err(invalidEnvironment(client.configPath, environment.error));
+    return err(
+      invalidEnvironment(
+        client.configPath,
+        environment.error,
+        writeOverrides,
+        platform,
+      ),
+    );
   return ok(documents);
 };
 

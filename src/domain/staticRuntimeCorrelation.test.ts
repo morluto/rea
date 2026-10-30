@@ -11,7 +11,7 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import { functionComparisonResultSchema } from "./functionComparisonSchemas.js";
 import { jsonValueSchema, type JsonValue } from "./jsonValue.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../contracts/functionComparisonExample.js";
-import { functionDossierSchema } from "./hopperValues.js";
+import { functionDossierSchema } from "./native/functionDossier.js";
 import { compareFunctions } from "./functionComparison.js";
 import { functionSnapshotFixture } from "./functionDossierEvidence.fixture.js";
 import {

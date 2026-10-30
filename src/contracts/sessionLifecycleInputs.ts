@@ -6,7 +6,7 @@ import {
   rawBinarySelectionError,
 } from "../domain/rawBinary.js";
 import { z } from "zod";
-import { analysisProviderSelectorSchema } from "./providerSelection.js";
+import { analysisProviderSelectorSchema } from "../domain/providerSelection.js";
 
 /** Caller-supplied analysis snapshot path; must name its destination absolutely. */
 const snapshotPathSchema = absoluteLocalPathStringSchema.describe(

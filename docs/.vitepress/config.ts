@@ -53,7 +53,11 @@ export default defineConfig({
             text: "Web network captures",
             link: "/web-network-captures",
           },
-          { text: "Agent environments", link: "/agent-environments" },
+          {
+            text: "Build RL environments",
+            link: "/agent-environments-quickstart",
+          },
+          { text: "Environment reference", link: "/agent-environments" },
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
           { text: "Process capture", link: "/process-capture" },

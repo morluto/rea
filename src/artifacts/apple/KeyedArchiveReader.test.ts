@@ -232,27 +232,29 @@ describe("inert keyed archive decoding", () => {
       expect.objectContaining({ source: 1, target: 2, status: "resolved" }),
     );
   });
-  it("reports an XML archive dictionary keyed __proto__ as omitted", () => {
-    const xml = build({ ...archive, $objects: ["$null", "value"] }).replace(
-      "<key>$top</key>",
-      "<key>__proto__</key><string>x</string><key>$top</key>",
-    );
+  it("preserves an XML object dictionary keyed __proto__", () => {
+    const xml = build({
+      ...archive,
+      $objects: ["$null", { prototypeKey: "x" }],
+    }).replace("<key>prototypeKey</key>", "<key>__proto__</key>");
     const graph = decodeKeyedArchiveBytes(Buffer.from(xml), {
       offset: 0,
       limit: 2,
     });
-    expect(graph.objects.map(({ value }) => value)).toEqual(["$null", "value"]);
-    expect(graph.limitations).toContain(
-      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects.map(({ value }) => value)).toEqual([
+      "$null",
+      { ["__proto__"]: "x" },
+    ]);
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
-  it("reports a binary archive dictionary keyed __proto__ as omitted", () => {
+  it("preserves a binary object dictionary keyed __proto__", () => {
     const placeholder = "proto_key";
     const encoded = Buffer.from(
       buildBinary({
         ...archive,
-        [placeholder]: "hidden",
-        $objects: ["$null", "value"],
+        $objects: ["$null", { [placeholder]: "hidden" }],
       }),
     );
     const start = encoded.indexOf(placeholder);
@@ -261,9 +263,10 @@ describe("inert keyed archive decoding", () => {
     Buffer.from("__proto__").copy(encoded, start);
 
     const graph = decodeKeyedArchiveBytes(encoded, { offset: 0, limit: 2 });
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[1]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
   it("does not report a binary __proto__ value as an omitted key", () => {
     const graph = decodeKeyedArchiveBytes(
@@ -276,9 +279,9 @@ describe("inert keyed archive decoding", () => {
       ),
       { offset: 0, limit: 2 },
     );
-    expect(graph.limitations).not.toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
   it("rejects missing roots, malformed plist, and non-keyed archives", () => {
     expect(() =>
@@ -447,6 +450,10 @@ describe("binary plist reference preflight", () => {
       [2, "$null"],
     ]);
   });
+});
+
+describe("binary plist dictionary materialization", () => {
+  const selection = { offset: 0, limit: 10 };
 
   it("recognizes a shared key object used by separate dictionaries", () => {
     const graph = decodeKeyedArchiveBytes(
@@ -460,18 +467,24 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects.map(({ value }) => value)).toEqual([
+      { ["__proto__"]: "first" },
+      { ["__proto__"]: "second" },
+    ]);
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
-  it("reports binary omission presence without claiming a count", () => {
+  it("preserves nested keys while duplicate entries retain the last value", () => {
     const placeholder = "proto_key";
     const nested = Buffer.from(
       buildBinary({
         ...archive,
-        [placeholder]: { [placeholder]: "hidden", visible: true },
-        $objects: ["$null", "value"],
+        $objects: [
+          "$null",
+          { [placeholder]: { [placeholder]: "hidden", visible: true } },
+        ],
       }),
     );
     let index = nested.indexOf(placeholder);
@@ -480,9 +493,14 @@ describe("binary plist reference preflight", () => {
       index = nested.indexOf(placeholder, index + placeholder.length);
     }
     const nestedGraph = decodeKeyedArchiveBytes(nested, selection);
-    expect(nestedGraph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(nestedGraph.objects[1]?.value).toEqual({
+      ["__proto__"]: { ["__proto__"]: "hidden", visible: true },
+    });
+    expect(
+      nestedGraph.limitations.some((value) =>
+        value.includes("keyed __proto__"),
+      ),
+    ).toBe(false);
 
     const shadowedValue = keyedRoot([
       plistArray([9]),
@@ -497,12 +515,7 @@ describe("binary plist reference preflight", () => {
     expect(keyOffset).toBeGreaterThanOrEqual(0);
     Buffer.from("__proto__").copy(shadowedValue, keyOffset);
     const shadowedGraph = decodeKeyedArchiveBytes(shadowedValue, selection);
-    expect(shadowedGraph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
-    expect(shadowedGraph.limitations).not.toContain(
-      "1 dictionary entry keyed __proto__ was omitted because REA results cannot represent that key.",
-    );
+    expect(shadowedGraph.objects[0]?.value).toEqual({ shadow: "replacement" });
   });
 
   it("detects UTF-16 binary dictionary keys", () => {
@@ -515,9 +528,10 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[0]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 
   it("detects extended-length UTF-16 binary dictionary keys", () => {
@@ -530,9 +544,10 @@ describe("binary plist reference preflight", () => {
       ]),
       selection,
     );
-    expect(graph.limitations).toContain(
-      "Dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-    );
+    expect(graph.objects[0]?.value).toEqual({ ["__proto__"]: "hidden" });
+    expect(
+      graph.limitations.some((value) => value.includes("keyed __proto__")),
+    ).toBe(false);
   });
 });
 
@@ -893,7 +908,7 @@ it("preserves exact integers in XML authored UID dictionaries", () => {
   expect(graph.total_references).toBe(1);
 });
 
-it("preserves XML dictionary identity when prototype-key omission leaves a CF$UID field", () => {
+it("preserves XML dictionary identity beside an authored CF$UID field", () => {
   const xml = build({
     $archiver: "NSKeyedArchiver",
     $objects: [
@@ -907,7 +922,9 @@ it("preserves XML dictionary identity when prototype-key omission leaves a CF$UI
     offset: 0,
     limit: 10,
   });
-  expect(graph.objects[1]?.value).toEqual({ authoredRecord: { CF$UID: 2 } });
+  expect(graph.objects[1]?.value).toEqual({
+    authoredRecord: { CF$UID: 2, ["__proto__"]: "authored" },
+  });
   expect(graph.total_references).toBe(2);
   expect(graph.references).toEqual([
     expect.objectContaining({
@@ -923,9 +940,7 @@ it("preserves XML dictionary identity when prototype-key omission leaves a CF$UI
       status: "resolved",
     }),
   ]);
-  expect(graph.limitations).toContainEqual(
-    expect.stringMatching(
-      /\b1 dictionary entry\b.*\b__proto__\b.*\bomitted\b/u,
-    ),
-  );
+  expect(
+    graph.limitations.some((value) => value.includes("keyed __proto__")),
+  ).toBe(false);
 });

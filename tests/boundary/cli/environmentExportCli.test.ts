@@ -50,9 +50,15 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
-      details: { operation: "environment-export" },
+      code: "cleanup_incomplete",
+      details: {
+        operation: "environment-export",
+        cleanup: "incomplete",
+        resources: [files.manifestPath],
+        diagnostics: { input_path: files.manifestPath, input_role: "manifest" },
+        cleanup_reason: "controlled persistent close failure",
+      },
     });
-    expect(JSON.stringify(result.json)).toContain("cleanup");
     await expect(readFile(join(directory, "README.md"))).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -68,6 +74,39 @@ const BUNDLE_FILES = [
   "envs/grafana-example/manifest.json",
   "tasks/smoke.json",
 ];
+
+cliTest(
+  "refuses unaddressable service names before writing a bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-bundle-hostname-cli-");
+    const files = await writeEnvironmentServeFiles(root);
+    for (const name of ["4294967296", "123", "a".repeat(64)]) {
+      const directory = join(root, `bundle-${name}`);
+      const result = await cli.run({
+        arguments: [
+          "environment-export",
+          files.manifestPath,
+          "--evidence",
+          files.capturePath,
+          directory,
+          "--name",
+          name,
+          "--json",
+        ],
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "environment-export",
+          issues: [{ path: ["name"] }],
+        },
+      });
+      await expect(stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  },
+);
 
 cliTest(
   "writes the bundle folder from the fixture pair and prints the written files with sizes",

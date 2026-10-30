@@ -7,12 +7,24 @@
  * refusal paths, and cancellation before spawn.
  */
 import { createHash } from "node:crypto";
-import { open, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 import { PcapProvider } from "../../../src/pcap/PcapProvider.js";
+import { PcapAnalysisService } from "../../../src/application/pcap/PcapAnalysisService.js";
 import {
   CAPINFOS_COMMAND_ENV,
   TSHARK_COMMAND_ENV,
@@ -46,6 +58,134 @@ const providerOver = (): PcapProvider => {
   onTestFinished(() => provider.close());
   return provider;
 };
+
+it.skipIf(isWindows).each(["path", "explicit"] as const)(
+  "retains the selected %s environment after a successful Wireshark probe",
+  async (selection) => {
+    const root = await createTestTempDirectory("rea-pcap-environment-");
+    for (const [name, banner] of [
+      ["tshark", "TShark"],
+      ["capinfos", "Capinfos"],
+    ] as const) {
+      await writeFile(
+        join(root, name),
+        `#!/bin/sh
+printf '${banner} (Wireshark) 4.6.6-%s\\n' "$PCAP_TEST_PROFILE"
+printf '%s|%s|%s\\n' "$PCAP_TEST_PROFILE" "$PCAP_TEST_EMPTY" "\${PCAP_TEST_ABSENT-unset}" >> "$0.calls"
+`,
+        { mode: 0o755 },
+      );
+    }
+    const environment: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: root,
+      PCAP_TEST_PROFILE: "selected",
+      PCAP_TEST_EMPTY: "",
+    };
+    delete environment.PCAP_TEST_ABSENT;
+    delete environment.REA_TSHARK_COMMAND;
+    delete environment.REA_CAPINFOS_COMMAND;
+    if (selection === "explicit") {
+      environment.REA_TSHARK_COMMAND = join(root, "tshark");
+      environment.REA_CAPINFOS_COMMAND = join(root, "capinfos");
+    }
+    const provider = new PcapProvider({ environment });
+    onTestFinished(() => provider.close());
+    const service = new PcapAnalysisService(provider);
+    const first = await service.execute("inspect_pcap_client", {});
+    if (!first.ok) throw first.error;
+    expect(first.value.normalized_result).toMatchObject({
+      client: {
+        tshark_version: "TShark (Wireshark) 4.6.6-selected",
+        capinfos_version: "Capinfos (Wireshark) 4.6.6-selected",
+      },
+    });
+    environment.PATH = join(root, "missing-bin");
+    environment.PCAP_TEST_PROFILE = "later";
+    environment.PCAP_TEST_EMPTY = "later";
+    environment.PCAP_TEST_ABSENT = "later";
+    if (selection === "explicit") {
+      environment.REA_TSHARK_COMMAND = join(root, "missing-tshark");
+      environment.REA_CAPINFOS_COMMAND = join(root, "missing-capinfos");
+    }
+    const repeated = await service.execute("inspect_pcap_client", {});
+    if (!repeated.ok) throw repeated.error;
+    expect(repeated.value.normalized_result).toEqual(
+      first.value.normalized_result,
+    );
+    expect(JSON.stringify(repeated.value)).not.toContain("PCAP_TEST_PROFILE");
+    for (const name of ["tshark", "capinfos"])
+      expect(await readFile(join(root, `${name}.calls`), "utf8")).toBe(
+        "selected||unset\nselected||unset\n",
+      );
+  },
+);
+
+it.skipIf(isWindows)(
+  "preserves selected Wireshark wrappers and re-admits changed symlink targets after success",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-pcap-selected-wrapper-",
+    );
+    const bin = join(directory, "bin"),
+      libexec = join(directory, "libexec");
+    await mkdir(bin);
+    await mkdir(libexec);
+    const source = join(libexec, "wrapper"),
+      replacement = join(libexec, "replacement");
+    const script =
+      '#!/bin/sh\nselected="${0%/*}/${0##*/}"\nIFS= read -r banner < "$selected.version" || exit 19\nprintf "%s\\n" "$banner"\nif [ -f "$selected.retarget" ]; then\n  IFS= read -r target < "$selected.retarget"\n  /bin/ln -sf "$target" "$0"\nfi\n';
+    for (const path of [source, replacement]) {
+      await writeFile(path, script);
+      await chmod(path, 0o755);
+    }
+    const tshark = join(bin, "tshark"),
+      capinfos = join(bin, "capinfos");
+    for (const [path, name] of [
+      [tshark, "TShark"],
+      [capinfos, "Capinfos"],
+    ] as const) {
+      await symlink(source, path);
+      await writeFile(`${path}.version`, `${name} (Wireshark) 4.6.6-stub\n`);
+    }
+    expect(
+      (await promisify(execFile)(tshark, ["--version"])).stdout.trim(),
+    ).toBe("TShark (Wireshark) 4.6.6-stub");
+    const provider = new PcapProvider({
+      environment: {
+        REA_TSHARK_COMMAND: tshark,
+        REA_CAPINFOS_COMMAND: capinfos,
+      },
+    });
+    onTestFinished(() => provider.close());
+    const request = { operation: "inspect_pcap_client", input: {} } as const;
+    const first = await evidenceResult(provider, request);
+    expect(first.client).toMatchObject({
+      tshark_command: tshark,
+      tshark_resolved_path: await realpath(source),
+      capinfos_command: capinfos,
+    });
+    await writeFile(`${tshark}.retarget`, `${replacement}\n`);
+    const changed = await provider.execute(request);
+    if (changed.ok) throw new Error("Changed selected wrapper was accepted");
+    expect(projectAnalysisError(changed.error)).toMatchObject({
+      code: "artifact_changed",
+      details: {
+        path: tshark,
+        captured_output: { stdout: "TShark (Wireshark) 4.6.6-stub\n" },
+      },
+    });
+    await unlink(`${tshark}.retarget`);
+    const fresh = await evidenceResult(provider, request);
+    expect(fresh.client).toMatchObject({
+      tshark_command: tshark,
+      tshark_resolved_path: await realpath(replacement),
+    });
+    expect(first.client).toMatchObject({
+      tshark_resolved_path: await realpath(source),
+    });
+  },
+);
 
 const evidenceResult = async (
   provider: PcapProvider,
@@ -286,6 +426,17 @@ it.runIf(hasNativeBound)(
     expect((result.protocol_distribution as unknown[]).length).toBeGreaterThan(
       0,
     );
+    expect(result.dns_queries).toEqual([
+      {
+        query: "api.example.com",
+        query_labels_hex: ["617069", "6578616d706c65", "636f6d"],
+        response_addresses: ["93.184.216.34"],
+        response_address_count: 1,
+      },
+    ]);
+    expect(result.unattributed_dns_addresses).toEqual([]);
+    expect(result.unattributed_dns_address_count).toBe(0);
+    expect(result.unattributed_dns_packet_count).toBe(0);
     expect(result.coverage).toBe("complete");
   },
 );

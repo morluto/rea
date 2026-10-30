@@ -8,13 +8,19 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { DirectAnalysisDependencies } from "./DirectAnalysisDependencies.js";
 import type { BinarySession } from "./binary/BinarySession.js";
 import type { SessionProviderRoute } from "./binary/SessionProviderRouter.js";
+import {
+  routeAllowsSnapshotReplay,
+  routeProviderIdentity,
+} from "./binary/SessionProviderPolicy.js";
 import type { ResolvedSessionOpen } from "./binary/BinarySessionOpen.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
+import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
+import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
 import {
   ARTIFACT_ANALYSIS_OPERATIONS,
   type ArtifactAnalysisOperation,
@@ -56,7 +62,7 @@ import {
   workflowSnapshotRecord,
   recordWorkflowUnknowns,
 } from "./WorkflowEvidence.js";
-import type { AnalysisProviderSelector } from "../contracts/providerSelection.js";
+import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import { resolveXrefsAddress } from "./XrefsAddressResolution.js";
 import {
   AnalysisCancelledError,
@@ -66,6 +72,7 @@ import { deliverAnalysisEvidence } from "./EvidenceBundleCommands.js";
 import type { BinaryTargetError } from "../domain/configurationErrors.js";
 import {
   directAnalysisCleanupFailure,
+  projectDirectAnalysisFailure,
   managedAnalysisCleanupFailure,
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
@@ -127,7 +134,7 @@ export const runDirectAnalysis = async (
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
   } = {},
-): Promise<JsonValue> =>
+): Promise<Result<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
     runAnalysis(dependencies, path, tool, arguments_, {
       logger: options.logger ?? silentLogger,
@@ -170,31 +177,35 @@ export const runProviderAnalysis = async (
           readonly evidenceBundlePath?: string;
         },
       ]
-): Promise<JsonValue> => {
+): Promise<Result<Evidence, JsonValue>> => {
   if (delivery !== undefined && tool !== "inspect_managed_members")
-    return cliError(
-      new AnalysisInputError(tool, undefined, [
-        {
-          path: ["delivery"],
-          reason: "invalid_value",
-          message:
-            "Evidence delivery options are only supported by inspect_managed_members",
-        },
-      ]),
+    return err(
+      cliError(
+        new AnalysisInputError(tool, undefined, [
+          {
+            path: ["delivery"],
+            reason: "invalid_value",
+            message:
+              "Evidence delivery options are only supported by inspect_managed_members",
+          },
+        ]),
+      ),
     );
   if (
     delivery?.detail === "summary" &&
     delivery.evidenceBundlePath === undefined
   )
-    return cliError(
-      new AnalysisInputError(tool, undefined, [
-        {
-          path: ["evidence_bundle"],
-          reason: "missing_argument",
-          message:
-            "summary detail requires --evidence-bundle so complete Evidence remains available to later CLI commands",
-        },
-      ]),
+    return err(
+      cliError(
+        new AnalysisInputError(tool, undefined, [
+          {
+            path: ["evidence_bundle"],
+            reason: "missing_argument",
+            message:
+              "summary detail requires --evidence-bundle so complete Evidence remains available to later CLI commands",
+          },
+        ]),
+      ),
     );
   return withProcessCancellation(signal, async (operationSignal) => {
     // The selected CLI path is a request fact. Keep it out of provider inputs
@@ -210,14 +221,16 @@ export const runProviderAnalysis = async (
         operationSignal,
       );
       await dispatchQueuedInterrupts();
-      if (!original.ok) return cliError(original.error);
+      if (!original.ok) return err(cliError(original.error, path));
       const evidence = withEvidenceCallerInputPath(original.value, path);
       if (operationSignal.aborted)
-        return cliError(
-          new AnalysisCancelledError(tool, {
-            cause: operationSignal.reason,
-            partialObservation: evidence,
-          }),
+        return err(
+          cliError(
+            new AnalysisCancelledError(tool, {
+              cause: operationSignal.reason,
+              partialObservation: evidence,
+            }),
+          ),
         );
       const result =
         delivery?.evidenceBundlePath === undefined
@@ -228,7 +241,7 @@ export const runProviderAnalysis = async (
               delivery.detail,
               operationSignal,
             );
-      return result.ok ? result.value : cliError(result.error);
+      return result.ok ? ok(result.value) : err(cliError(result.error, path));
     }
     return runAnalysis(dependencies, path, tool, arguments_, {
       logger,
@@ -316,7 +329,7 @@ const runAnalysis = async (
     readonly architecture?: BinaryArchitecture;
     readonly entryPoint?: string;
   },
-): Promise<JsonValue> => {
+): Promise<Result<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
   const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;
@@ -324,7 +337,7 @@ const runAnalysis = async (
     session = await options.createSession();
   } else {
     const config = dependencies.readConfiguration();
-    if (!config.ok) return cliError(config.error);
+    if (!config.ok) return err(cliError(config.error));
     session = await (
       tool === "inspect_native_dispatch_metadata" && snapshotPath === undefined
         ? dependencies.createNativeDispatchBinarySession
@@ -405,7 +418,9 @@ const runAnalysis = async (
         !requiresNativeSourceAdmissionBeforeReplay(
           route.binding?.identity.id,
         ) &&
-        allowsSnapshotReplay(route, tool)
+        tool !== "trace_native_ui_action" &&
+        tool !== "decompile_all" &&
+        routeAllowsSnapshotReplay(route, tool)
       ) {
         const cached = snapshotEvidenceForQuery(snapshot, {
           target: preview.value.target,
@@ -414,7 +429,7 @@ const runAnalysis = async (
           parameters: arguments_,
           provider: isWorkflowEvidenceTool(tool)
             ? REA_WORKFLOW_PROVIDER
-            : providerIdentityForRoute(route, tool),
+            : routeProviderIdentity(route, tool),
           evidenceProfile,
         });
         if (cached !== undefined)
@@ -506,13 +521,15 @@ const runAnalysis = async (
       );
       if (written.ok) publishedSnapshot = written.value;
       else {
-        if (written.error instanceof EvidenceFileError)
-          publishedSnapshot = written.error.published;
-        const recovered =
-          written.error instanceof EvidenceFileError &&
-          written.error.published !== undefined &&
-          (await session.closeFileResources()).ok;
-        if (!recovered)
+        const published =
+          written.error instanceof EvidenceFileError
+            ? written.error.published
+            : undefined;
+        if (published?.path !== undefined)
+          publishedSnapshot = { path: published.path, bytes: published.bytes };
+        const released =
+          published !== undefined && (await session.closeFileResources()).ok;
+        if (!released || published?.path === undefined)
           return err(written.error.retainPartialObservation(evidence));
       }
     }
@@ -540,9 +557,11 @@ const runAnalysis = async (
       outcome.cleanupError.retainDiagnostics({
         analysis_snapshot: { ...publishedSnapshot },
       });
-    return directAnalysisCleanupFailure(result, outcome.cleanupError);
+    return err(
+      directAnalysisCleanupFailure(result, outcome.cleanupError, path),
+    );
   }
-  return result.ok ? result.value : cliError(result.error);
+  return result.ok ? ok(result.value) : err(cliError(result.error, path));
 };
 
 const executeAnalysisTool = async (input: {
@@ -570,29 +589,31 @@ const executeAnalysisTool = async (input: {
   if (tool === "analyze_function") {
     const { executeFunctionAnalysisEvidence } =
       await import("./FunctionAnalysisEvidence.js");
-    const result = await executeFunctionAnalysisEvidence(
+    let result = await executeFunctionAnalysisEvidence(
       session,
       input.arguments,
       input.openedTarget,
       { signal },
     );
+    result = retainAnalysisResultSources(
+      tool,
+      (source) => session.recordEvidence(source),
+      result,
+    );
     return result.ok ? ok({ evidence: result.value }) : result;
   }
-  if (
-    tool === "binary_overview" ||
-    tool === "inspect_native_api" ||
-    tool === "inspect_native_dispatch_metadata" ||
-    tool === "trace_feature" ||
-    tool === "trace_native_values" ||
-    tool === "trace_native_ui_action" ||
-    tool === "decompile_all"
-  ) {
+  if (isWorkflowEvidenceTool(tool)) {
     const { EnhancedTools } = await import("./EnhancedTools.js");
-    const result = await executeComposedWorkflow(
+    let result = await executeComposedWorkflow(
       session,
       (observed) =>
         new EnhancedTools(observed).execute(tool, input.arguments, signal),
       composedLimitationBudget(tool),
+    );
+    result = retainAnalysisResultSources(
+      tool,
+      (source) => session.recordEvidence(source),
+      result,
     );
     if (!result.ok) return result;
     const evidence = createWorkflowEvidence({
@@ -736,24 +757,6 @@ const inspectBundleResourceInput = async (
   }
 };
 
-const allowsSnapshotReplay = (
-  route: SessionProviderRoute,
-  tool:
-    | NativeToolName
-    | ArtifactAnalysisOperation
-    | ManagedToolName
-    | DirectAnalysisTool,
-): boolean => {
-  if (tool === "trace_native_ui_action" || tool === "decompile_all")
-    return false;
-  const descriptor = route.capabilities?.get(tool);
-  return descriptor === undefined
-    ? ![...(route.capabilities?.values() ?? [])].some(
-        ({ cachePolicy }) => cachePolicy === "live",
-      )
-    : descriptor.cachePolicy !== "live";
-};
-
 const analysisProfileForRoute = (
   route: SessionProviderRoute,
   tool:
@@ -775,7 +778,7 @@ const analysisProfileForRoute = (
   }
   if (isWorkflowEvidenceTool(tool))
     return workflowAnalysisProfile(profile, tool);
-  const provider = providerIdentityForRoute(route, tool);
+  const provider = routeProviderIdentity(route, tool);
   return provider.id === profile.provider.id ? profile : undefined;
 };
 
@@ -786,13 +789,6 @@ const nativeDispatchBindingProfile = (
   if (operation !== "inspect_native_dispatch_metadata") return undefined;
   return profilelessNativeDispatchProfile(route);
 };
-
-/** Mirror BinarySession.providerIdentity for a route not opened yet. */
-const providerIdentityForRoute = (
-  route: SessionProviderRoute,
-  operation: string,
-): ProviderIdentity =>
-  route.capabilities?.get(operation)?.provider ?? route.identity;
 
 const analysisProfileForEvidence = (
   session: BinarySession,
@@ -812,7 +808,10 @@ const isWorkflowEvidenceTool = (
     | ArtifactAnalysisOperation
     | ManagedToolName
     | DirectAnalysisTool,
-): boolean =>
+): tool is Exclude<
+  Extract<DirectAnalysisTool, EnhancedToolName>,
+  "analyze_function"
+> =>
   tool === "binary_overview" ||
   tool === "inspect_native_api" ||
   tool === "inspect_native_dispatch_metadata" ||
@@ -837,7 +836,12 @@ const fileExists = async (path: string): Promise<boolean> => {
   }
 };
 
-const cliError = (error: AnalysisError): JsonValue => ({
+const cliError = (
+  error: AnalysisError,
+  callerInputPath?: string,
+): JsonValue => ({
   error: "Analysis failed",
-  ...projectAnalysisError(error),
+  ...(callerInputPath === undefined
+    ? projectAnalysisError(error)
+    : projectDirectAnalysisFailure(error, callerInputPath)),
 });

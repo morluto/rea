@@ -1,17 +1,20 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import {
+  retainedSummaryDelivery,
+  withoutDeliveryDetail,
+  type EvidenceToolFamilyOptions,
+} from "./retainedSummaryDelivery.js";
 
 import type {
   AnalysisOperation,
   AnalysisOperationPort,
 } from "../application/AnalysisProvider.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
+import { ok } from "../domain/result.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import type { Evidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ok, type Result } from "../domain/result.js";
 import type { Logger } from "pino";
 import { mcpProgressReporter } from "./mcpProgress.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -27,6 +30,7 @@ interface EvidenceToolRegistration {
   readonly logger: Logger;
   readonly activeTarget: (() => BinaryTarget | undefined) | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
+  readonly evidenceById?: EvidenceToolFamilyOptions["evidenceById"];
   readonly withAdmittedAnalysis: WithAdmittedAnalysis;
   readonly analysisForAdmission?: (
     analysis: AnalysisOperationPort,
@@ -35,21 +39,6 @@ interface EvidenceToolRegistration {
     operation: Exclude<AnalysisOperation, "health">,
     parameters: Readonly<Record<string, JsonValue>>,
   ) => Readonly<Record<string, JsonValue>>;
-  /** Exclude adapter-only selections, such as delivery detail, from Evidence identity. */
-  readonly parametersForEvidence?: (
-    operation: Exclude<AnalysisOperation, "health">,
-    parameters: Readonly<Record<string, JsonValue>>,
-  ) => Readonly<Record<string, JsonValue>>;
-  /** Refuse an unsatisfiable delivery selection before any analysis runs. */
-  readonly preflight?: (
-    operation: Exclude<AnalysisOperation, "health">,
-    parameters: Readonly<Record<string, JsonValue>>,
-  ) => Result<unknown, AnalysisError>;
-  readonly projectEvidence?: (
-    operation: Exclude<AnalysisOperation, "health">,
-    parameters: Readonly<Record<string, JsonValue>>,
-    evidence: Evidence,
-  ) => Result<Evidence, AnalysisError>;
 }
 
 /** Register provider-backed contracts that return atomic Evidence observations. */
@@ -59,14 +48,17 @@ export const registerEvidenceTools = (
   options: EvidenceToolRegistration,
 ): void => {
   for (const contract of contracts) {
+    const delivery =
+      contract.retainedSummary === undefined
+        ? undefined
+        : retainedSummaryDelivery(contract.name, options);
     server.registerTool(
       contract.name,
       toolRegistrationOptions(contract),
       async (input, context) => {
         const parameters = jsonObjectSchema.parse(input);
-        const ready = options.preflight?.(contract.name, parameters);
-        if (ready !== undefined && !ready.ok)
-          return server.delivery.toCallToolResult(ready, contract);
+        const ready = delivery?.preflight(parameters) ?? ok(null);
+        if (!ready.ok) return server.delivery.toCallToolResult(ready, contract);
         const admitted = await options.withAdmittedAnalysis(
           contract.name,
           context.mcpReq.signal,
@@ -76,9 +68,15 @@ export const registerEvidenceTools = (
               admittedAnalysis;
             const progress = mcpProgressReporter(context);
             await reportOperationStart(progress, contract.name);
+            const providerParameters =
+              contract.retainedSummary === undefined
+                ? parameters
+                : withoutDeliveryDetail(parameters);
             const executionParameters =
-              options.parametersForExecution?.(contract.name, parameters) ??
-              parameters;
+              options.parametersForExecution?.(
+                contract.name,
+                providerParameters,
+              ) ?? providerParameters;
             const execution = await logToolExecution(
               options.logger,
               contract.name,
@@ -94,8 +92,9 @@ export const registerEvidenceTools = (
             const sourceEvidence = execution.value.sourceEvidence ?? [];
             const evidence = createAnalysisExecutionEvidence(
               contract.name,
-              options.parametersForEvidence?.(contract.name, parameters) ??
-                parameters,
+              contract.retainedSummary?.evidenceParameters === "omit-detail"
+                ? providerParameters
+                : parameters,
               {
                 ...execution.value,
                 subject:
@@ -112,8 +111,7 @@ export const registerEvidenceTools = (
             if (!sourceRecorded.ok)
               return server.delivery.toCallToolResult(sourceRecorded, contract);
             const projected =
-              options.projectEvidence?.(contract.name, parameters, evidence) ??
-              ok(evidence);
+              delivery?.projectEvidence(parameters, evidence) ?? ok(evidence);
             if (!projected.ok)
               return server.delivery.toCallToolResult(projected, contract);
             const recorded = options.recordEvidence?.(projected.value);

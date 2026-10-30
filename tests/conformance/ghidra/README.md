@@ -11,6 +11,10 @@ binaries and Ghidra projects are never committed.
   RISC-V Clang/LLD/LLVM readelf; `REA_RISCV_CLANG`, `REA_RISCV_LLD` and
   `REA_RISCV_READELF` select existing tool commands.
 
+- `ReaDecodeProbe.java` decodes source-owned instruction bytes from a
+  language's default context and checks each mnemonic, length and optional
+  complete operand. The `ghidra-bridge-sources` CI job runs it for `ARM:LE:32:Cortex`,
+  `ARM:LE:32:v8-m` and `Xtensa:LE:32:default`; the bytes are never executed.
 - `inventory.c` produces separate x86-64 debug and stripped ELF executables.
   It covers imports, an external `puts` function, linker thunks, source symbols,
   direct calls, a targetless callback call, two referenced strings, and a
@@ -62,7 +66,7 @@ binaries and Ghidra projects are never committed.
 `REA_CC`, `REA_CLANG`, and `REA_LLD_LINK` can select alternate commands. The
 verifier requires the verified bring-your-own Ghidra 12.1.4 installation through
 `GHIDRA_INSTALL_DIR` and validates header classification before starting the
-provider. Provider admission accepts the rest of the 12.1.x line; this lane does
+provider. Provider admission accepts newer 12.x (>=12.1) builds with an unverified-build limitation; this lane does
 not.
 
 Conformance compares semantic facts: provider/profile identity, function
