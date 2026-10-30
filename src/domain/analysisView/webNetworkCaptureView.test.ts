@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { createEvidence } from "../evidence.js";
+import { freezeJsonSnapshot } from "../immutableJson.js";
 import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
 import { projectAnalysisView } from "./analysisView.js";
 
@@ -77,6 +78,91 @@ const capture = () => {
   };
 };
 
+it("uses qlog event headlines without promoting HTTP-shaped extensions", () => {
+  const { report } = capture();
+  const first = report.records[0];
+  if (first === undefined) throw new Error("Expected a capture record");
+  const qlog = webNetworkCaptureSchema.parse({
+    ...report,
+    format: "qlog",
+    qlog: {
+      profile: "aioquic-1.5.0-json-0.3",
+      scope: "all-recorded-events-before-selection",
+      body_bytes: "not-reported",
+      clock: {
+        unit: "milliseconds",
+        domain: "unix-epoch",
+        basis: "selected-aioquic-profile-not-producer-authentication",
+      },
+      traces: [],
+    },
+    total_records: 1,
+    records: [
+      {
+        ...first,
+        ordinal: 0,
+        reported: {
+          name: "transport:packet_sent",
+          time: 1.25,
+          request: { url: { payload: "event-extension" } },
+          type: { payload: "event-extension" },
+        },
+        numeric_literals: [],
+        binary_fields: [],
+      },
+    ],
+  });
+  if (qlog.artifact.sha256 === null) throw new Error("Expected fixture digest");
+  const evidence = createEvidence(
+    { ...qlog.artifact, sha256: qlog.artifact.sha256, format: "file" },
+    qlog.decoder,
+    {
+      operation: "inspect_web_network_capture",
+      parameters: {},
+      result: qlog,
+      confidence: "observed",
+      authority: "historical-reference",
+    },
+  );
+  const preview = projectAnalysisView(
+    {
+      evidenceId: evidence.evidence_id,
+      operation: evidence.operation,
+      normalizedResult: qlog,
+      subject: evidence.subject,
+      limitations: evidence.limitations,
+    },
+    { kind: "capture", detail: "preview", offset: 0, limit: 1 },
+  );
+  expect(preview.ok && preview.value).toMatchObject({
+    items: [{ reported: { name: "transport:packet_sent", time: 1.25 } }],
+  });
+  expect(JSON.stringify(preview)).not.toContain("event-extension");
+});
+
+it("checks each parent's subject even after its immutable capture has been validated", () => {
+  const { parent } = capture();
+  const source = {
+    ...parent,
+    normalizedResult: freezeJsonSnapshot(parent.normalizedResult),
+  };
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+  expect(
+    projectAnalysisView({ ...source, subject: null }, { kind: "summary" }).ok,
+  ).toBe(false);
+  if (source.subject === null) throw new Error("Expected fixture subject");
+  expect(
+    projectAnalysisView(
+      {
+        ...source,
+        subject: { ...source.subject, digest: { sha256: "e".repeat(64) } },
+      },
+      { kind: "summary" },
+    ).ok,
+  ).toBe(false);
+  expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+});
+
 it("keeps selected-record page coverage distinct from capture coverage and unsafe number absence", () => {
   const { parent, report } = capture();
   const summary = projectAnalysisView(parent, { kind: "summary" });
@@ -130,7 +216,7 @@ it("keeps selected-record page coverage distinct from capture coverage and unsaf
   });
 });
 
-it("retains explicitly unknown digests and rejects a different subject path", () => {
+it("retains explicitly unknown digests and rejects a different subject digest", () => {
   const { parent, report } = capture();
   const unknown = projectAnalysisView(
     {
@@ -153,7 +239,7 @@ it("retains explicitly unknown digests and rejects a different subject path", ()
   const mismatched = projectAnalysisView(
     {
       ...parent,
-      subject: { ...parent.subject, local_path: "/different/source.saz" },
+      subject: { ...parent.subject, digest: { sha256: "e".repeat(64) } },
     },
     { kind: "summary" },
   );

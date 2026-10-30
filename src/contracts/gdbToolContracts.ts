@@ -1,25 +1,16 @@
 import { z } from "zod";
 
 import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  commandEvidenceDetailSchema,
+  gdbCommandResultSchema,
+} from "../domain/commandObservation.js";
+import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
-import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
+import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
 
 const sessionId = z.string().uuid();
-const gdbCommandResult = z.strictObject({
-  command: z.string(),
-  mi: z.string(),
-  records: z.array(z.string()),
-  console: z.string(),
-  target: z.string(),
-  log: z.string(),
-  process_exit_observed: z.boolean().optional(),
-  process_exit_code: z.number().int().nullable().optional(),
-  process_exit_signal: z.string().nullable().optional(),
-  output_truncated: z.boolean(),
-  output_invalid_utf8: z.literal(true).optional(),
-  completion_status: z.enum(["complete", "unknown"]),
-});
 
 /** Persistent GDB/MI session contracts hosted by the existing REA MCP server. */
 export const GDB_TOOL_CONTRACTS = [
@@ -47,12 +38,16 @@ export const GDB_TOOL_CONTRACTS = [
     ...toolContractMetadata("gdb_console"),
     kind: "native-provider",
     description:
-      "Run one unrestricted GDB CLI command through MI interpreter-exec console and return raw MI, console, target, and log records inline with Evidence. A command timeout preserves collected records with completion_status unknown and stops the owned debugger session. Commands can execute shell, alter target state, access files, and use network. Closing the debugger never implies target termination. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
+      "Run one unrestricted GDB CLI command through MI interpreter-exec console and return raw MI, console, target, and log records inline with Evidence. Default detail complete preserves the original Evidence. Explicit detail summary retains that complete parent and returns every ordered MI record once, omitting duplicate stream groupings and raw mirrors; parent_evidence_id supports later inspect_analysis_view summary queries and complete Evidence export. A command timeout preserves collected records with completion_status unknown and stops the owned debugger session. Commands can execute shell, alter target state, access files, and use network. Closing the debugger never implies target termination. In a shared MCP server, this admitted command closes any active binary-analysis session; after its effects have settled, call open_binary before further analysis. Close an active Ghidra session explicitly first.",
     inputSchema: z.strictObject({
       session_id: sessionId,
       command: z.string().min(1),
+      detail: commandEvidenceDetailSchema,
     }),
-    outputSchema: evidenceResultOf(gdbCommandResult),
+    outputSchema: analysisDetailOutputSchemaOf(
+      gdbCommandResultSchema,
+      gdbCommandSummaryViewResultSchema,
+    ),
     examples: [
       {
         title: "Inspect loaded symbols",
@@ -78,7 +73,7 @@ export const GDB_TOOL_CONTRACTS = [
       recent_mi_records_truncated: z.boolean(),
       mi_invalid_utf8: z.boolean(),
       stderr: z.string(),
-      stderr_observed_bytes: z.number().int().nonnegative(),
+      stderr_observed_bytes: z.int().nonnegative(),
       stderr_truncated: z.boolean(),
       stderr_invalid_utf8: z.boolean(),
       diagnostics_truncated: z.boolean(),

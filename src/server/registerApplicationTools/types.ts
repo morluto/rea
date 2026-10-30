@@ -1,3 +1,4 @@
+import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import type {
   EvidenceWriter,
   EvidenceReader,
@@ -8,6 +9,7 @@ import type { WithAdmittedAnalysis } from "../analysisAdmission.js";
 
 /** Shared services for registering JavaScript application graph workflows. */
 export interface ApplicationToolRegistration {
+  readonly artifactResources: ArtifactResourceScope;
   readonly withAdmittedAnalysis?: WithAdmittedAnalysis;
   readonly logger: Logger;
   readonly evidenceById: EvidenceReader["evidenceById"] | undefined;

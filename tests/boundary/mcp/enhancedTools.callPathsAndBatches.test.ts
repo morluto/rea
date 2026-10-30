@@ -214,6 +214,58 @@ describe("enhanced MCP graph caveats", () => {
   });
 });
 
+describe("trace_call_path MCP path selection", () => {
+  it.each(["forward", "backward"] as const)(
+    "selects the first shortest %s path through a diamond with cycles",
+    async (direction) => {
+      const expanded: string[] = [];
+      const related: Readonly<Record<string, readonly string[]>> = {
+        "0x1": ["0x3", "0x2", "0x2"],
+        "0x2": ["0x1", "0x2", "0x4"],
+        "0x3": ["0x4"],
+      };
+      const client = await connect({
+        execute: async (name, arguments_) => {
+          if (name === "procedure_address")
+            return relationshipExecution(String(arguments_.procedure));
+          expect(name).toBe(
+            direction === "forward" ? "procedure_callees" : "procedure_callers",
+          );
+          const address = String(arguments_.procedure);
+          expanded.push(address);
+          return relationshipExecution(related[address] ?? [], [], {
+            status: "complete",
+          });
+        },
+      });
+      const trace = await client.callTool({
+        name: "trace_call_path",
+        arguments: { start: "0x1", goal: "0x4", direction },
+      });
+      expect(trace.isError).not.toBe(true);
+      expect(trace.structuredContent).toMatchObject({
+        normalized_result: {
+          goal_status: "reached",
+          traversal_path: ["0x1", "0x2", "0x4"],
+          nodes: [
+            { address: "0x1", depth: 0 },
+            { address: "0x2", depth: 1 },
+            { address: "0x3", depth: 1 },
+            { address: "0x4", depth: 2 },
+          ],
+          truncated: false,
+          failures: [],
+          relationship_coverage: {
+            "0x1": { status: "complete" },
+            "0x2": { status: "complete" },
+          },
+        },
+      });
+      expect(expanded).toEqual(["0x1", "0x2"]);
+    },
+  );
+});
+
 describe("trace_call_path MCP outcome semantics", () => {
   it("reports an unreachable goal as unknown when relationship coverage is partial", async () => {
     const client = await connect({
@@ -344,7 +396,11 @@ describe("enhanced MCP batch cancellation", () => {
     {
       stage: "entry-label lookup",
       cancelAt: "address_name",
-      expectedCalls: ["procedure_address:0x1", "address_name:0x1"],
+      expectedCalls: [
+        "procedure_address:0x1",
+        "procedure_address:0x2",
+        "address_name:0x1",
+      ],
       operation: "address_name",
     },
     {
@@ -352,7 +408,9 @@ describe("enhanced MCP batch cancellation", () => {
       cancelAt: "procedure_pseudo_code",
       expectedCalls: [
         "procedure_address:0x1",
+        "procedure_address:0x2",
         "address_name:0x1",
+        "address_name:0x2",
         "procedure_pseudo_code:0x1",
       ],
       operation: "procedure_pseudo_code",
@@ -378,7 +436,7 @@ describe("enhanced MCP batch cancellation", () => {
 
       const response = await client.callTool({
         name: "batch_decompile",
-        arguments: { addresses: ["0x1"] },
+        arguments: { addresses: ["0x1", "0x2"] },
       });
 
       expect(response.isError).toBe(true);
@@ -420,7 +478,6 @@ describe("enhanced MCP batch cancellation", () => {
       "procedure_address:0x1",
       "procedure_address:0x2",
       "address_name:0x1",
-      "address_name:0x2",
     ]);
   });
 });
@@ -431,16 +488,24 @@ describe("enhanced MCP batches", () => {
       { length: 37 },
       (_, index) => `0x${index.toString(16)}`,
     );
+    let active = 0;
+    let peakActive = 0;
     const analysis: AnalysisOperationPort = {
       execute: async (name, arguments_) => {
-        if (name === "procedure_address")
-          return ok(String(arguments_.procedure));
-        if (name === "address_name")
-          return ok(`name for ${String(arguments_.address)}`);
-        if (name !== "procedure_pseudo_code")
-          throw new Error(`Unexpected operation: ${name}`);
+        active++;
+        peakActive = Math.max(peakActive, active);
         await new Promise((resolve) => setImmediate(resolve));
-        return ok(`pseudo for ${String(arguments_.procedure)}`);
+        try {
+          if (name === "procedure_address")
+            return ok(String(arguments_.procedure));
+          if (name === "address_name")
+            return ok(`name for ${String(arguments_.address)}`);
+          if (name !== "procedure_pseudo_code")
+            throw new Error(`Unexpected operation: ${name}`);
+          return ok(`pseudo for ${String(arguments_.procedure)}`);
+        } finally {
+          active--;
+        }
       },
     };
     const client = await connect(analysis);
@@ -451,6 +516,8 @@ describe("enhanced MCP batches", () => {
       },
     });
     expect(result.isError).not.toBe(true);
+    expect(peakActive).toBe(1);
+    expect(active).toBe(0);
     expect(result.structuredContent).toMatchObject({
       normalized_result: {
         items: addresses.map((address) => ({

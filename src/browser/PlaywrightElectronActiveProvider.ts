@@ -1,3 +1,4 @@
+import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -25,9 +26,10 @@ import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type {
-  OwnedProcessGroup,
+  PersistentOwnedProcessGroup,
   ProcessLineageObservation,
 } from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import {
   observeOwnedProcessLineage,
   prepareProcessOwnershipInspection,
@@ -37,7 +39,6 @@ import {
   runElectronActions,
   readApplicationState,
   readFinalApplicationState,
-  runWithExecutionLimits,
 } from "./PlaywrightElectronActiveActions.js";
 import { projectElectronActiveCapture } from "./PlaywrightElectronActiveProjection.js";
 import { readElectronFuseImage } from "../electron/ElectronFuseReader.js";
@@ -108,7 +109,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     options: ExecutionOptions,
   ): Promise<Result<ElectronActiveObservationResult, AnalysisError>> {
     let application: ElectronApplication | undefined;
-    let ownership: OwnedProcessGroup | undefined;
+    let ownership: PersistentOwnedProcessGroup | undefined;
     let lineage: ProcessLineageObservation | undefined;
     let capture: ElectronActiveObservationResult | undefined;
     let paths: ElectronPaths | undefined;
@@ -182,6 +183,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         expectedParentPid: process.pid,
         expectedCommand: paths.executable,
         sweepTokenOwnedProcesses: true,
+        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
         ...(captureBaseline === undefined ? {} : { captureBaseline }),
       };
       lineage = await observeOwnedProcessLineage(ownership);
@@ -190,7 +192,15 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
         options.signal,
         startupDeadline,
       );
-      actions = await runElectronActions(application, input, options);
+      const actionOutcome = await runElectronActions(
+        application,
+        input,
+        options,
+        this.#resources,
+      );
+      actions = actionOutcome.actions;
+      if (actionOutcome.cleanupError !== undefined)
+        throw actionOutcome.cleanupError;
       const state = await readFinalApplicationState(
         application,
         options.signal,
@@ -216,9 +226,14 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
           ],
         };
       }
-      if (cause instanceof AnalysisError && cause.cleanupIncomplete)
+      if (cause instanceof AnalysisError && cause.cleanupIncomplete) {
+        if (capture !== undefined)
+          cause.retainPartialObservation({
+            kind: "electron-active-observation",
+            capture,
+          });
         outcome = err(cause);
-      else if (options.signal?.aborted === true)
+      } else if (options.signal?.aborted === true)
         outcome = err(
           new BrowserObservationError(OPERATION, "cancelled", {
             ...cancellationCause(cause, options.signal),
@@ -369,6 +384,7 @@ export const safeElectronEnvironment = (
       "TMPDIR",
       "USER",
       "DISPLAY",
+      "XAUTHORITY",
       "WAYLAND_DISPLAY",
       ...(platform === "win32"
         ? [

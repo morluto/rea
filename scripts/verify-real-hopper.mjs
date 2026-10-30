@@ -10,10 +10,10 @@ import {
   requireAddressArray,
   requireFunctionDossier,
   requirePseudocode,
-} from "../dist/application/RealHopperAssertions.js";
+} from "./lib/real-hopper-assertions.mjs";
 import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
 import { HOPPER_TARGET_LEASE_DIRECTORY } from "../dist/process/HopperLease.js";
-import { REA_WORKFLOW_PROVIDER } from "../dist/application/InvestigationProviders.js";
+import { REA_WORKFLOW_PROVIDER } from "../dist/domain/investigationProviders.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 import { verifyHopperStringObjects } from "./lib/real-hopper-search.mjs";
 import {
@@ -203,7 +203,7 @@ const verifyCurrentTarget = async (client, options) => {
       await client.callTool(
         {
           name: "analyze_function",
-          arguments: { procedure: firstAddress },
+          arguments: { procedure: firstAddress, detail: "complete" },
         },
         options,
       ),

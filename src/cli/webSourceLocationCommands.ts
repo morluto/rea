@@ -1,5 +1,7 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
+import { webSourceLocationInputSchema } from "../domain/webSourceLocation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -34,7 +36,10 @@ export const registerWebSourceLocationCommands = (
         "Zero-based UTF-16 generated column",
       ),
     }),
-    run: ({ args }) =>
+    options: z.object({
+      decodeTimeoutMs: webSourceLocationInputSchema.shape.decode_timeout_ms,
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.traceWebSourceLocation, () =>
           finishAnalysisCommand(
@@ -48,6 +53,9 @@ export const registerWebSourceLocationCommands = (
                     url: args.sourceMapUrl,
                   },
                   generated_position: { line: args.line, column: args.column },
+                  ...(options.decodeTimeoutMs === undefined
+                    ? {}
+                    : { decode_timeout_ms: options.decodeTimeoutMs }),
                 },
                 { signal },
               ),
@@ -55,7 +63,7 @@ export const registerWebSourceLocationCommands = (
             "web-source-location",
             "trace_web_source_location",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

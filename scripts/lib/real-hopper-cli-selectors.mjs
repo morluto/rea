@@ -12,7 +12,8 @@ export async function verifyHopperCliSelectors(call, runCli, dispatcher, path) {
       command: "function",
       option: "procedure",
       operation: "analyze_function",
-      parameters: { procedure: delegate.value },
+      // MCP defaults to a summary; match the CLI's complete dossier.
+      parameters: { procedure: delegate.value, detail: "complete" },
     },
     {
       command: "instructions",

@@ -5,16 +5,23 @@ import {
   createJavaScriptSemanticGraphNode,
   JavaScriptSemanticEvidenceContextRegistry,
 } from "../domain/javascript/javascriptSemanticGraph.js";
-import { proofEvidence } from "./ReconstructionObligationLedger.fixture.js";
+import {
+  deriveCandidates,
+  proofEvidence,
+} from "./ReconstructionObligationLedger.fixture.js";
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { emptyUnverifiedProcessCapture } from "../domain/process/processCapture.fixture.js";
+import {
+  emptyUnverifiedProcessCapture,
+  FINALIZED_PROCESS_CAPTURE_EXAMPLE,
+} from "../domain/process/processCapture.fixture.js";
+import { PROCESS_PROVIDER } from "../domain/process/processEvidenceProvider.js";
 import { parseProcessCapture } from "../domain/process/processCaptureParsing.js";
 import {
   digestProcessCommitment,
-  parseProcessScenario,
+  processScenarioSchema,
   processComparisonContract,
   processScenarioCommitment,
 } from "../domain/process/processScenario.js";
@@ -28,12 +35,16 @@ import {
   createJavaScriptApplicationGraph,
   createJavaScriptApplicationNode,
 } from "../domain/javascript/javascriptApplicationGraph.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
-import { MANAGED_WORKFLOW_PROVIDER } from "./InvestigationProviders.js";
+import { MANAGED_WORKFLOW_PROVIDER } from "../domain/investigationProviders.js";
 import { createProcessCaptureEvidence } from "./process/ProcessEvidence.js";
-import { deriveReconstructionObligationCandidates } from "./ReconstructionObligationCandidates.js";
 
-const applicationWithUnknowns = (keys: readonly string[]) => {
+const applicationWithUnknowns = (
+  keys: readonly string[],
+  {
+    kind = "unknown",
+    label = "Unclassified application boundary",
+  }: { kind?: "unknown" | "package"; label?: string } = {},
+) => {
   const source = createEvidence(
     undefined,
     { id: "fixture-source", name: "Fixture source", version: "1" },
@@ -48,7 +59,7 @@ const applicationWithUnknowns = (keys: readonly string[]) => {
   const base = buildSyntheticJavaScriptApplicationGraph();
   const unknownNodes = keys.map((key) =>
     createJavaScriptApplicationNode({
-      kind: "unknown",
+      kind,
       identity: {
         strategy: "artifact-local-key",
         stability: "artifact-version",
@@ -58,7 +69,7 @@ const applicationWithUnknowns = (keys: readonly string[]) => {
       },
       observations: [
         {
-          label: "Unclassified application boundary",
+          label,
           properties: {},
           evidence: artifactEvidence(
             APPLICATION_GRAPH_DIGESTS.asar,
@@ -80,7 +91,7 @@ const applicationWithUnknowns = (keys: readonly string[]) => {
     predicateType: "rea.managed-application-graph",
     operation: "project_managed_application_graph",
     parameters: {},
-    result: jsonValueSchema.parse({
+    result: {
       projection_id: `magp_${"a".repeat(64)}`,
       root_artifact_sha256: APPLICATION_GRAPH_DIGESTS.asar,
       source_evidence: {
@@ -103,7 +114,7 @@ const applicationWithUnknowns = (keys: readonly string[]) => {
       coverage: { status: "complete-within-inputs" },
       evidence_links: [source.evidence_id],
       limitations: [],
-    }),
+    },
     confidence: "inferred",
     authority: "analyst-inference",
     evidenceLinks: [source.evidence_id],
@@ -111,7 +122,7 @@ const applicationWithUnknowns = (keys: readonly string[]) => {
   return {
     graph,
     unknownNodes,
-    generated: deriveReconstructionObligationCandidates(
+    generated: deriveCandidates(
       createEvidenceBundle([source, application]),
       [],
     ),
@@ -142,8 +153,24 @@ describe("reconstruction obligation candidates", () => {
       ).toBe(false);
   });
 
+  it("falls back to a kind-based title when an application node label is blank", () => {
+    const {
+      unknownNodes: [node],
+      generated,
+    } = applicationWithUnknowns(["blank-label"], {
+      kind: "package",
+      label: " ",
+    });
+
+    expect(
+      generated.candidates.find(
+        ({ target }) => target.application_node_id === node?.node_id,
+      )?.title,
+    ).toBe("package boundary");
+  });
+
   it("does not bind an unknown process image to a packaged artifact obligation", () => {
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: "/path/whose-launch-identity-is-unknown",
     });
     const base = emptyUnverifiedProcessCapture();
@@ -168,15 +195,43 @@ describe("reconstruction obligation candidates", () => {
       },
     });
     const evidence = createProcessCaptureEvidence(scenario, capture);
-    const generated = deriveReconstructionObligationCandidates(
-      createEvidenceBundle([evidence]),
-      [],
-    );
+    const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
 
     expect(generated.candidates).toEqual([]);
     expect(generated.limitations).toContain(
       `Process capture ${evidence.evidence_id} has no validated executable artifact identity; packaged-process lifecycle obligation was not bound to an artifact.`,
     );
+  });
+
+  it("names the first rejected capture field and the remaining issue count", () => {
+    const {
+      manifest: { completed_at: _completedAt, ...manifest },
+      exit,
+      ...rest
+    } = FINALIZED_PROCESS_CAPTURE_EXAMPLE;
+    const evidence = createEvidence(undefined, PROCESS_PROVIDER, {
+      predicateType: "rea.process-capture",
+      operation: "capture_process_scenario",
+      parameters: {},
+      result: {
+        ...rest,
+        manifest,
+        exit: {
+          ...exit,
+          finalization: {
+            ...exit.finalization,
+            signals: [
+              { ...exit.finalization.signals[0], reason: "not allowed here" },
+            ],
+          },
+        },
+      },
+    });
+    const generated = deriveCandidates(createEvidenceBundle([evidence]), []);
+
+    expect(generated.limitations).toEqual([
+      `Process Evidence ${evidence.evidence_id} could not generate candidates: at manifest.completed_at: Invalid input: expected string, received undefined (1 more issues)`,
+    ]);
   });
 });
 
@@ -254,17 +309,20 @@ it("keeps each semantic candidate bound to its own file and authority context", 
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: semanticGraph }),
+      result: { ...base, semantic_graph: semanticGraph },
       confidence: "derived",
       authority: "shipped-artifact",
       evidenceLinks: sourceRecords.map(({ evidence_id }) => evidence_id),
     },
   );
-  const generated = deriveReconstructionObligationCandidates(
+  const generated = deriveCandidates(
     createEvidenceBundle([...sourceRecords, application]),
     [],
   );
-  expect(generated.limitations).toEqual([]);
+  expect(generated.limitations).toEqual([
+    `Semantic graph ${semanticGraph.graph_id} coverage is unknown; omitted candidates remain unknown.`,
+    `Semantic graph ${semanticGraph.graph_id}: Semantic relations are unavailable in this minimal example.`,
+  ]);
   expect(generated.candidates).toHaveLength(requests.length);
   for (const [index, node] of requests.entries()) {
     const source = sourceRecords[Math.floor(index / 2)];
@@ -290,4 +348,88 @@ it("keeps each semantic candidate bound to its own file and authority context", 
       ],
     });
   }
+});
+
+it("falls back to a kind-based title when a semantic node label is blank", () => {
+  const contexts = new JavaScriptSemanticEvidenceContextRegistry();
+  const base = javascriptApplicationAnalysisResultSchema.parse(
+    JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE.normalized_result,
+  );
+  const source = proofEvidence("blank-label-file");
+  const module = createJavaScriptSemanticGraphNode(
+    {
+      kind: "module",
+      identity: {
+        artifact_sha256: base.root_artifact_sha256,
+        module_path: "app.js",
+        source_range: null,
+        role_key: "module",
+      },
+      function_node_id: null,
+      application_node_ids: [],
+      label: "app.js",
+      properties: {},
+      evidence: artifactEvidence(base.root_artifact_sha256, "app.js"),
+    },
+    contexts,
+  );
+  const sha256 = "4".repeat(64);
+  const request = createJavaScriptSemanticGraphNode(
+    {
+      kind: "request",
+      identity: {
+        artifact_sha256: sha256,
+        module_path: "file.js",
+        source_range: {
+          start: { line: 1, column: 0 },
+          end: { line: 1, column: 8 },
+        },
+        role_key: "request-1",
+      },
+      function_node_id: null,
+      application_node_ids: [],
+      label: " ",
+      properties: {},
+      evidence: {
+        ...artifactEvidence(sha256, "file.js", "ast-static-analysis"),
+        evidence_ids: [source.evidence_id],
+      },
+    },
+    contexts,
+  );
+  const { graph_id: _graphId, ...semantic } = base.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semantic,
+    root_node_ids: [module.node_id],
+    nodes: [module, request],
+    evidence_contexts: contexts.contexts,
+  });
+  const example = JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE;
+  const application = createEvidence(
+    {
+      path: base.input_path,
+      sha256: base.root_artifact_sha256,
+      format: base.format,
+    },
+    example.provider,
+    {
+      predicateType: example.predicate_type,
+      operation: example.operation,
+      parameters: example.parameters,
+      result: { ...base, semantic_graph: semanticGraph },
+      confidence: "derived",
+      authority: "shipped-artifact",
+      evidenceLinks: [source.evidence_id],
+    },
+  );
+  const generated = deriveCandidates(
+    createEvidenceBundle([source, application]),
+    [],
+  );
+
+  expect(
+    generated.candidates.find(
+      ({ target }) => target.semantic_node_id === request.node_id,
+    )?.title,
+  ).toBe("request semantic boundary");
 });

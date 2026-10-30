@@ -13,6 +13,20 @@ import { decodeSazHttp } from "./SazHttp.js";
 import { decodeSazMetadata } from "./SazMetadata.js";
 import { projectSazRecord, type SazValue } from "./SazProjection.js";
 
+const SESSION_MEMBER_KINDS = {
+  "c.txt": "request",
+  "s.txt": "response",
+  "m.xml": "metadata",
+  "w.txt": "websocket",
+  "g.txt": "grpc",
+} as const;
+type SessionMemberKind =
+  (typeof SESSION_MEMBER_KINDS)[keyof typeof SESSION_MEMBER_KINDS];
+interface SessionMember {
+  readonly entry: ArtifactEntry;
+  readonly kind: SessionMemberKind;
+}
+
 /** Decode native SAZ sessions without extracting files, running Fiddler or converting to HAR. */
 export const decodeSazCapture = async (
   snapshotPath: string,
@@ -24,7 +38,7 @@ export const decodeSazCapture = async (
     WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
   );
   try {
-    const groups = new Map<string, ArtifactEntry[]>();
+    const groups = new Map<string, SessionMember[]>();
     const inventory: SazValue[] = [];
     const paths = new Set<string>();
     let declaredBytes = 0;
@@ -53,7 +67,7 @@ export const decodeSazCapture = async (
       if (declaredBytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes)
         throw new CaptureFormatError(
           "expanded-limit",
-          "SAZ expanded members exceed the 32 MiB complete-evidence budget.",
+          "SAZ expanded members exceed the 32 MiB complete-evidence budget. This release has no runtime override.",
         );
       inventory.push({
         path: entry.path,
@@ -61,12 +75,19 @@ export const decodeSazCapture = async (
         bytes: entry.declaredSize,
       });
       if (entry.kind !== "file") continue;
-      const match = /^raw\/(\d+)_(c\.txt|s\.txt|m\.xml|w\.txt|g\.txt)$/.exec(
-        entry.path,
-      );
-      if (match?.[1] !== undefined) {
+      const match = /^raw\/(\d+)_(.+)$/.exec(entry.path);
+      if (
+        match?.[1] !== undefined &&
+        match[2] !== undefined &&
+        Object.hasOwn(SESSION_MEMBER_KINDS, match[2])
+      ) {
         const group = groups.get(match[1]) ?? [];
-        group.push(entry);
+        group.push({
+          entry,
+          kind: SESSION_MEMBER_KINDS[
+            match[2] as keyof typeof SESSION_MEMBER_KINDS
+          ],
+        });
         groups.set(match[1], group);
       } else if (entry.path.startsWith("raw/")) {
         throw new CaptureFormatError(
@@ -90,7 +111,8 @@ export const decodeSazCapture = async (
         websocket: null,
         grpc: null,
       };
-      for (const entry of entries) {
+      const limitations: string[] = [];
+      for (const { entry, kind } of entries) {
         const stream = await reader.open(entry);
         const chunks: Buffer[] = [];
         let length = 0;
@@ -114,23 +136,24 @@ export const decodeSazCapture = async (
             "SAZ member does not match its declared size.",
           );
         const bytes = Buffer.concat(chunks, length);
-        if (entry.path.endsWith("_c.txt"))
-          source.request = {
-            member: entry.path,
-            ...decodeSazHttp(bytes, true),
-          };
-        else if (entry.path.endsWith("_s.txt"))
-          source.response = {
-            member: entry.path,
-            ...decodeSazHttp(bytes, false),
-          };
-        else if (entry.path.endsWith("_m.xml"))
+        if (kind === "request" || kind === "response") {
+          // Fiddler stores a session without this message as a zero-byte member.
+          if (length === 0)
+            limitations.push(
+              `The stored ${kind} member is empty (zero bytes); the ${kind} is reported as null.`,
+            );
+          else
+            source[kind] = {
+              member: entry.path,
+              ...decodeSazHttp(bytes, kind === "request"),
+            };
+        } else if (kind === "metadata")
           source.metadata = {
             member: entry.path,
             document: decodeSazMetadata(bytes),
           };
         else
-          source[entry.path.endsWith("_w.txt") ? "websocket" : "grpc"] = {
+          source[kind] = {
             member: entry.path,
             messages: bytes,
           };
@@ -139,10 +162,10 @@ export const decodeSazCapture = async (
         ordinal: records.length,
         location: {
           kind: "archive-members",
-          members: entries.map((entry) => entry.path),
+          members: entries.map(({ entry }) => entry.path),
         },
         ...projectSazRecord(source, sensitiveValues),
-        limitations: [],
+        limitations,
       });
     }
     const container = projectSazRecord({ members: inventory }, sensitiveValues);

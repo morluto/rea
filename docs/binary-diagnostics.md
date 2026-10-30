@@ -8,9 +8,12 @@ ordinary binary inspection use the same modular capability.
 
 ## Bring your own engine
 
-Initial real verification covers **Linux x64, ELF64 x86-64 little-endian
-EXEC/DYN/REL**. Provide an absolute Python executable whose environment already
-contains unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2:
+Real verification covers **Linux x64** hosts and **EXEC/DYN/REL** objects in
+these profiles: ELF64 x86-64, ELF32 i386, ELF32 little-endian ARM and ELF32
+little- or big-endian MIPS. Other machines, classes and byte orders, including
+AArch64 and big-endian ARM, return `unsupported_target`. Provide an absolute
+Python executable whose environment already contains unchanged pwntools 4.15.0,
+pyelftools 0.33 and Unicorn 2.1.2:
 
 ```sh
 REA_PWNTOOLS_PYTHON=/absolute/isolated-env/bin/python \
@@ -28,6 +31,16 @@ REA never installs Python, packages or GDB, changes a user init file, launches
 the selected object as a host process, or requests runtime library resolution. The Python process
 uses isolated mode and an owned cache. Exact upstream profiles are recorded in
 [upstream provenance](https://github.com/morluto/rea/blob/main/third_party/pwntools/README.md).
+
+The adapter skips pwntools kernel configuration and version discovery: those
+memory-content scans supply none of this report's fields. Ordinary `IKCFG_ST`
+data is not interpreted as a kernel-config request, and virtual zero-filled
+LOAD tails are reported from their headers without materializing them for that
+scan. GOT/PLT inference and the advertised static mitigation indicators still
+use the pinned upstream implementations. Header-table file ranges are checked
+before dependency seeks. Structural inventory and the convenience-map engine
+still parse the snapshot separately; eliminating that remaining duplication
+requires preserving the upstream GOT/PLT and mitigation facts.
 
 ## Interpreting results
 
@@ -90,6 +103,12 @@ one section or symbol, or a stable page without re-running the decoder. CLI
 one-shot invocations pass portable inline Evidence JSON; an MCP session uses
 the retained `evidence_id`. Page `limit` is required and bounded by the
 measured MCP stdio budget documented on the tool contract.
+An empty retained section or symbol collection has no valid item index. Its page
+view can still return an empty page.
+Malformed authenticated layout input remains rejected with the owning schema's
+safe field diagnostics under `source.normalized_result`, including the field
+path and type or value reason. Evidence authentication and decoder validation
+remain separate boundaries.
 
 Over MCP, `inspect_binary_layout` with `"detail": "summary"` retains the
 complete layout Evidence in the session and returns only its summary view.
@@ -160,10 +179,40 @@ launch builder. It is a configuration fact, not measured memory use or proof of
 the effective JVM limit; JVM environment options may affect that limit.
 When a Windows script wrapper selects the JVM, this value remains unknown.
 Historical stdout and stderr remain available, but classification uses only the
-failing operation's `failure_output`. Output draining waits at most one second,
+failing operation's `failure_output`. Retained stdout and stderr share an 8 MiB
+budget, but every drained byte is scanned for `java.lang.OutOfMemoryError`:
+`failure_output.observed_oome` records the latest confirmed token's bounded line per stream from
+the failing operation, with its byte offset, even after the budget is spent. These observations own OOME detection; retained text that ends at a class-name prefix cannot confirm a complete token. `line_complete` distinguishes a known line end from an incomplete trailing context; `invalid_utf8` marks replacement-decoded context.
+Incomplete operation output without an observed OOME keeps the original failure code and explains that a memory cause cannot be ruled out. Incompleteness alone does not confirm a memory constraint or justify heap-specific advice. Token context stays within the failing operation's checkpoint; a class-name prefix in a different identifier is not OOME evidence. A trailing bare token requires an observed stream EOF to establish its boundary.
+Output draining waits at most one second,
 subject to earlier cancellation or the startup deadline. `output_incomplete`
 marks a snapshot taken before stream closure; cleanup ownership remains with
 the session until release succeeds.
+
+A kernel or container OOM killer ends Ghidra with `SIGKILL` and prints no
+`OutOfMemoryError`. When a process or protocol failure records
+`exit_signal: "SIGKILL"` and no `stop_requested`, REA reports the signal
+instead of generic `rea doctor` advice. The process supervisor records
+`stop_requested: true` once REA begins stopping Ghidra, before it sends any
+signal, so REA's own SIGKILL is never reported as an outside kill.
+
+On Linux with cgroup v2, REA also reads its own cgroup's `memory.events` before
+launch and again after the kill, locating the group through the cgroup2 mount
+in `/proc/self/mountinfo`. `memory_cgroup` records the group path,
+`oom_kill_before`, `oom_kill_after` and `memory_max`. If the count rose, REA
+returns `resource_constraint` with `resource: "memory"` and `cgroup_memory_max`
+in `reported_limits`. The count covers every process in REA's cgroup and its
+child groups, which can include processes outside REA's process tree when the
+group is shared, so a rise shows that the kernel OOM killer ended a process in
+that cgroup or a child group, not which process it chose. `memory_max` is the
+limit in bytes, `"max"` when the group sets none, or `null` when it could not be
+read; a limit on a parent group is not read. The limit also covers Ghidra's
+native decompiler processes, whose number follows the available CPUs, so the
+advice does not recommend a larger Java heap. When the session had already
+completed an operation, the advice keeps the instruction to reopen the target
+with `open_binary`. Without a cgroup v2 memory group, or when the count did not
+rise, the failure stays `execution_failure` and names the signal as a possible
+out-of-memory kill.
 
 ## Portable PE resources
 
@@ -188,6 +237,14 @@ reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
 reserved data-entry fields are preserved.
 
+Every `directories[]` row retains its identity `path` and the matching incoming
+`entry_locations`: both are empty for the root, then contain the type and
+optionally the name. Empty branches keep these identities even when they have
+no payload leaves. Shared directory bytes produce a row for each incoming path,
+with the original directory range and each path's own entry locations. These
+rows are included in the metadata budget. A present empty root remains distinct
+from an absent resource data directory (`directory: null`, `directories: []`).
+
 RT_GROUP_ICON records expose original image descriptors and RT_ICON candidates.
 A reference resolves only when an icon with the same numeric ID and language
 exists. Missing references, other-language candidates and declared-size mismatch
@@ -210,3 +267,202 @@ Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
 regular files only and rejects symbolic links.
+
+## Byte entropy triage
+
+`inspect_byte_entropy` / `inspect-byte-entropy` profiles any local regular file
+without an analysis engine, execution, extraction or network access.
+
+```sh
+rea inspect-byte-entropy ./firmware.bin --block-size 4096 --json
+rea inspect-byte-entropy ./firmware.bin --offset 4096 --length 65536 --json
+```
+
+```json
+{
+  "name": "inspect_byte_entropy",
+  "arguments": { "path": "/artifacts/firmware.bin", "detail": "summary" }
+}
+```
+
+Complete Evidence includes `artifact` (original path, byte size and SHA-256),
+`block_size`, `window`, `file_entropy`, `thresholds`, `blocks`, `runs` and
+`limitations`. For a 4096-byte zero-filled file, the entropy fields are:
+
+```json
+{
+  "block_size": 4096,
+  "window": { "offset": 0, "length": 4096 },
+  "file_entropy": 0,
+  "thresholds": { "high": 7.2, "low": 1 },
+  "blocks": [{ "offset": 0, "length": 4096, "entropy": 0 }],
+  "runs": [{ "offset": 0, "length": 4096, "classification": "low" }]
+}
+```
+
+Offsets and lengths are decimal byte counts. Blocks begin at the requested
+`offset` (default zero); omitted `length` extends to EOF. Explicit windows past
+EOF fail rather than silently clipping. The final block may be shorter.
+`block_size` must be a power of two from 256 through 65536, default 4096. A
+window may produce at most 32,768 block rows; larger requests fail before the
+file scan with a capacity error. Choose a shorter window or larger block size.
+SHA-256 and `file_entropy` always cover the entire file, including when a window
+is selected. Empty files and empty windows are accepted; empty entropy is zero
+by convention. The tool reads the size the file reports. A file that reports size
+0, such as a Linux `/proc` entry, returns no blocks with a limitation that the
+result does not show the file is empty. File identity, size and timestamps are checked across the read;
+detected changes produce an error rather than Evidence.
+
+Shannon entropy is reported in bits per byte from 0 to 8, rounded to four decimal
+places. Adjacent blocks with reported entropy at least 7.2 form `high` runs;
+blocks at most 1.0 form `low` runs. Other blocks interrupt runs. Entropy does not
+prove encryption, and this measure cannot distinguish encrypted from compressed
+data. Small blocks can underestimate entropy; the result is a triage clue.
+
+MCP `detail: "summary"` retains complete Evidence in the session and returns
+file entropy, block/run counts, thresholds, the selected window, and the ten
+longest runs (ties ordered by file offset). Use its `parent_evidence_id` to
+retrieve complete Evidence, or request its summary with `inspect_analysis_view`.
+The CLI returns complete Evidence through the same service. Summary detail
+requires a session capable of retaining Evidence.
+
+Reads use one block-sized buffer and a 256-entry histogram. Complete output
+can become very large because it includes one row per selected block, and
+summary delivery still retains that full list. Use a shorter length or a
+larger block size to reduce it. Full Evidence and its serialization require
+memory proportional to the number of selected blocks. The 32,768-row ceiling bounds the actual retained block objects and
+their serialized representation: a cap-sized run below produced 1,514,877
+serialized bytes and increased V8 heap use by 21.2 MiB on the measured host.
+The cap therefore bounds this output independently of file size; it is not a
+portable process-memory guarantee. Narrow the window or increase block size to
+reduce retained rows further.
+
+Local service measurement (macOS arm64, Node 24.18.0, 100,000,000-byte file,
+4096-byte blocks, file already in the OS cache): first process run took 1.113 s
+wall / 1.148 s CPU with 145.3 MiB peak RSS; a second run in the same process took
+1.015 s / 1.035 s CPU, with cumulative peak RSS 155.8 MiB. Each read 100,000,000
+bytes and produced 24,415 blocks. Measurements include Evidence construction,
+summary projection and JSON serialization, with no child processes. Complete
+Evidence serialized to 1,122,303 bytes and its summary to 2,705 bytes. A
+cap-sized 134,217,728-byte sparse file with 4096-byte blocks produced 32,768
+rows and 1,514,877 serialized bytes; V8 heap use increased by 21.2 MiB and RSS
+by 18.1 MiB in that process. This separate measurement used the same macOS
+arm64 host and Node version. Cold disk I/O, token counts and an agent
+investigation were not measured; there was no previous equivalent tool to
+benchmark. These figures do not establish a portable peak-memory bound,
+constant memory for retained Evidence or faster agent task completion.
+
+## Portable native exports
+
+`inspect_native_exports` / `inspect-native-exports` reads the export table of an
+explicit PE or ELF image on any supported host, without an active target,
+native engine, `objdump` or Windows SDK:
+
+```sh
+rea inspect-native-exports ./runtimes/linux-x64/native/libexample.so --json
+```
+
+```json
+{
+  "name": "inspect_native_exports",
+  "arguments": { "path": "/artifacts/native/example.dll" }
+}
+```
+
+The complete Evidence identifies the stable artifact snapshot by path, byte
+count and SHA-256. Complete delivery remains the default. For a small initial
+MCP reply, select `detail: "summary"`; this retains the complete Evidence and
+returns artifact identity, table coverage and row counts. Use its
+`normalized_result.parent_evidence_id` with `inspect_analysis_view`:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<parent digest>"
+  },
+  "view": {
+    "kind": "native-exports",
+    "collection": "exports",
+    "names": ["selected_name"],
+    "fields": ["name"],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Names match exactly and preserve every same-name version or alias. Optional
+`indices` selects original row positions, intersecting a name filter when both
+are supplied; empty filters select nothing. `source_index` always remains and,
+with the parent ID, identifies the original export or issue row. Fields default
+to the complete row; an empty field list returns only its identity. ELF `name`
+selection also returns raw-byte and encoding qualifications. Fields from the
+other format are rejected. `collection: "issues"` pages the complete diagnostic
+records, with optional original indices. Offset and limit default to 0 and 64
+and apply to matching rows in original order.
+
+View `coverage` describes the selected page; `summary.coverage` or
+`exports.coverage` preserves source-table coverage. An exhausted or empty page
+does not make a partial source complete. Retained views never reopen the file.
+The CLI uses the same projector and requires a durable bundle for a summary:
+
+```sh
+rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./exports.bundle.json --json
+# Pass the summary's parent ID and the same view as JSON to inspect-analysis-view,
+# together with --evidence-bundle ./exports.bundle.json.
+```
+
+- PE rows reproduce the export directory: each used export-address-table slot
+  with its biased `ordinal` (`OrdinalBase` plus the slot index), one row per
+  name (aliases share an ordinal), `address`
+  as the preferred-base virtual address, or `forwarder` text when the slot
+  forwards to another DLL. Unused zero-address slots are omitted;
+  ordinal-only exports have a null `name`. The name-ordinal table stores an
+  unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
+  directory's DLL name, ordinal base and timestamp are reported, and an image
+  without an export directory is a complete empty inventory.
+- ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
+  binding and default or protected visibility. Each row keeps `value`
+  (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`
+  and `binding`. ELF string tables do not declare a text encoding. Names that
+  contain non-ASCII bytes are decoded as UTF-8 when those bytes form valid
+  UTF-8; `name_utf8_decodable` records whether the non-ASCII name bytes are
+  valid UTF-8 and `name_bytes_base64` retains those exact bytes (`null` for
+  ASCII names). When they are not valid UTF-8, `name` uses a byte-preserving
+  Latin-1 mapping and the raw bytes remain available. Older retained results
+  report null for the newly added encoding fields. `version` is null for an
+  unversioned symbol. A versioned
+  symbol reports its GNU index, a name resolved from `.gnu.version_d` or
+  `.gnu.version_r`, the corresponding `name_bytes_base64` and
+  `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
+  Version names use the same UTF-8-when-valid, otherwise byte-preserving
+  Latin-1 display mapping as symbol names; ELF does not declare either
+  string's text encoding. Older retained results report null for the added
+  version-name encoding fields. `"unknown"`
+  means the symbol-version table could not be read. A hidden version is not
+  the default version that a by-name `dlsym` lookup selects.
+  Definition names take precedence when both tables name the same index.
+
+Unreadable names, out-of-range name ordinals and unreadable forwarders are
+listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export names are bounded null-terminated byte strings and may continue
+across adjacent file-backed section mappings when the virtual bytes are
+unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
+Unresolved symbol versions keep their rows: the version name is null when no
+definition or requirement names the index, and `version` is
+`"unknown"` when the version table cannot be read; coverage is likewise
+`partial`. A dynamic symbol table without its null entry is malformed. An ELF
+without section headers is `unsupported`. With section headers, a missing
+`SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
+observed, including a directory containing only the inactive null section.
+Enumerating dynamic symbols from that segment is not implemented. A present
+section directory with neither a dynamic symbol table nor a dynamic segment
+reports a complete empty inventory. Mach-O exports are reported by
+`inspect_macho`.
+
+`max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
+Export directories in PE headers are read like those in sections. An export or
+dynamic symbol table above 262144 entries, more than 262144 rows, or more than
+16 MiB of retained names fails without partial success. Export rows do not establish that a symbol is reachable, safe to call
+or loaded at runtime.

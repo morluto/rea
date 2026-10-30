@@ -113,7 +113,7 @@ describe("IDA provider composition", () => {
     if (!config.ok) throw config.error;
     const producer = new RecordingIdaMcp(target, "headless");
     const provider = new IdaProvider(config.value, {}, () => producer);
-    expect(provider.inspectAvailability()).toMatchObject({
+    expect(await provider.inspectAvailability()).toMatchObject({
       status: "available",
       diagnostics: { live_connection_probed: false },
     });
@@ -128,9 +128,9 @@ describe("IDA provider composition", () => {
     expect(JSON.stringify(resolution)).not.toContain("private-fixture-token");
     expect(producer.connects).toBe(0);
     expect(
-      provider
-        .capabilities()
-        .find(({ operation }) => operation === "procedure_callers")?.available,
+      (await provider.inspectReadinessSnapshot()).capabilities.find(
+        ({ operation }) => operation === "procedure_callers",
+      )?.available,
     ).toBe(false);
   });
   it(
@@ -191,10 +191,94 @@ describe("IDA provider composition", () => {
   });
 });
 
+describe("IDA provider selection cancellation", () => {
+  it("restores a cancelled replacement through the prior selected registration binding", async () => {
+    const first = await createIdaTarget();
+    const second = await createIdaTarget();
+    roots.push(first.root, second.root);
+    const path = join(first.root, "registration.json");
+    await writeFile(path, JSON.stringify({ command: "first-server" }));
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+    if (!config.ok) throw config.error;
+    const factorySelections: string[] = [];
+    const controller = new AbortController();
+    const cancellationReason = new Error(
+      "cancel after retiring previous IDA client",
+    );
+    let cancelWhenPreviousCloses = false;
+    const provider = new IdaProvider(config.value, {}, (registration) => {
+      const command =
+        "command" in registration ? registration.command : registration.url;
+      factorySelections.push(command);
+      const producer = new RecordingIdaMcp(first.target, "attached");
+      if (factorySelections.length === 1) {
+        const close = producer.close.bind(producer);
+        producer.close = async () => {
+          await close();
+          if (cancelWhenPreviousCloses) controller.abort(cancellationReason);
+        };
+      }
+      return producer;
+    });
+    const session = createTestBinarySession(provider);
+    expect((await session.open(first.target.path)).ok).toBe(true);
+    expect(
+      (await session.execute("procedure_pseudo_code", { procedure: "main" }))
+        .ok,
+    ).toBe(true);
+    await writeFile(path, JSON.stringify({ command: "replacement-server" }));
+    cancelWhenPreviousCloses = true;
+    const replacement = await session.open(second.target.path, {
+      signal: controller.signal,
+    });
+    expect(replacement.ok).toBe(false);
+    expect(replacement).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: cancellationReason },
+    });
+    expect(session.activeTarget()?.sha256).toBe(first.target.sha256);
+    expect(
+      (await session.execute("procedure_pseudo_code", { procedure: "main" }))
+        .ok,
+    ).toBe(true);
+    expect(factorySelections).toEqual(["first-server", "first-server"]);
+    expect((await session.close()).ok).toBe(true);
+  });
+  it("preserves an already-aborted profile signal without reading registration", async () => {
+    const { root, target } = await createIdaTarget();
+    roots.push(root);
+    const config = parseConfig({
+      REA_IDA_MCP_CONFIG: join(root, "registration-that-must-not-be-read.json"),
+    });
+    if (!config.ok) throw config.error;
+    const reason = new Error("cancel before IDA profile inspection");
+    const controller = new AbortController();
+    controller.abort(reason);
+    let runCalls = 0;
+    const profile = await new IdaProvider(
+      config.value,
+      {},
+    ).resolveAnalysisProfile(target, {
+      signal: controller.signal,
+      resourceScope: {
+        retain: () => undefined,
+        run: async (operation) => {
+          runCalls += 1;
+          return operation();
+        },
+      },
+    });
+    expect(profile).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(runCalls).toBe(0);
+  });
+});
+
 describe("IDA universal Mach-O target identity", () => {
   const openUniversal = async (registration: Record<string, unknown>) => {
     const root = await createTestTempDirectory("rea-ida-universal-");
-    roots.push(root);
     const input = join(root, "universal");
     // x86_64 and arm64 slices share one whole-file digest.
     await writeFile(input, fat([0x01000007, 0x0100000c]));

@@ -32,10 +32,10 @@ const targets = {
   },
   external: {
     value: "another-package",
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
-  recursive: { value: "#another", imports: "external", exports: "rejected" },
+  recursive: { value: "#another", imports: "unavailable", exports: "rejected" },
   invalid: { value: "../feature.js", imports: "rejected", exports: "rejected" },
   scalar: { value: false, imports: "rejected", exports: "rejected" },
   numeric: { value: { 0: null }, imports: "rejected", exports: "rejected" },
@@ -47,7 +47,7 @@ const targets = {
   },
   arrayExternal: {
     value: [false, "another-package"],
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
   arrayRelative: {
@@ -62,7 +62,7 @@ const targets = {
   },
   escapeExternal: {
     value: [escapingTarget, "another-package"],
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
   escapeNull: {
@@ -82,7 +82,7 @@ const targets = {
   },
   escapeNested: {
     value: [{ node: escapingTarget }, "another-package"],
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
   escapeConfig: {
@@ -92,12 +92,12 @@ const targets = {
   },
   wtf8Reentry: {
     value: ["./%2\te%2\te/%ED%A0%80/feature.js", "another-package"],
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
   opaqueReentry: {
     value: ["./%2\te%2\te/rea-op\taque-0/feature.js", "another-package"],
-    imports: "external",
+    imports: "unavailable",
     exports: "rejected",
   },
   structuralReentry: {
@@ -232,6 +232,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             request.status === "root-legacy"
               ? fileStatus
               : request.status;
+          const mapKind = request.specifier.startsWith("#")
+            ? "imports"
+            : "exports";
+          const selectedTarget =
+            request.specifier === "mapped/structuralReentry"
+              ? targets.structuralReentry.value
+              : targets.feature.value;
           expect(graph.edges).toContainEqual(
             expect.objectContaining({
               relation: "imports",
@@ -246,9 +253,16 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
               }),
               evidence: expect.objectContaining({
                 limitations:
-                  status === "unavailable"
+                  status === "unavailable" && request.status !== "unavailable"
                     ? expect.arrayContaining([
                         expect.stringContaining("unpaired UTF-16 surrogate"),
+                        ...(request.status === "relative"
+                          ? [
+                              expect.stringContaining(
+                                `${mapKind} target ${JSON.stringify(selectedTarget)}:`,
+                              ),
+                            ]
+                          : []),
                       ])
                     : expect.not.arrayContaining([
                         expect.stringContaining("unpaired UTF-16 surrogate"),
@@ -263,6 +277,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
             }),
           );
         }
-    expect(await readFile(archive)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(archive), bytes)).toBe(0);
   },
 );

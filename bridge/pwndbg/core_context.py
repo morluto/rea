@@ -95,7 +95,7 @@ def main():
     try:
         encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
         if len(encoded) > OUTPUT_BYTES:
-            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds64 MiB reply budget."}).encode("utf-8")
+            encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete debugger context exceeds the 64 MiB reply budget."}).encode("utf-8")
         descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(encoded)

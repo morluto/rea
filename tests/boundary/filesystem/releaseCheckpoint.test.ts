@@ -1,5 +1,5 @@
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
@@ -19,6 +19,32 @@ const verifier = fileURLToPath(
   new URL("../../../scripts/verify-release-checkpoint.mjs", import.meta.url),
 );
 
+const pluginManifestPaths = [
+  ".claude-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+] as const;
+
+const pluginManifest = (version: string, launch = version) => ({
+  version,
+  mcpServers: {
+    rea: {
+      command: "node",
+      args: ["${CLAUDE_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs", launch],
+    },
+  },
+});
+
+const codexServerConfig = (version: string, launch = version) => ({
+  mcpServers: {
+    rea: {
+      command: "node",
+      args: ["./scripts/plugin-mcp-launcher.mjs", launch],
+      cwd: ".",
+      startup_timeout_sec: 30,
+    },
+  },
+});
+
 async function metadata(
   directory: string,
   version: string,
@@ -27,7 +53,15 @@ async function metadata(
 ) {
   await mkdir(join(directory, "docs"), { recursive: true });
   await mkdir(join(directory, "src"), { recursive: true });
+  for (const path of pluginManifestPaths)
+    await mkdir(join(directory, dirname(path)), { recursive: true });
   const files = {
+    ".claude-plugin/plugin.json": pluginManifest(version),
+    ".codex-plugin/plugin.json": {
+      version,
+      mcpServers: "./.codex-plugin/mcp.json",
+    },
+    ".codex-plugin/mcp.json": codexServerConfig(version),
     "package.json": { name: "rea-agents", version },
     "package-lock.json": { version, packages: { "": { version } } },
     ".release-please-manifest.json": { ".": version },
@@ -561,6 +595,51 @@ it.each([
     code: 1,
     stderr: expect.stringContaining(
       "declares 5.1.0; release branch requires 6.0.0",
+    ),
+  });
+});
+
+it.each(
+  pluginManifestPaths.map((path) => ({
+    path,
+    stale: "version",
+    manifest:
+      path === ".codex-plugin/plugin.json"
+        ? { version: "5.1.0", mcpServers: "./.codex-plugin/mcp.json" }
+        : pluginManifest("5.1.0"),
+    failure: "declares 5.1.0; release branch requires 6.0.0",
+  })),
+)("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
+  const f = await fixture();
+  await candidate(f, "6.0.0");
+  await writeFile(join(f.directory, path), JSON.stringify(manifest));
+  await git(f.directory, ["add", "."]);
+  await git(f.directory, ["commit", "-m", "chore: stale plugin manifest"]);
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(failure),
+  });
+});
+
+it.each([
+  {
+    path: ".claude-plugin/plugin.json",
+    manifest: pluginManifest("6.0.0", "5.1.0"),
+  },
+  {
+    path: ".codex-plugin/mcp.json",
+    manifest: codexServerConfig("6.0.0", "5.1.0"),
+  },
+])("reads the release pin from $path", async ({ path, manifest }) => {
+  const f = await fixture();
+  await candidate(f, "6.0.0");
+  await writeFile(join(f.directory, path), JSON.stringify(manifest));
+  await git(f.directory, ["add", "."]);
+  await git(f.directory, ["commit", "-m", "chore: stale plugin launch"]);
+  await expect(verify(f)).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining(
+      `launches version 5.1.0; release branch requires 6.0.0`,
     ),
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { javaScriptRouteInventorySchema } from "./javascriptRouteInventory.js";
 import { canBorrowParsedJsonSnapshot } from "../immutableJson.js";
 
 import {
@@ -22,7 +23,7 @@ import {
   javaScriptSourceSelectionSchema,
 } from "./javascriptSourceSelection.js";
 
-const countSchema = z.number().int().min(0);
+const countSchema = z.int().min(0);
 
 /** Public target-free request for static JavaScript application analysis. */
 export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
@@ -87,6 +88,7 @@ const applicationAnalysisResultShape = z.strictObject({
   statistics: reconstructionStatisticsSchema,
   limitations: z.array(z.string().min(1)),
   semantic_graph: javaScriptSemanticGraphSchema,
+  route_inventory: javaScriptRouteInventorySchema.exactOptional(),
 });
 
 type BindingIssue = {

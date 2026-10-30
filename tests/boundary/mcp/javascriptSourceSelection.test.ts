@@ -1,7 +1,8 @@
 import { Client } from "@modelcontextprotocol/client";
 import { createPackageWithOptions } from "@electron/asar";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { join, resolve } from "node:path";
 import { expect, it } from "vitest";
@@ -10,6 +11,10 @@ import { z } from "zod";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { writeJavaScriptSourceSelectionFixture } from "../../fixtures/javascriptSourceSelection.js";
+import {
+  asarHeaderBytes,
+  prependAsarJsonWhitespace,
+} from "../../fixtures/asarHeader.js";
 import { createStrippedAsarAddon } from "../../fixtures/strippedAsarAddon.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
@@ -26,6 +31,8 @@ const createSelectionClient = () => {
     env: {
       PATH: process.env.PATH ?? "",
       NODE_OPTIONS: "--max-old-space-size=512 --max-semi-space-size=8",
+      // Exact advertised constraints require the complete schema profile.
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
     },
     stderr: "pipe",
   });
@@ -241,7 +248,9 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
     const nestedRoot = await createTestTempDirectory(
       "rea-js-nested-selection-",
     );
-    await createPackageWithOptions(root, join(nestedRoot, "nested.asar"), {});
+    const nestedArchive = join(nestedRoot, "nested.asar");
+    await createPackageWithOptions(root, nestedArchive, {});
+    await prependAsarJsonWhitespace(nestedArchive, " \t\r\n".repeat(3_001));
     const nested = await client.callTool({
       name: "analyze_javascript_application",
       arguments: {
@@ -290,6 +299,82 @@ it("selects nested ASAR paths and distinguishes missing inventoried bytes from i
       error: {
         code: "artifact_operation_failed",
         details: { reason: "unavailable" },
+      },
+    });
+    await client.ping();
+  } finally {
+    await client.close();
+    await transport.close();
+  }
+}, 60_000);
+
+it("accepts ASAR headers with long legal JSON whitespace through the public application tool", async () => {
+  const root = await createTestTempDirectory("rea-js-asar-whitespace-mcp-");
+  await writeJavaScriptSourceSelectionFixture(root);
+  const archive = join(
+    await createTestTempDirectory("rea-js-asar-whitespace-mcp-output-"),
+    "app.asar",
+  );
+  await createPackageWithOptions(root, archive, {});
+  await prependAsarJsonWhitespace(archive, `${" ".repeat(9_001)}\r\n\t`);
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: archive, source_paths: ["main.mjs"] },
+    });
+    expect(output.isError, JSON.stringify(output.content)).not.toBe(true);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(output.structuredContent).normalized_result,
+    );
+    expect(result.statistics).toMatchObject({
+      nested_asar_containers: 0,
+      parsed_javascript_files: 1,
+      parse_failures: 0,
+    });
+    expect(
+      result.semantic_graph.nodes.some(
+        ({ kind, label }) => kind === "function" && label === "selected",
+      ),
+    ).toBe(true);
+    expect(result.root_artifact_sha256).toBe(
+      createHash("sha256")
+        .update(await readFile(archive))
+        .digest("hex"),
+    );
+  } finally {
+    await client.close();
+    await transport.close();
+  }
+}, 60_000);
+
+it("does not parse ASAR-looking JSON beyond the declared JSON extent through MCP", async () => {
+  const archive = join(
+    await createTestTempDirectory("rea-js-asar-padding-mcp-"),
+    "opaque.asar",
+  );
+  await writeFile(
+    archive,
+    asarHeaderBytes("  ", {
+      padding: Buffer.from('{"files":{"main.mjs":{"size":0,"offset":"0"}}}'),
+    }),
+  );
+  const { client, transport } = createSelectionClient();
+  try {
+    await client.connect(transport);
+    const output = await client.callTool({
+      name: "analyze_javascript_application",
+      arguments: { input_path: archive },
+    });
+    expect(output.isError).toBe(true);
+    const message = output.content.find((item) => item.type === "text");
+    if (message?.type !== "text")
+      throw new Error("Missing invalid ASAR response");
+    expect(JSON.parse(message.text)).toMatchObject({
+      error: {
+        code: "artifact_operation_failed",
+        details: { reason: "format" },
       },
     });
     await client.ping();

@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { normalizeTestTemporaryPrefix } from "../../../scripts/lib/test-temporary-ownership.mjs";
+
 /** An isolated filesystem and environment projection owned by one test. */
 export interface TestWorkspace {
   readonly root: string;
@@ -28,7 +30,9 @@ export const createTestWorkspace = async (
 ): Promise<TestWorkspace> => {
   const canonicalTemporaryRoot = await realpath(tmpdir());
   const root = await realpath(
-    await mkdtemp(join(canonicalTemporaryRoot, prefix)),
+    await mkdtemp(
+      join(canonicalTemporaryRoot, normalizeTestTemporaryPrefix(prefix)),
+    ),
   );
   const home = join(root, "home");
   const xdgConfigHome = join(root, "xdg", "config");

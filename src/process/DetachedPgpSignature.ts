@@ -33,6 +33,7 @@ export const verifyDetachedPgpSignature = async (
       new DetachedPgpSignatureError(
         "cancelled",
         "Package verification was cancelled.",
+        { cause: signal?.reason },
       ),
     );
   const isAborted = () => signal?.aborted === true;

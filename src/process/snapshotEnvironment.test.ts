@@ -1,6 +1,33 @@
 import { expect, it } from "vitest";
 
-import { snapshotEnvironment } from "./snapshotEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "./snapshotEnvironment.js";
+
+it.each(["win32", "linux", "darwin"] as const)(
+  "merges explicit environment layers using %s key identity before sorting",
+  (platform) => {
+    const existing = {
+      rea_analysis_provider: "hopper",
+      CallerSetting: "retain",
+    };
+    const overrides = { REA_ANALYSIS_PROVIDER: "ghidra", Path: "chosen" };
+    const merged = mergeEnvironmentOverrides(existing, overrides, platform);
+    expect(merged).toEqual(
+      platform === "win32"
+        ? {
+            REA_ANALYSIS_PROVIDER: "ghidra",
+            CallerSetting: "retain",
+            Path: "chosen",
+          }
+        : { ...existing, ...overrides },
+    );
+    expect(Object.isFrozen(merged)).toBe(true);
+    expect(existing.rea_analysis_provider).toBe("hopper");
+    expect(overrides.REA_ANALYSIS_PROVIDER).toBe("ghidra");
+  },
+);
 
 it.each(["linux", "darwin"] as const)(
   "preserves case-sensitive %s variables in an immutable snapshot",

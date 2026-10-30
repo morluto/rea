@@ -114,7 +114,14 @@ type ElectronIpcHandler =
       readonly handler_location: JavaScriptSourceRange;
     };
 
+export interface ElectronIpcReceiver {
+  readonly kind: "web-contents" | "main-frame";
+  /** Constructor syntax allocation, never a runtime frame identifier. */
+  readonly owner_location: JavaScriptSourceRange;
+}
+
 interface ElectronIpcFindingContext {
+  readonly receiver?: ElectronIpcReceiver;
   /** Absent on direct syntax observations; wrappers require inferred evidence. */
   readonly resolution_basis?: "wrapper-substitution";
   readonly module_key: string | null;
@@ -131,7 +138,22 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcFindingContext &
   (
     | { readonly channel: string; readonly channel_expression: null }
-    | { readonly channel: null; readonly channel_expression: string }
+    | {
+        readonly channel: null;
+        readonly channel_expression: string;
+        /**
+         * Every invocation of this site is a traced direct call that supplied a
+         * literal channel, recorded as its own wrapper-substitution finding or
+         * guarded call path. Absent when any invocation may supply another value.
+         */
+        readonly invocation_channels?: "literal";
+        /**
+         * Channels from guarded invocations, which keep their predicate on a
+         * call path instead of becoming findings. Each still competes for its
+         * channel in pairing.
+         */
+        readonly guarded_invocation_channels?: readonly string[];
+      }
   );
 
 /** Static check involving an IPC sender, frame, process, URL, or origin. */
@@ -193,6 +215,8 @@ export interface ElectronNativeAddonBindingFinding {
 
 /** All Electron-specific facts collected during one shared AST traversal. */
 export interface ElectronStaticFindings {
+  /** Calls that may replace the application path used by Electron loadFile. */
+  readonly app_path_changes?: readonly ElectronAppPathChangeFinding[];
   readonly browser_windows: readonly ElectronBrowserWindowFinding[];
   readonly context_bridge_apis: readonly ElectronContextBridgeFinding[];
   readonly ipc: readonly ElectronIpcFinding[];
@@ -201,6 +225,13 @@ export interface ElectronStaticFindings {
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
   /** Source-bound candidate paths through bundled exports and IPC closures. */
   readonly call_paths?: readonly ElectronCallPath[];
+}
+
+/** An Electron application path setter invocation or bound delegate capture. */
+export interface ElectronAppPathChangeFinding {
+  readonly module_key: string | null;
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
 }
 
 export interface ElectronCallPathStep {

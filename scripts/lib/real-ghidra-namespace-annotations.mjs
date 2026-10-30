@@ -165,8 +165,12 @@ export async function verifyGhidraNamespaceAnnotations({
       "alpha::cli_renamed",
     );
     assert.equal(
-      (await call("analyze_function", { procedure: entries[0].address }))
-        .procedure.name,
+      (
+        await call("analyze_function", {
+          procedure: entries[0].address,
+          detail: "complete",
+        })
+      ).procedure.name,
       "alpha::qualified",
       "The independent CLI session must not alter the active MCP database",
     );

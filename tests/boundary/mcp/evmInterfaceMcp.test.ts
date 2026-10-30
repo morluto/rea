@@ -19,6 +19,8 @@ import { inspectSolidityMetadata } from "../../../src/evm/SolidityMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { registerEvmTools } from "../../../src/server/registerEvmTools.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import {
@@ -44,6 +46,40 @@ const decodedMetadataFixture = () => {
   };
   return value;
 };
+
+it("preserves shared EVM detail guidance and defaults through full SDK discovery", async () => {
+  const inspect = vi.fn(async () => {
+    throw new Error("Discovery must not invoke the provider");
+  });
+  const server = new EvidenceMcpServer(
+    { name: "evm-detail", version: "1" },
+    {},
+    undefined,
+    createToolResultDelivery(undefined),
+  );
+  registerEvmTools(server, new EvmInterfaceService({ inspect }), silentLogger);
+  const client = new Client({ name: "evm-detail", version: "1" });
+  const [ct, st] = InMemoryTransport.createLinkedPair();
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+  });
+  await server.connect(st);
+  await client.connect(ct);
+  const { inputSchema } = await advertisedMcpToolSchemas(
+    client,
+    "inspect_evm_interface",
+  );
+  expect(inputSchema).toHaveProperty(["properties", "detail"], {
+    type: "string",
+    enum: ["complete", "summary"],
+    default: "complete",
+    description: expect.stringContaining(
+      "summary retains that complete Evidence",
+    ),
+  });
+  expect(inspect).not.toHaveBeenCalled();
+});
 
 it("advertises exact valid schemas and records inline EVM interface evidence without a binary target", async () => {
   const value = decodedMetadataFixture();
@@ -362,7 +398,9 @@ it("returns the exact inferred interface summary while preserving complete defau
   );
   expect(derived.evidence_id).not.toBe(original.evidence_id);
   expect(derived.evidence_links).toEqual([original.evidence_id]);
-  expect(derived.confidence).toBe("derived");
+  // Retention and paging do not make inferred candidates more certain.
+  expect(original.confidence).toBe("inferred");
+  expect(derived.confidence).toBe("inferred");
   const { hex: _hex, ...bytecode } = value.bytecode;
   expect(view).toMatchObject({
     parent_operation: "inspect_evm_interface",
@@ -481,6 +519,7 @@ it.each(["valid", "wrong-subject", "no-subject"])(
         exhausted: true,
       });
       expect(derived.evidence_links).toEqual([source.evidence_id]);
+      expect(derived.confidence).toBe("inferred");
     } else
       expect(parseMcpToolError(response).error.code).toBe("invalid_request");
     expect(inspect).not.toHaveBeenCalled();

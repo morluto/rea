@@ -1,4 +1,4 @@
-import { ok as javaProbeOk } from "../../../src/domain/result.js";
+import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { expect } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -8,7 +8,6 @@ import type { BinarySession } from "../../../src/application/binary/BinarySessio
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ok } from "../../../src/domain/result.js";
 import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallation.js";
 import type { GhidraOperation } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
@@ -265,6 +264,8 @@ const resultBuilders = new Map<GhidraOperation, GhidraResultBuilder>([
       procedure: ghidraFunctionIdentity(),
       direction: input.direction ?? "outgoing",
       references: [ghidraReferenceEdge()],
+      reference_kinds_available: true,
+      unresolved_calls: [],
     }),
   ],
   ["xrefs", () => ["0x401001"]],

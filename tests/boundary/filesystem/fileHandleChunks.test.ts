@@ -84,7 +84,7 @@ it("removes cancellation observation after normal stream completion", async () =
     buffer: Buffer.alloc(0),
   })) as unknown as FileHandle["read"];
   const source = readFileHandleChunks({ read }, { signal: controller.signal });
-  expect(await buffer(source)).toEqual(Buffer.alloc(0));
+  expect(Buffer.compare(await buffer(source), Buffer.alloc(0))).toBe(0);
   expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
   controller.abort(null);
   expect(source.errored).toBeNull();
@@ -111,9 +111,12 @@ it.each(["range", "eof"])(
     }) as FileHandle["read"];
     const source = readFileHandleChunks({ read }, { start: 5, end: 7 });
     expect(source.readCoverage()).toEqual({ kind: "incomplete", bytes: 0n });
-    expect(await buffer(source)).toEqual(
-      Buffer.alloc(boundary === "range" ? 3 : 1, 0x61),
-    );
+    expect(
+      Buffer.compare(
+        await buffer(source),
+        Buffer.alloc(boundary === "range" ? 3 : 1, 0x61),
+      ),
+    ).toBe(0);
     const coverage = source.readCoverage();
     expect(coverage).toEqual({
       kind: "complete",

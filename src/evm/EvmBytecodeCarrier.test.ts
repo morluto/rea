@@ -22,6 +22,14 @@ it.each(["0x1", "60 00", "0xzz", "\uFEFF6000", "\u00a06000"])(
     );
   },
 );
+it("rejects a long interior separator run in linear time", () => {
+  const text = `60${" ".repeat(200_000)}00`;
+  const started = performance.now();
+  expect(() => decodeEvmBytecodeCarrier(Buffer.from(text), "hex")).toThrow(
+    EvmCarrierFailure,
+  );
+  expect(performance.now() - started).toBeLessThan(1_000);
+});
 it("distinguishes raw bytes, empty code and malformed UTF-8", () => {
   const bytes = Uint8Array.from([0xff, 0x00]);
   const decoded = decodeEvmBytecodeCarrier(bytes, "raw");

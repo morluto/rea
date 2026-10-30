@@ -1,3 +1,4 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { describe, expect, it } from "vitest";
 import { traceNativeValues } from "./NativeValueTrace.js";
 import {
@@ -5,13 +6,16 @@ import {
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { nativeValueTraceSchema } from "../../domain/native/nativeValueTrace.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ok, err } from "../../domain/result.js";
 
 const subject = {
@@ -106,6 +110,87 @@ const analysis: AnalysisOperationPort = {
     );
   },
 };
+describe("native value trace seed admission", () => {
+  it("preserves the exact abort reason before attempting a seed", async () => {
+    const reason = { request: "cancel before native trace" };
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return analysis.execute(operation, parameters);
+        },
+      },
+      { procedure: "0x1000" },
+      AbortSignal.abort(reason),
+    );
+    if (result.ok) throw new Error("Expected pre-seed cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+    expect(attempted).toEqual([]);
+  });
+
+  it.each([
+    new AnalysisInputError("analyze_function", {
+      userMessage: "Unknown selector: missing",
+    }),
+    new NoBinaryOpenError(),
+    new AnalysisResourceConstraintError(
+      "analyze_function",
+      "capacity",
+      "Provider is busy",
+      null,
+      { retryable: true },
+    ),
+    new AnalysisCancelledError("analyze_function"),
+  ])("preserves the original seed failure object: $_tag", async (failure) => {
+    const attempted: unknown[] = [];
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters) => {
+          attempted.push([operation, parameters]);
+          return err(failure);
+        },
+      },
+      { procedure: "missing" },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected seed failure");
+    expect(result.error).toBe(failure);
+    expect(attempted).toEqual([["analyze_function", { procedure: "missing" }]]);
+  });
+
+  it("retains a successful seed without def-use as a useful unknown trace", async () => {
+    const base = functionDossierSchema.parse(ghidraFunctionDossier());
+    const result = await traceNativeValues(
+      {
+        execute: async () =>
+          ok(
+            createAnalysisExecution(
+              { ...base, native_value_flow: null },
+              provider,
+              { subject },
+            ),
+          ),
+      },
+      { procedure: base.procedure.address },
+    );
+    if (!result.ok) throw result.error;
+    expect(nativeValueTraceSchema.parse(result.value)).toMatchObject({
+      target_sha256: subject.sha256,
+      decompilations: 1,
+      procedures: [
+        expect.objectContaining({ address: base.procedure.address }),
+      ],
+      unknowns: [
+        expect.objectContaining({
+          reason: "Provider has no native def-use model",
+        }),
+      ],
+    });
+  });
+});
+
 describe("native value parameter-use node membership", () => {
   it("retains only parameter uses whose parameter nodes fit the node budget", async () => {
     const operationCount = 3_000;
@@ -405,6 +490,11 @@ describe("native value failed-callee traversal", () => {
         );
       },
     };
+    const expectedCalls = [
+      { source: "0x1000/bad-1", target: "0x2000" },
+      { source: "0x1000/bad-2", target: "0x2000" },
+      { source: "0x1000/good", target: "0x3000" },
+    ];
     // A new invocation retries the failed selector: failures are not cached
     // across traces, and successful procedure identity remains separate.
     for (let run = 0; run < 2; run++) {
@@ -426,9 +516,24 @@ describe("native value failed-callee traversal", () => {
         address: null,
         reason: expect.stringContaining("Callee unavailable"),
       });
-      expect(trace.edges.filter(({ kind }) => kind === "call")).toHaveLength(3);
+      expect(
+        trace.edges
+          .filter(({ kind }) => kind === "call")
+          .map(({ source, target }) => ({ source, target })),
+      ).toEqual(expectedCalls);
       expect(trace.truncated).toBe(false);
     }
+    const capped = await traceNativeValues(port, {
+      procedure: "0x1000",
+      max_functions: 3,
+      max_edges: 2,
+    });
+    if (!capped.ok) throw capped.error;
+    const cappedTrace = nativeValueTraceSchema.parse(capped.value);
+    expect(
+      cappedTrace.edges.map(({ source, target }) => ({ source, target })),
+    ).toEqual(expectedCalls.slice(0, 2));
+    expect(cappedTrace.truncated).toBe(true);
   });
 });
 
@@ -678,6 +783,25 @@ describe("bounded native value dependency composition", () => {
       error: { _tag: "AnalysisOutputError" },
     });
   });
+
+  it("returns typed cancellation when the caller aborts with the final provider reply", async () => {
+    const controller = new AbortController();
+    const reason = { request: "stop trace" };
+    const result = await traceNativeValues(
+      {
+        execute: async (operation, parameters, options) => {
+          const value = await analysis.execute(operation, parameters, options);
+          if (parameters.procedure === "0x2000") controller.abort(reason);
+          return value;
+        },
+      },
+      { procedure: "0x1000" },
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe(reason);
+  });
 });
 
 describe("native value trace selector origin", () => {
@@ -865,4 +989,55 @@ describe("native value byte-bound call bindings", () => {
       }),
     );
   });
+});
+
+describe("native value validation failure provenance", () => {
+  it.each(["call-targets", "target-digest"] as const)(
+    "retains the exact provider observation for invalid %s",
+    async (failure) => {
+      let expected:
+        | ReturnType<typeof createAnalysisExecutionEvidence>
+        | undefined;
+      const result = await traceNativeValues(
+        {
+          execute: async (operation, parameters, options) => {
+            const execution = await analysis.execute(
+              operation,
+              parameters,
+              options,
+            );
+            if (!execution.ok) return execution;
+            if (
+              (failure === "call-targets" &&
+                operation === "resolve_native_call_targets") ||
+              (failure === "target-digest" && parameters.procedure === "0x2000")
+            ) {
+              const observation = {
+                ...execution.value,
+                ...(failure === "call-targets"
+                  ? { result: { malformed: "call targets" } }
+                  : { subject: { ...subject, sha256: "b".repeat(64) } }),
+                rawResult: { original: "provider output" },
+                limitations: ["Provider coverage is partial"],
+              };
+              expected = createAnalysisExecutionEvidence(
+                operation,
+                parameters,
+                observation,
+                "observed",
+              );
+              return ok(observation);
+            }
+            return execution;
+          },
+        },
+        { procedure: "0x1000" },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error._tag).toBe("AnalysisOutputError");
+      expect(expected).toBeDefined();
+      expect(result.error.partialObservation).toEqual(expected);
+    },
+  );
 });

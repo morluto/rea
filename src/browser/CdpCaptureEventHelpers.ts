@@ -1,44 +1,51 @@
+import { err, ok, type Result } from "../domain/result.js";
+import { mediaTypeEssence } from "../domain/analysisView/recordedMediaType.js";
 import {
+  admitRecords,
   isHttpUrl,
-  numberValue,
   recordValue,
-  recordsValue,
   cdpStringValue,
   type UnknownRecord,
 } from "./CdpCaptureValues.js";
-import type { CdpEvent } from "./CdpConnection.js";
 
-/** Identify a top-level navigation event from its untrusted CDP envelope. */
-export const isMainFrameNavigation = (
-  event: CdpEvent,
-  mainFrameId: string,
-): boolean => {
-  const params = recordValue(event.params);
-  if (params === undefined) return false;
-  const frameId =
-    event.method === "Page.frameNavigated"
-      ? cdpStringValue(recordValue(params.frame)?.id)
-      : event.method === "Page.frameRequestedNavigation" ||
-          event.method === "Page.navigatedWithinDocument"
-        ? cdpStringValue(params.frameId)
-        : undefined;
-  return frameId === mainFrameId;
+export interface MalformedCdpCallFrame {
+  readonly _tag: "MalformedCdpCallFrame";
+}
+
+const malformedCallFrame: MalformedCdpCallFrame = {
+  _tag: "MalformedCdpCallFrame",
 };
 
-export const firstCallFrame = (
-  value: UnknownRecord | undefined,
-): UnknownRecord | undefined => recordsValue(value?.callFrames)[0];
+/**
+ * The call site is the frame at position zero. An omitted stack has no call
+ * site; a malformed stack or top frame stays unknown rather than promoting a
+ * caller to the call site.
+ */
+export const topCallFrame = (
+  value: unknown,
+): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
+  if (value === undefined) return ok(undefined);
+  const stack = recordValue(value);
+  if (stack === undefined) return err(malformedCallFrame);
+  const frames = admitRecords(stack.callFrames);
+  if (frames === undefined) return err(malformedCallFrame);
+  if (frames.length === 0) return ok(undefined);
+  const frame = recordValue(frames[0]);
+  return frame === undefined ? err(malformedCallFrame) : ok(frame);
+};
 
 export const initiatorLocation = (
   initiator: UnknownRecord | undefined,
-): UnknownRecord | undefined => {
-  let stack = recordValue(initiator?.stack);
+): Result<UnknownRecord | undefined, MalformedCdpCallFrame> => {
+  let stack = initiator?.stack;
   for (let depth = 0; depth < 32 && stack !== undefined; depth += 1) {
-    const frame = firstCallFrame(stack);
-    if (frame !== undefined) return frame;
-    stack = recordValue(stack.parent);
+    const frame = topCallFrame(stack);
+    if (!frame.ok || frame.value !== undefined) return frame;
+    stack = recordValue(stack)?.parent;
   }
-  return cdpStringValue(initiator?.url) === undefined ? undefined : initiator;
+  return ok(
+    cdpStringValue(initiator?.url) === undefined ? undefined : initiator,
+  );
 };
 
 export const exclusionReasonForUrl = (
@@ -50,16 +57,19 @@ export const exclusionReasonForUrl = (
       ? "disallowed_origin"
       : "unsupported_url";
 
-export const integerOrNull = (value: unknown): number | null => {
-  const number = numberValue(value);
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
-};
-
-export const executionContextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
+/** Preserve omitted and invalid protocol offsets as unknown, never invented coordinates. */
+export const cdpSourceCoordinates = (frame: UnknownRecord | undefined) => {
+  const valid = (value: unknown): value is number =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  const line = frame?.lineNumber;
+  const column = frame?.columnNumber;
+  return {
+    line: valid(line) ? line : null,
+    column: valid(column) ? column : null,
+    invalid:
+      (line !== undefined && !valid(line)) ||
+      (column !== undefined && !valid(column)),
+  };
 };
 
 export const isJsonContentType = (
@@ -76,7 +86,10 @@ export const isJsonContentType = (
 };
 
 export const isJsonMediaType = (value: string | null | undefined): boolean => {
-  const mediaType = value?.split(";", 1)[0]?.trim().toLowerCase();
+  const mediaType =
+    value === null || value === undefined ? null : mediaTypeEssence(value);
+  // CDP shape collection accepts structured JSON suffixes on any media type;
+  // replay's application-only JSON policy is a separate consumer decision.
   return (
     mediaType === "application/json" || mediaType?.endsWith("+json") === true
   );
@@ -107,14 +120,13 @@ export const consolePrimitive = (
         : undefined;
     case "undefined":
       return { type, text: "undefined" };
+    case "object":
+      // The protocol delivers `null` as an object with a `null` subtype. Its
+      // sentinel is already in the event, unlike an unexpanded remote object.
+      return cdpStringValue(value.subtype) === "null"
+        ? { type, text: "null" }
+        : undefined;
     default:
       return undefined;
   }
 };
-
-const BASE64 = /^(?:[A-Za-z\d+/]{4})*(?:[A-Za-z\d+/]{2}==|[A-Za-z\d+/]{3}=)?$/u;
-
-export const decodeBase64 = (value: string): Buffer | undefined =>
-  value.length % 4 === 0 && BASE64.test(value)
-    ? Buffer.from(value, "base64")
-    : undefined;

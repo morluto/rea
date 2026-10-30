@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   onlyCallable,
   topLevelBinding,
@@ -343,7 +347,7 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
     });
   });
 
-  it("fails closed on assignment ambiguity and alias cycles", () => {
+  it("preserves initializer uncertainty, assignment ambiguity and alias cycles", () => {
     const ambiguous = analyzeJavaScriptSemantics(`
       let current = "first";
       current = "second";
@@ -354,7 +358,8 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
       status: "ambiguous",
     });
     expect(topLevelBinding(ambiguous, "left").value).toMatchObject({
-      status: "cycle",
+      status: "unknown",
+      reason: "Binding right has no proven initializer at this read.",
     });
     expect(topLevelBinding(ambiguous, "right").provenance).toMatchObject({
       status: "cycle",
@@ -408,6 +413,69 @@ describe("JavaScript semantic analysis: dataflow 2", () => {
         bindingId: topLevelBinding(ir, "retained").bindingId,
       }),
     ]);
+  });
+});
+
+describe("JavaScript semantic analysis: mapped arguments writes", () => {
+  const commonJs = (source: string) => {
+    const parsed = parseJavaScriptSource(source, "mapped-arguments.cjs");
+    if (parsed === null) throw new Error("Expected CommonJS fixture to parse");
+    return analyzeParsedJavaScriptSemantics(parsed);
+  };
+  const returnField = (source: string) => {
+    const value = onlyCallable(commonJs(source), "read").returnSites[0]?.value;
+    if (value?.status !== "object")
+      throw new Error("Expected an object return value");
+    const field = value.properties.find(({ name }) => name === "value");
+    if (field === undefined) throw new Error("Expected returned value field");
+    return field.value;
+  };
+
+  it.each([
+    ["direct arguments write", "arguments[0] = 2;"],
+    ["stable arguments alias write", "const args = arguments; args[0] = 2;"],
+    ["array assignment pattern write", "[arguments[0]] = [2];"],
+    [
+      "nested object assignment pattern write",
+      "({ nested: arguments[0] } = { nested: 2 });",
+    ],
+  ])("does not retain a stale literal after a %s", (_name, write) => {
+    expect(
+      returnField(
+        `function read(value) { value = 1; ${write} return { value }; }`,
+      ).status,
+    ).not.toBe("literal");
+  });
+
+  it.each([
+    [
+      "strict function",
+      'function read(value) { "use strict"; value = 1; arguments[0] = 2; return { value }; }',
+    ],
+    [
+      "default parameter",
+      "function read(value = 0) { value = 1; arguments[0] = 2; return { value }; }",
+    ],
+    [
+      "no arguments write",
+      "function read(value) { value = 1; return { value }; }",
+    ],
+  ])("keeps the independent parameter value for a %s", (_name, fn) => {
+    expect(returnField(fn)).toEqual({ status: "literal", value: 1 });
+  });
+
+  it("retains uncertainty when source mode cannot establish sloppy semantics", () => {
+    const parsed = parseJavaScriptSource(
+      "function read(value) { value = 1; arguments[0] = 2; return { value }; }",
+    );
+    if (parsed === null) throw new Error("Expected fixture to parse");
+    const value = onlyCallable(analyzeParsedJavaScriptSemantics(parsed), "read")
+      .returnSites[0]?.value;
+    if (value?.status !== "object")
+      throw new Error("Expected an object return value");
+    expect(
+      value.properties.find(({ name }) => name === "value")?.value.status,
+    ).not.toBe("literal");
   });
 });
 

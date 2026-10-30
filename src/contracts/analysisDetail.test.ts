@@ -37,13 +37,16 @@ it("advertises only that operation's summary from analysis detail outputs", () =
       z.toJSONSchema(toolContract(name).outputSchema),
     );
     expect(schema).not.toContain("api-surface");
+    expect(schema).not.toContain("environment-manifest");
+    expect(schema).not.toContain("environment-state");
     expect(schema).not.toContain("inspect_web_network_capture");
   }
-  expect(
-    JSON.stringify(
-      z.toJSONSchema(toolContract("inspect_analysis_view").outputSchema),
-    ),
-  ).toContain("api-surface");
+  const viewSchema = JSON.stringify(
+    z.toJSONSchema(toolContract("inspect_analysis_view").outputSchema),
+  );
+  expect(viewSchema).toContain("api-surface");
+  expect(viewSchema).toContain("environment-manifest");
+  expect(viewSchema).toContain("environment-state");
 
   const layout = projectSummary(analysisViewLayoutEvidence());
   const javascript = projectSummary(analysisViewJavaScriptEvidence());

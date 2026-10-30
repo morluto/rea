@@ -13,3 +13,12 @@ export function generateLargeFixture(): string;
 export function sourceDigest(
   sources: readonly { readonly path: string; readonly content: string }[],
 ): string;
+
+export function resolveConformanceFixturePath(
+  root: string,
+  declaredPath: unknown,
+): Promise<string>;
+export function bindConformanceFixtureArtifact(
+  path: string,
+  fixture: unknown,
+): Promise<{ readonly path: string; readonly sha256: string }>;

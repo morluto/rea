@@ -1,4 +1,5 @@
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
+import type { ArtifactEmbeddedFormatProbeFacts } from "../ArtifactEmbeddedFormatProbes.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
@@ -6,6 +7,7 @@ import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import { lstat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import type { RootInventorySource } from "./classify.js";
+import { isZipPackageFormat } from "../../domain/zipPackageFormat.js";
 
 import {
   ArtifactReaderFailure,
@@ -45,36 +47,72 @@ import {
   scanReader,
   type PendingIntegrityContradiction,
 } from "./scanReader.js";
-import {
-  STRICT_INTEGRITY_POLICY,
-  type ArtifactInventoryOptions,
-} from "./types.js";
+import type { ArtifactInventoryOptions } from "./types.js";
 
-export const scanCanonicalArtifactInventory = async (
-  path: string,
-  options: ArtifactInventoryOptions,
-  readerFactory: typeof createReader = createReader,
-): Promise<ArtifactInventorySnapshot> =>
-  options.resourceScope.run(() =>
-    scanCanonicalArtifactInventoryInScope(path, options, readerFactory),
-  );
+export interface TransferredArtifactInventorySource {
+  readonly owner: ArtifactResourceOwner;
+  readonly admission: NonNullable<Parameters<typeof createReader>[3]>;
+}
 
 export const scanCanonicalArtifactInventoryInScope = async (
   path: string,
   options: ArtifactInventoryOptions,
   readerFactory: typeof createReader = createReader,
-): Promise<ArtifactInventorySnapshot> => {
-  const integrity = options.integrity ?? STRICT_INTEGRITY_POLICY;
+  selectedPath: string = path,
+): Promise<ArtifactInventorySnapshot> =>
+  (
+    await scanCanonical(
+      path,
+      options,
+      readerFactory,
+      "release",
+      undefined,
+      selectedPath,
+    )
+  ).snapshot;
+
+/** Keep the admitted source and parsed format facts alive for extraction of this inventory. */
+export const scanCanonicalArtifactInventoryForExtractionInScope = async (
+  path: string,
+  options: ArtifactInventoryOptions,
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
+): Promise<{
+  readonly snapshot: ArtifactInventorySnapshot;
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
+}> =>
+  scanCanonical(
+    path,
+    options,
+    createReader,
+    "transfer-source",
+    probeFacts,
+    selectedPath,
+  );
+
+const scanCanonical = async (
+  path: string,
+  options: ArtifactInventoryOptions,
+  readerFactory: typeof createReader,
+  rootDisposition: "release" | "transfer-source",
+  probeFacts?: ArtifactEmbeddedFormatProbeFacts,
+  selectedPath: string = path,
+): Promise<{
+  readonly snapshot: ArtifactInventorySnapshot;
+  readonly transferredSource: TransferredArtifactInventorySource | undefined;
+}> => {
   const metadata = await lstat(path);
   const {
     format: rootFormat,
     digest: rootDigest,
     rootSource,
+    readerAdmission,
   } = await classifyAndHashRootForInventory(
     path,
     metadata.isDirectory(),
     metadata,
-    options,
+    { ...options, selectedPath },
+    probeFacts,
   );
   let reader: ArtifactReader | undefined;
   let readerCreationFailure: { readonly cause: unknown } | undefined;
@@ -83,7 +121,9 @@ export const scanCanonicalArtifactInventoryInScope = async (
       path,
       rootFormat,
       options.environment ?? {},
-      rootSource,
+      readerAdmission,
+      options.asarHeaderAdmission,
+      selectedPath,
     );
   } catch (cause: unknown) {
     readerCreationFailure = { cause };
@@ -101,7 +141,13 @@ export const scanCanonicalArtifactInventoryInScope = async (
       caseCollisionLimitation,
       unknownParentOccurrences,
       traversal,
-    } = await scanReader(reader, ownedReaders, options.signal, integrity);
+    } = await scanReader(
+      reader,
+      ownedReaders,
+      options.signal,
+      options.integrity,
+      options.asarHeaderAdmission,
+    );
     outcome = {
       kind: "completed",
       snapshot: await buildInventorySnapshot({
@@ -123,17 +169,97 @@ export const scanCanonicalArtifactInventoryInScope = async (
     };
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };
+    // A mount refusal does not erase the independently classified, hashed
+    // carrier. Retain only that root, with explicitly unexamined children.
+    if (
+      rootFormat === "dmg" &&
+      cause instanceof ArtifactReaderFailure &&
+      cause.reason === "unavailable" &&
+      cause.partialObservation === undefined &&
+      options.signal?.aborted !== true
+    ) {
+      let retained: ArtifactInventorySnapshot | undefined;
+      let rootFailure: unknown;
+      try {
+        retained = await buildInventorySnapshot({
+          path,
+          metadata,
+          rootFormat,
+          rootDigest,
+          rootSource,
+          resourceScope: options.resourceScope,
+          reader,
+          signal: options.signal,
+          nodes: new Map(),
+          occurrences: [],
+          pendingContradictions: [],
+          caseCollisionLimitation: undefined,
+          unknownParentOccurrences: new Set(),
+          traversal: {
+            status: "unknown",
+            limitations: [
+              `DMG child traversal was unavailable: ${cause.message}`,
+            ],
+          },
+        });
+      } catch (failure: unknown) {
+        rootFailure = failure;
+      }
+      outcome = {
+        kind: "failed",
+        cause: new ArtifactReaderFailure(
+          cause.reason,
+          rootFailure === undefined
+            ? cause.message
+            : `${cause.message}; root observations could not be revalidated: ${rootFailure instanceof Error ? rootFailure.message : String(rootFailure)}`,
+          {
+            cause:
+              rootFailure === undefined
+                ? cause
+                : new AggregateError(
+                    [cause, rootFailure],
+                    "DMG traversal and root revalidation failed",
+                    { cause },
+                  ),
+            cleanup: cause.cleanup,
+            cleanupLeases: cause.cleanupLeases,
+            userMessage: cause.userMessage,
+            ...(retained === undefined
+              ? {}
+              : {
+                  partialObservation: {
+                    kind: "artifact-inventory",
+                    inventory: retained,
+                  },
+                }),
+          },
+          cause.details,
+        ),
+      };
+    }
   }
-  const cleanupFailure = await cleanupInventoryOwners({
+  const cleanup = await cleanupInventoryOwners({
     path,
     options,
     rootSource,
     ownedReaders,
+    readerAdmission,
     outcome,
+    rootDisposition:
+      rootDisposition === "transfer-source" &&
+      outcome.kind === "completed" &&
+      rootSource !== undefined &&
+      (isZipPackageFormat(rootFormat) ||
+        (readerAdmission !== undefined && "kind" in readerAdmission))
+        ? "transfer"
+        : "release",
   });
-  if (cleanupFailure !== undefined) throw cleanupFailure;
-  if (outcome.kind === "failed") throw outcome.cause;
-  return outcome.snapshot;
+  if (cleanup.failure !== undefined) throw cleanup.failure;
+  if (cleanup.outcome.kind === "failed") throw cleanup.outcome.cause;
+  return {
+    snapshot: cleanup.outcome.snapshot,
+    transferredSource: cleanup.transferred,
+  };
 };
 
 type InventoryScanOutcome =
@@ -148,34 +274,71 @@ const cleanupInventoryOwners = async ({
   options,
   rootSource,
   ownedReaders,
+  readerAdmission,
   outcome,
+  rootDisposition,
 }: {
   readonly path: string;
   readonly options: ArtifactInventoryOptions;
   readonly rootSource: RootInventorySource | undefined;
   readonly ownedReaders: readonly ArtifactReader[];
+  readonly readerAdmission: Parameters<typeof createReader>[3];
   readonly outcome: InventoryScanOutcome;
-}): Promise<ArtifactReaderFailure | undefined> => {
+  readonly rootDisposition: "release" | "transfer";
+}): Promise<{
+  readonly failure: ArtifactReaderFailure | undefined;
+  readonly transferred: TransferredArtifactInventorySource | undefined;
+  readonly outcome: InventoryScanOutcome;
+}> => {
+  let finalOutcome = outcome;
   let cleanupFailure: ArtifactReaderFailure | undefined;
-  const owners: ArtifactResourceOwner[] = [...ownedReaders]
+  // Finalization still belongs to this operation. Preserve completed facts when
+  // cancellation arrives while an owner is being released, but keep an earlier
+  // operation or cleanup failure primary.
+  const observeCancellation = (): void => {
+    if (
+      finalOutcome.kind === "completed" &&
+      cleanupFailure === undefined &&
+      options.signal?.aborted === true
+    )
+      finalOutcome = {
+        kind: "failed",
+        cause: new ArtifactReaderFailure(
+          "cancelled",
+          "Artifact inventory cancelled during finalization",
+          {
+            cause: options.signal.reason,
+            partialObservation: {
+              kind: "artifact-inventory",
+              inventory: finalOutcome.snapshot,
+            },
+          },
+        ),
+      };
+  };
+  observeCancellation();
+  const readerOwners: ArtifactResourceOwner[] = [...ownedReaders]
     .reverse()
     .map((reader) => ({
       kind: "reader" as const,
       reader,
       resource: `artifact reader for ${path}`,
     }));
-  if (rootSource !== undefined)
-    owners.push({
-      kind: "file-handle",
-      handle: rootSource.owner,
-      resource: `root artifact descriptor for ${path}`,
-    });
-  for (const owner of owners) {
+  const rootOwner: ArtifactResourceOwner | undefined =
+    rootSource === undefined
+      ? undefined
+      : {
+          kind: "file-handle",
+          handle: rootSource.owner,
+          resource: `root artifact descriptor for ${path}`,
+        };
+  for (const owner of readerOwners) {
     const attempt = await options.resourceScope.release(owner);
+    observeCancellation();
     if (attempt.kind === "released") continue;
     cleanupFailure = options.resourceScope.cleanupFailure(
       cleanupFailure === undefined
-        ? outcome
+        ? finalOutcome
         : { kind: "failed", cause: cleanupFailure },
       [attempt],
       outcome.kind === "completed"
@@ -183,7 +346,38 @@ const cleanupInventoryOwners = async ({
         : undefined,
     );
   }
-  return cleanupFailure;
+  if (
+    rootDisposition === "transfer" &&
+    finalOutcome.kind === "completed" &&
+    cleanupFailure === undefined &&
+    rootSource !== undefined &&
+    rootOwner !== undefined &&
+    readerAdmission !== undefined
+  )
+    return {
+      failure: undefined,
+      transferred: { owner: rootOwner, admission: readerAdmission },
+      outcome: finalOutcome,
+    };
+  if (rootOwner !== undefined) {
+    const attempt = await options.resourceScope.release(rootOwner);
+    observeCancellation();
+    if (attempt.kind === "failed")
+      cleanupFailure = options.resourceScope.cleanupFailure(
+        cleanupFailure === undefined
+          ? finalOutcome
+          : { kind: "failed", cause: cleanupFailure },
+        [attempt],
+        outcome.kind === "completed"
+          ? { kind: "artifact-inventory", inventory: outcome.snapshot }
+          : undefined,
+      );
+  }
+  return {
+    failure: cleanupFailure,
+    transferred: undefined,
+    outcome: finalOutcome,
+  };
 };
 
 interface SnapshotBuildInput {
@@ -220,6 +414,7 @@ const buildInventorySnapshot = async (
     executable: hostExecutableMarking(path, metadata),
     format: rootFormat,
     path,
+    formatMetadata: reader?.formatMetadata?.(),
   });
   for (const occurrence of input.occurrences)
     if (
@@ -312,14 +507,12 @@ const buildIntegrityContradictions = (
       contradiction_id: artifactContradictionId({
         rootArtifactId: rootNode.artifact_id,
         logicalPath: occurrence.logical_path,
-        declaredSha256: contradiction.declaredSha256,
-        observedSha256: contradiction.observedSha256,
+        integrity: contradiction.integrity,
       }),
       occurrence_id: occurrence.occurrence_id,
       parent_artifact_id: parentArtifactId,
       logical_path: occurrence.logical_path,
-      declared_sha256: contradiction.declaredSha256,
-      observed_sha256: contradiction.observedSha256,
+      ...contradiction.integrity,
       entry_kind: contradiction.entryKind,
       unpacked: contradiction.unpacked,
       trust: "observed-untrusted",

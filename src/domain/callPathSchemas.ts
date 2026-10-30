@@ -3,48 +3,32 @@ import { z } from "zod";
 import { emptyArraySchema } from "./emptyArraySchema.js";
 import { evidenceSchema } from "./evidence.js";
 import { prefixedDigestSchema } from "./../domain/digests.js";
-
-const addressSchema = z
-  .string()
-  .regex(
-    /^(?:(?:[A-Za-z0-9._~\x2d]|%[0-9A-F]{2})+:)?0x(?:0|[1-9a-f][0-9a-f]*)$/u,
-  );
-const inputAddressSchema = z
-  .string()
-  .regex(/^(?:(?:[A-Za-z0-9._~\x2d]|%[0-9a-fA-F]{2})+:)?0[xX][0-9a-fA-F]+$/u)
-  .transform((address) => {
-    const separator = address.lastIndexOf(":") + 1;
-    const space = address
-      .slice(0, separator)
-      .replace(/%[0-9a-fA-F]{2}/gu, (escape) => escape.toUpperCase());
-    return `${space}0x${BigInt(address.slice(separator)).toString(16)}`;
-  });
+import {
+  nativeAddressSchema,
+  nativeAddressInputSchema,
+} from "./native/nativeAddress.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
-
-/** Normalize a hexadecimal offset while preserving its optional address space. */
-export const parseCallPathAddress = (input: unknown): string =>
-  inputAddressSchema.parse(input);
 
 /** Strict input for explicit call-path reconstruction from complete dossiers. */
 export const callPathInputSchema = z.strictObject({
   functions: z.array(evidenceSchema).min(1),
-  start: z.object({ address: inputAddressSchema }).strict(),
-  goal: z.object({ address: inputAddressSchema }).strict(),
+  start: z.object({ address: nativeAddressInputSchema }).strict(),
+  goal: z.object({ address: nativeAddressInputSchema }).strict(),
 });
 
 const citedNodeSchema = z.object({
-  address: addressSchema,
+  address: nativeAddressSchema,
   name: z.string().nullable(),
   evidence_links: z.array(evidenceIdSchema).min(1),
 });
 const citedEdgeSchema = z.object({
-  source: addressSchema,
-  target: addressSchema,
+  source: nativeAddressSchema,
+  target: nativeAddressSchema,
   evidence_links: z.array(evidenceIdSchema).min(1),
 });
 const pathSchema = z
   .object({
-    hops: z.number().int().min(0),
+    hops: z.int().min(0),
     nodes: z.array(citedNodeSchema).min(1),
     edges: z.array(citedEdgeSchema),
     evidence_links: z.array(evidenceIdSchema).min(1),
@@ -66,12 +50,12 @@ const pathSchema = z
       });
   });
 const resultContextShape = {
-  start: addressSchema,
-  goal: addressSchema,
+  start: nativeAddressSchema,
+  goal: nativeAddressSchema,
   explored: z.object({
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    depth_reached: z.number().int().min(0),
+    nodes: z.int().min(0),
+    edges: z.int().min(0),
+    depth_reached: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(z.string()),
@@ -82,7 +66,7 @@ export const callPathResultSchema = z.union([
   z.object({
     ...resultContextShape,
     status: z.literal("found"),
-    shortest_hops: z.number().int().min(0),
+    shortest_hops: z.int().min(0),
     search_scope: z.object({ exhaustive: z.boolean() }),
     paths: z.array(pathSchema).min(1),
   }),

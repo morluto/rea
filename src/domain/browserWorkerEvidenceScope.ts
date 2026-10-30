@@ -11,7 +11,7 @@ import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 export const browserWorkerEvidenceScopeSchema = z
   .object({
     parameters: z.object({
-      target_id: z.string().trim().min(1),
+      target_id: z.string().min(1),
       include_script_sources: z.boolean(),
       allowed_origins: browserAllowedOriginsSchema,
       worker_target_ids: browserWorkerTargetIdsSchema,

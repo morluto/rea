@@ -30,6 +30,33 @@ const exclusions = (
 ): TraversalState["exclusions"] => items;
 
 describe("unobserved internal symlink reconciliation", () => {
+  it("uses the explicit root failure only when no closer completed directory or exclusion covers the target", () => {
+    const entries: ReferenceSourceEntry[] = [
+      internalLink("unobserved", "unseen/target.txt"),
+      internalLink("complete", "known/target.txt"),
+      internalLink("excluded", "omitted/target.txt"),
+      { status: "read", kind: "directory", path: "known" },
+    ];
+
+    reconcileUnobservedSymlinkTargets(
+      entries,
+      exclusions({ path: "omitted", kind: "directory" }),
+      undefined,
+      { code: "changed", message: "Reference root changed" },
+    );
+
+    expect(entries[0]).toMatchObject({
+      status: "failed",
+      kind: "symlink",
+      code: "changed",
+      message: expect.stringContaining("Reference root changed"),
+    });
+    expect(entries.slice(1, 3)).toEqual([
+      internalLink("complete", "known/target.txt"),
+      internalLink("excluded", "omitted/target.txt"),
+    ]);
+  });
+
   it("retains unreadable targets below the nearest failed directory", () => {
     const entries: ReferenceSourceEntry[] = [
       internalLink("alias.txt", "hidden/target.txt"),

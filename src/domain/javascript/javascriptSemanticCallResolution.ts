@@ -1,3 +1,4 @@
+import { javascriptSourceRangeContains } from "./javascriptSourceCoordinates.js";
 import * as t from "@babel/types";
 
 import type {
@@ -6,14 +7,16 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticEffectTiming,
+} from "./javascriptSemanticMutationInitializers.js";
 import {
   unwrapJavaScriptExpression,
   runtimeFunctionParameters,
 } from "./javascriptAstValues.js";
 import {
   resolveSemanticBindingState,
-  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
   type JavaScriptSemanticInitializer,
@@ -33,6 +36,8 @@ interface CallResolutionContext {
   readonly state: JavaScriptSemanticAnalysisState;
   readonly callableById: ReadonlyMap<string, JavaScriptSemanticCallable>;
   readonly seenInitializers: ReadonlySet<JavaScriptSemanticInitializer>;
+  /** Bindings on the active chain whose read selected every initializer. */
+  readonly seenBindings: ReadonlySet<JavaScriptSemanticBindingState>;
   readonly bindingCache: WeakMap<t.Identifier, LocalCallableResolution>;
 }
 
@@ -53,6 +58,7 @@ export const resolveLocalCallables = (
     state: input.state,
     callableById: input.callableById,
     seenInitializers: input.seenInitializers,
+    seenBindings: new Set(),
     bindingCache: input.bindingCache,
   });
 
@@ -103,12 +109,30 @@ const resolveIdentifier = (
     node,
     context.state.parentsByNode,
   );
-  const candidates = resolveBindingCallables(read.binding, context);
+  // A full read re-enters the same candidate set wherever the chain returns
+  // to this binding. Close that cycle at the binding; position-narrowed reads
+  // keep their per-initializer cycle handling.
+  const selectsAll = read.binding === binding;
+  if (selectsAll && context.seenBindings.has(binding))
+    return {
+      callableIds: [],
+      complete: false,
+      cycleDependent: true,
+      reason: `Call target initializer cycle at ${binding.name}.`,
+    };
+  const candidates = resolveBindingCallables(
+    read.binding,
+    node,
+    selectsAll
+      ? {
+          ...context,
+          seenBindings: new Set(context.seenBindings).add(binding),
+        }
+      : context,
+  );
   // Knowing every local candidate does not prove that any write replaced the
   // incoming value, or that a write in another activation precedes this read.
-  const covered =
-    read.hasDefiniteInitializer ||
-    semanticStableInitializer(binding, context.state) !== undefined;
+  const covered = read.hasDefiniteInitializer;
   const resolution =
     candidates.complete && !covered
       ? {
@@ -146,6 +170,7 @@ const resolveAlternatives = (
 
 const resolveBindingCallables = (
   binding: JavaScriptSemanticBindingState,
+  site: t.Identifier,
   context: CallResolutionContext,
 ): LocalCallableResolution => {
   if (binding.initializers.length === 0)
@@ -177,11 +202,21 @@ const resolveBindingCallables = (
   const callableIds = uniqueCallableIds(
     candidates.flatMap((candidate) => candidate.callableIds),
   );
+  // Pattern writes are owned reference facts, not ordinary initializers. A
+  // read may retain both an earlier callable and a conditional projected
+  // replacement. Until projected callable resolution is supported here,
+  // preserve known candidates without claiming they cover every target.
+  const complete =
+    !binding.referenceInitializers.some(
+      (initializer) =>
+        initializer.assignment &&
+        semanticEffectTiming(site, initializer.node, context.state) !== "after",
+    ) && candidates.every(({ complete }) => complete);
   const resolution = {
     callableIds,
-    complete: candidates.every(({ complete }) => complete),
+    complete,
     reason:
-      callableIds.length === 1 && candidates.every(({ complete }) => complete)
+      callableIds.length === 1 && complete
         ? "Unique local callable target."
         : `Call target ${binding.name} has ambiguous or unsupported assignments.`,
     ...(candidates.some((candidate) => candidate.cycleDependent)
@@ -236,7 +271,7 @@ const parameterAcceptsArgument = (
   if (!t.isFunction(node)) return false;
   const parameters = runtimeFunctionParameters(node);
   const parameterIndex = parameters.findIndex((parameter) =>
-    rangeContains(range(parameter), location),
+    javascriptSourceRangeContains(range(parameter), location),
   );
   if (parameterIndex === argumentIndex) return true;
   return (
@@ -245,17 +280,6 @@ const parameterAcceptsArgument = (
     t.isRestElement(parameters[parameterIndex])
   );
 };
-
-const rangeContains = (
-  outer: JavaScriptSemanticArgumentFlow["parameterLocation"],
-  inner: JavaScriptSemanticArgumentFlow["parameterLocation"],
-): boolean =>
-  (outer.start.line < inner.start.line ||
-    (outer.start.line === inner.start.line &&
-      outer.start.column <= inner.start.column)) &&
-  (outer.end.line > inner.end.line ||
-    (outer.end.line === inner.end.line &&
-      outer.end.column >= inner.end.column));
 
 const uniqueCallableIds = (values: readonly string[]): string[] =>
   [...new Set(values)].sort(compareUnicodeCodePoints);

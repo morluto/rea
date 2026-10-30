@@ -381,7 +381,7 @@ it("copies every byte across chunk boundaries through the destination owner", as
   const snapshot = await createGhidraTargetSnapshot(path, runtime, sha256, {
     platform: "linux",
   });
-  expect(await readFile(snapshot.path)).toEqual(bytes);
+  expect(Buffer.compare(await readFile(snapshot.path), bytes)).toBe(0);
   expect(snapshot.sha256).toBe(sha256);
   expect(
     [...fault.handles, ...fault.destinations].every(

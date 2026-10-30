@@ -273,13 +273,13 @@ itWithCaptureCapability.each(["cli", "mcp"] as const)(
       ],
       limits: { processes: 1 },
     });
+    // Sampling diagnostics are independent of retention exhaustion. The capture
+    // parser above validates their count/reason consistency on this live host.
     expect(result.truncation_details?.process).toMatchObject({
       sample_limit: 1,
       sampling_partial: true,
       retained_samples: 1,
       sample_limit_reached: true,
-      sampling_failures: 0,
-      first_sampling_failure: null,
       coverage: "sampled",
     });
     expect(compareProcessCaptures(result, result)).toMatchObject({

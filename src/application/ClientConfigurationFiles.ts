@@ -1,17 +1,18 @@
 import { err, ok, type Result } from "../domain/result.js";
-import {
-  RegularFileCleanupFailure,
-  readRegularFileText,
-} from "./RegularFileRead.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
+import { readRegularFileText } from "./RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
   type ClientConfigurationDocument,
+  type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
+import { PRODUCT_IDENTITY } from "../identity.js";
 
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
@@ -21,11 +22,34 @@ export interface ClientConfigurationSource extends ClientConfigurationDocument {
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-): ClientConfigurationFileError => ({
-  kind: "malformed",
-  path,
-  detail: `Configuration ${path} has an invalid REA server environment: ${error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. Repair it before rerunning setup.`,
-});
+  overrides: Readonly<Record<string, string>> = {},
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationFileError => {
+  const constraints = error.settings
+    .map(({ setting, constraint }) => `${setting}: ${constraint}`)
+    .join("; ");
+  const overrideNames = new Set(
+    Object.keys(overrides).map((name) =>
+      platform === "win32" ? name.toUpperCase() : name,
+    ),
+  );
+  const overrideSettings = error.settings
+    .map(({ setting }) => setting)
+    .filter((setting) =>
+      overrideNames.has(platform === "win32" ? setting.toUpperCase() : setting),
+    );
+  const location =
+    overrideSettings.length > 0
+      ? `The proposed registration environment includes launch overrides (${overrideSettings.join(", ")}) that do not satisfy the effective REA configuration constraints`
+      : overrideNames.size > 0
+        ? `The effective REA server environment for ${path} is invalid; check the client configuration and proposed launch overrides`
+        : `Configuration ${path} has an invalid REA server environment`;
+  return {
+    kind: "malformed",
+    path,
+    detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before rerunning setup.`,
+  };
+};
 
 /** A named source failure that setup can explain without losing the bad path. */
 export interface ClientConfigurationFileError {
@@ -84,10 +108,12 @@ export const readConfigurationFile = async (
   }
 };
 
-/** Read every applicable user file; malformed lower-priority files also stop setup. */
+/** Read each layer; setup may validate its writable layer with proposed overrides. */
 export const readClientConfigurationFiles = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
+  platform: NodeJS.Platform = process.platform,
+  writeOverrides?: Readonly<Record<string, string>>,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -102,19 +128,37 @@ export const readClientConfigurationFiles = async (
     if (document.value !== undefined) {
       const environment = clientRegistrationEnvironment(
         document.value,
-        {},
+        path === client.configPath ? writeOverrides : undefined,
         "fragment",
+        platform,
       );
       if (!environment.ok)
-        return err(invalidEnvironment(path, environment.error));
+        return err(
+          invalidEnvironment(
+            path,
+            environment.error,
+            path === client.configPath ? writeOverrides : undefined,
+            platform,
+          ),
+        );
       documents.push({ ...document.value, sourcePath: path });
     }
   }
   const environment = clientRegistrationEnvironment(
-    effectiveClientConfiguration(documents),
+    effectiveClientConfiguration(documents, undefined, platform),
+    writeOverrides,
+    "effective",
+    platform,
   );
   if (!environment.ok)
-    return err(invalidEnvironment(client.configPath, environment.error));
+    return err(
+      invalidEnvironment(
+        client.configPath,
+        environment.error,
+        writeOverrides,
+        platform,
+      ),
+    );
   return ok(documents);
 };
 
@@ -135,6 +179,39 @@ const mergeConfigurationValue = (previous: unknown, next: unknown): unknown => {
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** Native OpenCode dialect applies across all selected configuration layers. */
+export const clientWriteDialect = (
+  dialect: ClientRegistrationDialect,
+  sources: readonly ClientConfigurationDocument[],
+): ClientRegistrationDialect =>
+  dialect === "opencode" &&
+  sources.some(({ dialect }) => dialect === "opencode_v2")
+    ? "opencode_v2"
+    : dialect;
+
+/** Interpret the write fragment using the effective client dialect, preserving peers. */
+export const clientConfigurationForWrite = (
+  parsed: ClientConfigurationDocument,
+  sources: readonly ClientConfigurationDocument[],
+): ClientConfigurationDocument => {
+  if (
+    parsed.dialect !== "opencode" ||
+    clientWriteDialect(parsed.dialect, sources) !== "opencode_v2"
+  )
+    return parsed;
+  if (Object.hasOwn(parsed.servers, "servers"))
+    throw new TypeError(
+      "A legacy OpenCode server named servers conflicts with the effective native server table; repair this ambiguity before setup",
+    );
+  return {
+    ...parsed,
+    dialect: "opencode_v2",
+    serversPath: ["mcp", "servers"],
+    servers: {},
+    legacyServers: parsed.servers,
+  };
+};
+
 /** Project a client's effective user registration without modifying its source files. */
 export const effectiveClientConfiguration = (
   sources: readonly ClientConfigurationSource[],
@@ -142,6 +219,7 @@ export const effectiveClientConfiguration = (
     readonly client: Pick<SetupClient, "configPath" | "configPaths">;
     readonly document: ClientConfigurationDocument | undefined;
   },
+  platform: NodeJS.Platform = process.platform,
 ): ClientConfigurationDocument | undefined => {
   const documents =
     target === undefined
@@ -158,25 +236,45 @@ export const effectiveClientConfiguration = (
   const last = documents.at(-1);
   if (last === undefined) return undefined;
   if (documents.length === 1) return last;
-  const servers: Record<string, unknown> = {};
+  const servers: Record<string, unknown> = Object.create(null);
   for (const document of documents) {
     const names = new Set([
       ...Object.keys(document.legacyServers),
       ...Object.keys(document.servers),
     ]);
-    for (const name of names)
-      servers[name] = mergeConfigurationValue(
-        servers[name],
-        effectiveClientServer(document, name),
-      );
+    for (const name of names) {
+      const previous = servers[name];
+      const next = effectiveClientServer(document, name);
+      const merged = mergeConfigurationValue(previous, next);
+      const key = document.environmentKey;
+      if (
+        name === PRODUCT_IDENTITY.mcpServerKey &&
+        isObject(merged) &&
+        isObject(merged[key])
+      ) {
+        const before =
+          isObject(previous) && isObject(previous[key]) ? previous[key] : {};
+        const after = isObject(next) && isObject(next[key]) ? next[key] : {};
+        servers[name] = {
+          ...merged,
+          [key]: mergeEnvironmentOverrides(before, after, platform),
+        };
+      } else servers[name] = merged;
+    }
   }
-  return { ...last, servers, legacyServers: {} };
+  return {
+    ...last,
+    dialect: clientWriteDialect(last.dialect, documents),
+    servers,
+    legacyServers: {},
+  };
 };
 
 /** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<
   Result<
     {
@@ -186,9 +284,17 @@ export const readEffectiveClientRegistrationConfiguration = async (
     ClientConfigurationFileError
   >
 > => {
-  const nativeSources = await readClientConfigurationFiles(client, resources);
+  const nativeSources = await readClientConfigurationFiles(
+    client,
+    resources,
+    platform,
+  );
   if (!nativeSources.ok) return nativeSources;
-  const nativeDocument = effectiveClientConfiguration(nativeSources.value);
+  const nativeDocument = effectiveClientConfiguration(
+    nativeSources.value,
+    undefined,
+    platform,
+  );
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
   if (
@@ -207,9 +313,14 @@ export const readEffectiveClientRegistrationConfiguration = async (
   const fallbackSources = await readClientConfigurationFiles(
     fallbackClient,
     resources,
+    platform,
   );
   if (!fallbackSources.ok) return fallbackSources;
-  const fallbackDocument = effectiveClientConfiguration(fallbackSources.value);
+  const fallbackDocument = effectiveClientConfiguration(
+    fallbackSources.value,
+    undefined,
+    platform,
+  );
   return ok(
     fallbackDocument === undefined
       ? { document: nativeDocument, configPath: client.configPath }

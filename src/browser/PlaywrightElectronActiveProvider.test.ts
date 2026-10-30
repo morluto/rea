@@ -1,6 +1,6 @@
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { cleanupElectronProcesses } from "./ElectronProcessCleanup.js";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -11,10 +11,11 @@ import {
 } from "../../tests/fixtures/electron/fuseImage.js";
 
 import * as processOwnership from "../process/ProcessOwnership.js";
+import { ProcessOwnershipEvidenceOwner } from "../process/ProcessOwnershipEvidence.js";
 import * as ownershipObservation from "../process/ProcessOwnershipObservation.js";
 import * as electronActions from "./PlaywrightElectronActiveActions.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
-import type { OwnedProcessGroup } from "../process/ProcessOwnership.js";
+import type { PersistentOwnedProcessGroup } from "../process/ProcessOwnership.js";
 import {
   PlaywrightElectronActiveProvider,
   safeElectronEnvironment,
@@ -27,11 +28,15 @@ afterEach(() => {
 
 it("passes the selected environment and ownership token to Electron launch", async () => {
   vi.stubEnv("LANG", "ambient-language");
+  vi.stubEnv("XAUTHORITY", "/ambient/.Xauthority");
   let launchedEnvironment: unknown;
   const provider = new PlaywrightElectronActiveProvider(
     {
       LANG: "selected-language",
       PATH: "/selected/bin",
+      DISPLAY: ":selected-display",
+      XAUTHORITY: "/selected/display-authorization",
+      WAYLAND_DISPLAY: "selected-wayland",
       REA_PRIVATE_VALUE: "not-a-launch-setting",
     },
     async (options) => {
@@ -51,6 +56,9 @@ it("passes the selected environment and ownership token to Electron launch", asy
   expect(launchedEnvironment).toEqual({
     LANG: "selected-language",
     PATH: "/selected/bin",
+    DISPLAY: ":selected-display",
+    XAUTHORITY: "/selected/display-authorization",
+    WAYLAND_DISPLAY: "selected-wayland",
     REA_PROCESS_RUN_ID: expect.any(String),
   });
 });
@@ -75,12 +83,17 @@ it("passes required Windows runtime variables without inheriting unrelated value
   });
 });
 
-const ownership = {
-  runId: "run",
-  leaderPid: 4242,
-  processGroupId: 4242,
-  expectedParentPid: 1,
-} satisfies OwnedProcessGroup;
+let ownership: PersistentOwnedProcessGroup;
+
+beforeEach(() => {
+  ownership = {
+    runId: "run",
+    leaderPid: 4242,
+    processGroupId: 4242,
+    expectedParentPid: 1,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  };
+});
 
 const emptyHookSnapshot = () => ({
   events: [],
@@ -484,6 +497,85 @@ it("cancels a windowless wait action and cleans up the owned application", async
   expect(result.error.cause).toBe(reason);
 });
 
+it("records actions after a failed action as not executed and keeps the capture", async () => {
+  stubVerifiedElectronCleanup();
+  const state = {
+    windows: [],
+    metrics: [],
+    electronVersion: "44.0.0",
+    hookSnapshot: emptyHookSnapshot(),
+  };
+  vi.spyOn(electronActions, "readApplicationState").mockResolvedValue(state);
+  vi.spyOn(electronActions, "readFinalApplicationState").mockResolvedValue(
+    state,
+  );
+  const click = vi.fn(async () => {
+    throw new Error("strict mode violation");
+  });
+  const waitForTimeout = vi.fn(async () => undefined);
+  const page = { locator: () => ({ click }), waitForTimeout };
+  const application = {
+    process: () => ({ pid: 424242 }),
+    close: vi.fn(async () => undefined),
+    windows: () => [page],
+    browserWindow: async () => ({
+      evaluate: async (read: (window: { id: number }) => unknown) =>
+        read({ id: 42 }),
+      dispose: async () => {},
+    }),
+    firstWindow: async () => page,
+  };
+
+  const result = await captureWithController(
+    new AbortController(),
+    application,
+    [
+      { step_id: "fail", kind: "click", selector: "#duplicate" },
+      { step_id: "settle", kind: "wait", duration_ms: 0, window_index: 0 },
+      {
+        step_id: "link",
+        kind: "deep-link",
+        delivery: "open-url",
+        url: "rea-test://open",
+      },
+    ],
+  );
+
+  if (!result.ok) throw result.error;
+  expect(click).toHaveBeenCalledOnce();
+  expect(waitForTimeout).not.toHaveBeenCalled();
+  expect(application.close).toHaveBeenCalledOnce();
+  expect(result.value.actions).toEqual([
+    {
+      step_id: "fail",
+      kind: "click",
+      window_index: 0,
+      target: "window:42",
+      status: "failed",
+      elapsed_ms: expect.any(Number),
+      error: "strict mode violation",
+    },
+    {
+      step_id: "settle",
+      kind: "wait",
+      window_index: 0,
+      target: null,
+      status: "cancelled",
+      elapsed_ms: 0,
+      error: "not executed after an earlier action failure",
+    },
+    {
+      step_id: "link",
+      kind: "deep-link",
+      window_index: null,
+      target: null,
+      status: "cancelled",
+      elapsed_ms: 0,
+      error: "not executed after an earlier action failure",
+    },
+  ]);
+});
+
 it("cancels a pending initial state read and cleans up the owned application", async () => {
   const cleanupSpies = stubVerifiedElectronCleanup();
   const controller = new AbortController();
@@ -694,8 +786,8 @@ it("cancels a completed capture when cancellation arrives during process cleanup
   stubCompletedCapture();
   const controller = new AbortController();
   const reason = new Error("SIGTERM during process cleanup");
-  // The POSIX path ends with the token sweep; Windows ends with tree termination.
-  vi.spyOn(processOwnership, "verifyNoTokenOwnedProcesses").mockImplementation(
+  // POSIX cleanup owns the final sweep; Windows uses tree termination.
+  vi.spyOn(processOwnership, "cleanupOwnedProcessGroup").mockImplementation(
     async () => {
       controller.abort(reason);
       return {
@@ -779,7 +871,7 @@ it.each(["process", "transport"] as const)(
     vi.spyOn(electronActions, "runElectronActions").mockImplementation(
       async () => {
         controller.abort(reason);
-        return [];
+        return { actions: [] };
       },
     );
     if (failure === "process") {

@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { FridaInstrumentationService } from "../dist/application/frida/FridaInstrumentationService.js";
 import { FridaInstrumentationManager } from "../dist/frida/FridaInstrumentationManager.js";
 import { isValidFridaRemoteAddress } from "../dist/contracts/fridaRemoteAddress.js";
-import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 const options = parseArguments(process.argv.slice(2));
 if (options.help) {
@@ -31,103 +31,89 @@ const remote =
           : { keepaliveInterval: options.keepaliveInterval }),
       };
 
-let primaryFailure;
-let report;
 try {
-  let targetProcess;
-  let input;
-  if (remote === undefined) {
-    input = {
-      mode: "spawn",
-      deviceId: "local",
-      program: process.execPath,
-      argv: ["-e", "setTimeout(() => {}, 1500)"],
-      source: {
-        sourceKind: "inline",
-        source: "send({ rea_frida_verification: 'ok', pid: Process.id });",
-      },
-      durationMs: 500,
-    };
-    targetProcess = { pid: undefined, name: basename(process.execPath) };
-  } else {
-    const inventory = await service.listProcesses({ remote });
-    if (!inventory.ok) throw new Error(inventory.error.message);
-    targetProcess = inventory.value.processes.find(
-      ({ pid }) => pid === options.pid,
-    );
-    if (targetProcess === undefined)
-      throw new Error(
-        `Selected PID ${String(options.pid)} was not observed remotely`,
+  const report = await withVerifierCleanup(async () => {
+    let targetProcess;
+    let input;
+    if (remote === undefined) {
+      input = {
+        mode: "spawn",
+        deviceId: "local",
+        program: process.execPath,
+        argv: ["-e", "setTimeout(() => {}, 1500)"],
+        source: {
+          sourceKind: "inline",
+          source: "send({ rea_frida_verification: 'ok', pid: Process.id });",
+        },
+        durationMs: 500,
+      };
+      targetProcess = { pid: undefined, name: basename(process.execPath) };
+    } else {
+      const inventory = await service.listProcesses({ remote });
+      if (!inventory.ok) throw new Error(inventory.error.message);
+      targetProcess = inventory.value.processes.find(
+        ({ pid }) => pid === options.pid,
       );
-    input = {
-      mode: "attach",
-      remote,
-      pid: options.pid,
-      source: {
-        sourceKind: "inline",
-        source: "send({ rea_frida_verification: 'ok', pid: Process.id });",
-      },
-      durationMs: 500,
+      if (targetProcess === undefined)
+        throw new Error(
+          `Selected PID ${String(options.pid)} was not observed remotely`,
+        );
+      input = {
+        mode: "attach",
+        remote,
+        pid: options.pid,
+        source: {
+          sourceKind: "inline",
+          source: "send({ rea_frida_verification: 'ok', pid: Process.id });",
+        },
+        durationMs: 500,
+      };
+    }
+
+    const result = await service.instrument(input);
+    if (!result.ok) throw new Error(result.error.message);
+    const observed = result.value.evidence.normalized_result;
+    if (
+      typeof observed !== "object" ||
+      observed === null ||
+      Array.isArray(observed) ||
+      !Array.isArray(observed.messages)
+    )
+      throw new Error("Frida returned no message observation");
+    const messageObserved = observed.messages.some(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        !Array.isArray(message) &&
+        message.type === "send" &&
+        typeof message.payload === "object" &&
+        message.payload !== null &&
+        !Array.isArray(message.payload) &&
+        message.payload.rea_frida_verification === "ok" &&
+        message.payload.pid === observed.pid,
+    );
+    if (!messageObserved)
+      throw new Error("Selected target did not return the Frida marker");
+    return {
+      ok: result.value.cleanupError === null,
+      provider: "frida",
+      host_platform: process.platform,
+      target_mode: remote === undefined ? "local_spawn" : "remote_attach",
+      target_pid: observed.pid,
+      target_name: targetProcess.name,
+      ...(remote === undefined ? {} : { remote_target_observed: true }),
+      script_message_observed: true,
+      cleanup_error: result.value.cleanupError,
     };
-  }
-
-  const result = await service.instrument(input);
-  if (!result.ok) throw new Error(result.error.message);
-  const observed = result.value.evidence.normalized_result;
-  if (
-    typeof observed !== "object" ||
-    observed === null ||
-    Array.isArray(observed) ||
-    !Array.isArray(observed.messages)
-  )
-    throw new Error("Frida returned no message observation");
-  const messageObserved = observed.messages.some(
-    (message) =>
-      typeof message === "object" &&
-      message !== null &&
-      !Array.isArray(message) &&
-      message.type === "send" &&
-      typeof message.payload === "object" &&
-      message.payload !== null &&
-      !Array.isArray(message.payload) &&
-      message.payload.rea_frida_verification === "ok" &&
-      message.payload.pid === observed.pid,
-  );
-  if (!messageObserved)
-    throw new Error("Selected target did not return the Frida marker");
-  report = {
-    ok: result.value.cleanupError === null,
-    provider: "frida",
-    host_platform: process.platform,
-    target_mode: remote === undefined ? "local_spawn" : "remote_attach",
-    target_pid: observed.pid,
-    target_name: targetProcess.name,
-    ...(remote === undefined ? {} : { remote_target_observed: true }),
-    script_message_observed: true,
-    cleanup_error: result.value.cleanupError,
-  };
-} catch (cause) {
-  primaryFailure = cause;
-}
-
-let cleanupFailure;
-try {
-  await closeVerifierResources([() => manager.closeAll()], primaryFailure);
-} catch (cause) {
-  cleanupFailure = cause;
-}
-if (primaryFailure !== undefined || cleanupFailure !== undefined) {
-  const causes =
-    cleanupFailure instanceof AggregateError
-      ? cleanupFailure.errors
-      : [cleanupFailure ?? primaryFailure];
-  process.stderr.write(
-    `Frida real-provider verification failed: ${causes.map((cause) => (cause instanceof Error ? cause.message : String(cause))).join("; ")}\n`,
-  );
-  process.exitCode = 1;
-} else {
+  }, [() => manager.closeAll()]);
   process.stdout.write(`${JSON.stringify(report)}\n`);
   if (!report.ok) process.exitCode = 1;
+} catch (cause) {
+  const causes = cause instanceof AggregateError ? cause.errors : [cause];
+  process.stderr.write(
+    `Frida real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
+  );
+  process.exitCode = 1;
 }
 
 function parseArguments(args) {

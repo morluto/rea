@@ -5,12 +5,12 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
+import { FULL_CATALOG_IDENTITY } from "../../../src/catalogIdentity.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
 import {
   evidenceResultOf,
   expandToolAvailability,
-  toolAvailabilityInventory,
+  toolAvailabilitySummaryInventory,
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -39,7 +39,7 @@ const expectAvailableToolInventory = async (
   const inventory = z
     .object({
       result: z.object({
-        tool_availability: toolAvailabilityInventory,
+        tool_availability: toolAvailabilitySummaryInventory,
       }),
     })
     .parse(status.structuredContent).result.tool_availability;
@@ -51,7 +51,7 @@ const expectAvailableToolInventory = async (
   expect(
     availability.length,
     "compiled tool inventory is stale; run npm run build:cached",
-  ).toBe(CATALOG_IDENTITY.counts.mcp_tools);
+  ).toBe(FULL_CATALOG_IDENTITY.counts.mcp_tools);
   expect(new Set(listed.tools.map(({ name }) => name))).toEqual(
     new Set(TOOL_CONTRACTS.map(({ name }) => name)),
   );

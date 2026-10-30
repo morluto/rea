@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { aliasSelectionBudgetSource } from "../../../tests/fixtures/javascriptAliasSelectionBudget.js";
 
 const expressionWrappers = [
   ["plain", (value: string) => value],
@@ -8,6 +9,207 @@ const expressionWrappers = [
   ["non-null", (value: string) => `(${value}!)`],
   ["satisfies", (value: string) => `(${value} satisfies any)`],
 ] as const;
+
+it.each([
+  ["module.require = replacement;", true],
+  [
+    "const holder = { loader: module }; holder.loader.require = replacement;",
+    true,
+  ],
+  [
+    "const holder = {}; holder.loader = module; holder.loader.require = replacement;",
+    true,
+  ],
+  ["const holder = [module]; holder[0].require = replacement;", true],
+  ["Object.defineProperty(module, 'require', { value: replacement });", true],
+  ["const api = module; Object.assign(api, { require: replacement });", true],
+  ["const module = { require() {} }; module.require = replacement;", false],
+  ["const api = module.exports; api.require = replacement;", false],
+  [
+    "const holder = { a: module }; const target = flag ? holder.a : holder; target.require = replacement;",
+    true,
+  ],
+  [
+    "const table = { x: {}, y: {}, z: module }; const target = flag ? table.x : table.y; target.require = replacement;",
+    false,
+  ],
+])("keeps CommonJS delegate replacement unknown: %s", (write, changed) => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `${write} require("./shared.cjs");`,
+  );
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references).toEqual([
+    expect.objectContaining({
+      kind: "require",
+      specifier: changed ? null : "./shared.cjs",
+    }),
+  ]);
+});
+
+it("keeps a require capture before a later delegate replacement", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    'require("./shared.cjs"); const holder = { loader: module }; holder.loader.require = replacement;',
+  );
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: "./shared.cjs" }),
+  ]);
+});
+
+it.each([
+  ["const holder = {}; holder.loader = { require() {} }; holder.loader", false],
+  [
+    "const holder = { loader: module }; holder.loader = {}; holder.loader",
+    false,
+  ],
+  [
+    "const holder = {}; if (flag) holder.loader = { require() {} }; holder.loader",
+    false,
+  ],
+  ["const holder = { loader: module }; holder.loader", true],
+  ["const holder = { inner: { loader: module } }; holder.inner.loader", true],
+  ["const holder = [module]; holder[0]", true],
+  [
+    "const holder = { loader: module }; const { loader } = holder; loader",
+    true,
+  ],
+  [
+    "const holder = { loader: module }; const loader = holder.loader; loader",
+    true,
+  ],
+  [
+    "const holder = { loader: module }; const alias = { ...holder }; alias.loader",
+    true,
+  ],
+  ["const holder = { loader: module, loader: {} }; holder.loader", false],
+  ["const holder = { loader: {} }; holder.loader", false],
+  ["const holder = { loader: module.exports }; holder.loader", false],
+  ["const holder = { loader: module }; holder.missing", false],
+  [
+    "const table = { a: { b: {}, d: module }, c: { d: {}, b: {} } }; const selected = flag ? table.a.b : table.c.d; selected",
+    false,
+  ],
+  ["let holder = {}; while (flag) holder = holder.slot; holder", true],
+  ["const holder = {}; holder.loader = module; holder.loader", true],
+  ["const holder = {}; if (flag) holder.loader = module; holder.loader", true],
+  [
+    "const holder = {}; const alias = holder; alias.loader = module; holder.loader",
+    true,
+  ],
+])(
+  "tracks the selected module-object container slot: %s",
+  (receiver, expected) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${receiver}.require("./shared.cjs");`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      expected
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it("bounds branching selector work and reports unknown ownership explicitly", () => {
+  const analysis = analyzeJavaScriptStaticSource(aliasSelectionBudgetSource());
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+  expect(analysis.limitations).toContainEqual(
+    expect.stringMatching(/Alias selection expansion.*512/u),
+  );
+});
+
+it.each([
+  ['const load = module.require.bind(module); load("./shared.cjs");', true],
+  [
+    'const api = module; const load = api.require.bind(api); load("./shared.cjs");',
+    true,
+  ],
+  [
+    'const load = module["require"][`bind`](module); load("./shared.cjs");',
+    true,
+  ],
+  ['module.require.call(module, "./shared.cjs");', true],
+  ['module.require.apply(module, ["./shared.cjs"]);', true],
+  [
+    'const load = module.require.bind.call(module.require, module); load("./shared.cjs");',
+    true,
+  ],
+  [
+    'const module = { require() {} }; const load = module.require.bind(module); load("./shared.cjs");',
+    false,
+  ],
+  [
+    'const api = module.exports; const load = api.require.bind(api); load("./shared.cjs");',
+    false,
+  ],
+])(
+  "retains unchecked module delegate invocation and capture: %s",
+  (source, possibleModule) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      possibleModule
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
+  ["const { api = module } = options;", true],
+  ["const { api = module } = {};", true],
+  ["const { api = module } = { api: {} };", false],
+  ["const { api = module.exports } = options;", false],
+  ["const { ...api } = module;", false],
+])(
+  "tracks active direct module defaults: %s",
+  (declaration, possibleModule) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `${declaration} api.require("./shared.cjs");`,
+    );
+    expect(analysis.references).toEqual(
+      possibleModule
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
+
+it.each([
+  "const { exports: api } = module;",
+  "const { exports: { api } } = module;",
+  "const [api] = [module.exports];",
+])(
+  "keeps projected module members separate from the loader: %s",
+  (declaration) => {
+    const analysis = analyzeJavaScriptStaticSource(`${declaration}
+    api.require = () => {}; api.require("./shared.cjs");`);
+    expect(analysis.references).toEqual([]);
+  },
+);
+
+it.each(["module", "local"])(
+  "examines a repeated conditional alias graph once per source read for %s",
+  (origin) => {
+    const source = [`const a0 = ${origin === "module" ? "module" : "{}"};`];
+    for (let index = 1; index <= 128; index += 1)
+      source.push(
+        `let a${index} = a${index - 1}; if (flag) a${index} = a${index - 1};`,
+      );
+    source.push('a128.require("./shared.cjs");');
+    const analysis = analyzeJavaScriptStaticSource(source.join("\n"));
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.references).toEqual(
+      origin === "module"
+        ? [expect.objectContaining({ kind: "require", specifier: null })]
+        : [],
+    );
+  },
+);
 
 it("shares erased call-target names with endpoint consumers without inventing dynamic keys", () => {
   const analysis = analyzeJavaScriptStaticSource(`
@@ -155,8 +357,8 @@ it.each(expressionWrappers)(
       )
       .toEqual([
         ["local-window", "candidate"],
-        ["/local-db", null],
-        ["/local-cache", null],
+        ["/local-db", "candidate"],
+        ["/local-cache", "candidate"],
         ["changed-window", "candidate"],
         ["uncertain-window", "candidate"],
       ]);
@@ -231,7 +433,12 @@ it("preserves preload and utility paths through exact computed join members", ()
         ),
       )
       .toEqual([
-        ["preload", "preload.js", "filesystem-expression", "property:preload"],
+        [
+          "preload",
+          "preload.js",
+          "filesystem-expression",
+          "BrowserWindow:webPreferences.preload",
+        ],
       ]);
     expect
       .soft(
@@ -339,11 +546,14 @@ it("keeps dynamic, interpolated, and invalid template keys unresolved", () => {
 describe("static callee boundary matching", () => {
   it("matches complete callee members without suffix collisions", () => {
     const analysis = analyzeJavaScriptStaticSource(`
+      const {BrowserWindow} = require("electron");
+      const win = new BrowserWindow();
       win.loadFile("./window.html");
-      BrowserWindow.loadURL("https://app.example.test");
+      new BrowserWindow().loadURL("https://app.example.test");
       navigator.serviceWorker.register("./worker.js");
       loadFile("./bare.html");
-      win?.loadURL("https://optional.example.test");
+      const optional = new BrowserWindow();
+      optional?.loadURL("https://optional.example.test");
 
       uploadFile("./upload.html");
       preloadFile("./preload.html");
@@ -357,9 +567,8 @@ describe("static callee boundary matching", () => {
       analysis.role_paths.map(({ path, mechanism }) => [path, mechanism]),
     ).toEqual([
       ["./window.html", "call:win.loadFile"],
-      ["https://app.example.test", "call:BrowserWindow.loadURL"],
-      ["./bare.html", "call:loadFile"],
-      ["https://optional.example.test", "call:win.loadURL"],
+      ["https://app.example.test", "call:loadURL"],
+      ["https://optional.example.test", "call:optional.loadURL"],
     ]);
     // The document base URL is unknown, so the script path stays unresolved.
     expect(

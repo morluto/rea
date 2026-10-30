@@ -96,7 +96,7 @@ const cases = [
     client: "dsh",
     path: ".dsh/cordis.patch.yml",
     text: "- insert: [\n",
-    diagnostic: "Configuration is not valid YAML",
+    diagnostic: "Invalid or unsupported Cordis YAML",
     syntax: "YAML",
   },
 ] as const;
@@ -139,7 +139,9 @@ for (const scenario of cases)
         appliedActions: [],
       });
       if ("syntax" in scenario) {
-        expect(setup.json).toMatchObject({ remediation: expect.any(String) });
+        expect(setup.json).toMatchObject({
+          remediation: expect.stringMatching(/\S/u),
+        });
         if (scenario.syntax === "JSON")
           expect(setup.stdout).toContain("Invalid JSON/JSONC");
       } else {
@@ -166,7 +168,7 @@ for (const scenario of cases)
       });
       if (!("syntax" in scenario))
         expect(uninstall.stdout).not.toContain("not valid JSON");
-      expect(await readFile(config)).toEqual(original);
+      expect(Buffer.compare(await readFile(config), original)).toBe(0);
       expect(await readdir(dirname(config))).toEqual([
         scenario.path.split("/").at(-1),
       ]);

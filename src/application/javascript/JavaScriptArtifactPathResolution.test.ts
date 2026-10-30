@@ -4,12 +4,503 @@ import {
   resolveArtifactPathByContext,
   type ResolveArtifactPathInput,
 } from "./JavaScriptArtifactPathResolution.js";
+import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { artifactLocalIdentity } from "./JavaScriptArtifactGraphContext.js";
 import { applicationNodeIdentitySchema } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import { analyzeJavaScriptStaticSource } from "../../domain/javascript/javascriptStaticAnalysis.js";
 
+const completeInventoryCoverage = {
+  scope: "container-entries",
+  status: "complete",
+} as const;
+
+describe("incomplete inventory lookups", () => {
+  it.each(["complete", "unknown"] as const)(
+    "qualifies missing candidates before extension fallbacks under %s traversal",
+    (status) => {
+      const files = fileMap([
+        file("app/main.cjs", "root"),
+        file("app/target.js", "root"),
+      ]);
+      const unanalyzedFiles = {
+        coverage: { scope: "container-entries" as const, status },
+        get: () => undefined,
+        hasDirectory: () => false,
+      };
+      expect(
+        resolve({
+          declaredPath: "./target",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject(
+        status === "complete"
+          ? { resolution_status: "resolved", resolved_path: "app/target.js" }
+          : {
+              resolution_status: "unavailable",
+              resolved_path: null,
+              candidate_path: "app/target",
+            },
+      );
+      expect(
+        resolve({
+          declaredPath: "./target.js",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/target.js",
+      });
+      expect(
+        resolve({
+          declaredPath: "./missing.js",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+          unanalyzedFiles,
+        }),
+      ).toMatchObject({
+        resolution_status: status === "complete" ? "not-found" : "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+});
+
+describe("Windows CommonJS request classification", () => {
+  it.each([
+    "..\\shared\\window.cjs",
+    ".\\window.cjs",
+    "fixture\\window.cjs",
+    "C:shared\\window.cjs",
+  ])(
+    "retains unknown Windows CommonJS request semantics for %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/window.cjs", "root"),
+            file("shared/window.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each([
+    "node:\\fs",
+    "node:fs\\extra",
+    "https:\\example.invalid\\window.cjs",
+  ])(
+    "does not treat the rejected scheme request %s as an unknown Windows path",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([file("app/main.cjs", "root")]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "rejected",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it("keeps rejected and URL-owned backslash requests distinct from CommonJS host syntax", () => {
+    const files = fileMap([
+      file("app/main.cjs", "root"),
+      file("app/window.cjs", "root"),
+    ]);
+    for (const [declaredPath, moduleKind, status, resolvedPath] of [
+      [".\\window\0.cjs", "require", "rejected", null],
+      [".\\window.cjs", "import", "rejected", null],
+      ["./window.cjs", "require", "resolved", "app/window.cjs"],
+      ["node:fs", "require", "external", null],
+    ] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status: status,
+        resolved_path: resolvedPath,
+      });
+  });
+});
+
+describe("relative ESM URL separators", () => {
+  it.each([
+    ["./dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["../shared\\dep.mjs", "resolved", "shared/dep.mjs"],
+    ["./unused\\..\\dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["./..\\..\\outside.mjs", "rejected", null],
+    ["./dir%5cdep.mjs", "rejected", null],
+    ["./dir%2fdep.mjs", "rejected", null],
+    ["./dir\\dep%00.mjs", "rejected", null],
+    [".\\dir\\dep.mjs", "rejected", null],
+  ] as const)(
+    "resolves %s with module URL rules",
+    (declaredPath, status, target) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([
+            file("app/main.mjs", "root"),
+            file("app/dir/dep.mjs", "root"),
+            file("shared/dep.mjs", "root"),
+            file("outside.mjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: status,
+        resolved_path: target,
+      });
+    },
+  );
+});
+
+describe("literal POSIX inventory base segments", () => {
+  it("validates the final URL after a parent reference removes the encoded base segment", () => {
+    expect(
+      resolve({
+        declaredPath: "../b.js",
+        sourcePath: "literal\\dir/a.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: fileMap([file("b.js", "container")]),
+      }),
+    ).toMatchObject({ resolution_status: "resolved", resolved_path: "b.js" });
+  });
+  it.each(
+    ["literal\\dir", "resources/app.asar/literal\\dir"].flatMap((directory) =>
+      (["import", "require", "compiler-dependent"] as const).map(
+        (moduleKind) => ({ directory, moduleKind }),
+      ),
+    ),
+  )(
+    "preserves loader-specific admission from $directory with mode $moduleKind",
+    ({ directory, moduleKind }) => {
+      const sourcePath = `${directory}/a.js`;
+      const target = `${directory}/b.js`;
+      const files = fileMap([
+        file(sourcePath, "container"),
+        file(target, "container"),
+        file(`${directory.replaceAll("\\", "/")}/b.js`, "container"),
+      ]);
+      expect(
+        resolve({
+          declaredPath: "./b.js",
+          sourcePath,
+          context: "module-specifier",
+          moduleKind,
+          files,
+        }),
+      ).toMatchObject({
+        resolution_status:
+          moduleKind === "require"
+            ? "resolved"
+            : moduleKind === "import"
+              ? "rejected"
+              : "unavailable",
+        resolved_path: moduleKind === "require" ? target : null,
+        ...(moduleKind === "compiler-dependent"
+          ? {
+              conditional_resolutions: [
+                expect.objectContaining({
+                  mode: "import",
+                  resolution_status: "rejected",
+                  resolved_path: null,
+                }),
+                expect.objectContaining({
+                  mode: "require",
+                  resolution_status: "resolved",
+                  resolved_path: target,
+                }),
+              ],
+            }
+          : {}),
+      });
+    },
+  );
+
+  it.each([
+    "./bad%5Cb.js",
+    "./bad%2Fb.js",
+    "./bad%00b.js",
+    "./bad%xxb.js",
+    ".\\b.js",
+  ])(
+    "still rejects newly declared unsafe module URL syntax %s inside a literal inventory directory",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "literal\\dir/a.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([file("literal\\dir/b.js", "container")]),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+
+  it.each([
+    "./discard%5C/../b.js",
+    "./discard%2F/../b.js",
+    "./discard%00/../b.js",
+    "./discard%xx/../b.js",
+  ])(
+    "still rejects inherited encoded separators after normalizing discarded request segments: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "literal\\dir/a.js",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([file("literal\\dir/b.js", "container")]),
+        }),
+      ).toMatchObject({
+        resolution_status: "rejected",
+        resolved_path: null,
+      });
+    },
+  );
+});
+
+describe("runtime host path classification", () => {
+  it.each([
+    "/discard%2F/../shared/window.cjs",
+    "/discard%5C/../shared/window.cjs",
+    "/discard%00/../shared/window.cjs",
+    "/discard%xx/../shared/window.cjs",
+  ])(
+    "normalizes discarded absolute URL segments before pathname validation: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: new Map(),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+  it("normalizes discarded relative URL segments before pathname validation", () => {
+    expect(
+      resolve({
+        declaredPath: "./discard%2F/../window.cjs",
+        sourcePath: "app/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: fileMap([file("app/window.cjs", "root")]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "app/window.cjs",
+    });
+  });
+  it("retains unknown URL identity for an unpaired source directory segment", () => {
+    expect(
+      resolve({
+        declaredPath: "./window.cjs",
+        sourcePath: "app/\ud800/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: new Map(),
+      }),
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
+  });
+  it.each([
+    "/shared%2Fwindow.mjs",
+    "/shared%5cwindow.mjs",
+    "/shared%00window.mjs",
+    "/shared%xxwindow.mjs",
+  ])(
+    "rejects invalid absolute ESM URL path syntax before host lookup: %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: new Map(),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: new Map(),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+  it("keeps encoded query bytes outside ESM pathname admission", () => {
+    expect(
+      resolve({
+        declaredPath: "/shared/window.mjs?token=%2F#fragment",
+        sourcePath: "app/main.mjs",
+        context: "module-specifier",
+        moduleKind: "import",
+        files: new Map(),
+      }),
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
+  });
+  it.each(["exact-file", "application-file", "node-entrypoint"] as const)(
+    "keeps POSIX and Windows absolute %s paths unavailable before canonical admission",
+    (runtimePathKind) => {
+      for (const declaredPath of [
+        "/opt/app/main.cjs",
+        "C:/app/main.cjs",
+        "C:\\app\\main.cjs",
+        "\\\\server\\share\\main.cjs",
+        "//server/share/main.cjs",
+        "\\app\\main.cjs",
+      ])
+        expect(
+          resolve({
+            declaredPath,
+            sourcePath: "app/package.json",
+            context: "filesystem-expression",
+            runtimePathKind,
+            files: fileMap([
+              file("opt/app/main.cjs", "root"),
+              file("app/main.cjs", "root"),
+            ]),
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+          declared_path: declaredPath,
+        });
+      expect(
+        resolve({
+          declaredPath: "C:/app/\0main.cjs",
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind,
+          files: new Map(),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+});
+
 describe("artifact URI scheme classification", () => {
+  it.each(["entry:prod.cjs", "entry:prod%2Fname.cjs"])(
+    "retains package main filename bytes for %s without URI classification",
+    (declaredPath) => {
+      const files = fileMap([
+        file("app/package.json", "root"),
+        file(`app/${declaredPath}`, "root"),
+      ]);
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files,
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "resolved",
+        resolved_path: `app/${declaredPath}`,
+      });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "module-specifier",
+          moduleKind: "require",
+          files,
+        }),
+      ).toMatchObject({ resolution_status: "external", resolved_path: null });
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([file("app/package.json", "root")]),
+        }),
+      ).toMatchObject({
+        resolution_status: "not-found",
+        resolved_path: null,
+        candidate_path: `app/${declaredPath}`,
+      });
+    },
+  );
+
+  it.each(["require", "import"] as const)(
+    "resolves a colon-bearing dependency package main with the %s loader",
+    (moduleKind) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind,
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              '{"main":"entry:prod.cjs"}',
+            ),
+            file("app/node_modules/fixture/entry:prod.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/node_modules/fixture/entry:prod.cjs",
+      });
+    },
+  );
+
   it.each(["html-reference", "module-specifier", "url-reference"] as const)(
     "keeps digit-bearing schemes external in %s even when a local file matches",
     (context) => {
@@ -188,6 +679,7 @@ describe("loader-specific module suffix lookup", () => {
     const files = fileMap([file("app/entry.cjs", "root")]);
     const unanalyzedFiles = {
       get: (path: string) => opaque.get(path),
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     expect(
@@ -226,10 +718,13 @@ describe("loader-specific module suffix lookup", () => {
         files,
         unanalyzedFiles: {
           ...unanalyzedFiles,
-          get: () => ({
-            ...opaque.get("app/core.jsc")!,
-            container_sha256: "b".repeat(64),
-          }),
+          get: (path: string) =>
+            path === "app/core.jsc"
+              ? {
+                  ...opaque.get(path)!,
+                  container_sha256: "b".repeat(64),
+                }
+              : undefined,
         },
       }),
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
@@ -257,6 +752,7 @@ describe("unavailable inventoried native add-ons", () => {
       files: fileMap([file("app/entry.cjs", "root")]),
       unanalyzedFiles: {
         get: (path) => (path === unavailable.path ? unavailable : undefined),
+        coverage: completeInventoryCoverage,
         hasDirectory: () => false,
       },
     });
@@ -296,6 +792,7 @@ describe("unavailable package metadata", () => {
         requestedPaths.push(path);
         return path === manifest.path ? manifest : undefined;
       },
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     const relativeRequire = resolve({
@@ -364,6 +861,7 @@ describe("unavailable package metadata", () => {
     ]);
     const lookup = {
       get: (path: string) => (path === manifest.path ? manifest : undefined),
+      coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
     for (const [sourcePath, moduleKind] of [
@@ -569,6 +1067,37 @@ describe("legacy package main lookup", () => {
 });
 
 describe("legacy package main metadata validation and fallback", () => {
+  it.each(
+    ["[]", "[{}]", "123", '"root"', "null", "false"].flatMap((text) =>
+      (["import", "require", "compiler-dependent"] as const).map(
+        (moduleKind) => ({ text, moduleKind }),
+      ),
+    ),
+  )(
+    "blocks index fallback for non-object package root $text in $moduleKind mode",
+    ({ text, moduleKind }) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/entry.js",
+          context: "module-specifier",
+          moduleKind,
+          files: fileMap([
+            file("app/entry.js", "root"),
+            file("app/node_modules/fixture/package.json", "root", text),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+        limitations: expect.arrayContaining([
+          expect.stringContaining("not valid package JSON"),
+        ]),
+      });
+    },
+  );
+
   it("still rejects non-string package main metadata", () => {
     expect(
       resolve({
@@ -980,7 +1509,7 @@ describe("ESM module URL path decoding", () => {
 });
 
 describe("JavaScript file URL resolution", () => {
-  it("resolves file URL paths without interpreting query bytes as path syntax", () => {
+  it("keeps absolute file URL modules unavailable without a host mapping", () => {
     const files = fileMap([file("assets/app.js", "root")]);
     for (const declaredPath of [
       "file:///assets/app.js#entry",
@@ -996,8 +1525,8 @@ describe("JavaScript file URL resolution", () => {
         }),
       ).toMatchObject({
         declared_path: declaredPath,
-        resolution_status: "resolved",
-        resolved_path: "assets/app.js",
+        resolution_status: "unavailable",
+        resolved_path: null,
       });
     }
 
@@ -1024,7 +1553,7 @@ describe("JavaScript file URL resolution", () => {
         moduleKind: "import",
         files,
       }),
-    ).toMatchObject({ resolution_status: "external", resolved_path: null });
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
   });
 });
 
@@ -1447,7 +1976,118 @@ describe("scoped package directory and specifier resolution", () => {
   });
 });
 
+const packageExportPatternCases = [
+  {
+    name: "matching",
+    exports: { "./*": "./*.cjs" },
+    request: "fixture/window",
+    status: "unavailable",
+  },
+  {
+    name: "nonmatching",
+    exports: { "./other/*": "./*.cjs" },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "suffix mismatch",
+    exports: { "./*.js": "./*.cjs" },
+    request: "fixture/window.cjs",
+    status: "external",
+  },
+  {
+    name: "empty match",
+    exports: { "./*end": "./*.cjs" },
+    request: "fixture/end",
+    status: "external",
+  },
+  {
+    name: "multiple stars",
+    exports: { "./*/*": "./*.cjs" },
+    request: "fixture/deep/window",
+    status: "external",
+  },
+  {
+    name: "exact before pattern",
+    exports: { "./*": "./*.cjs", "./window": "./window.cjs" },
+    request: "fixture/window",
+    status: "resolved",
+  },
+  {
+    name: "exact null before pattern",
+    exports: { "./*": "./*.cjs", "./window": null },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "matching null",
+    exports: { "./*": null },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "overlapping null prefix",
+    exports: { "./*": "./*.cjs", "./private/*": null },
+    request: "fixture/private/window",
+    status: "external",
+  },
+  {
+    name: "overlapping null suffix",
+    exports: { "./*": "./*.cjs", "./*.hidden": null },
+    request: "fixture/window.hidden",
+    status: "external",
+  },
+  {
+    name: "overlapping value prefix",
+    exports: { "./*": null, "./public/*": "./*.cjs" },
+    request: "fixture/public/window",
+    status: "unavailable",
+  },
+  {
+    name: "inactive pattern condition",
+    exports: { "./*": { browser: "./*.cjs" } },
+    request: "fixture/window",
+    status: "external",
+  },
+  {
+    name: "conditional null",
+    exports: { "./*": { node: null, default: "./*.cjs" } },
+    request: "fixture/window",
+    status: "external",
+  },
+];
+
 describe("package exports subpath encapsulation", () => {
+  it.each(packageExportPatternCases)(
+    "keeps $name exports patterns distinct from deterministic encapsulation",
+    ({ exports, request, status }) => {
+      for (const moduleKind of ["import", "require"] as const) {
+        expect(
+          resolve({
+            declaredPath: request,
+            sourcePath: "app/main.cjs",
+            context: "module-specifier",
+            moduleKind,
+            files: fileMap([
+              file("app/main.cjs", "root"),
+              file(
+                "app/node_modules/fixture/package.json",
+                "root",
+                JSON.stringify({ exports }),
+              ),
+              file("app/node_modules/fixture/window.cjs", "root"),
+            ]),
+          }),
+        ).toMatchObject({
+          resolution_status: status,
+          resolved_path:
+            status === "resolved"
+              ? "app/node_modules/fixture/window.cjs"
+              : null,
+        });
+      }
+    },
+  );
   it("keeps subpaths encapsulated when only a root target is exported", () => {
     const files = fileMap([
       file("app/src/consumer.js", "root"),
@@ -2148,7 +2788,7 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(outcome).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(outcome.limitations.join(" ")).toMatch(/wildcard/i);
@@ -2177,12 +2817,12 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(recursive).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(recursive.limitations.join(" ")).toMatch(/recursive/i);
     expect(external).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
     expect(external.limitations.join(" ")).toMatch(/external-package/i);
@@ -2225,10 +2865,10 @@ describe("package import alias refusals", () => {
       files,
     });
     expect(outcome).toMatchObject({
-      resolution_status: "external",
+      resolution_status: "unavailable",
       resolved_path: null,
     });
-    expect(outcome.limitations.join(" ")).toContain("package scopes");
+    expect(outcome.limitations.join(" ")).toContain("container boundary");
   });
 });
 
@@ -2379,6 +3019,8 @@ describe("contextual JavaScript module identity", () => {
     const analysis = analyzeJavaScriptStaticSource(
       `
         import { BrowserWindow } from "electron";
+        import path, { dirname } from "node:path";
+        import { fileURLToPath } from "node:url";
         new BrowserWindow({ webPreferences: {
           preload: path.resolve("ignored", __dirname, "preload.cjs")
         }});
@@ -2400,7 +3042,7 @@ describe("contextual JavaScript module identity", () => {
         new BrowserWindow({ webPreferences: {
           preload: new URL("./remote-base.js", location.href)
         }});
-        window.loadURL("file:///renderer/index.html");
+        new BrowserWindow().loadURL("file:///renderer/index.html");
       `,
     );
 
@@ -2648,18 +3290,20 @@ describe("url-reference directory and empty-segment semantics", () => {
     "/dist/worker.js/.",
     "./worker.js/.?cache=1#entry",
   ])("keeps directory-form URLs distinct from files: %s", (declaredPath) => {
-    expect(
-      resolve({
-        declaredPath,
-        sourcePath: "dist/app.mjs",
-        context: "url-reference",
-        files: fileMap([file("dist/worker.js", "root")]),
-      }),
-    ).toMatchObject({
-      declared_path: declaredPath,
-      resolution_status: "not-found",
-      resolved_path: null,
-    });
+    for (const context of ["url-reference", "html-reference"] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "dist/app.mjs",
+          context,
+          files: fileMap([file("dist/worker.js", "root")]),
+        }),
+        context,
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "not-found",
+        resolved_path: null,
+      });
   });
 
   it.each([
@@ -2911,8 +3555,125 @@ describe("url-reference JavaScript artifact path resolution", () => {
   });
 });
 
-const resolve = (input: ResolveArtifactPathInput) =>
-  resolveArtifactPathByContext(input);
+describe("module-backed package main host paths", () => {
+  it.each([
+    ["sub\\entry.cjs", "unavailable", null],
+    ["sub/entry.cjs", "resolved", "app/node_modules/fixture/sub/entry.cjs"],
+  ] as const)(
+    "preserves dependency main host semantics for %s",
+    (main, status, expected) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/sub/entry.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: expected });
+    },
+  );
+
+  it.each(
+    [
+      "/shared/window.cjs",
+      "C:/shared/window.cjs",
+      "\\\\host\\share\\window.cjs",
+    ].flatMap((main) => [true, false].map((direct) => ({ main, direct }))),
+  )(
+    "retains host main $main before logical lookup (direct=$direct)",
+    ({ main, direct }) => {
+      expect(
+        resolve({
+          declaredPath: direct ? main : "fixture",
+          sourcePath: direct
+            ? "app/node_modules/fixture/package.json"
+            : "app/main.cjs",
+          context: direct ? "package-entrypoint" : "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("shared/window.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: direct ? main : "fixture",
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each(["entry.cjs", "./entry.cjs"])(
+    "preserves relative package main lookup for %s",
+    (main) => {
+      expect(
+        resolve({
+          declaredPath: "fixture",
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/entry.cjs", "root"),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/node_modules/fixture/entry.cjs",
+      });
+    },
+  );
+
+  it.each([true, false])(
+    "keeps NUL package mains rejected (direct=%s)",
+    (direct) => {
+      const main = "/shared/\0window.cjs";
+      expect(
+        resolve({
+          declaredPath: direct ? main : "fixture",
+          sourcePath: direct ? "app/package.json" : "app/main.cjs",
+          context: direct ? "package-entrypoint" : "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(
+              "app/node_modules/fixture/package.json",
+              "root",
+              JSON.stringify({ main }),
+            ),
+            file("app/node_modules/fixture/index.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    },
+  );
+});
+
+const jsonDocuments = new JavaScriptJsonDocuments();
+const resolve = (input: Omit<ResolveArtifactPathInput, "jsonDocuments">) =>
+  resolveArtifactPathByContext({ ...input, jsonDocuments });
 
 const fileMap = (files: readonly JavaScriptArtifactFile[]) =>
   new Map(files.map((value) => [value.path, value]));
@@ -2994,7 +3755,7 @@ describe("exact HTML resource resolution", () => {
 });
 
 it.each(["require", "import"] as const)(
-  "rejects a literal trailing backslash package main before %s probing",
+  "retains unknown Windows trailing-backslash package main semantics before %s probing",
   (moduleKind) => {
     const files = fileMap([
       file("entry.js", "root"),
@@ -3013,9 +3774,239 @@ it.each(["require", "import"] as const)(
         moduleKind,
         files,
       }),
-    ).toMatchObject({ resolution_status: "rejected", resolved_path: null });
+    ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
   },
 );
+
+describe("literal-percent runtime path resolution", () => {
+  it.each([
+    ["exact-file", "filesystem-expression"],
+    ["exact-file", "module-specifier"],
+    ["node-entrypoint", "filesystem-expression"],
+  ] as const)(
+    "preserves literal percent bytes for %s in %s",
+    (runtimePathKind, context) => {
+      const declaredPath = "./preload%2F%5C%2E.cjs";
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context,
+          runtimePathKind,
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/preload%2F%5C%2E.cjs", "root"),
+            file("app/preload/entry.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_context: context,
+        resolution_status: "resolved",
+        resolved_path: "app/preload%2F%5C%2E.cjs",
+        limitations: [],
+      });
+    },
+  );
+
+  it("keeps a file URL's decoded percent bytes literal at runtime lookup", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      import { fileURLToPath } from "node:url";
+      new BrowserWindow({ webPreferences: {
+        preload: fileURLToPath(new URL("./preload%252Fname.cjs", import.meta.url))
+      }});
+    `);
+    const preload = analysis.role_paths.find(({ role }) => role === "preload");
+    if (preload === undefined)
+      throw new Error("Expected a static preload path");
+    expect(analysis.parse_status).toBe("complete");
+    expect(preload).toMatchObject({
+      path: "./preload%2Fname.cjs",
+      resolution_context: "filesystem-expression",
+    });
+    expect(
+      resolve({
+        declaredPath: preload.path,
+        sourcePath: "app/main.mjs",
+        context: preload.resolution_context,
+        runtimePathKind: "exact-file",
+        files: fileMap([
+          file("app/main.mjs", "root"),
+          file("app/preload%2Fname.cjs", "root"),
+          file("app/preload/name.cjs", "root"),
+          file("app/preload%252Fname.cjs", "root"),
+        ]),
+      }),
+    ).toMatchObject({
+      declared_path: "./preload%2Fname.cjs",
+      resolution_status: "resolved",
+      resolved_path: "app/preload%2Fname.cjs",
+      limitations: [],
+    });
+  });
+
+  it.each(["exact-file", "node-entrypoint"] as const)(
+    "confines literal-percent filesystem paths for %s",
+    (runtimePathKind) => {
+      expect(
+        resolve({
+          declaredPath: "../../outside%2Fname.cjs",
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind,
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("outside%2Fname.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "rejected",
+        resolved_path: null,
+        limitations: [
+          expect.stringContaining("escapes the canonical artifact root"),
+        ],
+      });
+    },
+  );
+
+  it.each(["%2F", "%5C"])(
+    "keeps %s rejected in a URL-owned runtime resource",
+    (separator) => {
+      expect(
+        resolve({
+          declaredPath: `file:///app/preload${separator}name.cjs`,
+          sourcePath: "app/main.cjs",
+          context: "module-specifier",
+          runtimePathKind: "url-resource",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file(`app/preload${separator}name.cjs`, "root"),
+            file("app/preload/name.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "rejected",
+        resolved_path: null,
+      });
+    },
+  );
+});
+
+describe("application-root Electron loadFile resolution", () => {
+  it.each([
+    "sub\\index.html",
+    ".\\index.html",
+    "C:index.html",
+    "C:sub\\index.html",
+  ])(
+    "retains unknown Windows loadFile host semantics for %s",
+    (declaredPath) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath: "app",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/sub/index.html", "root"),
+            file("app/index.html", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+    },
+  );
+
+  it.each([
+    ["sub/index.html", "resolved", "app/sub/index.html"],
+    ["sub\\index\0.html", "rejected", null],
+  ] as const)(
+    "keeps loadFile admission controls for %s",
+    (declaredPath, status, path) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.cjs",
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath: "app",
+          files: fileMap([
+            file("app/main.cjs", "root"),
+            file("app/sub/index.html", "root"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: path });
+    },
+  );
+
+  it("confines a sibling path after applying a nested application root", () => {
+    expect(
+      resolve({
+        declaredPath: "../shared/index.html",
+        sourcePath: "app/main.cjs",
+        context: "filesystem-expression",
+        runtimePathKind: "application-file",
+        applicationRootPath: "app",
+        files: fileMap([
+          file("app/main.cjs", "root"),
+          file("shared/index.html", "root"),
+        ]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "shared/index.html",
+    });
+  });
+  it.each(["", "resources/app.asar"])(
+    "resolves loadFile within application root %j instead of the calling script",
+    (applicationRootPath) => {
+      const prefix =
+        applicationRootPath === "" ? "" : `${applicationRootPath}/`;
+      const files = fileMap([
+        file(`${prefix}sub/main.cjs`, "app"),
+        file(`${prefix}dist%2Findex.html`, "app"),
+        file(`${prefix}sub/dist%2Findex.html`, "app"),
+        file(`${prefix}sub/absent.html`, "app"),
+        file(`${prefix}fallback/index.html`, "app"),
+        file(`${prefix}foreign.html`, "other-container"),
+        file("outside.html", "other-container"),
+      ]);
+      const loadFile = (declaredPath: string) =>
+        resolve({
+          declaredPath,
+          sourcePath: `${prefix}sub/main.cjs`,
+          context: "filesystem-expression",
+          runtimePathKind: "application-file",
+          applicationRootPath,
+          files,
+        });
+      expect(loadFile("dist%2Findex.html")).toMatchObject({
+        runtime_path_base: "application-root",
+        resolved_path: `${prefix}dist%2Findex.html`,
+        resolution_status: "resolved",
+      });
+      expect(loadFile("/dist%2Findex.html")).toMatchObject({
+        resolved_path: null,
+        resolution_status: "unavailable",
+      });
+      for (const path of ["absent.html", "fallback", "foreign.html"])
+        expect(loadFile(path)).toMatchObject({
+          resolved_path: null,
+          resolution_status: "not-found",
+        });
+      expect(loadFile("../../../../outside.html")).toMatchObject({
+        resolved_path: null,
+        resolution_status: "rejected",
+      });
+    },
+  );
+});
 
 describe("exact Electron runtime entrypoint resolution", () => {
   it("requires a protocol for Electron URL resources", () => {
@@ -3177,7 +4168,7 @@ it("resolves Node runtime entrypoints without substituting emitted TypeScript so
     file("directory/index.js", "root"),
   ]);
   for (const [declaredPath, status, path, candidatePath] of [
-    ["./worker.js", "not-found", null, "worker.js"],
+    ["./worker.js", "unavailable", null, "worker.js"],
     ["./runtime", "resolved", "runtime.js", undefined],
     ["./directory", "resolved", "directory/index.js", undefined],
   ] as const)
@@ -3194,4 +4185,337 @@ it("resolves Node runtime entrypoints without substituting emitted TypeScript so
       resolved_path: path,
       ...(candidatePath === undefined ? {} : { candidate_path: candidatePath }),
     });
+});
+
+describe("Node launch package main ownership", () => {
+  it.each(["index.js", "index.json", "index.cjs"])(
+    "uses the same package index producer for a default launch with %s",
+    (fallback) => {
+      expect(
+        resolve({
+          declaredPath: "",
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "root"),
+            file(`app/${fallback}`, "root"),
+            file("app.js", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: fallback === "index.cjs" ? "not-found" : "resolved",
+        resolved_path: fallback === "index.cjs" ? null : `app/${fallback}`,
+      });
+    },
+  );
+
+  it("keeps unavailable main bytes ahead of a present package index", () => {
+    const source = file("app/package.json", "root");
+    expect(
+      resolve({
+        declaredPath: "declared.cjs",
+        sourcePath: source.path,
+        context: "package-entrypoint",
+        runtimePathKind: "node-entrypoint",
+        files: fileMap([source, file("app/index.js", "root")]),
+        unanalyzedFiles: {
+          get: (path) =>
+            path === "app/declared.cjs"
+              ? {
+                  path,
+                  container_sha256: source.container_sha256,
+                  sha256: null,
+                  bytes: null,
+                  inventory_artifact_id: null,
+                  kind: "javascript",
+                  hash_status: "unavailable",
+                  limitations: ["main readback unavailable"],
+                }
+              : undefined,
+          coverage: completeInventoryCoverage,
+          hasDirectory: () => false,
+        },
+      }),
+    ).toMatchObject({
+      resolution_status: "unavailable",
+      resolved_path: null,
+      candidate_path: "app/declared.cjs",
+    });
+  });
+
+  it.each([
+    ["missing.cjs", "index.js", "app/index.js"],
+    ["sub/missing", "index.json", "app/index.json"],
+    ["directory", "index.js", "app/index.js"],
+    ["declared.cjs", "index.js", "app/declared.cjs"],
+    ["missing.cjs", "index.cjs", null],
+  ] as const)(
+    "uses Node package main lookup for %s with %s",
+    (declaredPath, fallback, expected) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context: "package-entrypoint",
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "root"),
+            file(`app/${fallback}`, "root"),
+            file("app/declared.cjs", "root"),
+            file("app/directory/package.json", "root", '{"main":"nested.cjs"}'),
+            file("app/directory/nested.cjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: expected === null ? "not-found" : "resolved",
+        resolved_path: expected,
+      });
+    },
+  );
+
+  it.each([
+    [
+      "app/package.json",
+      "../resources/CODE.ASAR/window.cjs",
+      "resources/CODE.ASAR/window.cjs",
+      "package-entrypoint",
+    ],
+    [
+      "resources/APP.ASAR/package.json",
+      "../window.cjs",
+      "resources/window.cjs",
+      "package-entrypoint",
+    ],
+    [
+      "main.cjs",
+      "./resources/CODE.ASAR/window.cjs",
+      "resources/CODE.ASAR/window.cjs",
+      "filesystem-expression",
+    ],
+  ] as const)(
+    "retains archive launch lookup for %s loading %s",
+    (sourcePath, declaredPath, target, context) => {
+      expect(
+        resolve({
+          sourcePath,
+          declaredPath,
+          context,
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([file(sourcePath, "source"), file(target, "target")]),
+        }),
+      ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
+    },
+  );
+
+  it("does not use package fallback for a utility entrypoint or an unproven main container", () => {
+    for (const [context, declaredPath, status] of [
+      ["filesystem-expression", "./missing.cjs", "not-found"],
+      ["package-entrypoint", "declared.cjs", "unavailable"],
+      ["package-entrypoint", "../../escape.cjs", "rejected"],
+    ] as const)
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/package.json",
+          context,
+          runtimePathKind: "node-entrypoint",
+          files: fileMap([
+            file("app/package.json", "source"),
+            file("app/index.js", "source"),
+            file("app/declared.cjs", "foreign"),
+          ]),
+        }),
+      ).toMatchObject({ resolution_status: status, resolved_path: null });
+  });
+});
+
+it.each(["sub\\main.cjs", ".\\main.cjs", "C:main.cjs"])(
+  "retains unknown host semantics for the Windows-relative entrypoint %s",
+  (declaredPath) => {
+    expect(
+      resolve({
+        declaredPath,
+        sourcePath: "app/package.json",
+        context: "filesystem-expression",
+        runtimePathKind: "node-entrypoint",
+        files: fileMap([
+          file("app/package.json", "root"),
+          file("app/main.cjs", "root"),
+          file("app/sub/main.cjs", "root"),
+        ]),
+      }),
+    ).toMatchObject({
+      declared_path: declaredPath,
+      resolution_status: "unavailable",
+      resolved_path: null,
+    });
+  },
+);
+
+describe("package metadata at archive module boundaries", () => {
+  it.each(["APP.ASAR", "app.AsAr"])(
+    "preserves archive component bytes while admitting %s runtime crossings",
+    (archive) => {
+      const directory = `resources/${archive}`;
+      const files = fileMap([
+        file("main.cjs", "outer"),
+        file(`${directory}/main.cjs`, "archive"),
+        file(
+          `${directory}/pkg/package.json`,
+          "archive",
+          '{"main":"actual.cjs"}',
+        ),
+        file(`${directory}/pkg/actual.cjs`, "archive"),
+        file(`${directory}/pkg/index.js`, "archive"),
+        file("resources/pkg/package.json", "outer", '{"main":"actual.cjs"}'),
+        file("resources/pkg/actual.cjs", "outer"),
+        file("resources/pkg/index.js", "outer"),
+      ]);
+      for (const [sourcePath, declaredPath, target] of [
+        ["main.cjs", `./${directory}/pkg`, `${directory}/pkg/actual.cjs`],
+        [`${directory}/main.cjs`, "../pkg", "resources/pkg/actual.cjs"],
+      ] as const)
+        expect(
+          resolve({
+            sourcePath,
+            declaredPath,
+            context: "module-specifier",
+            moduleKind: "require",
+            files,
+          }),
+        ).toMatchObject({
+          resolution_status: "resolved",
+          resolved_path: target,
+        });
+    },
+  );
+
+  it("does not admit same-archive or similarly named foreign containers", () => {
+    for (const directory of ["resources/APP.ASAR", "resources/APP.ASAR-extra"])
+      expect(
+        resolve({
+          sourcePath: `${directory}/main.cjs`,
+          declaredPath: "./window.cjs",
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file(`${directory}/main.cjs`, "source"),
+            file(`${directory}/window.cjs`, "foreign"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "unavailable",
+        resolved_path: null,
+      });
+  });
+  it.each([
+    ["resources/app.asar/main.cjs", "../pkg", "resources/pkg"],
+    ["app/main.cjs", "../resources/code.asar/pkg", "resources/code.asar/pkg"],
+    [
+      "resources/app.asar/main.cjs",
+      "fixture",
+      "resources/node_modules/fixture",
+    ],
+  ])(
+    "uses the selected package main for %s loading %s",
+    (sourcePath, declaredPath, directory) => {
+      expect(
+        resolve({
+          sourcePath,
+          declaredPath,
+          context: "module-specifier",
+          moduleKind: "require",
+          files: fileMap([
+            file(sourcePath, "source"),
+            file(
+              `${directory}/package.json`,
+              "target",
+              '{"main":"actual.cjs"}',
+            ),
+            file(`${directory}/actual.cjs`, "target"),
+            file(`${directory}/index.js`, "target"),
+          ]),
+        }),
+      ).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: `${directory}/actual.cjs`,
+      });
+    },
+  );
+
+  it("keeps metadata-less ancestor package directories after an archive escape", () => {
+    expect(
+      resolve({
+        sourcePath: "resources/app.asar/main.cjs",
+        declaredPath: "fixture/parser",
+        context: "module-specifier",
+        moduleKind: "require",
+        files: fileMap([
+          file("resources/app.asar/main.cjs", "source"),
+          file("resources/node_modules/fixture/parser.js", "target"),
+        ]),
+      }),
+    ).toMatchObject({
+      resolution_status: "resolved",
+      resolved_path: "resources/node_modules/fixture/parser.js",
+    });
+  });
+
+  it.each(["resources/app.asar/main.cjs", "resources/main.cjs"])(
+    "keeps unread metadata blocking a decoy index for %s",
+    (sourcePath) => {
+      const path = "resources/pkg/package.json";
+      const target = file(path, "target", null);
+      const files = fileMap([
+        file(sourcePath, "source"),
+        file("resources/pkg/index.js", "source"),
+      ]);
+      for (const opaque of [false, true]) {
+        expect(
+          resolve({
+            sourcePath,
+            declaredPath: sourcePath.includes(".asar/") ? "../pkg" : "./pkg",
+            context: "module-specifier",
+            moduleKind: "require",
+            files: opaque ? files : fileMap([...files.values(), target]),
+            unanalyzedFiles: {
+              get: (requested) =>
+                opaque && requested === path ? target : undefined,
+              coverage: completeInventoryCoverage,
+              hasDirectory: () => false,
+            },
+          }),
+        ).toMatchObject({
+          resolution_status: "unavailable",
+          resolved_path: null,
+        });
+      }
+    },
+  );
+});
+
+it("distinguishes an unobserved bare package from builtins and blocked aliases", () => {
+  const files = aliasFiles({
+    "package.json": JSON.stringify({
+      imports: { "#blocked": null, "#builtin": "node:path" },
+    }),
+    "main.js": "",
+  });
+  const resolveName = (declaredPath: string) =>
+    resolve({
+      declaredPath,
+      sourcePath: "main.js",
+      context: "module-specifier",
+      moduleKind: "require",
+      files,
+    });
+  expect(resolveName("outside-package")).toMatchObject({
+    resolution_status: "external",
+    unexamined_module_imports: true,
+  });
+  for (const name of ["node:path", "electron", "#blocked", "#builtin"])
+    expect(resolveName(name), name).not.toHaveProperty(
+      "unexamined_module_imports",
+    );
 });

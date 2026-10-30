@@ -24,7 +24,10 @@ export const createJebAnalysisProvider = (
       environment,
       ...(requestTimeout.value === undefined
         ? {}
-        : { requestTimeoutMs: requestTimeout.value }),
+        : {
+            requestTimeoutMs: requestTimeout.value,
+            discoveryTimeoutMs: requestTimeout.value,
+          }),
       ...(connectionFactory === undefined ? {} : { connectionFactory }),
     });
   } catch (cause: unknown) {

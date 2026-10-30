@@ -14,15 +14,7 @@ import {
   startFakeCdpBrowser,
   type FakeCdpBrowser,
 } from "../../fixtures/fakeCdpBrowser.js";
-import { trackBrowser } from "./cdpBrowserProvider.support.js";
-
-const waitFor = async (ready: () => boolean, description: string) => {
-  const deadline = Date.now() + 5_000;
-  while (!ready()) {
-    if (Date.now() > deadline) throw new Error(description);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-};
+import { trackBrowser, waitFor } from "./cdpBrowserProvider.support.js";
 
 describe("CdpBrowserProvider: cancellation during cleanup", () => {
   it.each([
@@ -374,6 +366,32 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
     );
 
     if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("session_detached");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "session_detached",
+      detail: "session_detached",
+      timestamp: null,
+    });
+    expect(result.value.limitations).toContain(
+      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    );
+  });
+
+  it("reports target termination only for an observed target crash", async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "target_crashed",
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
     expect(result.value.window.end_reason).toBe("target_terminated");
     expect(result.value.timeline.at(-1)).toMatchObject({
       type: "target_terminated",
@@ -398,10 +416,10 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
     );
 
     if (!result.ok) throw result.error;
-    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.window.end_reason).toBe("transport_disconnected");
     expect(result.value.timeline.at(-1)).toMatchObject({
-      type: "target_terminated",
-      detail: "target_terminated",
+      type: "transport_disconnected",
+      detail: "transport_disconnected",
     });
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).not.toContain("Target.attachToTarget");
@@ -429,6 +447,11 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       type: "redirect",
       url: null,
       destination_scope: "outside_policy",
+      redirect_response: {
+        url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
+        status: 302,
+        scope: "approved",
+      },
     });
     expect(result.value.completeness).toMatchObject({
       status: "policy_filtered",

@@ -10,7 +10,10 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
-import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
+import {
+  projectSemanticResultBindings,
+  type SemanticFlowProjectionContext,
+} from "./JavaScriptSemanticGraphFlowProjection.js";
 
 /** Project literal EventEmitter registrations, removals, and dispatches. */
 export const projectSemanticEvents = (
@@ -180,18 +183,11 @@ const projectTimerSchedule = (
     relation: "schedules-timer",
     resolution: "resolved",
   });
-  for (const projected of operation.projectedResultBindings)
-    addSemanticGraphRelation(context.state, {
-      source: timerNodes.get(operation.timerId),
-      target: context.bindingNodes.get(projected.bindingId),
-      relation: "destructures",
-      resolution:
-        projected.resolution === "complete" ? "resolved" : "candidate",
-      properties: {
-        projection_path: [...projected.projectionPath],
-        projection_resolution: projected.resolution,
-      },
-    });
+  projectSemanticResultBindings(
+    context,
+    timerNodes.get(operation.timerId),
+    operation.projectedResultBindings,
+  );
 };
 
 const projectTimerCancellation = (

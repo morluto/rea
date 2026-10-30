@@ -42,25 +42,6 @@ export const resourceContentSize = (
     : err({ _tag: "InvalidCdpResourceSize" });
 };
 
-/** Preserve partial script declarations; omitted or invalid fields remain unknown. */
-export const scriptMetadataValues = (
-  value: UnknownRecord | undefined,
-): {
-  readonly hash: string | null;
-  readonly length: number | null;
-  readonly isModule: boolean | null;
-} => {
-  const length = numberValue(value?.length);
-  return {
-    hash: cdpStringValue(value?.hash) ?? null,
-    length:
-      length !== undefined && Number.isSafeInteger(length) && length >= 0
-        ? length
-        : null,
-    isModule: typeof value?.isModule === "boolean" ? value.isModule : null,
-  };
-};
-
 export const requiredRecord = (value: unknown): UnknownRecord => {
   const record = recordValue(value);
   if (record === undefined)
@@ -125,7 +106,8 @@ export const delayWithCancellation = async (
   const maximumTimerDelay = 2_147_483_647;
   let remaining = durationMs;
   while (remaining > 0) {
-    if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    if (signal?.aborted === true)
+      throw new AnalysisCancelledError(operation, { cause: signal.reason });
     const delay = Math.min(remaining, maximumTimerDelay);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -135,7 +117,9 @@ export const delayWithCancellation = async (
       const onAbort = (): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
-        reject(new AnalysisCancelledError(operation));
+        reject(
+          new AnalysisCancelledError(operation, { cause: signal?.reason }),
+        );
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       if (signal?.aborted === true) onAbort();

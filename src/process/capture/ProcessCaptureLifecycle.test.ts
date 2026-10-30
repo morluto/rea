@@ -1,7 +1,7 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCaptureFinalization } from "../../domain/process/processCapture.js";
 import { awaitTerminalExit } from "./ProcessCaptureLifecycle.js";
 import type { ProcessTimer } from "./ProcessTimer.js";
@@ -75,7 +75,7 @@ const start = (
 ) =>
   awaitTerminalExit({
     terminal: fake.terminal,
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       executable: "unused",
       idle_timeout_ms: 10_000,
       ...scenario,
@@ -92,6 +92,36 @@ const start = (
     dispatchedEventIndexes: new Set<number>(),
     recordEvent: () => undefined,
   });
+
+it("uses the monotonic running deadline after the wall clock moves backward", async () => {
+  const fake = fakeTerminal();
+  const controller = new AbortController();
+  const wallStart = Date.now();
+  let reads = 0;
+  const wall = vi.spyOn(Date, "now").mockImplementation(() => {
+    reads += 1;
+    return reads === 1 ? wallStart : wallStart - 60_000 + reads;
+  });
+  const kill = vi.spyOn(fake.terminal, "kill").mockImplementation(() => {
+    queueMicrotask(() => fake.deliverExit({ exitCode: 0, signal: 9 }));
+  });
+  const fallback = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const monotonicStarted = performance.now();
+    const exit = observed(
+      await start(fake, { timeout_ms: 100 }, controller.signal),
+    );
+    // The production clock rounds down to milliseconds, losing at most 1 ms.
+    expect(performance.now() - monotonicStarted).toBeGreaterThanOrEqual(99);
+    expect(exit.reason).toBe("timeout");
+    expect(controller.signal.aborted).toBe(false);
+    expect(kill).toHaveBeenCalledOnce();
+  } finally {
+    clearTimeout(fallback);
+    kill.mockRestore();
+    wall.mockRestore();
+  }
+});
 
 it("records attempts when a self-exit notification arrives after escalation", async () => {
   const fake = fakeTerminal();

@@ -1,4 +1,6 @@
-import { join, isAbsolute } from "node:path";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
+import { join } from "node:path";
 import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
@@ -7,6 +9,7 @@ import {
 } from "../application/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
+  DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
   type FirmwareRequest,
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
@@ -14,7 +17,6 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
-  AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
@@ -23,13 +25,17 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
+import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
-  FIRMWARE_LIMITS,
   BINWALK_PROVIDER_IDENTITY,
   UNBLOB_PROVIDER_IDENTITY,
 } from "./FirmwareRelease.js";
+import {
+  startFirmwareDeadline,
+  type FirmwareDeadline,
+} from "./FirmwareDeadline.js";
 import { admitFirmwareVersion } from "./FirmwareVersion.js";
 import {
   firmwareToolUnavailable,
@@ -47,7 +53,10 @@ import {
   normalizeUnblobReport,
 } from "./FirmwareReports.js";
 
-import { firmwareFailure, firmwareCancellation } from "./FirmwareFailures.js";
+import {
+  firmwareFailure,
+  firmwarePhaseInterruption,
+} from "./FirmwareFailures.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
@@ -124,6 +133,18 @@ const limitations = [
   "The actual launcher executable is hashed. Interpreter, shared libraries and installed Python package dependencies are not independently attested; source revision remains unknown for caller-supplied builds.",
 ] as const;
 
+/** Unblob's safe-link handling rewrites absolute targets inside its output. */
+const UNBLOB_LINK_TARGET_LIMITATION =
+  "Symlink link_target values are read from Unblob's extracted tree, not from the firmware's filesystem metadata. Unblob rewrites absolute targets relative to the extraction root, so a relative link_target may have been stored as an absolute path in the image.";
+
+const publishedSymlinks = (result: unknown): boolean => {
+  const parsed = firmwareResultSchemas.extract_firmware.safeParse(result);
+  return (
+    parsed.success &&
+    parsed.data.unpublished_entries.some((entry) => entry.kind === "symlink")
+  );
+};
+
 /** Queued bring-your-own firmware adapters with private snapshots and owned cleanup. */
 export class FirmwareProvider implements FirmwareAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
@@ -186,7 +207,12 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.close();
     } catch (cause: unknown) {
-      failures.push(firmwareFailure(cause, "firmware", "close_firmware"));
+      failures.push(
+        firmwareFailure(cause, {
+          engine: "firmware",
+          operation: "close_firmware",
+        }),
+      );
     }
     const workspace = await this.#retryWorkspaceCleanup();
     if (workspace.failure !== undefined) failures.push(workspace.failure);
@@ -199,7 +225,10 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     try {
       await this.#files.retryCleanup();
     } catch (cause: unknown) {
-      fileFailure = firmwareFailure(cause, "firmware", "close_firmware");
+      fileFailure = firmwareFailure(cause, {
+        engine: "firmware",
+        operation: "close_firmware",
+      });
     }
     const workspace = await this.#retryWorkspaceCleanup();
     return {
@@ -299,23 +328,40 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     request: FirmwareRequest,
     options?: ExecutionOptions,
   ): Promise<Outcome> {
+    // Capture configuration after queue admission; later operations may select updates.
+    const environment = snapshotEnvironment(this.environment);
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
     const engineName =
       request.operation === "inspect_firmware_regions" ? "binwalk" : "unblob";
-    const deadline = AbortSignal.timeout(FIRMWARE_LIMITS.timeoutMs);
-    const signal =
+    const withCaller = (phase: FirmwareDeadline) =>
       options?.signal === undefined
-        ? deadline
-        : AbortSignal.any([options.signal, deadline]);
+        ? phase.signal
+        : AbortSignal.any([options.signal, phase.signal]);
+    // Extraction and publication have separate budgets: publication time depends on the
+    // destination filesystem, so it must not be charged to the extraction deadline.
+    const analysisTimeoutMs =
+      request.input.analysis_timeout_ms ?? DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS;
+    let deadline = startFirmwareDeadline("analysis", analysisTimeoutMs);
+    let signal = withCaller(deadline);
     let outcome: Outcome;
     try {
       if (signal.aborted)
         throw new AnalysisCancelledError(request.operation, {
           cause: signal.reason,
         });
+      if (request.operation === "extract_firmware")
+        await SafeOutputTree.checkDestination(
+          request.input.output_directory,
+        ).catch((cause: unknown) => {
+          throw outputDirectoryAdmissionRefusal(
+            request.operation,
+            "output_directory",
+            cause,
+          );
+        });
       const command = await resolveFirmwareCommand(
-        this.environment,
+        environment,
         engineName,
         request.operation,
         this.#files,
@@ -326,18 +372,25 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const ownedRootLease = new AnalysisCleanupLease(() => ownedRoot.close());
       rootLease = ownedRootLease;
       const target = await this.#files.snapshot(request, root.path, signal);
-      const run = (
+      const run = async (
         args: readonly string[],
         outputBudget?: { root: string; bytes: number; entries: number },
-      ) =>
-        runFirmwareCommand({
+      ) => {
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            signal,
+          });
+        const output = await runFirmwareCommand({
           engine: engineName,
           operation: request.operation,
-          ...command,
+          fileSizeCeiling: command.fileSizeCeiling,
+          command: command.command.invocationPath,
+          limiter: command.limiter.invocationPath,
           args,
           cwd: root?.path ?? "",
-          environment: this.environment,
+          environment,
           signal,
+          deadline,
           retainCleanup: (supervisor) => {
             this.#pendingCleanup.set(ownedRoot.path, {
               supervisor,
@@ -352,6 +405,20 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             ? {}
             : { outputBudget, acceptReportedExtractionFailure: true }),
         });
+        for (const selected of [command.command, command.limiter])
+          await assertArtifactCommandPath(selected, request.operation, {
+            capturedOutput: {
+              stdout: output.stdout.text,
+              stderr: output.stderr.text,
+              stdout_bytes: output.stdout.bytes,
+              stderr_bytes: output.stderr.bytes,
+              exit_code: output.exit_code ?? null,
+              signal: output.signal,
+              truncated: false,
+            },
+          });
+        return output;
+      };
       const versionRun = await run(["--version"]);
       const version = versionRun.stdout.text.trim();
       if (versionRun.stdout.bytes > 1024)
@@ -370,7 +437,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       const engine = {
         name: engineName,
         version: admitted.version,
-        executable_path: command.command,
+        executable_path: command.command.resolvedPath,
         executable_sha256: command.sha256,
         source_revision: null,
         worker_count: 1 as const,
@@ -397,6 +464,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           signal,
         });
         result = firmwareResultSchemas.inspect_firmware_regions.parse({
+          analysis_timeout_ms: analysisTimeoutMs,
           engine,
           input_size: target.size,
           regions: normalizeBinwalkReport(
@@ -408,14 +476,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         raw = { report, execution: processRun, version_execution: versionRun };
       } else {
-        if (!isAbsolute(request.input.output_directory))
-          throw new AnalysisInputError(request.operation, undefined, [
-            {
-              path: ["output_directory"],
-              reason: "invalid_format",
-              message: "Extraction output directory must be absolute",
-            },
-          ]);
         const outputRoot = join(root.path, "extracted");
         const processRun = await run(
           [
@@ -465,7 +525,21 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           request.operation,
           signal,
         );
+        // The inventory can finish after its deadline expired; an expired
+        // extraction must not publish under the fresh publication budget.
+        const interruption = firmwarePhaseInterruption(
+          request.operation,
+          signal,
+          deadline,
+        );
+        if (interruption !== undefined) throw interruption;
+        deadline = startFirmwareDeadline(
+          "publication",
+          request.input.publication_timeout_ms,
+        );
+        signal = withCaller(deadline);
         result = await publishFirmwareExtraction({
+          analysisTimeoutMs,
           files: this.#files,
           workspacePath: root.path,
           deadline,
@@ -505,6 +579,9 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
             rawResult: raw,
             limitations: [
               ...limitations,
+              ...(engineName === "unblob" && publishedSymlinks(result)
+                ? [UNBLOB_LINK_TARGET_LIMITATION]
+                : []),
               ...(admitted.status === "compatible"
                 ? [admitted.limitation]
                 : []),
@@ -520,12 +597,11 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         ),
       );
     } catch (cause: unknown) {
-      const failure = firmwareFailure(
-        cause,
-        engineName,
-        request.operation,
+      const failure = firmwareFailure(cause, {
+        engine: engineName,
+        operation: request.operation,
         deadline,
-      );
+      });
       outcome = err(failure);
     }
     const finished = await finishFirmwareWorkspace(
@@ -558,16 +634,19 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       finished.error.cleanupResources.includes(root.path)
     )
       rootLease.bindCleanupError(finished.error);
-    if (finished.ok && signal.aborted)
-      return err(
-        firmwareCancellation(
-          request.operation,
-          signal.reason,
-          deadline,
-        ).retainPartialObservation(
-          completedFirmwareObservation(finished.value),
-        ),
+    if (finished.ok) {
+      const interruption = firmwarePhaseInterruption(
+        request.operation,
+        signal,
+        deadline,
       );
+      if (interruption !== undefined)
+        return err(
+          interruption.retainPartialObservation(
+            completedFirmwareObservation(finished.value),
+          ),
+        );
+    }
     return finished;
   }
 }
@@ -580,7 +659,7 @@ const finishFirmwareWorkspace = async (
   request: FirmwareRequest,
   rootLease: AnalysisCleanupLease | undefined,
   signal: AbortSignal,
-  deadline: AbortSignal,
+  deadline: FirmwareDeadline,
 ): Promise<Outcome> => {
   if (
     !outcome.ok &&
@@ -613,12 +692,10 @@ const finishFirmwareWorkspace = async (
       },
     );
     rootLease?.bindCleanupError(cleanup);
-    if (outcome.ok && signal.aborted) {
-      const primary = firmwareCancellation(
-        request.operation,
-        signal.reason,
-        deadline,
-      );
+    const primary = outcome.ok
+      ? firmwarePhaseInterruption(request.operation, signal, deadline)
+      : undefined;
+    if (outcome.ok && primary !== undefined) {
       primary.retainPartialObservation(
         completedFirmwareObservation(outcome.value),
       );

@@ -1,4 +1,12 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 
 import { afterEach, expect, it, vi } from "vitest";
@@ -6,29 +14,56 @@ import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
-import type { FileCloseResourceOwner } from "../../../../src/application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
 
 const injected = vi.hoisted(() => ({
   failNextClose: false,
+  failReadClose: true,
   holdCloseFailures: false,
   releaseCloseFailures: false,
   closeCalls: 0,
-  failCloseReadStage: undefined as "fingerprint" | "shebang" | undefined,
-  failReadStage: undefined as "fingerprint" | "shebang" | undefined,
+  fingerprintReads: 0,
+  installationPath: undefined as string | undefined,
+  failCloseReadStage: undefined as
+    | "preProbeFingerprint"
+    | "fingerprint"
+    | "identity"
+    | undefined,
+  failReadStage: undefined as
+    | "preProbeFingerprint"
+    | "fingerprint"
+    | "identity"
+    | undefined,
   abortOnReadFailure: undefined as (() => void) | undefined,
+  abortOnClose: undefined as
+    | {
+        stage: "preProbeFingerprint" | "fingerprint" | "identity";
+        abort: () => void;
+      }
+    | undefined,
   handles: [] as import("node:fs/promises").FileHandle[],
+  nativeCloses: new Map<
+    import("node:fs/promises").FileHandle,
+    () => Promise<void>
+  >(),
 }));
 
 afterEach(async () => {
   injected.failNextClose = false;
+  injected.failReadClose = true;
   injected.holdCloseFailures = false;
   injected.releaseCloseFailures = false;
   injected.closeCalls = 0;
+  injected.fingerprintReads = 0;
+  injected.installationPath = undefined;
   injected.failCloseReadStage = undefined;
   injected.failReadStage = undefined;
   injected.abortOnReadFailure = undefined;
-  for (const handle of injected.handles.splice(0))
-    if (handle.fd >= 0) await handle.close();
+  injected.abortOnClose = undefined;
+  for (const [handle, close] of injected.nativeCloses)
+    if (handle.fd >= 0) await close();
+  injected.nativeCloses.clear();
+  injected.handles.length = 0;
 });
 
 vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
@@ -40,60 +75,107 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     ...original,
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
-        const handle = await original.openRegularFile(...args);
+        const descriptor = await original.openRegularFile(...args);
+        const { handle } = descriptor;
+        // Test teardown retains native release separately from the producer's
+        // injected close behavior, including when an assertion fails early.
+        const nativeClose = handle.close.bind(handle);
+        injected.nativeCloses.set(handle, nativeClose);
+        const isInstallation = String(args[0]) === injected.installationPath;
         injected.handles.push(handle);
         const failNextClose = injected.failNextClose;
         const failCloseReadStage = injected.failCloseReadStage;
         const failReadStage = injected.failReadStage;
+        const abortOnClose = injected.abortOnClose;
         if (
           !failNextClose &&
           !injected.holdCloseFailures &&
           !failCloseReadStage &&
-          !failReadStage
+          !failReadStage &&
+          !abortOnClose
         )
-          return handle;
+          return descriptor;
         injected.failNextClose = false;
         let readStageMatched = false;
         let failedClose = false;
-        return {
-          get fd() {
-            return handle.fd;
-          },
-          stat: (...statArgs: Parameters<typeof handle.stat>) =>
-            handle.stat(...statArgs),
-          read: (
+        let abortCloseMatched = false;
+        let fingerprintStage:
+          | "preProbeFingerprint"
+          | "fingerprint"
+          | "identity"
+          | undefined;
+        const tracksFingerprint = [
+          failCloseReadStage,
+          failReadStage,
+          abortOnClose?.stage,
+        ].some(
+          (stage) =>
+            stage === "preProbeFingerprint" ||
+            stage === "fingerprint" ||
+            stage === "identity",
+        );
+        const positional: {
+          read(
+            buffer: Buffer,
+            offset: number,
+            length: number,
+            position: number,
+          ): Promise<{ bytesRead: number; buffer: Buffer }>;
+        } = handle;
+        const nativeRead = positional.read.bind(handle);
+        vi.spyOn(positional, "read").mockImplementation(
+          (
             buffer: Buffer,
             offset: number,
             length: number,
             position: number,
           ) => {
             if (
-              (failReadStage === "fingerprint" && length > 2) ||
-              (failReadStage === "shebang" && length === 2)
+              length > 2 &&
+              tracksFingerprint &&
+              fingerprintStage === undefined
             ) {
+              fingerprintStage = isInstallation
+                ? injected.fingerprintReads === 0
+                  ? "preProbeFingerprint"
+                  : "identity"
+                : "fingerprint";
+              if (isInstallation) injected.fingerprintReads += 1;
+            }
+            const readStage =
+              length === 2
+                ? undefined
+                : length > 2
+                  ? fingerprintStage
+                  : undefined;
+            if (abortOnClose?.stage === readStage) abortCloseMatched = true;
+            if (failReadStage !== undefined && failReadStage === readStage) {
               readStageMatched = true;
               injected.abortOnReadFailure?.();
               throw new Error("injected read fault");
             }
-            if (failCloseReadStage === "fingerprint" && length > 2)
-              readStageMatched = true;
-            if (failCloseReadStage === "shebang" && length === 2)
-              readStageMatched = true;
-            return handle.read(buffer, offset, length, position);
-          },
-          close: async () => {
-            injected.closeCalls += 1;
             if (
-              (failNextClose && !failedClose) ||
-              (readStageMatched && !failedClose) ||
-              (injected.holdCloseFailures && !injected.releaseCloseFailures)
-            ) {
-              failedClose = true;
-              throw new Error("injected close fault");
-            }
-            await handle.close();
+              failCloseReadStage !== undefined &&
+              failCloseReadStage === readStage
+            )
+              readStageMatched = true;
+            return nativeRead(buffer, offset, length, position);
           },
-        } as unknown as typeof handle;
+        );
+        vi.spyOn(handle, "close").mockImplementation(async () => {
+          injected.closeCalls += 1;
+          if (abortCloseMatched) abortOnClose?.abort();
+          if (
+            (failNextClose && !failedClose) ||
+            (readStageMatched && injected.failReadClose && !failedClose) ||
+            (injected.holdCloseFailures && !injected.releaseCloseFailures)
+          ) {
+            failedClose = true;
+            throw new Error("injected close fault");
+          }
+          await nativeClose();
+        });
+        return descriptor;
       },
     ),
   };
@@ -104,12 +186,13 @@ import { composeBinarySession } from "../../../../src/application/binary/BinaryS
 import { KunaTargetCommands } from "../../../../src/kuna/KunaTargetCommands.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { inspectKunaProvider } from "../../../../src/kuna/KunaDoctor.js";
-import { inspectKunaInstallationOwned } from "./kunaFileCloseOwner.js";
+import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallation.js";
+import { inspectKunaInstallationOwned } from "./kunaResourceScope.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import { run, session } from "./kunaSessionFixture.js";
 
 it.skipIf(process.platform === "win32").each(
-  (["fingerprint", "shebang"] as const).flatMap((stage) =>
+  (["identity"] as const).flatMap((stage) =>
     (["health", "search_procedures"] as const).map((operation) => ({
       stage,
       operation,
@@ -121,6 +204,8 @@ it.skipIf(process.platform === "win32").each(
     const fixture = await session("rea-kuna-installation-owner-resolution-");
     const client = fixture.open();
     injected.closeCalls = 0;
+    injected.fingerprintReads = 0;
+    injected.installationPath = fixture.kuna;
     injected.failCloseReadStage = stage;
     try {
       const inspected = await client.execute(
@@ -153,7 +238,7 @@ it.skipIf(process.platform === "win32").each(
       expect(producer.cause).toMatchObject({
         name: "RegularFileCleanupFailure",
       });
-      const failedCloseCall = stage === "fingerprint" ? 1 : 2;
+      const failedCloseCall = 2;
       expect(injected.closeCalls).toBe(failedCloseCall);
 
       expect(await client.close()).toEqual({ ok: true, value: null });
@@ -182,6 +267,7 @@ it.skipIf(process.platform === "win32")(
     const commands = new KunaTargetCommands(fixture.target, {
       signal: controller.signal,
     });
+    injected.fingerprintReads = 0;
     injected.failReadStage = "fingerprint";
     injected.abortOnReadFailure = () => controller.abort();
     let originatingError:
@@ -231,6 +317,7 @@ it.skipIf(process.platform === "win32")(
     const cache = new KunaProjectCache(fixture.cacheRoot, {
       maxBytes: 64 * 1024 ** 2,
     });
+    injected.fingerprintReads = 0;
     injected.failReadStage = "fingerprint";
     try {
       const result = await cache.build({
@@ -268,6 +355,7 @@ it.skipIf(process.platform === "win32")(
     const commands = new KunaTargetCommands(fixture.target, {
       signal: controller.signal,
     });
+    injected.fingerprintReads = 0;
     injected.failReadStage = "fingerprint";
     try {
       const result = await commands.run({
@@ -472,9 +560,7 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it
-  .skipIf(process.platform === "win32")
-  .each([{ stage: "fingerprint" }, { stage: "shebang" }] as const)(
+it.skipIf(process.platform === "win32").each([{ stage: "identity" }] as const)(
   "resolves the Kuna profile cleanup error after its $stage descriptor closes",
   async ({ stage }) => {
     const fixture = await session("rea-kuna-profile-owner-resolution-");
@@ -482,6 +568,8 @@ it
       new AnalysisProviderRegistry([fixture.provider]),
     );
     injected.closeCalls = 0;
+    injected.fingerprintReads = 0;
+    injected.installationPath = fixture.kuna;
     injected.failCloseReadStage = stage;
     try {
       const resolved = await binary.previewTarget(fixture.target);
@@ -497,7 +585,7 @@ it
 
       expect(await binary.close()).toEqual({ ok: true, value: null });
       expect(originatingError.cleanupIncomplete).toBe(false);
-      expect(injected.closeCalls).toBe(stage === "fingerprint" ? 2 : 3);
+      expect(injected.closeCalls).toBe(3);
       expect(await binary.status()).toMatchObject({ cleanup_pending: false });
     } finally {
       injected.failCloseReadStage = undefined;
@@ -542,7 +630,7 @@ it.skipIf(process.platform === "win32")(
     expect(injected.closeCalls).toBe(3);
     expect(await binary.status()).toMatchObject({ cleanup_pending: false });
     expect((await fakeKunaCalls(fixture.kuna)).map(({ argv }) => argv)).toEqual(
-      [["--version"], ["--version"]],
+      [["--version"]],
     );
   },
 );
@@ -554,7 +642,7 @@ it.skipIf(process.platform === "win32")(
     injected.closeCalls = 0;
     injected.failNextClose = true;
     const resources = new ArtifactResourceScope();
-    const fileCloseResources: FileCloseResourceOwner = {
+    const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
         resources.retain({
           kind: "lease",
@@ -570,7 +658,7 @@ it.skipIf(process.platform === "win32")(
           REA_KUNA_CACHE_DIR: fixture.cacheRoot,
         },
         process.platform,
-        { fileCloseResources },
+        { resourceScope },
       );
       expect(inspection.checks[0]).toMatchObject({
         ok: false,
@@ -583,8 +671,112 @@ it.skipIf(process.platform === "win32")(
       await resources.close();
     }
     expect((await fakeKunaCalls(fixture.kuna)).map(({ argv }) => argv)).toEqual(
-      [["--version"], ["--version"]],
+      [["--version"]],
     );
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves the completed pre-probe fingerprint when cancellation arrives during its close",
+  async () => {
+    const fixture = await session("rea-kuna-pre-probe-fingerprint-cancel-");
+    const bytes = await readFile(fixture.kuna);
+    const fingerprint = {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    };
+    const beforeCalls = await fakeKunaCalls(fixture.kuna);
+    const controller = new AbortController();
+    const reason = Object.freeze({ request: "cancel before version probe" });
+    injected.fingerprintReads = 0;
+    injected.closeCalls = 0;
+    injected.installationPath = fixture.kuna;
+    injected.abortOnClose = {
+      stage: "preProbeFingerprint",
+      abort: () => controller.abort(reason),
+    };
+    try {
+      const cause: unknown = await inspectKunaInstallationOwned(
+        {
+          REA_KUNA_COMMAND: fixture.kuna,
+          REA_KUNA_CACHE_DIR: fixture.cacheRoot,
+        },
+        { signal: controller.signal },
+      ).then(
+        () => undefined,
+        (failure: unknown) => failure,
+      );
+      const cancellation = kunaInstallationCancellation(cause);
+      expect(cancellation?.reason).toBe(reason);
+      expect(cancellation?.diagnostics).toMatchObject({
+        kuna_installation: {
+          status: "partial",
+          command: fixture.kuna,
+          executable: fixture.kuna,
+          completed_hash: fingerprint,
+        },
+      });
+      expect(
+        cancellation?.diagnostics?.["kuna_installation"],
+      ).not.toHaveProperty("version");
+      expect(injected.closeCalls).toBe(1);
+      expect(await fakeKunaCalls(fixture.kuna)).toEqual(beforeCalls);
+    } finally {
+      injected.abortOnClose = undefined;
+      controller.abort(reason);
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps a physical post-probe read failure primary with the version and prior fingerprint",
+  async () => {
+    const fixture = await session("rea-kuna-post-probe-read-failure-");
+    const bytes = await readFile(fixture.kuna);
+    const beforeProbeFingerprint = {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    };
+    const controller = new AbortController();
+    injected.fingerprintReads = 0;
+    injected.installationPath = fixture.kuna;
+    injected.failReadStage = "identity";
+    injected.failReadClose = false;
+    injected.abortOnReadFailure = () =>
+      controller.abort({ request: "abort after physical read failure" });
+    try {
+      const result = await inspectKunaInstallationOwned(
+        {
+          REA_KUNA_COMMAND: fixture.kuna,
+          REA_KUNA_CACHE_DIR: fixture.cacheRoot,
+        },
+        { signal: controller.signal },
+      );
+      expect(controller.signal.aborted).toBe(true);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          code: "executable_missing",
+          reason: expect.stringContaining("injected read fault"),
+          diagnostics: {
+            version: "1.833",
+            verified: true,
+            identity_observation_phase: "post_probe",
+            identity_observation_failure: "injected read fault",
+            before_probe_sha256: beforeProbeFingerprint.sha256,
+            before_probe_bytes: beforeProbeFingerprint.bytes,
+            deadline_ms: 10_000,
+            stdout: "kuna 1.833\n",
+            stdout_bytes: 11,
+            output_truncated: false,
+          },
+        },
+      });
+    } finally {
+      injected.failReadStage = undefined;
+      injected.abortOnReadFailure = undefined;
+      injected.failReadClose = true;
+    }
   },
 );
 
@@ -625,6 +817,131 @@ it.skipIf(process.platform === "win32")(
       await chmod(retired, 0o700).catch(() => {});
       await client.close();
       await binary.close();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32").each(
+  (["doctor", "profile", "health"] as const).flatMap((consumer) =>
+    (["identity"] as const).flatMap((stage) =>
+      [false, true].map((closeRefusal) => ({
+        consumer,
+        stage,
+        closeRefusal,
+      })),
+    ),
+  ),
+)(
+  "preserves completed installation facts for $consumer during $stage close, refusal=$closeRefusal",
+  async ({ consumer, stage, closeRefusal }) => {
+    const fixture = await session("rea-kuna-completed-installation-cancel-");
+    const bytes = await readFile(fixture.kuna);
+    const executable = await realpath(fixture.kuna);
+    const command =
+      consumer === "doctor"
+        ? join(fixture.root, "selected-kuna")
+        : fixture.kuna;
+    if (consumer === "doctor") await symlink(fixture.kuna, command);
+    const fingerprint = {
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+    };
+    const controller = new AbortController();
+    const reason = { request: "cancel completed Kuna installation read" };
+    const resources = new ArtifactResourceScope();
+    const resourceScope: RetainedResourceScope = {
+      retain: (owner, resource) =>
+        resources.retain({
+          kind: "lease",
+          resource,
+          lease: { release: () => owner.close() },
+        }),
+      run: (operation) => resources.run(operation),
+    };
+    const client = consumer === "health" ? fixture.open() : undefined;
+    injected.fingerprintReads = 0;
+    injected.installationPath = command;
+    injected.abortOnClose = { stage, abort: () => controller.abort(reason) };
+    injected.failCloseReadStage = closeRefusal ? stage : undefined;
+    let failure: AnalysisError | undefined;
+    try {
+      let diagnostics: AnalysisError["diagnostics"];
+      if (consumer === "doctor") {
+        await inspectKunaProvider(
+          {
+            REA_KUNA_COMMAND: command,
+            REA_KUNA_CACHE_DIR: fixture.cacheRoot,
+          },
+          process.platform,
+          { resourceScope, signal: controller.signal },
+        ).then(
+          (inspection) => {
+            expect(closeRefusal).toBe(true);
+            expect(inspection.checks[0]).toMatchObject({
+              code: "cleanup_incomplete",
+            });
+            diagnostics = inspection.checks[0]?.details;
+          },
+          (cause: unknown) => {
+            if (!(cause instanceof AnalysisError)) throw cause;
+            failure = cause;
+          },
+        );
+      } else {
+        const result =
+          consumer === "profile"
+            ? await fixture.provider.resolveAnalysisProfile(fixture.target, {
+                resourceScope,
+                signal: controller.signal,
+              })
+            : await client!.execute(
+                "health",
+                {},
+                { signal: controller.signal },
+              );
+        if (result.ok) throw new Error("Expected installation cancellation");
+        failure = result.error;
+      }
+      if (failure !== undefined) {
+        expect(failure).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cleanupIncomplete: closeRefusal,
+        });
+        expect(failure.cause).toBe(reason);
+        diagnostics = failure.diagnostics;
+        expect(projectAnalysisError(failure)).toMatchObject({
+          code: closeRefusal ? "cleanup_incomplete" : "cancelled",
+          details: {
+            ...(closeRefusal ? { execution_failure: "cancelled" } : {}),
+            diagnostics: {
+              kuna_installation: {
+                status: "partial",
+                completed_hash: fingerprint,
+              },
+            },
+          },
+        });
+      }
+      expect(diagnostics).toMatchObject({
+        kuna_installation: {
+          status: "partial",
+          command,
+          executable,
+          version: "1.833",
+          completed_hash: fingerprint,
+          ...(stage === "identity" ? { script: true } : {}),
+        },
+      });
+      expect(injected.handles.some((handle) => handle.fd >= 0)).toBe(
+        closeRefusal,
+      );
+    } finally {
+      injected.abortOnClose = undefined;
+      injected.failCloseReadStage = undefined;
+      await resources.close();
+      if (client !== undefined) expect((await client.close()).ok).toBe(true);
+      expect(failure?.cleanupIncomplete ?? false).toBe(false);
+      expect(injected.handles.every((handle) => handle.fd < 0)).toBe(true);
     }
   },
 );

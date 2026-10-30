@@ -1,22 +1,17 @@
 import type { EvidenceMcpServer } from "../EvidenceMcpServer.js";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
-import { recordSessionEvidenceSources } from "../sessionEvidence.js";
+import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
 
-import { projectManagedApplicationGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
+import { projectManagedGraphEvidence } from "../../application/managed/ManagedApplicationGraphService.js";
+import { readManagedGraphProjection } from "../../domain/managed/managedApplicationGraph.js";
+import type { Evidence } from "../../domain/evidence.js";
+import { ok } from "../../domain/result.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
-import { managedWorkflowContract } from "./contract.js";
-import {
-  resolveManagedArtifactEvidence,
-  resolveManagedBoundaryEvidence,
-  resolveManagedEvidence,
-  sourceEvidence,
-} from "./evidence.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import type { ManagedWorkflowToolRegistration } from "./types.js";
 
-const graphContract = managedWorkflowContract(
-  "project_managed_application_graph",
-);
+const graphContract = toolContract("project_managed_application_graph");
 
 /** Register the managed application graph projection workflow tool. */
 export const registerProjectManagedApplicationGraph = (
@@ -33,49 +28,24 @@ export const registerProjectManagedApplicationGraph = (
         graphContract.name,
         context.mcpReq.signal,
         async () => {
-          const managedArtifact =
-            input.managed_artifact === undefined
-              ? undefined
-              : resolveManagedArtifactEvidence(input.managed_artifact);
-          if (managedArtifact !== undefined && !managedArtifact.ok)
-            return server.delivery.toCallToolResult(
-              managedArtifact,
-              graphContract,
-            );
-          const managedMembers =
-            input.managed_members === undefined
-              ? undefined
-              : resolveManagedEvidence(input.managed_members);
-          if (managedMembers !== undefined && !managedMembers.ok)
-            return server.delivery.toCallToolResult(
-              managedMembers,
-              graphContract,
-            );
-          const managedBoundaries =
-            input.managed_native_boundaries === undefined
-              ? undefined
-              : resolveManagedBoundaryEvidence(input.managed_native_boundaries);
-          if (managedBoundaries !== undefined && !managedBoundaries.ok)
-            return server.delivery.toCallToolResult(
-              managedBoundaries,
-              graphContract,
-            );
-          const parsed = {
-            managed_artifact: managedArtifact?.value[0],
-            managed_members: managedMembers?.value[0],
-            managed_native_boundaries: managedBoundaries?.value[0],
-          };
+          const request = readManagedGraphProjection(input);
+          if (!request.ok)
+            return server.delivery.toCallToolResult(request, graphContract);
           const result = await logToolExecution(
             options.logger,
             graphContract.name,
             () =>
-              Promise.resolve(projectManagedApplicationGraphEvidence(parsed)),
+              Promise.resolve(ok(projectManagedGraphEvidence(request.value))),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, graphContract);
-          const recordedSources = recordSessionEvidenceSources(
+          const recordedSources = recordEvidenceSources(
             options.recordEvidence,
-            sourceEvidence(parsed),
+            [
+              request.value.sources.artifact?.evidence,
+              request.value.sources.members?.evidence,
+              request.value.sources.boundaries?.evidence,
+            ].filter((source): source is Evidence => source !== undefined),
           );
           if (!recordedSources.ok)
             return server.delivery.toCallToolResult(

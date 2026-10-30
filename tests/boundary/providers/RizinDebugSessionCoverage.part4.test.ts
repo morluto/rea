@@ -70,6 +70,12 @@ it.skipIf(process.platform === "win32")(
     const result = await manager.execute(started.value.session_id, "large");
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.value.result.output_truncated).toBe(true);
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      recent_output_truncated: true,
+      recent_output: expect.arrayContaining([
+        "a".repeat(16384) + "[recent frame truncated]",
+      ]),
+    });
   },
 );
 
@@ -85,17 +91,107 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "preserves unsolicited history and marks oversized recent frames",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.resume(); setTimeout(() => process.stdout.write("x".repeat(17000) + "\\0"), 20);',
+it.skipIf(process.platform === "win32").each([
+  { name: "empty", bytes: Buffer.alloc(0), prefix: "", truncated: false },
+  {
+    name: "short CJK",
+    bytes: Buffer.from("雪".repeat(10)),
+    prefix: "雪".repeat(10),
+    truncated: false,
+  },
+  {
+    name: "exact ASCII budget",
+    bytes: Buffer.from("a".repeat(16384)),
+    prefix: "a".repeat(16384),
+    truncated: false,
+  },
+  {
+    name: "oversized ASCII",
+    bytes: Buffer.from("a".repeat(17000)),
+    prefix: "a".repeat(16384),
+    truncated: true,
+  },
+  {
+    name: "two-byte boundary",
+    bytes: Buffer.from("a".repeat(16383) + "é"),
+    prefix: "a".repeat(16383),
+    truncated: true,
+  },
+  {
+    name: "oversized CJK",
+    bytes: Buffer.from("雪".repeat(20000)),
+    prefix: "雪".repeat(5461),
+    truncated: true,
+  },
+  {
+    name: "split emoji boundary",
+    bytes: Buffer.from("a".repeat(16383) + "😀" + "x".repeat(100)),
+    prefix: "a".repeat(16383),
+    truncated: true,
+  },
+  {
+    name: "complete emoji boundary",
+    bytes: Buffer.from("a".repeat(16380) + "😀" + "x"),
+    prefix: "a".repeat(16380) + "😀",
+    truncated: true,
+  },
+  {
+    name: "invalid UTF-8 expansion below the wire budget",
+    bytes: Buffer.alloc(6000, 0xff),
+    prefix: "\uFFFD".repeat(5461),
+    truncated: true,
+    invalidUtf8: true,
+  },
+])(
+  "bounds $name history while preserving complete command Evidence",
+  async ({ bytes, prefix, truncated, ...flags }) => {
+    const injected = createInjectedProcess({
+      onWrite: (text, control) => {
+        const marker = /!echo (.+)\n/u.exec(text)?.[1];
+        if (marker === undefined) return;
+        setImmediate(() => {
+          control.output(bytes);
+          control.output(Buffer.from([0]));
+          control.output(`${marker}\0`);
+        });
+      },
+    });
+    const { manager, started } = await startInjected(injected.spawnProcess);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    const result = await manager.execute(
+      started.value.session_id,
+      "history-fixture",
     );
-    const { manager, sessionId } = await start(provider);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const status = manager.status(sessionId);
-    expect(status?.recent_output_truncated).toBe(true);
-    expect(status?.recent_output.at(-1)).toContain("[recent frame truncated]");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const expected = {
+      output: bytes.toString("utf8"),
+      output_truncated: false,
+      completion_status: "complete",
+    };
+    expect(result.value.evidence).toMatchObject({
+      normalized_result: expected,
+      raw_result: expected,
+    });
+    expect(result.value.result.output_invalid_utf8).toBe(
+      "invalidUtf8" in flags ? true : undefined,
+    );
+
+    // Exercise unsolicited frames too, without relying on child scheduling.
+    injected.control.output(bytes);
+    injected.control.output(Buffer.from([0]));
+    const status = manager.status(started.value.session_id);
+    expect(status?.recent_output_truncated).toBe(truncated);
+    expect(status?.output_invalid_utf8).toBe("invalidUtf8" in flags);
+    const retained = status?.recent_output.at(-1);
+    expect(retained).toBe(
+      prefix + (truncated ? "[recent frame truncated]" : ""),
+    );
+    expect(Buffer.byteLength(retained ?? "", "utf8")).toBeLessThanOrEqual(
+      16 * 1024 + 24,
+    );
   },
 );
 
@@ -226,8 +322,13 @@ it.skipIf(process.platform === "win32")(
     setTimeout(() => abort.abort(), 30);
     const result = await execution;
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.error.message).toContain("injected stop uncertainty");
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(abort.signal.reason);
+      expect(result.error.cleanup?.reason).toContain(
+        "injected stop uncertainty",
+      );
+    }
   },
 );
 

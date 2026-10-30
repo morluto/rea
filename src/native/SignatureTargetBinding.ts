@@ -44,6 +44,7 @@ type SignatureOwner = Extract<
 export interface SignatureTargetBinding {
   readonly identity: string;
   readonly snapshotPath: string;
+  readonly snapshotIdentity: string;
 }
 
 const identity = (stat: BigIntStats): string =>
@@ -118,9 +119,20 @@ export const withSignatureTarget = async (
             : snapshotFailure(target, "create", cause),
         );
       }
+      const children = new ArtifactResourceScope();
       const owner: SignatureOwner = {
         kind: "lease",
-        lease: new AnalysisCleanupLease(() => root.close(), [root.path]),
+        lease: new AnalysisCleanupLease(
+          async () => {
+            await children.close();
+            await root.close();
+          },
+          {
+            get cleanupResources() {
+              return [...children.cleanupResources, root.path];
+            },
+          },
+        ),
         resource: root.path,
       };
       let result: Result<InspectSignature, AnalysisError>;
@@ -128,7 +140,7 @@ export const withSignatureTarget = async (
         const binding = await bindSignatureTarget(
           target,
           join(root.path, basename(target.path)),
-          resources,
+          children,
           signal,
         );
         if (!binding.ok) result = binding;
@@ -173,11 +185,19 @@ export const withSignatureTarget = async (
       cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
         ? cause.cleanup
         : undefined;
-    if (retained !== undefined)
+    if (retained !== undefined) {
+      const failure = signatureCleanupFailure(
+        target,
+        retained.resources,
+        cause,
+        "retry",
+      );
+      bindArtifactFileCleanup(cause, failure);
       return combineCleanupFailure(
         err(signatureReadFailure(target, cause)),
-        signatureCleanupFailure(target, retained.resources, cause, "retry"),
+        failure,
       );
+    }
     return err(signatureReadFailure(target, cause));
   }
 };
@@ -202,8 +222,8 @@ const signatureCleanupFailure = (
   resources: readonly string[],
   cause: unknown,
   phase: string,
-): AnalysisError => {
-  const failure = new ProviderCleanupError(
+): AnalysisError =>
+  new ProviderCleanupError(
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
     resources,
     {
@@ -213,9 +233,6 @@ const signatureCleanupFailure = (
     },
     { operation: "inspect_signature", cause },
   );
-  bindArtifactFileCleanup(cause, failure);
-  return failure;
-};
 
 const snapshotFailure = (
   target: BinaryTarget,
@@ -364,7 +381,23 @@ const bindSignatureTarget = async (
           `Signature target changed while establishing its version: ${target.path}`,
         );
       await snapshotIO(target, "seal", () => snapshot.chmod(0o400));
-      return ok({ identity: identity(opened), snapshotPath });
+      const snapshotOpened = await snapshot.stat({ bigint: true });
+      const snapshotAtPath = await lstat(snapshotPath, { bigint: true });
+      if (
+        !snapshotOpened.isFile() ||
+        !snapshotAtPath.isFile() ||
+        snapshotAtPath.isSymbolicLink() ||
+        identity(snapshotOpened) !== identity(snapshotAtPath)
+      )
+        return changedTarget(
+          target,
+          `Digest-verified signature snapshot changed while binding: ${target.path}`,
+        );
+      return ok({
+        identity: identity(opened),
+        snapshotPath,
+        snapshotIdentity: identity(snapshotOpened),
+      });
     } catch (cause: unknown) {
       return err(signatureReadFailure(target, cause));
     }
@@ -422,11 +455,32 @@ export const verifySignatureTarget = async (
     assertRegularFileActive(signal);
     const current = await lstat(target.path, { bigint: true });
     assertRegularFileActive(signal);
-    return current.isFile() && identity(current) === binding.identity
+    if (!current.isFile() || identity(current) !== binding.identity)
+      return changedTarget(
+        target,
+        `Signature target changed during inspection: ${target.path}`,
+      );
+    let snapshot: BigIntStats;
+    try {
+      snapshot = await lstat(binding.snapshotPath, { bigint: true });
+    } catch (cause: unknown) {
+      const code =
+        cause instanceof Error && "code" in cause ? cause.code : undefined;
+      if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP")
+        return changedTarget(
+          target,
+          `Digest-verified signature snapshot is unavailable during inspection: ${target.path}`,
+        );
+      return err(signatureReadFailure(target, cause));
+    }
+    assertRegularFileActive(signal);
+    return snapshot.isFile() &&
+      !snapshot.isSymbolicLink() &&
+      identity(snapshot) === binding.snapshotIdentity
       ? ok(undefined)
       : changedTarget(
           target,
-          `Signature target changed during inspection: ${target.path}`,
+          `Digest-verified signature snapshot changed during inspection: ${target.path}`,
         );
   } catch (cause: unknown) {
     return err(signatureReadFailure(target, cause));

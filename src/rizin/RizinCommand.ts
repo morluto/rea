@@ -7,10 +7,12 @@ export const RIZIN_PROVIDER_IDENTITY = {
   version: null,
 } as const;
 
-/** Build a one-shot rz-pipe compatible command while retaining plugin availability. */
+/** Default one-shot presentation to plain text while retaining plugin availability. */
 export const rizinCommand = (input: RizinInput): readonly string[] => [
   "-N",
   "-q",
+  "-e",
+  "scr.color=0",
   "-c",
   input.command,
   absoluteCallerPath(input.path),

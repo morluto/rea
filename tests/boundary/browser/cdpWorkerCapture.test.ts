@@ -420,7 +420,16 @@ it.each(["missing", "observation"] as const)(
       captured.value,
       provider.identity(),
     );
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/selection/u);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/selection/u),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/selection/u);
   },
 );
@@ -2017,6 +2026,55 @@ it.each([undefined, { length: 1 }, []])(
   },
 );
 
+it.each([
+  { type: undefined },
+  { type: 7 },
+  { type: "" },
+  { targetId: "" },
+  { url: undefined },
+  { attached: null },
+  { openerId: null },
+  { openerId: "" },
+  { parentFrameId: null },
+  { parentFrameId: "" },
+])(
+  "admits worker facts before applying origin or ownership policy: %j",
+  async (override) => {
+    const { provider, input } = await fixture({
+      commandEvents: () => [],
+      commandResult: (command) =>
+        command.method === "Target.getTargets"
+          ? {
+              targetInfos: [
+                { type: "page" },
+                {
+                  targetId: "worker",
+                  type: "worker",
+                  url: "https://outside.example/worker.js",
+                  attached: false,
+                  openerId: "foreign-page",
+                  ...override,
+                },
+              ],
+            }
+          : undefined,
+    });
+    const captured = await provider.inspectPage(input);
+    if (!captured.ok) throw captured.error;
+    expect(captured.value.workers).toEqual([]);
+    expect(captured.value.completeness.unavailable_sections).toContain(
+      "workers",
+    );
+    expect(
+      captured.value.completeness.excluded.filter(
+        ({ section }) => section === "workers",
+      ),
+    ).toEqual([
+      { section: "workers", reason: "invalid_protocol_value", count: 1 },
+    ]);
+  },
+);
+
 it("retains valid worker records beside malformed inventory entries", async () => {
   const { provider, input } = await fixture({
     commandEvents: () => [],
@@ -2172,7 +2230,16 @@ it("reports a contradictory page origin at the captured target", async () => {
   expect(checked.error.issues).toContainEqual(
     expect.objectContaining({ path: ["normalized_result", "target"] }),
   );
-  expect(() => parseRuntimeCaptures([evidence])).toThrow(/origin scope/u);
+  expect(() => parseRuntimeCaptures([evidence])).toThrow(
+    expect.objectContaining({
+      _tag: "AnalysisInputError",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringMatching(/origin scope/u),
+        }),
+      ]),
+    }),
+  );
   expect(() => selectScriptCapture(evidence)).toThrow(/origin scope/u);
 });
 
@@ -2200,7 +2267,16 @@ it.each(["target", "script", "origin"] as const)(
     );
     // A canonical digest authenticates these bytes, not their selection consistency.
     expect(() => parseEvidence(evidence)).not.toThrow();
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/origin scope/u);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/origin scope/u),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/origin scope/u);
   },
 );
@@ -2235,7 +2311,16 @@ it.each([
       provider.identity(),
     );
     expect(() => parseEvidence(evidence)).not.toThrow();
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/ownership/u);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/ownership/u),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/ownership/u);
   },
 );
@@ -2329,14 +2414,14 @@ it.each([
       result.static_load_states.some(
         (state) => state.status === "not-observed-in-capture",
       ),
-    ).toBe(failed === "none");
-    if (failed !== "none")
-      expect(result.static_load_states).toContainEqual(
-        expect.objectContaining({
-          status: "unknown",
-          reason: "static-or-runtime-coverage-incomplete",
-        }),
-      );
+    ).toBe(false);
+    // Discovery success does not establish pre-attachment worker code coverage.
+    expect(result.static_load_states).toContainEqual(
+      expect.objectContaining({
+        status: "unknown",
+        reason: "static-or-runtime-coverage-incomplete",
+      }),
+    );
   },
 );
 
@@ -2478,7 +2563,16 @@ it.each(["target", "script"] as const)(
       captured.value,
       provider.identity(),
     );
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/sanitized/u);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/sanitized/u),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/sanitized/u);
   },
 );
@@ -2667,7 +2761,16 @@ it.each(["own", "shared"])(
       provider.identity(),
     );
     expect(() => parseEvidence(evidence)).not.toThrow();
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/source/u);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/source/u),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/source/u);
     expect(() => selectScriptCapture(captured.value)).not.toThrow();
   },
@@ -2948,7 +3051,14 @@ it.each(["worker", "shared_worker"] as const)(
         provider.identity(),
       );
       expect(() => parseRuntimeCaptures([evidence])).toThrow(
-        /service_worker target/,
+        expect.objectContaining({
+          _tag: "AnalysisInputError",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringMatching(/service_worker target/),
+            }),
+          ]),
+        }),
       );
       expect(() => selectScriptCapture(evidence)).toThrow(
         /service_worker target/,
@@ -2975,7 +3085,16 @@ it.each(["shared_worker", "service_worker"] as const)(
       capture.value,
       provider.identity(),
     );
-    expect(() => parseRuntimeCaptures([evidence])).toThrow(/dedicated worker/);
+    expect(() => parseRuntimeCaptures([evidence])).toThrow(
+      expect.objectContaining({
+        _tag: "AnalysisInputError",
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            message: expect.stringMatching(/dedicated worker/),
+          }),
+        ]),
+      }),
+    );
     expect(() => selectScriptCapture(evidence)).toThrow(/dedicated worker/);
   },
 );

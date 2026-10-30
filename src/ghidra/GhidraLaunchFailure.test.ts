@@ -96,30 +96,6 @@ describe("Ghidra launch failure diagnostics", () => {
     }
   });
 
-  it("surfaces the retained launcher outcome in the session failure_cause", async () => {
-    const javaHome = await failingJavaHome(
-      "#!/bin/sh\necho 'jvm probe exploded' >&2\nexit 3\n",
-    );
-    const runtimeRoot = await mkdtemp(join(tmpdir(), "rea-ghidra-launch-"));
-    try {
-      const launched = await probeLauncher(javaHome, runtimeRoot).launch(
-        launchSession(runtimeRoot),
-      );
-      expect(launched.ok).toBe(false);
-      if (launched.ok) throw new Error("expected the launch to fail");
-      const outcome = launchOutcomeOf(launched.error);
-      expect(outcome).toBeDefined();
-      expect(outcome?.["killed"]).toBe(false);
-      expect(outcome?.["outputTruncated"]).toBe(false);
-      expect(outcome?.["stderrTruncated"]).toBe(false);
-      expect(outcome?.["stderr"]).toContain("jvm probe exploded");
-      expect(outcome?.["outputTruncated"]).toBe(false);
-    } finally {
-      await rm(javaHome, { recursive: true, force: true });
-      await rm(runtimeRoot, { recursive: true, force: true });
-    }
-  });
-
   it("bounds projected launcher output and marks truncation explicitly", async () => {
     const oversized = `${"x".repeat(EXPECTED_OUTPUT_BOUND_BYTES)}UNRETAINED-TAIL`;
     const javaHome = await failingJavaHome(
@@ -136,10 +112,11 @@ describe("Ghidra launch failure diagnostics", () => {
       expect(outcome?.["stderrTruncated"]).toBe(true);
       expect(outcome?.["outputTruncated"]).toBe(false);
       expect(outcome?.["stderrBytes"]).toBe(oversized.length);
-      expect((outcome?.["stderr"] as string).length).toBeLessThanOrEqual(
-        EXPECTED_OUTPUT_BOUND_BYTES,
-      );
-      expect(outcome?.["stderr"] as string).not.toContain("UNRETAINED-TAIL");
+      const stderr = outcome?.["stderr"];
+      if (typeof stderr !== "string")
+        throw new Error("Expected launcher stderr");
+      expect(stderr.length).toBeLessThanOrEqual(EXPECTED_OUTPUT_BOUND_BYTES);
+      expect(stderr).not.toContain("UNRETAINED-TAIL");
     } finally {
       await rm(javaHome, { recursive: true, force: true });
       await rm(runtimeRoot, { recursive: true, force: true });

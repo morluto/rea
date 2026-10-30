@@ -1,3 +1,4 @@
+import type { ElectronIpcContext } from "./ElectronBoundaryAnalysis.js";
 import type { JavaScriptArtifactGraphContext } from "./JavaScriptArtifactGraphContext.js";
 import { addElectronIpcBoundaries } from "./ElectronBoundaryGraphIpc.js";
 import { addElectronNativeBoundaries } from "./ElectronBoundaryGraphNative.js";
@@ -7,9 +8,10 @@ import { addElectronCallPaths } from "./ElectronBoundaryGraphCallPaths.js";
 /** Add every static Electron process and security-boundary fact to the JAG. */
 export const addElectronBoundaries = (
   context: JavaScriptArtifactGraphContext,
+  ipc: ElectronIpcContext,
 ): void => {
   addElectronWindowBoundaries(context);
-  addElectronIpcBoundaries(context);
+  addElectronIpcBoundaries(context, ipc);
   addElectronNativeBoundaries(context);
-  addElectronCallPaths(context);
+  addElectronCallPaths(context, ipc);
 };

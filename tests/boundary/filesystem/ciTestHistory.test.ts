@@ -17,7 +17,7 @@ const now = Date.now();
 function artifact(id: number, overrides: Record<string, unknown> = {}) {
   return {
     id: id + 100,
-    name: "test-timings",
+    name: "test-timings-full",
     expired: false,
     created_at: new Date(now - 60_000).toISOString(),
     workflow_run: {
@@ -51,6 +51,7 @@ async function invoke(
     apiError?: boolean;
     repository?: string;
     repositoryId?: string;
+    tier?: string;
   } = {},
 ) {
   const directory = await createTestTempDirectory("rea-ci-test-history-");
@@ -92,6 +93,7 @@ async function invoke(
       CI_REPOSITORY: options.repository ?? repository,
       CI_REPOSITORY_ID: options.repositoryId ?? String(repositoryId),
       CI_DEFAULT_BRANCH: "main",
+      CI_TIMING_TIER: options.tier ?? "",
       GITHUB_OUTPUT: output,
     },
   });
@@ -120,17 +122,21 @@ it("selects the latest trusted full run that actually published timing history",
       14: run(14, { path: ".github/workflows/release.yml" }),
       11: run(11, { event: "workflow_dispatch" }),
     },
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "11" });
-  expect(output).toBe("run-id=11\n");
-  expect(calls).toContain("name=test-timings");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "11",
+    artifact_name: "test-timings-full",
+  });
+  expect(output).toBe("run-id=11\nartifact-name=test-timings-full\n");
+  expect(calls).toContain("name=test-timings-full");
   expect(calls).toContain("per_page=100");
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(3);
   expect(calls).not.toContain("actions/workflows");
 });
 
-it("rejects expired, foreign, old, and non-full run candidates", async () => {
+it("rejects expired, foreign, old, and pull-request candidates", async () => {
   const { result, output } = await invoke(
     [
       artifact(15, { expired: true }),
@@ -145,16 +151,30 @@ it("rejects expired, foreign, old, and non-full run candidates", async () => {
     {
       12: run(12, { event: "pull_request" }),
     },
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("writes an empty run id when GitHub history is unavailable", async () => {
-  const { result, output } = await invoke([], {}, { apiError: true });
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  const { result, output } = await invoke(
+    [],
+    {},
+    {
+      apiError: true,
+      tier: "full",
+    },
+  );
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
 });
 
 it("bounds run lookups to five artifacts even when inventory has more", async () => {
@@ -167,9 +187,13 @@ it("bounds run lookups to five artifacts even when inventory has more", async ()
         run(id, index < 5 ? { conclusion: "failure" } : {}),
       ]),
     ),
+    { tier: "full" },
   );
 
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
   expect(calls.match(/actions\/runs\//gu)).toHaveLength(5);
 });
 
@@ -182,7 +206,119 @@ it("returns empty history without querying for an invalid repository identity", 
       repositoryId: "not-an-id",
     },
   );
-  expect(JSON.parse(result.stdout)).toEqual({ run_id: "" });
-  expect(output).toBe("run-id=\n");
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
   expect(calls).toBe("");
+});
+
+it("selects fast history without reading the full-tier artifact", async () => {
+  const { result, calls } = await invoke(
+    [
+      artifact(32, {
+        created_at: new Date(now - 30_000).toISOString(),
+      }),
+      artifact(31, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 90_000).toISOString(),
+      }),
+      artifact(30, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 20_000).toISOString(),
+        workflow_run: {
+          ...artifact(30).workflow_run,
+          head_branch: "feature",
+        },
+      }),
+    ],
+    {
+      32: run(32, { event: "schedule" }),
+      31: run(31, { event: "push" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "31",
+    artifact_name: "test-timings-fast",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("ignores pull-request fast history instead of borrowing another artifact", async () => {
+  const { result, calls } = await invoke(
+    [artifact(41, { name: "test-timings-fast" }), artifact(40)],
+    {
+      41: run(41, { event: "pull_request" }),
+      40: run(40, { event: "workflow_dispatch" }),
+    },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls.match(/actions\/runs\//gu)).toHaveLength(1);
+});
+
+it("leaves fast history empty when only full-tier history was published", async () => {
+  const { result, output, calls } = await invoke(
+    [artifact(70)],
+    { 70: run(70, { event: "schedule" }) },
+    { tier: "fast" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toContain("name=test-timings-fast");
+  expect(calls).not.toContain("name=test-timings-full");
+  expect(calls).not.toMatch(/actions\/runs\//u);
+});
+
+it("does not query when the tier has no timing artifact", async () => {
+  const { result, output, calls } = await invoke([artifact(71)], {
+    71: run(71, { event: "schedule" }),
+  });
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "",
+    artifact_name: "",
+  });
+  expect(output).toBe("run-id=\nartifact-name=\n");
+  expect(calls).toBe("");
+});
+
+it("selects full-tier history without using a newer fast artifact", async () => {
+  const { result } = await invoke(
+    [
+      artifact(61, {
+        name: "test-timings-fast",
+        created_at: new Date(now - 10_000).toISOString(),
+      }),
+      artifact(60, {
+        name: "test-timings-full",
+        created_at: new Date(now - 80_000).toISOString(),
+      }),
+    ],
+    {
+      61: run(61, { event: "push" }),
+      60: run(60, { event: "schedule" }),
+    },
+    { tier: "full" },
+  );
+
+  expect(JSON.parse(result.stdout)).toEqual({
+    run_id: "60",
+    artifact_name: "test-timings-full",
+  });
 });

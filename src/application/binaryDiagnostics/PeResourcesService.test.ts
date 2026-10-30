@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { PeResourcesService } from "./PeResourcesService.js";
-import { PE_RESOURCES_PROVIDER } from "../InvestigationProviders.js";
+import { PE_RESOURCES_PROVIDER } from "../../domain/investigationProviders.js";
 import { inspectPeResourcesInputSchema } from "../../domain/native/peResources.js";
 import { parsePeResources } from "../../native/pe/PeResourceParser.js";
 import { peResourceFixture } from "../../native/pe/PeResources.fixture.js";
@@ -30,6 +30,9 @@ it.each([
   "outside-range",
   "wrong-coverage",
   "bad-icon-reference",
+  "mismatched-directory-path",
+  "outside-directory-entry",
+  "outside-directory-name",
 ])(
   "rejects invalid provider output before creating Evidence: %s",
   async (problem) => {
@@ -40,6 +43,25 @@ it.each([
     if (problem === "wrong-coverage") report.coverage.resources = 99;
     if (problem === "bad-icon-reference")
       report.icon_groups[0]!.images[0]!.candidate_resource_indices = [999];
+    if (problem === "mismatched-directory-path")
+      report.directories[1]!.path = [];
+    if (problem === "outside-directory-entry")
+      report.directories[1]!.entry_locations[0] = {
+        offset: report.artifact.bytes,
+        bytes: 8,
+      };
+    if (problem === "outside-directory-name") {
+      const directory = report.directories.find(
+        (item) => item.path[1]?.kind === "name",
+      );
+      const identity = directory?.path[1];
+      if (directory === undefined || identity?.kind !== "name")
+        throw new Error("Missing named directory fixture");
+      directory.path[1] = {
+        ...identity,
+        location: { offset: report.artifact.bytes, bytes: 2 },
+      };
+    }
     const service = new PeResourcesService({
       identity: PE_RESOURCES_PROVIDER,
       inspect: () => Promise.resolve(ok(report)),

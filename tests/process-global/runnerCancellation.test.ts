@@ -318,6 +318,33 @@ it("preserves executable arguments through the public runner", async () => {
   });
 });
 
+it("preserves command stderr, warnings and exit status independently of supervisor notices", async () => {
+  const directory = await createTestTempDirectory("rea-runner-diagnostics-");
+  const stderr = 'authored command stderr: "quotes" & 雪\n';
+  const result = await execute(directory, process.execPath, [
+    "-e",
+    `
+process.stdout.write(JSON.stringify({
+  disabledWarnings: process.execArgv.filter((argument) => argument.startsWith("--disable-warning")),
+}));
+process.stderr.write(${JSON.stringify(stderr)});
+process.emitWarning("authored command experiment", { type: "ExperimentalWarning" });
+process.emitWarning("authored command deprecation", { type: "DeprecationWarning" });
+process.exitCode = 7;
+`,
+  ]);
+  expect(result.code).toBe(7);
+  expect(JSON.parse(result.stdout)).toEqual({ disabledWarnings: [] });
+  expect(result.stderr).toContain(stderr);
+  expect(result.stderr).toContain(
+    "ExperimentalWarning: authored command experiment",
+  );
+  expect(result.stderr).toContain(
+    "DeprecationWarning: authored command deprecation",
+  );
+  expect(result.stderr).not.toContain("stripTypeScriptTypes");
+});
+
 it.runIf(process.platform === "win32")(
   "launches an executable from a path containing spaces",
   async () => {

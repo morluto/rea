@@ -12,6 +12,11 @@ sandbox. Filesystem observation paths select what REA snapshots; they do not
 restrict what the process can read or write. The inherited environment is not
 recorded, so its influence may remain unknown.
 
+The installed PTY backend cannot preserve an explicit environment name
+`__proto__`. REA rejects that override before launch; use `/usr/bin/env` with
+`__proto__=VALUE` as an argument when that literal variable is required. The
+reserved `REA_PROCESS_RUN_ID` name also remains unavailable to scenario overrides.
+
 ## Host support
 
 Capturing a new scenario currently requires Linux or macOS and a working
@@ -37,6 +42,10 @@ process starts; the same prerequisite applies to owned provider-process
 supervision on macOS. REA removes that directory when it exits. REA does not
 install Xcode, Command Line Tools, or other software. Capability checks prepare
 this helper before reporting macOS capture as available.
+
+Stopping process sampling or cancelling an ownership query waits for its issued
+inspection command to exit. Closing a macOS ownership reader rejects new queries
+and waits for admitted helper commands before removing their executable directory.
 
 ## Capture a command
 
@@ -215,11 +224,42 @@ child output. Child output remains in the capture Evidence on stdout.
 resource limits, and normalization settings have defaults; see
 `processScenarioSchema` for the exact contract. Event times are milliseconds
 from launch, must be ordered, and must fall within `timeout_ms`. Inputs marked
-`sensitive` are sent to the process but persisted as a byte-count placeholder.
+`sensitive` are sent to the process but persisted with empty `data`,
+`sensitive: true`, and `input_bytes`. Exact nonempty CR/LF-separated input
+literals are removed from retained terminal text, including cross-chunk and
+VT-styled echoes. Rendering uses that redacted stream, so intermediate terminal
+states and serialized state cannot restore removed bytes. Normalized text is
+checked again. Encoded, transformed, or arbitrarily edited values are not a
+secret-detection contract; their privacy remains unknown. Unmarked inputs and
+caller-selected environment values remain evidence.
+
+The capture-local matcher admits at most 65,536 prefix states and 8,388,608
+construction work units. Projection uses at most 32 MiB of reusable position
+indexes and 67,108,864 work units across one capture. Capacity failures return a
+non-retryable resource error and withhold terminal text in partial observations.
+If output admission leaves gaps, the sensitive capture withholds retained
+terminal text rather than interpreting separated fragments as a complete stream.
+`raw_terminal.redacted_bytes` reports bytes removed from admitted original
+chunks; these bytes still consume `output_bytes` alongside retained safe bytes.
+Private display effects remain unknown, with frame order and provenance retained.
+
+This changes the sensitive-input Evidence representation: consumers of the old
+`<redacted-input:N-bytes>` placeholder must read `input_bytes` instead. Existing
+saved captures remain readable and are not rewritten; old files may still
+contain previously echoed input. A private-input comparison policy version
+separates old and new captures; reacquire both sides for comparable observations.
 Environment overrides are recorded in the scenario commitment; inherited
 values are not copied into Evidence.
 
-Terminal dimensions must satisfy `columns × (rows + scrollback) ≤ 1,000,000`.
+A bare executable name uses the scenario's `PATH` override, then the inherited
+`PATH`. When neither supplies `PATH`, lookup uses `/usr/bin:/bin`, matching
+[Node's Unix default](https://nodejs.org/api/child_process.html#child-process).
+An explicitly empty `PATH` searches only the working directory. Executable,
+working-directory, and observation paths preserve native `symlink/..` traversal.
+
+Terminal width must be at least two columns: the pinned xterm renderer cannot
+represent a one-column screen. This applies to the initial size and every resize.
+Terminal dimensions must also satisfy `columns × (rows + scrollback) ≤ 1,000,000`.
 Every scheduled resize uses the same selected scrollback and must fit this
 working-buffer budget. REA rejects oversized scenarios before launching the
 command; it never clamps the requested dimensions. This limit is independent
@@ -237,17 +277,90 @@ A missing entry proves creation or deletion only when the corresponding
 observation root's path enumeration was exhausted. Otherwise its effect has
 `status: "unknown"`, the available before/after state, and a reason; a null
 state in this variant means unobserved. Paths below symlinks that REA did not
-follow also remain unknown. Partial enumeration of one root does not erase
+follow also remain unknown. Each observed symlink records a
+`symlink_not_followed` enumeration omission with a null system code, including
+a stable selected root. The link's own metadata can remain unchanged while
+descendant coverage and filesystem comparison remain unknown. Physical
+parent-directory enumeration still proves unrelated sibling absence.
+Partial enumeration of one root does not erase
 known effects in another, and unavailable content hashes do not by themselves
 make path absence unknown.
 
+Filesystem coverage records `unobserved_subtrees` separately from metadata
+enumeration. `symlink_not_followed` identifies a link whose own metadata was
+observed while its descendants were outside the snapshot. `observer_owned`
+identifies the exact directory allocated for this capture's bookkeeping; it
+is created before the baseline and excluded from both snapshots and file-entry
+capacity. Target activity inside that excluded directory remains unobserved.
+Matching filenames elsewhere are included normally. Historical captures that
+omit subtree facts do not establish descendant absence under that scope.
+
+When a follow-up read fails after an entry's metadata was observed, the
+snapshot keeps unaffected observations and records an `entry_unavailable`
+enumeration omission with the root-aliased path and system error code.
+Successfully observed identity replacements use `identity_changed` with a null
+system code. Unstable symlink targets are omitted; already observed directory
+metadata remains available. The affected root stays incomplete, so omitted
+entries do not prove deletion. A path missing at its initial lookup remains an
+observed absence.
+
+Before launch, a selected root below a non-directory, or one whose lookup is
+denied or otherwise unavailable, fails capture. After admission, a root or descendant lookup that
+reports a missing path or a non-directory ancestor is an observed absence. A
+denied or otherwise unavailable lookup records an `entry_unavailable` omission
+for that path instead, and its root stays incomplete. Cancellation and
+unexpected I/O failures still stop capture.
+
+An initial selected-root permission denial returns `access_denied` with the
+selected path, native `EACCES` or `EPERM`, and filesystem-read recovery. Capture
+does not launch the target. Earlier snapshot facts and the denied root's
+omission remain in the partial observation; unresolved read cleanup retains its
+own classification until its exact resources are released.
+
 Terminal frame `data` is the comparison text after the selected normalization.
 New captures also preserve `raw_data` when normalization changes a PTY chunk;
-otherwise `data` is already the original text. Older captures may lack the
+otherwise `data` is already that text. For sensitive captures, both fields
+contain only the safe projection; no unredacted backup is retained. Older captures may lack the
 original text for changed chunks. Both values participate in Evidence identity,
 while comparisons and trace assertions use the normalized text. Retaining the
 original adds at most `limits.output_bytes` of text, because it comes from the
 same admitted PTY chunks rather than a second unbounded stream.
+
+When PID normalization is enabled, the root and identifiers in retained process
+samples use the same identity set in terminal text and sampled commands. Raw
+PTY chunks emitted before a child was sampled are projected again from their
+retained source after sampling stops; custom patterns still run after PID
+replacement. Earlier declared normalization omissions remain explicit; omitted
+chunks are not reconstructed. Numbers not in that observed set remain literal.
+Captures commit
+`pid_normalization_version: "sampled-identifiers-v2"`, so older root-only terminal
+normalization is not silently compared as equivalent.
+
+Headless rendering runs once at terminal finalization from the already retained,
+byte-bounded PTY chunks, preserving their elapsed times and resize order. Parsing
+latency therefore occurs during finalization; rendered journal entries record
+that derived observation. A corrected raw-text projection that exceeds
+`limits.output_bytes` returns a typed capacity failure with collected facts in
+partial observations. No additional raw-screen copy or replay is retained.
+
+Before failure cleanup renders retained observations, REA cancels scheduled
+interactions, waits for sampling to stop, and stops the owned process group.
+The terminal finalizer then freezes PTY input, retains normalized and rendered
+facts, and releases the renderer. Cleanup retry reuses those completed facts.
+All new captures commit
+`terminal_observation_version: "deferred-rendered-journal-v1"`, including when
+PID and port normalization are disabled. Historical Evidence remains readable;
+recapture both sides with the same observation version before comparison.
+
+When path normalization is enabled, aliases apply to selected path identities
+at clear text delimiters. A selected executable path does not alias a longer
+sibling filename such as `tool-helper`; selected parent directories still
+normalize within descendant paths, including when the working directory or an
+observation path is spelled with a trailing `/` or `/.`. A selected filesystem
+root `/` also aliases descendant paths, without rewriting URL separators or
+HTML closing tags. The comparison contract
+records these rules as `path-component-boundaries-v3`, so captures made with the
+earlier rules cannot be compared as if the text had the same meaning.
 
 Rendered frame `lines` hold the visible rows after normalization, with trailing
 U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records
@@ -314,6 +427,10 @@ to a bare PID kill for either finalization signal; failed identity or ownership
 validation is recorded as `unverified` with its reason. Cancellation before any
 deadline keeps the existing terminal kill. Descendants are not signalled during
 finalization; owned-process cleanup handles them afterwards.
+
+For an `exited` capture, `exit.code` is the target's normal exit code. It is
+`null` when the target ended on a signal, such as one sent by a scenario
+`signal` event, and the observed signal stays in `exit.signal`.
 
 `exit.reason` keeps the initiating deadline (`timeout` or `idle_timeout`).
 `exit.code` is `null` for every deadline exit; the code of an exit observed
@@ -397,10 +514,12 @@ Every capture requires `truncation_details`, with separate accounting for:
   bytes, plus observed/retained frame counts. This is independent of the raw
   chunk budget and does not count JSON encoding. Repeated screen snapshots can
   exhaust it even when all raw output fits. Rendered states use retained PTY
-  input, so raw omissions also limit rendered coverage. When bounded
-  normalization omits a rendered frame before its final size is known,
-  `unknown_size_frames` reports that count; `observed_bytes` includes only
-  rendered frame sizes that were determined exactly.
+  input, so raw omissions also limit rendered coverage. `unknown_size_frames`
+  counts frames whose complete size was not calculated; it does not by itself
+  identify normalization as the cause. `normalization_over_budget_frames`
+  counts the subset of unknown-size frames stopped by an ordered normalization
+  stage; it cannot exceed `unknown_size_frames`.
+  `observed_bytes` includes only rendered frame sizes determined exactly.
 - `filesystem_before` and `filesystem_after`: file-count/depth limits,
   enumeration failures, whole-file hash budget and bytes successfully hashed.
   Directory names are read incrementally within the remaining entry capacity.
@@ -410,6 +529,11 @@ Every capture requires `truncation_details`, with separate accounting for:
   An unreadable directory is recorded in `enumeration_omissions` with its
   root-aliased path and operating-system error code. Entries observed before
   that directory remain available, while descendants beneath it stay unknown.
+  A basename that is not valid UTF-8 is never looked up through replacement
+  characters. It consumes entry capacity and records an `unrepresentable_name`
+  omission at its containing directory, with exact basename bytes in
+  `raw_name_hex` and a null `system_code`. That root's enumeration remains
+  incomplete, so missing paths beneath it remain unknown.
   Each retained regular file without a digest has an aliased path, size,
   remaining budget and reason: `file_bytes_budget`,
   `file_changed_or_short_read`, or `file_unavailable`. Its `system_code` is
@@ -419,6 +543,19 @@ Every capture requires `truncation_details`, with separate accounting for:
   imply incomplete path enumeration.
 - `process`: sampling limit and whether sampling ended partially. Coverage
   remains `sampled`, including when that limit was not exhausted.
+  `sampling_failures` counts failed read observations plus at most one
+  unfinished pass interrupted by sampler shutdown. `first_sampling_failure`
+  retains the first attributed read diagnostic, with shutdown context appended
+  when applicable; interruption alone has an explicit shutdown diagnostic.
+  Denied or failed procfs reads mark
+  sampling partial while preserving readable process rows and thread children;
+  a process with unreadable identity is not attributed. Expected process-exit
+  races are separate from failed observations. A native token reader's confirmed
+  process absence during initialization is an expected exit; token-read denial
+  and unavailable snapshots still count as failed observations. Shutdown counts only when it
+  interrupts a read or leaves traversal unfinished; a completed pass does not
+  become partial merely because the sampler stops. Completed rows
+  remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
 results for unaffected dimensions and mark affected dimensions unknown; an
@@ -427,7 +564,11 @@ Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its
 diagnostic; unrelated dimensions retain their own comparison, including unknown
-coverage. Captures missing `truncation_details` are rejected on import;
+coverage. A finite-variant omission stays nonconforming to that variant, but does
+not mark a shared successor changed merely because its journal position shifted.
+Observed ordering violations remain changes. When a requested trace differs or
+its journal is unavailable and per-source values cannot locate the difference,
+`first_divergence` is unknown rather than evidence that no divergence occurred. Captures missing `truncation_details` are rejected on import;
 preserve them as historical files and recapture for current comparisons.
 `limits.file_bytes` is already the cumulative whole-file hashing budget,
 independent of `limits.output_bytes`, which bounds retained terminal content.
@@ -435,11 +576,61 @@ Each filesystem checkpoint starts with a fresh `file_bytes` budget across all
 selected roots; it is not a per-file allowance. File contents are read in
 64 KiB chunks for hashing and are not embedded in capture Evidence.
 
-When the host withholds an unrelated process’s ownership token, REA leaves that
+Ownership inspections bind run-token reads to native start identities and retain
+related generations through reparenting, group changes, omitted rows, and cleanup
+retries. A host without native identity reads still token-checks process-table
+rows that appear only in a launcher-exit refresh before reporting that group
+clean or publishing an empty lineage. A matching token authorizes a signal only
+for a group whose leader carries the same token. A matching token whose leader
+is absent, or an unreadable token for a still-live new row, stays unresolved. A
+readable foreign token is not signaled. An unreadable row that has exited by
+the confirmation read does not hide a new row in that confirmation table, and a
+group proven while revalidating another owned group is signaled in the same
+cleanup. A matched row that changes parent or group on the confirmation read
+is token-checked again. A PID whose token was already read is read again
+on the next confirmation even when its parent and group return to the
+pre-exit values. A PID whose first token was foreign is read again
+on that table, because the PID alone does not identify the process. A PID
+from the pre-exit table is read again when its parent or group changes, and
+an unchanged pre-existing row that was never token-read stays unread. Lineage
+publishes one row for each PID. Confirmation reads are bounded; a table that keeps producing unreadable
+replacements stays unresolved. That refresh does not retain a ledger
+for a later attempt that never observes the launcher. Lineage reads a row again
+when its parent, group, or launcher-tree membership changes, and it reads a
+token again on the next refresh even when those fields are unchanged. The
+launcher is read on every lineage refresh; a missing, unowned, or
+relation-changed launcher PID is not published as a verified lineage. A
+descendant absent from the latest refresh is omitted. An
+ancestor move cannot leave a foreign descendant inside a verified result. A
+group that reappears after cleanup already processed it is revalidated once;
+another appearance stays unresolved. The captured run keeps
+one evidence owner through settlement and cleanup.
+An absent or changed token leaves a previously related generation unresolved;
+current token proof is still required before signaling. Swept cleanup verifies the
+remaining family after its group signals. Coverage is bounded by the native
+snapshots and generations inspected; sampled group IDs select candidates.
+
+When the host withholds an unrelated process's ownership token, REA leaves that
 process untouched and records its PID and reason in `cleanup.unverified_processes`
 and process residual unknowns. Successful cleanup verifies the owned group;
 it does not attribute those unrelated processes. Related or otherwise unexplained
 unreadable processes still prevent successful cleanup.
+
+Failed cleanup retains its exact resources for the owning session to retry.
+The CLI retries before projecting its error; MCP retries pending cleanup before
+admitting another capture and during session cleanup. Once every attributed
+owner confirms release, the live error status clears `cleanup_incomplete`.
+The original failure, observations and `cleanup_report` retain the facts from
+the earlier attempt, including any cleanup failure recorded then.
+
+Snapshot file handles, directory handles, and the selected executable reader
+follow the same ownership rule. A failed close preserves completed observations
+and any primary read failure; it cannot turn a completed digest into a successful
+capture with unresolved cleanup. Interrupted snapshots retain examined entries
+with incomplete coverage in `partial_observation`, alongside the failure.
+File-handle retry uses the exact retained owner. After a directory close rejects,
+Node does not expose enough handle validity to authorize another native close;
+REA retains that unresolved owner and blocks further captures in the session.
 
 On macOS, changing a Node process's `process.title` can make its run token
 unreadable. Node documents that [setting the title overwrites argv memory](https://nodejs.org/download/release/v24.18.0/docs/api/process.html#processtitle).
@@ -471,6 +662,15 @@ missing or relative SDK/compiler path fails with an actionable prerequisite
 error before compilation. An incompatible installation reports the compiler's
 bounded diagnostics; REA does not repair or replace the toolchain.
 
+The compile deadline is `REA_SWIFTC_COMPILE_TIMEOUT_MS`. An omitted value is
+120,000 ms, and accepted values are integers from 1 to 2,147,483,647. REA reads
+the variable from the environment that starts the process and keeps that
+deadline for every helper compile in that process. Restart REA to apply a
+change; the next ownership-helper compile uses the new value. A timeout names
+the effective milliseconds. Invalid values fail configuration validation at
+startup. Embedded compiler diagnostics are cut at 512 bytes, and this release
+has no runtime override for that excerpt.
+
 For example, select paths from your existing Xcode or Command Line Tools
 installation **before** entering an enforced write boundary:
 
@@ -497,3 +697,11 @@ REA then preserves ownership uncertainty and can report `cleanup_incomplete`;
 it does not disable verification to continue. A sandbox that explicitly allows
 this read-only process inspector is a separate prerequisite from the compiler
 and cache settings.
+
+Symlink observations preserve their stored target bytes in `symlink_target_hex`
+(lowercase hexadecimal). `symlink_target` retains valid UTF-8 text and is `null`
+when the target bytes cannot be decoded as UTF-8. Filesystem effects compare
+these exact bytes without resolving the link. Older captures without the hex
+field still parse; a legacy target containing U+FFFD has ambiguous byte identity,
+so matching target text alone produces an `unknown` effect. Symlink descendants
+remain outside filesystem observation regardless of target encoding.

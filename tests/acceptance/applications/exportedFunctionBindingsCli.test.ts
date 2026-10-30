@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -7,19 +8,17 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { javaScriptExportShapeComparisonResultSchema } from "../../../src/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliCompileCacheEnvironment } from "../../support/cli/cliFixture.js";
 import {
-  createTestWorkspace,
-  removeTestWorkspace,
-  type TestWorkspace,
-} from "../../support/workspace/workspaceFixture.js";
+  createCliCommandSession,
+  type CliCommandSession,
+} from "../../support/cli/cliCommandSession.js";
 
 const execute = promisify(execFile);
 const requireFixture = createRequire(import.meta.url);
@@ -29,14 +28,10 @@ const comparisonEnvelope = z.object({
 const applicationEnvelope = z.object({
   normalized_result: javascriptApplicationAnalysisResultSchema,
 });
-let cliCacheWorkspace: TestWorkspace | undefined;
+let cliSession: CliCommandSession | undefined;
 
-beforeAll(async () => {
-  cliCacheWorkspace = await createTestWorkspace("rea-export-bindings-cache-");
-});
-
-// Source semantics use the real stdio workflow throughout the matrix. The
-// missing-export and count-change cases also check compiled CLI adapter parity.
+// Source semantics use one real stdio MCP session. CLI parity uses the shared
+// file-scoped session, including its worker rotation and cleanup policy.
 let mcpConnection:
   | {
       readonly client: Client;
@@ -61,8 +56,7 @@ afterAll(async () => {
       await mcpConnection?.transport.close();
     },
     async () => {
-      if (cliCacheWorkspace !== undefined)
-        await removeTestWorkspace(cliCacheWorkspace.root);
+      await cliSession?.close();
     },
   ]);
 });
@@ -1213,20 +1207,22 @@ const expectCountChange = (
 };
 
 const runCli = async (args: readonly string[]): Promise<unknown> => {
-  if (cliCacheWorkspace === undefined)
-    throw new Error("CLI compile-cache workspace was not initialized");
-  const { stdout } = await execute(
-    process.execPath,
-    [resolve("scripts/rea.mjs"), ...args],
-    {
-      maxBuffer: 16 * 1024 * 1024,
-      env: cliCompileCacheEnvironment(
-        { ...process.env, REA_LOG_LEVEL: "silent" },
-        cliCacheWorkspace.path("node-compile"),
-      ),
-    },
+  cliSession ??= createCliCommandSession({
+    startTimeoutMs: 20_000,
+    requestTimeoutMs: 20_000,
+  });
+  const environment = Object.fromEntries(
+    Object.entries({ ...process.env, REA_LOG_LEVEL: "silent" }).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
   );
-  return JSON.parse(stdout);
+  const result = await cliSession.run({
+    arguments: args,
+    cwd: process.cwd(),
+    environment,
+  });
+  expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+  return result.json;
 };
 
 const analyzeVersions = async (
@@ -1315,7 +1311,11 @@ const getMcpClient = async (): Promise<Client> => {
       command: process.execPath,
       args: [resolve("scripts/rea.mjs"), "mcp"],
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH ?? "", REA_LOG_LEVEL: "silent" },
+      env: {
+        PATH: process.env.PATH ?? "",
+        REA_LOG_LEVEL: "silent",
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+      },
       stderr: "pipe",
     });
     transport.stderr?.on("data", () => undefined);

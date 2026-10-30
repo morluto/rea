@@ -2,144 +2,22 @@ import { names } from "./catalog-core.mjs";
 
 /** Build tool-family counts and sorted tool-name lists. */
 export const toolFamilyCatalog = (sources) => {
-  const families = [
-    {
-      id: "direct",
-      surface: "official-proxy",
-      contracts: sources.officialContracts.OFFICIAL_TOOL_CONTRACTS,
-    },
-    {
-      id: "enhanced",
-      surface: "enhanced",
-      contracts: sources.enhancedContracts.ENHANCED_TOOL_CONTRACTS,
-    },
-    {
-      id: "native",
-      surface: "native-provider",
-      contracts: [
-        ...sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
-        ...sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
-        ...sources.cutterContracts.CUTTER_TOOL_CONTRACTS,
-        ...sources.reverseEngineeringContracts
-          .REVERSE_ENGINEERING_TOOL_CONTRACTS,
-        ...sources.gdbContracts.GDB_TOOL_CONTRACTS,
-        ...sources.rizinDebugContracts.RIZIN_DEBUG_TOOL_CONTRACTS,
-      ],
-    },
-    {
-      id: "artifact",
-      surface: "artifact-provider",
-      contracts: [
-        ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
-        ...sources.evmContracts.EVM_TOOL_CONTRACTS,
-        ...sources.goContracts.GO_TOOL_CONTRACTS,
-        ...sources.rustContracts.RUST_TOOL_CONTRACTS,
-        ...sources.wasmContracts.WASM_TOOL_CONTRACTS,
-        ...sources.sqliteContracts.SQLITE_TOOL_CONTRACTS,
-        ...sources.captureContracts.CAPTURE_TOOL_CONTRACTS,
-        ...sources.signalContracts.SIGNAL_TOOL_CONTRACTS,
-      ],
-    },
-    {
-      id: "managed",
-      surface: "managed",
-      contracts: [
-        ...sources.managedContracts.MANAGED_TOOL_CONTRACTS,
-        ...sources.managedWorkflowContracts.MANAGED_WORKFLOW_TOOL_CONTRACTS,
-      ],
-    },
-    {
-      id: "firmware",
-      surface: "firmware-provider",
-      contracts: sources.firmwareContracts.FIRMWARE_TOOL_CONTRACTS,
-    },
-    {
-      id: "android",
-      surface: "android-provider",
-      contracts: sources.androidContracts.ANDROID_TOOL_CONTRACTS,
-    },
-    {
-      id: "pcap",
-      surface: "pcap-provider",
-      contracts: sources.pcapContracts.PCAP_TOOL_CONTRACTS,
-    },
-    {
-      id: "flutter",
-      surface: "flutter-provider",
-      contracts: sources.flutterContracts.FLUTTER_TOOL_CONTRACTS,
-    },
-    {
-      id: "frida",
-      surface: "instrumentation-provider",
-      contracts: sources.fridaContracts.FRIDA_TOOL_CONTRACTS,
-    },
-    {
-      id: "apktool",
-      surface: "apktool-provider",
-      contracts: sources.apktoolContracts.APKTOOL_TOOL_CONTRACTS,
-    },
-    {
-      id: "jeb",
-      surface: "jeb-provider",
-      contracts: sources.jebContracts.JEB_TOOL_CONTRACTS,
-    },
-    {
-      id: "adb",
-      surface: "adb-provider",
-      contracts: sources.adbContracts.ADB_TOOL_CONTRACTS,
-    },
-    {
-      id: "browser",
-      surface: "browser-provider",
-      contracts: [
-        ...sources.browserContracts.BROWSER_TOOL_CONTRACTS,
-        ...sources.webRuntimeContracts.WEB_RUNTIME_TOOL_CONTRACTS,
-        ...sources.browserScenarioContracts.BROWSER_SCENARIO_TOOL_CONTRACTS,
-        ...sources.webNetworkCaptureContracts
-          .WEB_NETWORK_CAPTURE_TOOL_CONTRACTS,
-      ],
-    },
-    {
-      id: "electron",
-      surface: "electron-provider",
-      contracts: sources.electronContracts.ELECTRON_TOOL_CONTRACTS,
-    },
-    {
-      id: "javascript-runtime",
-      surface: "runtime-provider",
-      contracts:
-        sources.javascriptRuntimeObservationContracts
-          .JAVASCRIPT_RUNTIME_OBSERVATION_TOOL_CONTRACTS,
-    },
-    {
-      id: "application",
-      surface: "application-workflow",
-      contracts: [
-        ...sources.applicationContracts.APPLICATION_TOOL_CONTRACTS,
-        ...sources.analysisViewContracts.ANALYSIS_VIEW_TOOL_CONTRACTS,
-        ...sources.webScriptContracts.WEB_SCRIPT_TOOL_CONTRACTS,
-        ...sources.javascriptRecoveryContracts
-          .JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
-      ],
-    },
-    {
-      id: "session",
-      surface: "session",
-      contracts: sources.sessionContracts.SESSION_TOOL_CONTRACTS,
-    },
-  ].map(({ id, surface, contracts }) => ({
-    id,
-    surface,
-    count: contracts.length,
-    tools: names(contracts),
-  }));
+  const families = sources.toolFamilies.TOOL_FAMILY_DEFINITIONS.map(
+    ({ id, surface, contracts }) => ({
+      id,
+      surface,
+      count: contracts.length,
+      tools: names(contracts),
+    }),
+  );
   const familyTotal = families.reduce(
     (total, family) => total + family.count,
     0,
   );
   if (
     familyTotal !== sources.toolContracts.TOOL_CONTRACTS.length ||
-    familyTotal !== sources.catalogIdentity.CATALOG_IDENTITY.counts.mcp_tools
+    familyTotal !==
+      sources.catalogIdentity.FULL_CATALOG_IDENTITY.counts.mcp_tools
   )
     throw new Error("Tool family inventory does not match TOOL_CONTRACTS");
   return { total: familyTotal, families };
@@ -233,7 +111,9 @@ export const providerCatalog = (sources) => {
       identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
-          ({ name }) => name !== "inspect_pe_resources",
+          ({ name }) =>
+            name === "inspect_binary_layout" ||
+            name === "inspect_recorded_crash",
         ),
     },
     {
@@ -241,6 +121,69 @@ export const providerCatalog = (sources) => {
       contracts:
         sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
           ({ name }) => name === "inspect_pe_resources",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_CERTIFICATES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_certificates",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_IMPORTS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_imports",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.DEVICETREE_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_devicetree",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.PE_LOAD_CONFIG_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_pe_load_config",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.ELF_NOTES_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_elf_notes",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.APPLE_IPS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_apple_ips",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.KERNEL_MODULE_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_kernel_module",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.BYTE_ENTROPY_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_byte_entropy",
+        ),
+    },
+    {
+      identity: sources.artifactProviders.NATIVE_EXPORTS_PROVIDER,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS.filter(
+          ({ name }) => name === "inspect_native_exports",
         ),
     },
     {
@@ -258,6 +201,10 @@ export const providerCatalog = (sources) => {
       ),
     },
     {
+      identity: sources.apkSignatureProvider.APK_SIGNATURE_PROVIDER_IDENTITY,
+      contracts: sources.apkSignatureContracts.APK_SIGNATURE_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.evmProvider.EVMOLE_PROVIDER_IDENTITY,
       contracts: sources.evmContracts.EVM_TOOL_CONTRACTS,
     },
@@ -266,8 +213,28 @@ export const providerCatalog = (sources) => {
       contracts: sources.goContracts.GO_TOOL_CONTRACTS,
     },
     {
+      identity: sources.gpuProvider.GPU_CODE_OBJECTS_PROVIDER_IDENTITY,
+      contracts: sources.gpuContracts.GPU_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.il2cppProvider.IL2CPP_METADATA_PROVIDER_IDENTITY,
+      contracts: sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.modelProvider.MODEL_ARTIFACT_PROVIDER_IDENTITY,
+      contracts: sources.modelContracts.MODEL_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.pythonPycProvider.PYTHON_PYC_PROVIDER_IDENTITY,
+      contracts: sources.pythonPycContracts.PYTHON_PYC_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.erlangProvider.ERLANG_BEAM_PROVIDER_IDENTITY,
+      contracts: sources.erlangContracts.ERLANG_BEAM_TOOL_CONTRACTS,
     },
     {
       identity: sources.electronFuseProvider.ELECTRON_FUSE_PROVIDER_IDENTITY,
@@ -279,7 +246,10 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,
-      contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+        ...sources.desktopContracts.DESKTOP_APPLICATION_TOOL_CONTRACTS,
+      ],
     },
     {
       identity: sources.artifactProviders.MANAGED_STATIC_PROVIDER,

@@ -11,8 +11,17 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
 
 const EXACT_INTEGER = { $plist_type: "integer", decimal: "9007199254740993" };
 const ROUNDED = 9007199254740992;
+const unknownInteger = (
+  literal: string,
+  reason: "invalid-literal" | "unsupported-markup",
+) => ({
+  $plist_type: "unknown",
+  element: "integer",
+  literal,
+  reason,
+});
 
-/** Accepted decoder representations whose supplemental metadata needs care. */
+/** Boundary cases that retain exact integers or explicit unknown literals. */
 export const mixedArchiveNumberElements = [
   "<integer>9007199254740992<!-- split -->3</integer>",
   "<integer>9007199254740992<![CDATA[3]]></integer>",
@@ -23,8 +32,19 @@ export const mixedArchiveNumberElements = [
   "<integer>9007199254740992x</integer>",
 ] as const;
 
+interface MetadataCase {
+  readonly name: string;
+  readonly source: JsonValue;
+  readonly element: string;
+  readonly expected: JsonValue;
+  readonly knownIntegerCount?: number;
+  readonly unknownScalarCount?: number;
+  readonly malformedReference: boolean;
+  readonly integerElement?: string;
+}
+
 /** Ordinary dictionaries and malformed numeric references at the same boundary. */
-export const archiveNumberMetadataCases = [
+export const archiveNumberMetadataCases: readonly MetadataCase[] = [
   ...[
     {
       element: "<real>9007199254740992<![CDATA[0]]></real>",
@@ -39,15 +59,23 @@ export const archiveNumberMetadataCases = [
     source: { first: "__INTEGER__", other: "__OTHER__" },
     element,
     expected: { first: EXACT_INTEGER, other: value },
-    incomplete: false,
     malformedReference: false,
   })),
   ...mixedArchiveNumberElements.map((element) => ({
     name: element,
     source: { first: "__INTEGER__", other: "__OTHER__" },
     element,
-    expected: { first: ROUNDED, other: ROUNDED },
-    incomplete: true,
+    expected: {
+      first: EXACT_INTEGER,
+      other: unknownInteger(
+        element.slice("<integer>".length, -"</integer>".length),
+        element.endsWith("x</integer>")
+          ? "invalid-literal"
+          : "unsupported-markup",
+      ),
+    },
+    knownIntegerCount: 1,
+    unknownScalarCount: 1,
     malformedReference: false,
   })),
   ...(["UID", "CF$UID"] as const).flatMap((key) => [
@@ -56,7 +84,6 @@ export const archiveNumberMetadataCases = [
       source: { [key]: { amount: "__INTEGER__" } },
       element: "",
       expected: { [key]: { amount: EXACT_INTEGER } },
-      incomplete: false,
       malformedReference: false,
     },
     {
@@ -64,38 +91,33 @@ export const archiveNumberMetadataCases = [
       source: { [key]: ["__INTEGER__"] },
       element: "",
       expected: { [key]: [EXACT_INTEGER] },
-      incomplete: false,
       malformedReference: false,
     },
     {
-      name: `${key} malformed numeric reference`,
+      name:
+        key === "CF$UID"
+          ? `${key} malformed numeric reference`
+          : `${key} unsafe integer dictionary data`,
       source: { [key]: "__INTEGER__" },
       element: "",
-      expected: { [key]: ROUNDED },
-      incomplete: false,
-      malformedReference: true,
+      expected: { [key]: key === "CF$UID" ? ROUNDED : EXACT_INTEGER },
+      malformedReference: key === "CF$UID",
     },
   ]),
   {
-    name: "entity-encoded integer text",
+    // Native plist integer grammar reads raw text, unlike real elements.
+    name: "entity-encoded integer rejected by native plist grammar",
     source: { amount: "__INTEGER__" },
     element: "",
-    expected: { amount: EXACT_INTEGER },
-    incomplete: false,
+    expected: {
+      amount: unknownInteger("&#57;007199254740993", "invalid-literal"),
+    },
+    knownIntegerCount: 0,
+    unknownScalarCount: 1,
     malformedReference: false,
     integerElement: "<integer>&#57;007199254740993</integer>",
   },
-] satisfies readonly {
-  name: string;
-  source: JsonValue;
-  element: string;
-  expected: JsonValue;
-  incomplete: boolean;
-  malformedReference: boolean;
-  integerElement?: string;
-}[];
-
-type MetadataCase = (typeof archiveNumberMetadataCases)[number];
+];
 
 /** Write one inert archive and retain the original byte digest for assertions. */
 export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
@@ -108,9 +130,7 @@ export const keyedArchiveNumberMetadataFixture = async (item: MetadataCase) => {
   })
     .replace(
       "<string>__INTEGER__</string>",
-      "integerElement" in item
-        ? item.integerElement
-        : "<integer>9007199254740993</integer>",
+      item.integerElement ?? "<integer>9007199254740993</integer>",
     )
     .replace("<string>__OTHER__</string>", item.element);
   const bytes = Buffer.from(xml);
@@ -145,14 +165,26 @@ export const expectKeyedArchiveNumberMetadata = (
     status: "resolved",
     raw: { CF$UID: 1 },
   });
-  if (item.incomplete) {
+  if (item.unknownScalarCount !== undefined) {
     expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `^${String(item.unknownScalarCount)} XML scalar value\\(s\\) could not be established`,
+          "u",
+        ),
+      ),
+    );
+    expect(result.limitations).not.toContainEqual(
       expect.stringMatching(/metadata.*completely observed.*precision/u),
     );
-    expect(
-      result.limitations.some((note) => note.includes("unambiguous integer")),
-    ).toBe(false);
-  } else if (item.malformedReference) {
+  } else {
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(
+        /^\d+ XML scalar value\(s\) could not be established/u,
+      ),
+    );
+  }
+  if (item.malformedReference) {
     expect(result.references).toContainEqual({
       source: 1,
       path: [],
@@ -162,8 +194,20 @@ export const expectKeyedArchiveNumberMetadata = (
     });
   } else {
     expect(result.references).toHaveLength(1);
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/^1 unambiguous integer value/u),
-    );
+    const knownIntegerCount = item.knownIntegerCount ?? 1;
+    if (knownIntegerCount === 0) {
+      expect(result.limitations).not.toContainEqual(
+        expect.stringMatching(/^\d+ unambiguous integer value/u),
+      );
+    } else {
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          new RegExp(
+            `^${String(knownIntegerCount)} unambiguous integer value`,
+            "u",
+          ),
+        ),
+      );
+    }
   }
 };

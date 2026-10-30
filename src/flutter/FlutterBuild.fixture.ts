@@ -179,13 +179,14 @@ export const buildElf32Image = (
  */
 export const buildStrippedElf64Image = (
   symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
 ): Buffer => {
   const ELF_HEADER = 64;
   const PHENT = 56;
   const PHNUM = 2;
   const dynamicEntry = 16;
   // DT_SYMTAB, DT_STRTAB, DT_STRSZ, DT_SYMENT, DT_HASH, DT_NULL.
-  const DYNAMIC_ENTRIES = 6;
+  const DYNAMIC_ENTRIES = 6 + extraDynamicEntries.length;
   const phoff = ELF_HEADER;
   const dynamicOff = phoff + PHENT * PHNUM;
   const dynsymOff = dynamicOff + DYNAMIC_ENTRIES * dynamicEntry;
@@ -228,12 +229,13 @@ export const buildStrippedElf64Image = (
   image.writeBigUInt64LE(BigInt(dynamicOff), dyn + 8); // p_offset
   image.writeBigUInt64LE(BigInt(dynamicOff), dyn + 0x10); // p_vaddr
   image.writeBigUInt64LE(BigInt(DYNAMIC_ENTRIES * dynamicEntry), dyn + 0x20);
-  const pairs: ReadonlyArray<readonly [number, number]> = [
+  const pairs: ReadonlyArray<readonly [number, number | bigint]> = [
     [6, dynsymOff],
     [5, dynstrOff],
     [10, strtabBytes],
     [11, 24],
     [4, hashOff],
+    ...extraDynamicEntries,
   ];
   pairs.forEach(([tag, value], index) => {
     const base = dynamicOff + index * dynamicEntry;
@@ -257,6 +259,38 @@ export const buildStrippedElf64Image = (
     image.writeUInt16LE(1, base + 6); // Defined even when section headers are stripped.
   });
   return image;
+};
+
+/** Four snapshot exports and their pool, discovered without section headers. */
+export const strippedAotFixtureImage = (
+  extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
+): Buffer => {
+  const symbols = buildStrippedElf64Image(
+    [
+      { name: "_kDartVmSnapshotData", value: 0x1000, size: 52 },
+      { name: "_kDartVmSnapshotInstructions", value: 0x1800, size: 16 },
+      { name: "_kDartIsolateSnapshotData", value: 0x2000, size: 0x600 },
+      { name: "_kDartIsolateSnapshotInstructions", value: 0x2600, size: 16 },
+    ],
+    extraDynamicEntries,
+  );
+  const vmSection = snapshotSection(REFERENCE_HASH);
+  const isolateSection = Buffer.concat([
+    snapshotSection(REFERENCE_HASH),
+    Buffer.from([0]),
+    Buffer.from("package:example/main.dart\0dart:core\0Example\0"),
+  ]);
+  return Buffer.concat([
+    symbols,
+    Buffer.alloc(0x1000 - symbols.length),
+    vmSection,
+    Buffer.alloc(0x1800 - 0x1000 - vmSection.length),
+    Buffer.alloc(16),
+    Buffer.alloc(0x2000 - 0x1800 - 16),
+    isolateSection,
+    Buffer.alloc(0x600 - isolateSection.length),
+    Buffer.alloc(16),
+  ]);
 };
 
 /** A minimal Dart snapshot data section carrying a 32-hex hash. */

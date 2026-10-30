@@ -248,7 +248,7 @@ const readStableFileEntry = async (
         parentBefore.message,
         safeSize(expected.size),
       );
-    const handle = await openRegularFile(absolute, {
+    const { handle } = await openRegularFile(absolute, {
       symlinks: "reject",
       signal,
     });
@@ -295,11 +295,18 @@ const readStableFileEntry = async (
         "File is no longer a regular file",
         safeSize(expected.size),
       );
-    const message = filesystemFailureDetail(
+    const detail = filesystemFailureDetail(
       cause,
       "File could not be read safely",
     );
-    if (message === undefined) throw cause;
-    return entryFailure(path, "file", "io", message, safeSize(expected.size));
+    if (detail === undefined) throw cause;
+    return entryFailure(
+      path,
+      "file",
+      "io",
+      detail.message,
+      safeSize(expected.size),
+      detail.localDiagnostic,
+    );
   }
 };

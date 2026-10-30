@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
-import { digestSchema } from "./../domain/digests.js";
-import { prefixedDigestSchema } from "./../domain/digests.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");
@@ -26,14 +26,7 @@ const functionClaimSchema = z.object({
   kind: z.literal("structural-function"),
   dimension: z.enum([
     "overall",
-    "identity",
-    "pseudocode",
-    "assembly",
-    "comments",
-    "calls",
-    "references",
-    "strings_names",
-    "cfg",
+    ...functionComparisonDimensionNameSchema.options,
   ]),
 });
 const artifactClaimSchema = z.object({
@@ -102,12 +95,12 @@ export const reconstructionVerificationResultSchema = z
     status: verificationStatusSchema,
     specification_sha256: digestSchema,
     summary: z.object({
-      total: z.number().int().min(1),
-      passed: z.number().int().min(0),
-      failed: z.number().int().min(0),
-      unknown: z.number().int().min(0),
-      behavioral: z.number().int().min(0),
-      structural: z.number().int().min(0),
+      total: z.int().min(1),
+      passed: z.int().min(0),
+      failed: z.int().min(0),
+      unknown: z.int().min(0),
+      behavioral: z.int().min(0),
+      structural: z.int().min(0),
     }),
     claims: z.object({
       items: z.array(reconstructionClaimResultSchema),

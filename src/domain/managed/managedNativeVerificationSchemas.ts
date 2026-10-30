@@ -2,12 +2,13 @@ import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
-import { cliMetadataGuidSchema } from "./managedArtifact.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import {
+  cliMetadataGuidSchema,
+  managedNativeImportSchema,
+} from "./managedArtifact.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
-const tokenSchema = z.string().regex(/^0x[0-9a-f]{8}$/u);
 const textSchema = z.string().min(1);
 
 const nativeSymbolSchema = z.strictObject({
@@ -22,27 +23,25 @@ const nativeSymbolSchema = z.strictObject({
 
 export type NativeSymbol = z.infer<typeof nativeSymbolSchema>;
 
+const verifiedManagedDeclarationSchema = managedNativeImportSchema
+  .pick({
+    token: true,
+    member_token: true,
+    member_name: true,
+    import_name: true,
+    import_scope_name: true,
+    no_mangle: true,
+    char_set: true,
+    call_convention: true,
+  })
+  .extend({
+    declaration_verification: managedNativeImportSchema.shape.verification,
+  })
+  .strict();
+
 const pinvokeVerificationContextShape = {
   item_id: prefixedDigestSchema("mnv_pinvoke"),
-  managed: z.strictObject({
-    token: tokenSchema,
-    member_token: tokenSchema.nullable(),
-    member_name: z.string().nullable(),
-    import_name: z.string().min(1),
-    import_scope_name: z.string().nullable(),
-    no_mangle: z.boolean(),
-    char_set: z.enum(["not-specified", "ansi", "unicode", "auto", "unknown"]),
-    call_convention: z.enum([
-      "not-specified",
-      "winapi",
-      "cdecl",
-      "stdcall",
-      "thiscall",
-      "fastcall",
-      "unknown",
-    ]),
-    declaration_verification: z.literal("managed-declaration-only"),
-  }),
+  managed: verifiedManagedDeclarationSchema,
   evidence_links: z.array(evidenceIdSchema).min(1),
   limitations: z.array(textSchema),
 };
@@ -127,10 +126,6 @@ export const managedNativeVerificationInputSchema = z
     }
   });
 
-export type ManagedNativeVerificationInput = z.infer<
-  typeof managedNativeVerificationInputSchema
->;
-
 const verificationCoverageSchema = z.strictObject({
   status: z.enum(["complete-within-inputs", "partial"]),
 });
@@ -150,26 +145,27 @@ export const managedNativeVerificationResultSchema = z
       artifact_path: z.string().min(1),
       mvid: cliMetadataGuidSchema.nullable(),
       metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-      pinvoke_imports_total: z.number().int().min(0),
-      native_implementations_total: z.number().int().min(0),
+      pinvoke_imports_total: z.int().min(0),
+      native_implementations_total: z.int().min(0),
       coverage_state: z.enum(["complete", "partial", "unavailable"]),
     }),
     native_observations: z.strictObject({
-      total: z.number().int().min(1),
-      accepted: z.number().int().min(0),
-      unsupported: z.number().int().min(0),
-      symbols: z.number().int().min(0),
+      total: z.int().min(1),
+      accepted: z.int().min(0),
+      unsupported: z.int().min(0),
+      symbols: z.int().min(0),
     }),
     summary: z.strictObject({
-      verified: z.number().int().min(0),
-      inferred: z.number().int().min(0),
-      unresolved: z.number().int().min(0),
-      contradicted: z.number().int().min(0),
-      native_body_unresolved: z.number().int().min(0),
+      verified: z.int().min(0),
+      inferred: z.int().min(0),
+      unresolved: z.int().min(0),
+      contradicted: z.int().min(0),
+      native_body_unresolved: z.int().min(0),
     }),
     pinvoke_imports: z.array(pinvokeVerificationSchema),
     native_implementations: z.strictObject({
-      unresolved: z.number().int().min(0),
+      runtime_provided: z.int().nonnegative().nullable().default(null),
+      unresolved: z.int().min(0),
       reason: textSchema,
     }),
     coverage: verificationCoverageSchema,

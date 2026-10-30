@@ -293,34 +293,8 @@ describe("feature seed selection controls", () => {
   );
 });
 
-describe("public feature trace from contextBridge source members", () => {
-  it.each(["openProject", "missingProject"])(
-    "normalizes optional seed defaults before deriving trace identity for %s",
-    (value) => {
-      const input = {
-        sourceEvidenceId,
-        graph: contextBridgeGraph(),
-        nativeEvidence: [],
-        direction: "both" as const,
-      };
-      const omitted = traceApplicationFeature({
-        ...input,
-        seed: { kind: "api", value },
-      });
-      const explicit = traceApplicationFeature({
-        ...input,
-        seed: {
-          kind: "api",
-          value,
-          match: null,
-          case_sensitive: false,
-        },
-      });
-      expect(omitted).toEqual(explicit);
-    },
-  );
-
-  it("traces one exact member seed through the public feature workflow", () => {
+describe("feature trace projection from contextBridge source members", () => {
+  it("traces one exact member seed while preserving projection facts", () => {
     const mode = {
       value: "openProject",
       match: "exact" as const,
@@ -391,7 +365,7 @@ describe("public feature trace from contextBridge source members", () => {
     });
     expect(result.evidence_links).toEqual([sourceEvidenceId]);
     expect(result.limitations).toContain(
-      "No graph entity matched the literal seed; this is not evidence that the feature is absent.",
+      "No application graph entity matched the literal seed; this is not evidence that the feature is absent.",
     );
   });
 

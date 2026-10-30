@@ -28,12 +28,17 @@ export const parseDemangledSymbols = (
     if (output === "" || output === "\n") return [];
     throw new TypeError("swift-demangle emitted output for an empty input");
   }
-  const lines = output.replace(/\n$/u, "").split("\n");
-  if (lines.length !== inputs.length)
+  // The command-line producer warns and skips exact `_` arguments. Other
+  // single-line inputs each own one record, including undecoded spellings.
+  const expectedRecords = inputs.filter((input) => input !== "_").length;
+  const lines = output === "" ? [] : output.replace(/\n$/u, "").split("\n");
+  if (lines.length !== expectedRecords)
     throw new TypeError("swift-demangle output count does not match input");
-  return inputs.map<DemangledSymbol>((input, index) => {
-    const value = lines[index];
-    if (value === undefined)
+  let record = 0;
+  return inputs.map<DemangledSymbol>((input) => {
+    if (input === "_") return { input, output: "", status: "invalid" };
+    const value = lines[record++];
+    if (value === undefined || value.length === 0)
       throw new TypeError("swift-demangle omitted an output line");
     const decoded = value !== input && value !== undecodedSpelling(input);
     return {

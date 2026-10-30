@@ -4,6 +4,40 @@ REA exposes six provider-neutral investigation workflows through the MCP
 `prompts` capability. They complement the generated tool catalog; they do not add, remove, or
 invoke tools by themselves.
 
+Clients that expose tools but not prompts can use the target-free
+`guided_workflows` tool with `action: "list"` or `action: "render"`. CLI callers
+can use `rea guided-workflows` to list workflows, or pass `--action render`,
+`--workflow-id ID`, and `--arguments-json '{"feature":"offline search"}'` to
+render one. Both paths use the same contracts and renderer as native prompts;
+rendering returns guidance only and does not inspect a target, start analysis,
+or change session state.
+
+The list contains workflow identifiers, descriptions, and argument requirements;
+render returns only the selected workflow's text. Unknown argument names and
+non-string values are rejected with field paths. `action: "list"` accepts no
+workflow identifier or arguments. The MCP adapter respects the same
+`REA_MCP_TOOL_FAMILIES` scope as native prompts, including render requests.
+
+To find a section in the installed guidance bundle by analyst question, use
+`search_guidance` and pass a returned locator to `read_guidance_section`. The
+CLI equivalent is `rea guidance --query "exact JavaScript module"`, followed
+by `rea guidance --action read --locator LOCATOR`. Search is limited to the
+packaged managed skill files, works without providers or a target, and returns
+deterministically paged matches. Every non-generic query word must occur in the
+section; generic-only queries return no matches. Results are documentation; locators
+are bound to the installed bundle and report stale or unavailable guidance without
+returning cached section content. A no-match result says nothing about analysis
+capability availability.
+
+Search returns at most 20 matches per page with 500-code-unit context excerpts.
+Read retrieves the complete selected section. Admission permits 1 MiB per file,
+4 MiB per bundle, 4,096 sections, and 25,165,824 expanded UTF-16 code units before
+section text is materialized. Unreadable or oversized bundles return
+`bundle_unavailable`, with no partial index or inferred absence. Cleanup failures
+remain errors with their retained retry owner. The bundle and complete section
+are bound by fixed-size hashes in locators, so a long heading does not make its own
+locator unreadable.
+
 ## Prompt inventory
 
 | Prompt                            | Purpose                                                                              |
@@ -14,6 +48,13 @@ invoke tools by themselves.
 | `trace_crash`                     | Correlate a crash symptom with static paths and optional process capture evidence.   |
 | `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
 | `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
+
+A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow only when every tool in
+its suggested steps belongs to a selected family. Partially available
+workflows are omitted from `prompts/list` — `prompts/get` reports them as not
+found — so a rendered prompt never directs the agent to a disabled call. The
+server identity digest and `rea mcp doctor` prompt inventory follow the same
+scope.
 
 Every rendered prompt provides optional starting points using current REA tool
 names. Agents can call tools directly, skip irrelevant suggestions, and inspect
@@ -30,9 +71,11 @@ directly to `analyze_javascript_application` with `input_path`; it does not
 require `open_binary`. When that Evidence, or `inspect_binary_layout` Evidence,
 is already retained, it suggests `inspect_analysis_view` before tracing a
 feature seed. The CLI equivalent is `rea analyze <directory>`.
-`open_binary` and the doctor target check admit files and macOS app bundles.
-A directory outside that opening route is reported with an available analysis
-action; this does not establish support for every directory format.
+`open_binary` and the doctor target check admit files and Apple bundle
+directories (`.app`, `.appex`, `.framework`, `.xpc`, `.systemextension`,
+`.bundle` and `.plugin`). Another Apple bundle type is refused as unsupported,
+and another directory is reported with an available analysis action; this does
+not establish support for every directory format.
 
 For target paths in `compare_application_versions`, the prompt suggests
 opening each target before calling `inspect_artifact`; inspection operates on
@@ -60,6 +103,11 @@ Use standard MCP discovery and retrieval:
 The server advertises `listChanged: true`. Updating a registered guided prompt
 emits `notifications/prompts/list_changed`, allowing clients to refresh their
 cached prompt catalog.
+
+Schema-invalid parameters to `prompts/get`, `prompts/list`,
+`completion/complete`, and `tools/list` return JSON-RPC `-32602` with field
+diagnostics. Correct the named fields and retry on the same connection.
+Unexpected handler failures retain JSON-RPC `-32603`.
 
 ## Session-aware completion
 
@@ -108,11 +156,13 @@ list does not establish that the target has no procedures.
 | Artifact occurrence | Occurrence IDs present in schema-valid retained artifact inventory pages.                                                                            |
 | Residual unknown    | Current non-resolved unknown heads only.                                                                                                             |
 
-Suggestions are Unicode-normalized, case-insensitive prefix matches. The server
-deduplicates them and sorts by code point for deterministic results. Procedure
-completion derives candidates from the complete inventory, so a name is offered
-only when it identifies one address in that inventory. A completion reply
-carries at most 100 values, the MCP limit. `total` counts every match and
+Prefix matching is Unicode-normalized and case-insensitive; suggestions retain
+their original spelling. The server deduplicates them and sorts by code point
+for deterministic results. Procedure completion derives candidates from the
+complete inventory, so a name is offered only when it identifies one address in
+that inventory. Every name at a shared address participates in this check,
+including later rows that establish ambiguity. A completion reply carries at
+most 100 values, the MCP limit. `total` counts every match and
 `hasMore` is `true` when values were omitted. Completion has no paging
 controls. A longer prefix reaches an omitted value only when it excludes other
 matches; matching uses normalized, case-insensitive forms, so a value can stay

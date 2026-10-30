@@ -14,7 +14,7 @@ export const nativeCallPartialObservationSchema = z.strictObject({
     launch_identity: completed.target.shape.launch_identity.optional(),
   }),
   process: completed.process.partial().extend({
-    pid: z.number().int().positive().nullable(),
+    pid: z.int().positive().nullable(),
     stdout: nativeCapturedOutputSchema.nullable(),
     stderr: nativeCapturedOutputSchema.nullable(),
     other_stops: z.array(z.string()),

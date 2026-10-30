@@ -1,11 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { matchesGlob } from "node:path";
-import { CI_FLAGS as flags, MANUAL_VERIFIERS, SCOPES } from "./scopes.mjs";
+import {
+  CI_FLAGS as flags,
+  MANUAL_VERIFIERS,
+  CI_LANES,
+  WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+} from "./scopes.mjs";
 import { planTestSelection } from "./test-selection.mjs";
 
-// Test files select the host/runtime lanes that execute their focused suites.
-const HOST_TEST_OWNERS = ["apple", "package", "sqlite"];
 // Actionlint validates workflow syntax only. The semantic suite asserts these
 // workflows' release, publication and self-hosted runner safeguards.
 const GUARDED_WORKFLOWS = new Set([
@@ -22,13 +25,15 @@ const GUARDED_WORKFLOWS = new Set([
 // Sources compiled by build-conformance-fixtures.mjs. The readiness journey
 // analyzes the built C fixture as well as its own applications.
 const FIXTURE_SOURCES = [
+  "scripts/build-conformance-fixtures.mjs",
+  "scripts/verify-conformance-fixtures.mjs",
+  "scripts/lib/conformance-fixtures.mjs",
   "tests/conformance/c/**",
   "tests/conformance/napi/**",
   "tests/conformance/objc/**",
   "tests/conformance/swift/**",
   "tests/conformance/versions/**",
 ];
-const READINESS_SOURCES = ["tests/conformance/readiness/**"];
 // These reporters affect CI output only; they do not select a host or provider
 // verification lane when changed on their own.
 const PORTABLE_CI_REPORTERS = new Set([
@@ -42,8 +47,18 @@ const matchesAny = (file, patterns) =>
   patterns.some((pattern) => matchesGlob(file, pattern));
 const selected = Object.fromEntries(flags.map((flag) => [flag, false]));
 const reasons = [];
+// Shared process, contract, CLI, and CI-script edits are not a specific provider.
+// Fast qualification keeps the portable suite and the Linux x64 runtime
+// baseline. Full qualification still selects every lane.
+const SHARED_BOUNDARY =
+  /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/;
 const full = (reason) => {
-  for (const flag of flags) selected[flag] = true;
+  if (tier === "full") {
+    for (const flag of flags) selected[flag] = true;
+  } else {
+    selected.code = true;
+    selected.runtime = true;
+  }
   reasons.push(reason);
 };
 const git = (...args) =>
@@ -53,6 +68,31 @@ function classifyPackage(base, head) {
   const after = JSON.parse(git("show", `${head}:package.json`));
   const { scripts: beforeScripts, ...beforeRest } = before;
   const { scripts: afterScripts, ...afterRest } = after;
+  const compilerDependencies = (metadata) => ({
+    dependencies: {
+      typescript: metadata.dependencies?.typescript,
+      tsrs: metadata.dependencies?.tsrs,
+    },
+    devDependencies: {
+      typescript: metadata.devDependencies?.typescript,
+      tsrs: metadata.devDependencies?.tsrs,
+    },
+  });
+  const compilerScripts = [
+    "compile",
+    "typecheck",
+    "build",
+    "build:cached",
+    "test:prepare",
+    "docs:prepare",
+    "verify:frida:bindings",
+  ].flatMap((name) => [name, `pre${name}`, `post${name}`]);
+  selected.package ||=
+    JSON.stringify(compilerDependencies(before)) !==
+      JSON.stringify(compilerDependencies(after)) ||
+    compilerScripts.some(
+      (name) => beforeScripts?.[name] !== afterScripts?.[name],
+    );
   if (JSON.stringify(beforeRest) !== JSON.stringify(afterRest)) {
     full("Package metadata or dependencies changed");
     return;
@@ -69,12 +109,16 @@ function classifyPackage(base, head) {
       selected.reverse_tools = true;
       continue;
     }
+    if (script === "test:python") {
+      selected.python = true;
+      continue;
+    }
     if (script === "test:sqlite" || script === "test:sqlite:run") {
       selected.sqlite = true;
       continue;
     }
     if (
-      /^(test(?::|$)|check(?::|$)|lint(?::|$)|format(?::|$)|knip$|jscpd$)/.test(
+      /^(test(?::|$)|check(?::|$)|lint(?::|$)|format(?::|$)|knip(?::|$)|jscpd$)/.test(
         script,
       )
     )
@@ -103,11 +147,11 @@ function classifyPackage(base, head) {
     const scriptOwners =
       simple &&
       entries.every((entry) =>
-        Object.values(SCOPES).some((patterns) => matchesAny(entry, patterns)),
+        Object.values(CI_LANES).some(({ paths }) => matchesAny(entry, paths)),
       )
-        ? Object.entries(SCOPES)
-            .filter(([, patterns]) =>
-              entries.some((entry) => matchesAny(entry, patterns)),
+        ? Object.entries(CI_LANES)
+            .filter(([, { paths }]) =>
+              entries.some((entry) => matchesAny(entry, paths)),
             )
             .map(([owner]) => owner)
         : [];
@@ -169,7 +213,16 @@ if (tier === "reused") {
       .split("\0")
       .filter(Boolean);
     for (const file of files) {
-      if (matchesAny(file, SCOPES.reverse_tools)) selected.reverse_tools = true;
+      selected.package ||= matchesAny(
+        file,
+        WINDOWS_EXECUTABLE_SELECTION_INPUTS,
+      );
+      for (const [
+        owner,
+        { paths, earlyAll, earlyInputs = [] },
+      ] of Object.entries(CI_LANES))
+        if (matchesAny(file, earlyAll ? paths : earlyInputs))
+          selected[owner] = true;
       if (
         /^(README(?:_[^/]+)?\.md|AGENTS\.md|CONTRIBUTING\.md|CHANGELOG\.md|SECURITY\.md|native\/windows\/README\.md|\.github\/pull_request_template\.md)$/.test(
           file,
@@ -183,23 +236,41 @@ if (tier === "reused") {
           file.startsWith("docs/") &&
           (/\.(?:[cm]?[jt]s|[jt]sx)$/u.test(file) ||
             file.endsWith("/package.json"));
-        selected.website ||= matchesAny(file, SCOPES.website);
+        selected.website ||= matchesAny(file, CI_LANES.website.paths);
         continue;
       }
       if (/^(src|tests)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file)) {
         selected.code = true;
-        for (const owner of HOST_TEST_OWNERS)
-          selected[owner] ||= matchesAny(file, SCOPES[owner]);
+        for (const [owner, { paths, testInputs }] of Object.entries(CI_LANES))
+          if (testInputs && matchesAny(file, paths)) selected[owner] = true;
         continue;
       }
       if (matchesAny(file, MANUAL_VERIFIERS)) {
         selected.code = true;
         continue;
       }
-      const owners = Object.entries(SCOPES)
-        .filter(([, patterns]) =>
-          patterns.some((pattern) => matchesGlob(file, pattern)),
-        )
+      // Timing and report helpers stay on the portable suite. They are not a
+      // runtime or provider change.
+      if (PORTABLE_CI_REPORTERS.has(file)) {
+        selected.code = true;
+        continue;
+      }
+      // A shared boundary is not evidence that every provider or host changed.
+      // One matching owner is path evidence. Several owners means the same
+      // registration file is listed by many lanes; fast qualification does not
+      // fan those out or start the multi-host package matrix.
+      if (tier !== "full" && SHARED_BOUNDARY.test(file)) {
+        selected.code = true;
+        selected.runtime = true;
+        const owners = Object.entries(CI_LANES)
+          .filter(([, { paths }]) => matchesAny(file, paths))
+          .map(([owner]) => owner);
+        if (owners.length === 1) selected[owners[0]] = true;
+        reasons.push(`Shared boundary on fast tier: ${file}`);
+        continue;
+      }
+      const owners = Object.entries(CI_LANES)
+        .filter(([, { paths }]) => matchesAny(file, paths))
         .map(([owner]) => owner);
       for (const owner of owners) selected[owner] = true;
       if (
@@ -224,9 +295,7 @@ if (tier === "reused") {
         selected.fixtures = true;
         selected.readiness = true;
       }
-      if (matchesAny(file, READINESS_SOURCES)) selected.readiness = true;
       if (file.startsWith("tests/")) continue;
-      if (PORTABLE_CI_REPORTERS.has(file)) continue;
       if (
         /^(src\/process\/|src\/filesystem\/|src\/contracts\/tool|src\/server\/createServer|src\/cli\.ts|scripts\/ci\/)/.test(
           file,

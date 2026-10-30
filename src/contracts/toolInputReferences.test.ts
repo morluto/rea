@@ -67,6 +67,45 @@ it.each(["draft-2020-12", "draft-07"] as const)(
   },
 );
 
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "keeps objdump Unicode validation and portable SDK patterns in %s",
+  (target) => {
+    const canonical = toolInputSchemaWithMetadata(
+      toolContract("inspect_with_objdump"),
+    );
+    const schema = canonical["~standard"].jsonSchema.input({ target });
+    const input = { path: "sample.elf", operation: "disassemble" };
+    for (const unicodeRegExp of [false, true]) {
+      const options = { strict: false, validateFormats: false, unicodeRegExp };
+      const ajv =
+        target === "draft-2020-12" ? new Ajv2020(options) : new Ajv(options);
+      expect(ajv.validateSchema(schema)).toBe(true);
+      const validate = ajv.compile(schema);
+      for (const symbol of [
+        "known_function",
+        "selector_\u{1F680}",
+        "selector_\uFFFD",
+      ]) {
+        expect(
+          validate({ ...input, symbol }),
+          JSON.stringify(validate.errors),
+        ).toBe(true);
+        expect(canonical.safeParse({ ...input, symbol }).success).toBe(true);
+      }
+      expect(validate({ ...input, symbol: "a\u0000b" })).toBe(false);
+    }
+    // Scalar Unicode engines cannot express unpaired UTF-16 surrogates. The
+    // registered canonical validator owns that runtime constraint.
+    for (const symbol of [
+      "\ud800",
+      "\udc00",
+      "prefix\ud800suffix",
+      "\udc00\ud800",
+    ])
+      expect(canonical.safeParse({ ...input, symbol }).success).toBe(false);
+  },
+);
+
 describe("advertised object dependencies", () => {
   it.each([
     ["draft-07", "dependencies"],
@@ -380,7 +419,7 @@ describe("root input presentation", () => {
   });
 });
 
-describe("advertised Boolean literals", () => {
+const registerBooleanLiteralCompatibilityTests = (): void => {
   it("keeps canonical boolean-literal inputs accepted after advertisement", () => {
     const canonical = {
       type: "object",
@@ -448,6 +487,100 @@ describe("advertised Boolean literals", () => {
       choice: {},
     });
   });
+};
+
+describe("advertised client-compatible literals", () => {
+  it.each([{ const: "" }, { enum: ["", "named"] }])(
+    "widens unsupported empty-string literals without changing canonical validation: %j",
+    (literal) => {
+      const canonical = {
+        type: "object",
+        properties: {
+          value: {
+            type: "string",
+            ...literal,
+            default: "",
+            description: "The literal value.",
+          },
+        },
+      };
+      const advertised = presentInputJsonSchema(canonical, () => undefined);
+      expect(
+        new Ajv2020({ strict: false }).compile(canonical)({ value: "" }),
+      ).toBe(true);
+      expect(
+        new Ajv2020({ strict: false }).compile(advertised)({ value: "" }),
+      ).toBe(true);
+      expect(advertised).toHaveProperty(["properties", "value"], {
+        type: "string",
+        default: "",
+        description: "The literal value.",
+      });
+    },
+  );
+
+  it("widens overlapping empty-string oneOf branches while preserving nonempty alternatives", () => {
+    const canonical = {
+      type: "object",
+      properties: {
+        value: {
+          oneOf: [
+            { type: "string", const: "" },
+            { type: "string", minLength: 1 },
+          ],
+        },
+      },
+    };
+    const advertised = presentInputJsonSchema(canonical, () => undefined);
+    const original = new Ajv2020({ strict: false }).compile(canonical);
+    const presented = new Ajv2020({ strict: false }).compile(advertised);
+    for (const value of ["", "named"]) {
+      expect(original({ value })).toBe(true);
+      expect(presented({ value })).toBe(true);
+    }
+    expect(advertised).toHaveProperty(["properties", "value", "anyOf"]);
+    expect(advertised).not.toHaveProperty(["properties", "value", "oneOf"]);
+  });
+
+  it("keeps only defaults shared by every root input group", () => {
+    const schema = z.union([
+      z.strictObject({
+        left: z.string(),
+        shared: z.boolean().default(false),
+        only_left: z.string().default("left"),
+        selection: z.string().default("left"),
+      }),
+      z.strictObject({
+        right: z.string(),
+        shared: z.boolean().default(false),
+        selection: z.string().default("right"),
+      }),
+    ]);
+    const advertised = presentInputJsonSchema(
+      z.toJSONSchema(schema, { io: "input" }),
+      () => undefined,
+    );
+    expect(advertised).toHaveProperty(
+      ["properties", "shared", "default"],
+      false,
+    );
+    expect(advertised).not.toHaveProperty([
+      "properties",
+      "only_left",
+      "default",
+    ]);
+    expect(advertised).toHaveProperty(["properties", "selection"], {
+      type: "string",
+    });
+    const input = { right: "selected" };
+    const validate = new Ajv2020({ strict: false, useDefaults: true }).compile(
+      advertised,
+    );
+    expect(validate(input)).toBe(true);
+    expect(schema.safeParse(input).success).toBe(true);
+    expect(input).not.toHaveProperty("only_left");
+  });
+  registerBooleanLiteralCompatibilityTests();
 });
 
 describe("advertised Boolean schema composition", () => {
@@ -569,3 +702,132 @@ describe("advertised Boolean schema composition", () => {
     expect(presented.examples).toEqual([literal]);
   });
 });
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "describes references from their containing resource in %s",
+  (dialect) => {
+    const presented = presentInputJsonSchema(
+      {
+        $schema:
+          dialect === "draft-07"
+            ? "http://json-schema.org/draft-07/schema#"
+            : "https://json-schema.org/draft/2020-12/schema",
+        $id: "https://example.test/root.json",
+        type: "object",
+        definitions: { value: { type: "string", description: "Outer text." } },
+        properties: {
+          child: {
+            $id: "child.json",
+            type: "object",
+            definitions: {
+              value: { type: "number", description: "Nested number." },
+            },
+            properties: { value: { $ref: "#/definitions/value" } },
+          },
+        },
+      },
+      () => undefined,
+    );
+    expect(presented).toMatchObject({
+      properties: {
+        child: { properties: { value: { description: "Nested number." } } },
+      },
+    });
+  },
+);
+
+it.each(["draft-2020-12", "draft-07"] as const)(
+  "keeps root union resource identities when lifting would change relative refs in %s",
+  (dialect) => {
+    const source = {
+      $schema:
+        dialect === "draft-07"
+          ? "http://json-schema.org/draft-07/schema#"
+          : "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.test/root.json",
+      anyOf: ["first", "second"].map((kind) => ({
+        $id: `https://example.test/${kind}/schema.json`,
+        type: "object",
+        properties: { kind: { const: kind }, value: { $ref: "child.json" } },
+        required: ["kind", "value"],
+        additionalProperties: false,
+      })),
+    };
+    const presented = presentInputJsonSchema(source, () => undefined);
+    const createAjv = () => {
+      const ajv =
+        dialect === "draft-07"
+          ? new Ajv({ strict: false })
+          : new Ajv2020({ strict: false });
+      ajv.addSchema({
+        $id: "https://example.test/first/child.json",
+        type: "string",
+      });
+      ajv.addSchema({
+        $id: "https://example.test/second/child.json",
+        type: "number",
+      });
+      return ajv;
+    };
+    const canonical = createAjv().compile(source);
+    const advertised = createAjv().compile(presented);
+    for (const kind of ["first", "second"])
+      for (const value of [7, "seven", null])
+        expect(advertised({ kind, value })).toBe(canonical({ kind, value }));
+  },
+);
+
+it("does not lift properties that still refer to deleted root-union locations", () => {
+  const source = {
+    anyOf: [
+      {
+        type: "object",
+        properties: { value: { $ref: "#/anyOf/1/properties/value" } },
+        required: ["value"],
+      },
+      {
+        type: "object",
+        properties: { value: { type: "number" } },
+        required: ["value"],
+      },
+    ],
+  };
+  const presented = presentInputJsonSchema(source, () => undefined);
+  const canonical = new Ajv2020({ strict: false }).compile(source);
+  const advertised = new Ajv2020({ strict: false }).compile(presented);
+  for (const value of [7, "seven", null])
+    expect(advertised({ value })).toBe(canonical({ value }));
+});
+
+it.each(["$ref", "$dynamicRef"])(
+  "preserves the root union used by recursive %s children",
+  (keyword) => {
+    const source = {
+      anyOf: [
+        {
+          type: "object",
+          properties: { end: { const: "done" } },
+          required: ["end"],
+          additionalProperties: false,
+        },
+        {
+          type: "object",
+          properties: { next: { [keyword]: "#" } },
+          required: ["next"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const presented = presentInputJsonSchema(source, () => undefined);
+    expect(presented.anyOf).toBeDefined();
+    const canonical = new Ajv2020({ strict: false }).compile(source);
+    const advertised = new Ajv2020({ strict: false }).compile(presented);
+    for (const value of [
+      { end: "done" },
+      { next: { end: "done" } },
+      { next: {} },
+      { next: { end: "invalid" } },
+    ])
+      expect(advertised(value)).toBe(canonical(value));
+  },
+);

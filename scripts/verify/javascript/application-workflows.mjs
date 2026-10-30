@@ -9,9 +9,6 @@ import {
   compareJavaScriptExportShapesEvidence,
   traceApplicationFeatureEvidence,
 } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { applicationVersionComparisonResultSchema } from "../../../dist/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
-import { applicationFeatureTraceResultSchema } from "../../../dist/domain/javascript/javascriptFeatureTraceSchemas.js";
-import { javaScriptExportShapeComparisonResultSchema } from "../../../dist/domain/javascript/javascriptExportShapeComparisonSchemas.js";
 import {
   completeVerifierRun,
   createVerifierRun,
@@ -45,14 +42,12 @@ const [leftPath, rightPath] = await Promise.all([
 if (leftPath === rightPath)
   throw new Error("--left and --right must resolve to distinct paths");
 const [left, right] = await Promise.all([
-  analyze(leftPath),
-  analyze(rightPath),
+  analyze(options.left),
+  analyze(options.right),
 ]);
 const comparison = compareApplicationVersionsEvidence({ left, right });
 if (!comparison.ok) throw comparison.error;
-const comparisonResult = applicationVersionComparisonResultSchema.parse(
-  comparison.value.normalized_result,
-);
+const comparisonResult = comparison.value.result;
 const seedValue =
   options["seed-value"] ??
   left.normalized_result.graph.nodes.find(
@@ -72,10 +67,7 @@ const trace =
         direction: "both",
       });
 if (trace !== null && !trace.ok) throw trace.error;
-const traceResult =
-  trace === null
-    ? null
-    : applicationFeatureTraceResultSchema.parse(trace.value.normalized_result);
+const traceResult = trace === null ? null : trace.value.result;
 const exportShapeSelector = resolveExportShapeSelector(left, right, options);
 const exportShapeComparison =
   exportShapeSelector === null
@@ -88,17 +80,13 @@ const exportShapeComparison =
 if (exportShapeComparison !== null && !exportShapeComparison.ok)
   throw exportShapeComparison.error;
 const exportShapeResult =
-  exportShapeComparison === null
-    ? null
-    : javaScriptExportShapeComparisonResultSchema.parse(
-        exportShapeComparison.value.normalized_result,
-      );
+  exportShapeComparison === null ? null : exportShapeComparison.value.result;
 
 process.stdout.write(
   `${JSON.stringify({
     verifier_run: await completeVerifierRun(verifierRun),
     comparison_id: comparisonResult.comparison_id,
-    evidence_id: comparison.value.evidence_id,
+    evidence_id: comparison.value.evidence.evidence_id,
     left: comparisonResult.left,
     right: comparisonResult.right,
     summary: comparisonResult.summary,
@@ -109,7 +97,7 @@ process.stdout.write(
         ? null
         : {
             comparison_id: exportShapeResult.comparison_id,
-            evidence_id: exportShapeComparison.value.evidence_id,
+            evidence_id: exportShapeComparison.value.evidence.evidence_id,
             left: exportShapeResult.left,
             right: exportShapeResult.right,
             summary: exportShapeResult.summary,
@@ -122,7 +110,7 @@ process.stdout.write(
         ? null
         : {
             trace_id: traceResult.trace_id,
-            evidence_id: trace.value.evidence_id,
+            evidence_id: trace.value.evidence.evidence_id,
             seed: traceResult.seed,
             summary: traceResult.summary,
             coverage: traceResult.coverage,

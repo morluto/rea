@@ -10,7 +10,7 @@ Do not disclose vulnerabilities, proof-of-concept exploits, credentials,
 private binaries, Hopper documents, or private Ghidra projects in a public
 issue.
 
-Use **Report a vulnerability** in the repository's **Security** tab to submit the report privately. Do not open a public issue to request a private contact channel.
+Use **Report a vulnerability** in the repository's **Security** tab as the preferred way to submit the report privately. If GitHub private reporting is unavailable to you, email [morluto@outlook.com](mailto:morluto@outlook.com). Do not open a public issue to request a private contact channel.
 
 Include the affected REA version, operating system/distribution, selected
 provider and version, impact, reproduction conditions, and any suggested

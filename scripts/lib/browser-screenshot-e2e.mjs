@@ -1,4 +1,7 @@
-import { requireMcpToolError } from "./mcp-verifier-results.mjs";
+import {
+  requireMcpOutput,
+  requireMcpToolError,
+} from "./mcp-verifier-results.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -16,10 +19,9 @@ import { comparePngScreenshots } from "../../dist/browser/PngVisualDiff.js";
 /** Verify a real, large PNG through production CLI and stdio MCP boundaries. */
 export async function verifyLargeScreenshotE2e(endpoint, origin) {
   const browser = await chromium.connectOverCDP(endpoint);
-  const context = await browser.newContext({
-    viewport: { width: 2048, height: 1536 },
-    deviceScaleFactor: 1,
-  });
+  // Independent CLI/MCP sessions must see the same native surface, without
+  // Playwright's session-scoped device-metrics override changing during capture.
+  const context = await browser.newContext({ viewport: null });
   const entrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -43,6 +45,17 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
     const session = await context.newCDPSession(page);
     let expectedPng;
     try {
+      const { windowId } = await session.send("Browser.getWindowForTarget", {
+        targetId: target.id,
+      });
+      await session.send("Browser.setContentsSize", {
+        windowId,
+        width: 2048,
+        height: 1536,
+      });
+      await page.waitForFunction(
+        () => innerWidth === 2048 && innerHeight === 1536,
+      );
       const result = await session.send("Page.captureScreenshot", {
         format: "png",
         fromSurface: true,
@@ -112,10 +125,11 @@ export async function verifyLargeScreenshotE2e(endpoint, origin) {
       { timeout: 60000 },
     );
     assert.notEqual(captured.isError, true, JSON.stringify(captured));
-    const mcpEvidence = parseEvidence(captured.structuredContent);
-    const mcpScreenshot = webScreenshotSchema.parse(
-      mcpEvidence.normalized_result,
+    assert.notEqual(captured.structuredContent, undefined);
+    const mcpEvidence = parseEvidence(
+      requireMcpOutput(captured, "capture_web_screenshot"),
     );
+    const mcpScreenshot = mcpEvidence.normalized_result;
     assert.deepEqual(mcpScreenshot.artifact, screenshot.artifact);
     const compared = comparePngScreenshots({
       before: screenshot.artifact,

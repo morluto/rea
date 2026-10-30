@@ -2,7 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { describe, expect, it } from "vitest";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
-import { functionDossierSchema } from "../../../src/domain/hopperValues.js";
+import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
 import {
   ghidraFunctionDossier,
@@ -71,7 +71,7 @@ it.each([
     try {
       const analyzed = await harness.mcp.callTool({
         name: "analyze_function",
-        arguments: { procedure: dossier.procedure.address },
+        arguments: { procedure: dossier.procedure.address, detail: "complete" },
       });
       expect(analyzed.isError).not.toBe(true);
       const evidence = sessionEvidence(
@@ -84,7 +84,7 @@ it.each([
         name: "compare_functions",
         arguments: { left: evidence, right: evidence },
       });
-      expect(reply.isError).not.toBe(true);
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const comparison = functionComparisonResultSchema.parse(
         sessionEvidence(harness.session, reply.structuredContent)
           .normalized_result,
@@ -172,20 +172,17 @@ it("retains terminal-call qualifications across function views and snapshot repl
         name,
         arguments:
           name === "analyze_function"
-            ? { procedure: identity.address }
+            ? { procedure: identity.address, detail: "complete" }
             : { procedure: identity.address, document: "fixture" },
       };
       const reply = await harness.mcp.callTool(request);
-      expect(reply.isError, name).not.toBe(true);
+      expect(reply.isError, `${name}: ${JSON.stringify(reply)}`).not.toBe(true);
       const evidence = sessionEvidence(
         harness.session,
         reply.structuredContent,
       );
       expect(evidence.normalized_result, name).toEqual(value);
-      expect(evidence.raw_result, name).toEqual({
-        value,
-        limitations: [limitation],
-      });
+      expect(evidence.raw_result, name).toBeNull();
       expect(evidence.limitations, name).toContain(limitation);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         function_boundary_observations:
@@ -234,13 +231,13 @@ it("retains handler-region limitations on incoming and outgoing reference Eviden
         name: "procedure_references",
         arguments: { procedure: dossier.procedure.address, direction },
       });
-      expect(reply.isError).not.toBe(true);
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
       const evidence = sessionEvidence(
         harness.session,
         reply.structuredContent,
       );
       expect(evidence.normalized_result).toMatchObject({ direction });
-      expect(evidence.raw_result).toMatchObject({ limitations: [limitation] });
+      expect(evidence.raw_result).toBeNull();
       expect(evidence.limitations).toContain(limitation);
       const replay = await harness.session.execute(
         "procedure_references",
@@ -467,7 +464,7 @@ describe("Ghidra MCP evidence parity", () => {
         (
           await mcp.callTool({
             name: "analyze_function",
-            arguments: { procedure: "fixture_main" },
+            arguments: { procedure: "fixture_main", detail: "complete" },
           })
         ).structuredContent,
       );

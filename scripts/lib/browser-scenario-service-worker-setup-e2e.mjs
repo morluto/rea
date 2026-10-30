@@ -142,6 +142,9 @@ export const verifyScenarioPolicySetup = async (
   page,
 ) => {
   const result = {};
+  // Exercise a caller-selected handshake deadline within the existing teardown
+  // guard; the default command deadline may legitimately outlast that guard.
+  const setupCommandTimeoutMs = 2_000;
   for (const mode of ["http-websocket", "http-discovery", "deadline"]) {
     const proxy = await startProxy(endpoint, mode);
     const provider = createBrowserScenarioProvider(process.env);
@@ -152,6 +155,9 @@ export const verifyScenarioPolicySetup = async (
         target_id: targetId,
       },
       start_url: { url: origin },
+      ...(mode === "deadline"
+        ? { command_timeout_ms: setupCommandTimeoutMs }
+        : {}),
       environment: { service_workers: "block" },
       actions: [
         { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
@@ -189,7 +195,9 @@ export const verifyScenarioPolicySetup = async (
       if (!next.ok) throw next.error;
       assert.equal(next.value.browser.cleanup, "disconnected-external");
       result[mode] = {
-        ...(mode === "deadline" ? { timed_out: true } : { cancelled: true }),
+        ...(mode === "deadline"
+          ? { timed_out: true, command_timeout_ms: setupCommandTimeoutMs }
+          : { cancelled: true }),
         socket_closed: true,
         target_reused: true,
       };

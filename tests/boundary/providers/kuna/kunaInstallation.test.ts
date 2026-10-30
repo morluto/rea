@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
-import { chmod, readFile, realpath, symlink } from "node:fs/promises";
+import {
+  chmod,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it as test } from "vitest";
 
+import { kunaInstallationCancellation } from "../../../../src/kuna/KunaInstallation.js";
 import { readKunaConfiguration } from "../../../../src/kuna/KunaConfiguration.js";
-import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaFileCloseOwner.js";
+import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
+import { makeLauncher, ownedGroupCleanup } from "./kunaVersionProbeProcess.js";
 
 const it = test.skipIf(process.platform === "win32");
 
@@ -47,6 +55,48 @@ it("identifies a caller-selected kuna by version and digest", async () => {
       path: null,
     },
   ]);
+});
+
+it("refuses to pair version output with executable bytes replaced during the probe", async () => {
+  const root = await createTestTempDirectory(
+    "rea-kuna-replaced-during-version-",
+  );
+  const kuna = join(root, "kuna");
+  const replacement = `#!${process.execPath}\nconsole.log("kuna 1.900");\n`;
+  const source = `#!${process.execPath}
+const fs = require("node:fs");
+const replacement = ${JSON.stringify(replacement)};
+console.log("kuna 1.833");
+fs.writeFileSync(process.argv[1] + ".new", replacement, { mode: 0o700 });
+fs.renameSync(process.argv[1] + ".new", process.argv[1]);
+`;
+  await writeFile(kuna, source, { mode: 0o700 });
+  await chmod(kuna, 0o700);
+  const before = await readFile(kuna);
+
+  const result = await inspectKunaInstallation({
+    REA_KUNA_COMMAND: kuna,
+    REA_KUNA_CACHE_DIR: join(root, "cache"),
+  });
+  const after = await readFile(kuna);
+
+  expect(createHash("sha256").update(after).digest("hex")).not.toBe(
+    createHash("sha256").update(before).digest("hex"),
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: "version_unresolved",
+      diagnostics: {
+        installation_identity_changed: true,
+        version: "1.833",
+        before_sha256: createHash("sha256").update(before).digest("hex"),
+        after_sha256: createHash("sha256").update(after).digest("hex"),
+        before_bytes: before.length,
+        after_bytes: after.length,
+      },
+    },
+  });
 });
 
 it("accepts another release but reports it as unverified", async () => {
@@ -91,7 +141,7 @@ it("reports a failed version probe with its exit status", async () => {
     error: {
       code: "version_unresolved",
       reason: expect.stringContaining("version probe failed"),
-      diagnostics: { exit_code: 3, killed: false },
+      diagnostics: { exit_code: 3, probe_failure_reason: "process" },
     },
   });
 });
@@ -203,19 +253,176 @@ it("stops a version probe that ignores SIGTERM instead of waiting on it", async 
 
   const result = await inspectKunaInstallation(
     { REA_KUNA_COMMAND: kuna },
-    // Long enough for Node to start the fake and install its SIGTERM handler.
-    { probeTimeoutMs: 1500 },
+    // Allow owned-process identity preparation, then exercise the stopped child.
+    { probeTimeoutMs: 4_000 },
   );
 
   expect(result).toMatchObject({
     ok: false,
     error: {
       code: "version_unresolved",
-      diagnostics: { killed: true, deadline_ms: 1500 },
+      diagnostics: {
+        probe_failure_reason: "timeout",
+        deadline_ms: 4_000,
+      },
     },
   });
-  // The deadline plus ExecFileOutput's bounded kill grace, never an open-ended wait.
-  expect(Date.now() - started).toBeLessThan(15_000);
+  // The owned process-group stop is bounded and must not wait on inherited output forever.
+  expect(Date.now() - started).toBeLessThan(10_000);
   const pid = (await fakeKunaCalls(kuna))[0]?.pid ?? 0;
   expect(() => process.kill(pid, 0)).toThrow();
 }, 20_000);
+
+it("keeps a version deadline ahead of cancellation during its joined stop", async () => {
+  const root = await createTestTempDirectory("rea-kuna-deadline-first-");
+  const command = join(root, "probe.cjs");
+  const stopped = join(root, "stopped");
+  const release = join(root, "release");
+  const launcher = makeLauncher(async (_child, pid) => {
+    process.kill(-pid, "SIGTERM");
+    const waitFor = async (path: string) => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        try {
+          await readFile(path);
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      throw new Error(`Timed out waiting for ${path}`);
+    };
+    await waitFor(stopped);
+    await waitFor(release);
+    return ownedGroupCleanup(pid);
+  });
+  await (
+    await import("node:fs/promises")
+  ).writeFile(
+    command,
+    `#!${process.execPath}
+const fs = require("node:fs");
+process.on("SIGTERM", () => fs.writeFileSync(${JSON.stringify(stopped)}, "timeout stop"));
+const gate = setInterval(() => {
+  if (fs.existsSync(${JSON.stringify(release)})) { clearInterval(gate); process.exit(0); }
+}, 5);
+setTimeout(() => process.exit(9), 10000).unref();
+`,
+    { mode: 0o700 },
+  );
+  const controller = new AbortController();
+  const pending = inspectKunaInstallation(
+    {
+      REA_KUNA_COMMAND: command,
+      REA_KUNA_CACHE_DIR: join(root, "cache"),
+    },
+    {
+      signal: controller.signal,
+      probeTimeoutMs: 1_000,
+      processLauncher: launcher.launcher,
+    },
+  );
+  const outcome = pending.then(
+    (value) => ({ kind: "result" as const, value }),
+    (cause: unknown) => ({ kind: "thrown" as const, cause }),
+  );
+  try {
+    await expect
+      .poll(
+        () =>
+          readFile(stopped).then(
+            () => true,
+            () => false,
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    controller.abort({ request: "late doctor cancellation" });
+    await writeFile(release, "release");
+    expect(await outcome).toMatchObject({
+      kind: "result",
+      value: {
+        ok: false,
+        error: {
+          code: "version_unresolved",
+          diagnostics: {
+            deadline_ms: 1000,
+            probe_failure_reason: "timeout",
+          },
+        },
+      },
+    });
+  } finally {
+    await writeFile(release, "release");
+    await outcome;
+  }
+});
+
+it("retains an admitted lookup failure when cancellation arrives during settlement", async () => {
+  const root = await createTestTempDirectory("rea-kuna-lookup-failure-");
+  const command = join(root, "missing-kuna");
+  const controller = new AbortController();
+  const pending = inspectKunaInstallation(
+    {
+      REA_KUNA_COMMAND: command,
+      REA_KUNA_CACHE_DIR: join(root, "cache"),
+    },
+    { signal: controller.signal },
+  );
+  controller.abort({ request: "cancel in-flight lookup" });
+  const outcome = await pending.then(
+    (value) => ({ kind: "result" as const, value }),
+    (cause: unknown) => ({ kind: "thrown" as const, cause }),
+  );
+  expect(outcome).toMatchObject({
+    kind: "result",
+    value: {
+      ok: false,
+      error: { code: "executable_missing", diagnostics: { command } },
+    },
+  });
+});
+
+it("preserves an already-cancelled caller before admitting a lookup", async () => {
+  const root = await createTestTempDirectory("rea-kuna-preabort-lookup-");
+  const controller = new AbortController();
+  const reason = { request: "cancel before lookup" };
+  controller.abort(reason);
+  const cause: unknown = await inspectKunaInstallation(
+    {
+      REA_KUNA_COMMAND: join(root, "missing-kuna"),
+      REA_KUNA_CACHE_DIR: join(root, "cache"),
+    },
+    { signal: controller.signal },
+  ).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(kunaInstallationCancellation(cause)?.reason).toBe(reason);
+});
+
+it.each(["darwin", "linux"] as const)(
+  "preserves native traversal in default cache roots on %s",
+  (platform) => {
+    const home = "/workspace/alias/../home";
+    const environment = { REA_KUNA_COMMAND: "/tools/kuna", HOME: home };
+    const configured = readKunaConfiguration(environment, platform);
+    expect(configured).toMatchObject({
+      value: {
+        cacheRoot:
+          platform === "darwin"
+            ? `${home}/Library/Caches/rea/kuna`
+            : `${home}/.cache/rea/kuna`,
+      },
+    });
+    if (platform === "linux")
+      expect(
+        readKunaConfiguration(
+          { ...environment, XDG_CACHE_HOME: "/workspace/alias/../cache" },
+          platform,
+        ),
+      ).toMatchObject({
+        value: { cacheRoot: "/workspace/alias/../cache/rea/kuna" },
+      });
+  },
+);

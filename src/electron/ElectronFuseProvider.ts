@@ -4,8 +4,7 @@ import { createElectronFuseEvidence } from "../domain/electron/electronFuseEvide
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   assertArtifactReadActive,
-  ArtifactFileCancelled,
-  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
@@ -81,19 +80,16 @@ export class ElectronFuseProvider implements ElectronFusePort {
     } catch (cause: unknown) {
       const failure = electronFuseFailure(cause, input.path);
       // Only this reader's completed physical outcome supplies partial fuse facts.
-      const outcome =
-        cause instanceof ArtifactFileCleanupFailure
-          ? (cause as ArtifactFileCleanupFailure<ElectronFuseImage>)
-              .fileCleanupFailure.outcome
-          : cause instanceof ArtifactFileCancelled
-            ? (cause as ArtifactFileCancelled<ElectronFuseImage>)
-                .fileCancellation.outcome
-            : undefined;
+      const completion = artifactFileCompletion(cause);
       const report =
         completed ??
-        (outcome?.kind === "completed"
-          ? reportFor(outcome.value, input.path, resolvedPath)
-          : undefined);
+        (completion === undefined
+          ? undefined
+          : reportFor(
+              completion.value as ElectronFuseImage,
+              input.path,
+              resolvedPath,
+            ));
       if (report !== undefined) {
         failure.retainPartialObservation(
           createElectronFuseEvidence(input, report, this.identity),

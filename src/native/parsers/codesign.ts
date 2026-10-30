@@ -45,11 +45,7 @@ export const parseCodeSignature = (
     entitlements: null,
     timestamp: values.get("Timestamp") ?? null,
     hardened_runtime: parseRuntime(values.get("CodeDirectory")),
-    limitations: unsigned
-      ? ["Artifact is not signed."]
-      : [
-          "Entitlements and designated requirements require separate bounded commands.",
-        ],
+    limitations: unsigned ? ["Artifact is not signed."] : [],
   });
   return parsed;
 };

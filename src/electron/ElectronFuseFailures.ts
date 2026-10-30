@@ -1,6 +1,7 @@
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
+  artifactFileCompletion,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -17,6 +18,7 @@ import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ZodError } from "zod";
 import {
@@ -55,13 +57,14 @@ export const electronFuseFailure = (
     bindArtifactFileCleanup(cause, cleanup);
     if (cause instanceof ArtifactFileCleanupFailure) {
       const outcome = cause.fileCleanupFailure.outcome;
+      const cancellation = artifactFileCompletion(cause)?.cancellation;
       const primary =
         outcome.kind === "failed"
           ? electronFuseFailure(outcome.cause, path, operation)
-          : cause.fileCleanupFailure.completionCancellation === undefined
+          : cancellation === undefined
             ? undefined
             : new AnalysisCancelledError(operation, {
-                cause: cause.fileCleanupFailure.completionCancellation.reason,
+                cause: cancellation.reason,
               });
       if (primary !== undefined)
         return analysisErrorWithCleanupFailure(
@@ -93,7 +96,15 @@ export const electronFuseFailure = (
       cause.boundary === "file-size"
         ? { maximum_input_bytes: 1024 * 1024 * 1024 }
         : { maximum_sentinels_per_slice: 32 },
-      { cause },
+      {
+        cause,
+        ...fixedAllowanceOptions(
+          cause.boundary === "file-size"
+            ? "the 1 GiB Electron fuse input allowance"
+            : "The Electron fuse sentinel inventory",
+          cause.boundary === "file-size" ? "input" : "count",
+        ),
+      },
     );
   if (cause instanceof ElectronFuseFormatFailure)
     return cause.kind === "unsupported"

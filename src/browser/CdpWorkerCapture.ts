@@ -5,6 +5,7 @@ import type { CdpEvent } from "./CdpConnection.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
+import { parseCdpWorkerTarget } from "./CdpWorkerTarget.js";
 import { exclusionReasonForUrl } from "./CdpCaptureEventHelpers.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
@@ -309,37 +310,26 @@ export class CdpWorkerCapture {
   }
 
   #admit(value: unknown): WorkerState | undefined {
-    const target = recordValue(value);
-    if (target === undefined) {
+    const parsed = parseCdpWorkerTarget(value);
+    if (!parsed.ok) {
       this.#invalidTarget(value);
       return;
     }
-    const type = cdpStringValue(target.type);
-    if (type === undefined || type.length === 0) {
-      this.#invalidTarget(target);
-      return;
-    }
+    const target = parsed.value;
+    if (target.kind === "non_worker") return;
+    const {
+      type,
+      targetId: id,
+      openerTargetId: openerId,
+      parentFrameId,
+    } = target;
     if (
       type !== "worker" &&
       type !== "shared_worker" &&
       type !== "service_worker"
     )
       return;
-    const id = cdpStringValue(target.targetId);
-    const openerId = cdpStringValue(target.openerId);
-    const parentFrameId = cdpStringValue(target.parentFrameId);
-    const existing = id === undefined ? undefined : this.#workers.get(id);
-    if (
-      id === undefined ||
-      id.length === 0 ||
-      typeof target.attached !== "boolean" ||
-      typeof target.url !== "string" ||
-      (target.openerId !== undefined && openerId === undefined) ||
-      (target.parentFrameId !== undefined && parentFrameId === undefined)
-    ) {
-      this.#invalidTarget(target);
-      return;
-    }
+    const existing = this.#workers.get(id);
     const url = allowedSanitizedUrl(target.url, this.allowedOrigins);
     if (
       existing !== undefined &&

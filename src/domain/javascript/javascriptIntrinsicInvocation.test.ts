@@ -2,6 +2,11 @@ import { expect, it } from "vitest";
 import * as t from "@babel/types";
 
 import { createSemanticModuleInterop } from "./javascriptModuleInterop.js";
+import {
+  javaScriptSourceInvocationContext,
+  javaScriptGenericInvocationMethod,
+  resolveJavaScriptGenericInvocation,
+} from "./javascriptIntrinsicInvocation.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { indexJavaScriptBindingsSteps } from "./javascriptSemanticAnalysis.js";
 import {
@@ -52,3 +57,44 @@ it("keeps a comma-expression intrinsic call unknown when its receiver is erased"
     }),
   ]);
 });
+
+it.each([
+  ["get.call(null)", "get"],
+  ["get.apply(null,[])", "get"],
+  ["get.call.call(other,null)", "get.call"],
+  ["get.apply.call(other,null,[])", "get.apply"],
+  ["(0,get.call)(null)", undefined],
+])(
+  "retains one generic callable receiver transition through %s",
+  (source, name) => {
+    const parsed = parseJavaScriptSource(source);
+    const statement = parsed?.program.body[0];
+    if (
+      !t.isExpressionStatement(statement) ||
+      !t.isCallExpression(statement.expression)
+    )
+      throw new Error("Expected source invocation fixture");
+    const call = statement.expression;
+    const method = javaScriptGenericInvocationMethod(call.callee);
+    const context = javaScriptSourceInvocationContext(call);
+    const result =
+      method === undefined
+        ? undefined
+        : resolveJavaScriptGenericInvocation(method, context);
+    expect(result?.callable).toEqual(
+      name === undefined
+        ? undefined
+        : name.includes(".")
+          ? expect.objectContaining({
+              type: "MemberExpression",
+              object: expect.objectContaining({ name: "get" }),
+              property: expect.objectContaining({ name: name.split(".")[1] }),
+            })
+          : expect.objectContaining({ type: "Identifier", name }),
+    );
+    if (name?.includes("."))
+      expect(result?.context.receiver).toEqual(
+        expect.objectContaining({ type: "Identifier", name: "other" }),
+      );
+  },
+);

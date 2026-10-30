@@ -1,4 +1,4 @@
-import type { ObjdumpInput } from "../domain/reverseEngineering.js";
+import type { ObjdumpSelection } from "../domain/reverseEngineering.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 export const OBJDUMP_PROVIDER_IDENTITY = {
@@ -8,7 +8,7 @@ export const OBJDUMP_PROVIDER_IDENTITY = {
 } as const;
 
 /** Build GNU objdump argv without invoking a shell or following DWARF links by default. */
-export const objdumpCommand = (input: ObjdumpInput): readonly string[] => {
+export const objdumpCommand = (input: ObjdumpSelection): readonly string[] => {
   if (input.operation === "architectures") return ["-i"];
   const argumentsByOperation = {
     file_headers: ["-f"],
@@ -16,7 +16,10 @@ export const objdumpCommand = (input: ObjdumpInput): readonly string[] => {
     symbols: ["-t"],
     relocations: ["-r"],
     dwarf: ["-W", input.follow_debug_links ? "-WK" : "-WN"],
-    disassemble: ["-d"],
+    disassemble:
+      input.operation === "disassemble" && input.symbol !== undefined
+        ? [`--disassemble=${input.symbol}`]
+        : ["-d"],
     disassemble_all: ["-D"],
   } satisfies Record<typeof input.operation, readonly string[]>;
   return [

@@ -378,7 +378,7 @@ async function inventory(operation, parameters) {
   const result = parseGhidraInventoryResult(operation, called.value);
   if (!result.ok) throw result.error;
   observed.add(operation);
-  return result.value;
+  return result.value.value;
 }
 
 async function functionOperation(operation, parameters) {

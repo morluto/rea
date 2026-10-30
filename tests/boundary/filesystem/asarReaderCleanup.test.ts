@@ -248,7 +248,7 @@ describe("ASAR preparation cleanup", () => {
     try {
       await expect(packedMember(reader)).rejects.toMatchObject({
         reason: "format",
-        message: "Truncated or invalid ASAR size pickle",
+        message: "ASAR header has invalid Pickle extents",
         cleanup: {
           reason: closeFailure.message,
           resources: [expect.any(String)],

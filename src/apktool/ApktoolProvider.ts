@@ -8,7 +8,7 @@ import {
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
 } from "../artifacts/ArtifactFileOperation.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
@@ -20,18 +20,18 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type {
-  ExecutionOptions,
-  ProviderAvailability,
-} from "../application/AnalysisProvider.js";
-import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
 import {
+  type ExecutionOptions,
+  type ProviderAvailability,
   createAnalysisExecution,
-  createAnalysisExecutionEvidence,
   type AnalysisExecution,
 } from "../application/AnalysisProvider.js";
+import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
   apktoolResultSchemas,
+  DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
+  MAX_APKTOOL_DECODE_TIMEOUT_MS,
   type ApktoolRequest,
   type ApktoolDecodeResult,
 } from "../domain/apktool/apktoolResourceAnalysis.js";
@@ -45,6 +45,7 @@ import {
   AnalysisUnsupportedTargetError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -54,8 +55,8 @@ import {
 } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { WindowsBatchCommandError } from "../process/WindowsBatchCommand.js";
+import { ownedProcessPrerequisiteAvailability } from "../application/ownedProcessAvailability.js";
 import {
-  APKTOOL_COMMAND_ENV,
   ApktoolConfigurationFailure,
   apktoolConfigurationAvailability,
   apktoolInvocation,
@@ -76,11 +77,21 @@ export const APKTOOL_PROVIDER_IDENTITY = {
   version: null,
 } as const;
 
-const DECODE_TIMEOUT_MS = 600_000;
 const DECODE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MANIFEST_MAX_BYTES = 512 * 1024;
 const MAX_DECODED_ENTRIES_VISITED = 100_000;
 const STDERR_EXCERPT_BYTES = 512;
+
+const apktoolDecodeTimeoutGuidance = (
+  timeoutMs: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `apktool decode reached its ${String(timeoutMs)} ms wall-clock deadline (deadlineExpired).`,
+  remediationAction: `${
+    timeoutMs < MAX_APKTOOL_DECODE_TIMEOUT_MS
+      ? `Increase decode_timeout_ms above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)}; omitted means ${String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS)}), or use rea decode-android-resources <path> --decode-timeout-ms <milliseconds> on the CLI.`
+      : `decode_timeout_ms is already at the maximum ${String(MAX_APKTOOL_DECODE_TIMEOUT_MS)} ms; do not increase it further.`
+  } A change applies on the next decode. It does not raise the ${String(DECODE_MAX_OUTPUT_BYTES)}-byte output capture allowance or the version probe; both have no runtime override. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
 
 const throwIfCancelled = (
   operation: string,
@@ -184,8 +195,9 @@ const apktoolCommandFailure = (
     return new AnalysisTimeoutError(operation, limits.timeoutMs, {
       cause,
       ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      ...apktoolDecodeTimeoutGuidance(limits.timeoutMs),
     });
-  if (cause.reason === "output-limit")
+  if (cause.reason === "output-limit") {
     return new AnalysisResourceConstraintError(
       operation,
       "memory",
@@ -194,8 +206,13 @@ const apktoolCommandFailure = (
       {
         cause,
         ...(capturedOutput === undefined ? {} : { capturedOutput }),
+        ...fixedAllowanceOptions(
+          `The apktool output capture allowance of ${String(limits.maxOutputBytes)} bytes (this release has no runtime override; decode_timeout_ms does not raise it)`,
+          "capture",
+        ),
       },
     );
+  }
   // A physical launcher/capture failure does not establish target refusal.
   // Only a fully collected ordinary nonzero decode exit carries that meaning.
   if (
@@ -274,15 +291,7 @@ export class ApktoolProvider {
   }
 
   private operationEnvironment(): Readonly<NodeJS.ProcessEnv> {
-    const ambient = snapshotEnvironment(process.env);
-    if (this.selectedEnvironment === undefined) return ambient;
-    // Child inheritance is sampled per operation. An explicit map keeps its
-    // launcher choice authoritative, including an omitted command selecting PATH.
-    return snapshotEnvironment({
-      ...ambient,
-      ...this.selectedEnvironment,
-      [APKTOOL_COMMAND_ENV]: this.selectedEnvironment[APKTOOL_COMMAND_ENV],
-    });
+    return this.selectedEnvironment ?? snapshotEnvironment(process.env);
   }
 
   /** Probe the selected apktool launcher; decodes nothing. */
@@ -342,6 +351,8 @@ export class ApktoolProvider {
       if (cause instanceof ApktoolConfigurationFailure) {
         return apktoolConfigurationAvailability(cause);
       }
+      const prerequisite = ownedProcessPrerequisiteAvailability(cause);
+      if (prerequisite !== undefined) return prerequisite;
       throw cause;
     }
   }
@@ -559,7 +570,8 @@ export class ApktoolProvider {
           snapshot,
         ],
         {
-          timeoutMs: DECODE_TIMEOUT_MS,
+          timeoutMs:
+            input.decode_timeout_ms ?? DEFAULT_APKTOOL_DECODE_TIMEOUT_MS,
           maxOutputBytes: DECODE_MAX_OUTPUT_BYTES,
         },
         signal,
@@ -675,11 +687,12 @@ export class ApktoolProvider {
         ),
       );
     } catch (cause) {
-      const physical = artifactFilePrimaryFailure(cause);
+      const { cause: physical, origin } = artifactFilePrimaryFacts(cause);
       const primary =
-        physical instanceof AnalysisError
+        origin === "owned-or-classified" && physical instanceof AnalysisError
           ? physical
-          : physical instanceof ArtifactReaderFailure &&
+          : origin === "owned-or-classified" &&
+              physical instanceof ArtifactReaderFailure &&
               physical.reason === "cancelled"
             ? new AnalysisCancelledError(operation, {
                 cause: artifactFileCancellationCause(physical),

@@ -17,6 +17,7 @@ import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { TOOL_CONTRACTS } from "../../../dist/contracts/toolContracts.js";
+import { analysisErrorProjectionSchema } from "../../../dist/contracts/errorSchemas.js";
 
 /** Real unusable Java runtimes and selectors must lead to applicable recovery. */
 export async function verifyAndroidFailureRecovery({
@@ -103,18 +104,37 @@ export async function verifyAndroidFailureRecovery({
         label: "JRE without compiler",
         env: { ...environment, JAVA_HOME: jre },
         observation: "jdk.compiler",
+        diagnostics: {
+          failure_kind: "java_runtime",
+          failure_code: "runtime_missing",
+          jdk_compiler: false,
+        },
+        message: /full JDK/u,
+        remediation: /java --list-modules/u,
       },
       {
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
-        observation:
-          process.platform === "win32" ? "Cannot find java.exe" : "ENOENT",
+        observation: `Cannot find an executable ${javaName}`,
+        diagnostics: {
+          failure_kind: "java_runtime",
+          failure_code: "runtime_missing",
+          phase: "path-lookup",
+        },
+        message: /Cannot find an executable java/u,
+        remediation: /JAVA_HOME|PATH/u,
       },
       {
         label: "invalid engine archive with a working JDK",
         env: { ...environment, REA_JADX_MCP_JAR: invalidJar },
         observation: "Cannot inspect REA_JADX_MCP_JAR",
-        jarFailure: true,
+        diagnostics: {
+          failure_kind: "jar",
+          failure_code: "version_unresolved",
+        },
+        message: /REA_JADX_MCP_JAR/u,
+        remediation: /jadx-headless-mcp/u,
+        forbiddenGuidance: /Select a full JDK/u,
       },
     ];
     if (process.platform === "darwin") {
@@ -126,6 +146,14 @@ export async function verifyAndroidFailureRecovery({
           label: "macOS Java stub",
           env: { ...withoutJavaHome, PATH: "/usr/bin:/bin" },
           observation: "Unable to locate a Java Runtime",
+          diagnostics: {
+            failure_kind: "java_probe",
+            failure_code: "runtime_unavailable",
+          },
+          availabilityReason: "provider_unavailable",
+          availabilityRemediation: /selected Java runtime/u,
+          message: /selected Java runtime/u,
+          remediation: /selected launcher/u,
         });
       }
     }
@@ -145,33 +173,33 @@ export async function verifyAndroidFailureRecovery({
         assert.fail(`${scenario.label} unexpectedly succeeded`);
       } catch (cause) {
         assert.equal(cause.code, 1);
-        failure = JSON.parse(cause.stdout);
+        failure = analysisErrorProjectionSchema.parse(JSON.parse(cause.stdout));
       }
       assert.equal(failure.code, "capability_unavailable");
       assert.ok(
         JSON.stringify(failure).includes(scenario.observation),
         JSON.stringify(failure),
       );
-      assert.match(
-        failure.message,
-        scenario.jarFailure ? /REA_JADX_MCP_JAR/u : /full JDK/u,
-      );
-      assert.match(
-        failure.remediation.action,
-        scenario.jarFailure ? /jadx-headless-mcp/u : /java --list-modules/u,
-      );
-      if (scenario.jarFailure)
-        assert.doesNotMatch(failure.message, /Select a full JDK/u);
+      assert.ok(failure.details.diagnostics);
+      for (const [key, value] of Object.entries(scenario.diagnostics))
+        assert.deepEqual(failure.details.diagnostics[key], value);
+      assert.match(failure.message, scenario.message);
+      assert.match(failure.remediation.action, scenario.remediation);
+      if (scenario.forbiddenGuidance)
+        assert.doesNotMatch(failure.message, scenario.forbiddenGuidance);
       assert.doesNotMatch(JSON.stringify(failure), /rea doctor/u);
       await verifyAndroidReadiness({
         entrypoint,
         environment: scenario.env,
         repository,
         available: false,
-        remediation: new RegExp(
-          scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
-          "u",
-        ),
+        unavailableReason: scenario.availabilityReason ?? "provider_missing",
+        remediation:
+          scenario.availabilityRemediation ??
+          new RegExp(
+            scenario.observation.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
+            "u",
+          ),
       });
       console.log(`PASS CLI applicable recovery: ${scenario.label}`);
     }
@@ -265,6 +293,7 @@ const verifyAndroidReadiness = async ({
   repository,
   available,
   remediation,
+  unavailableReason = "provider_missing",
 }) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -311,7 +340,7 @@ const verifyAndroidReadiness = async ({
         assert.equal(item.reason, "available");
         assert.equal(item.remediation, null);
       } else {
-        assert.equal(item.reason, "provider_missing");
+        assert.equal(item.reason, unavailableReason);
         assert.match(item.remediation, remediation);
       }
     }

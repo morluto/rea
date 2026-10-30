@@ -1,4 +1,4 @@
-import { isSafeNumber, LosslessNumber } from "lossless-json";
+import { LosslessNumber } from "lossless-json";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { QlogCaptureFacts } from "../../domain/qlogCapture.js";
 import {
@@ -12,16 +12,11 @@ import {
   CaptureRedaction,
   captureObject,
   capturePointer,
+  isCaptureCredentialHeader,
 } from "./CaptureRedaction.js";
 import { QLOG_CAPTURE_PROVIDER_IDENTITY } from "./CaptureRelease.js";
 
 const MAX_VARINT = (1n << 62n) - 1n;
-const credentials = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-]);
 type Projection = Pick<
   WebNetworkCaptureRecord,
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
@@ -233,6 +228,9 @@ const collectTransportFacts = (
   },
 ): void => {
   const { fact, streams, excluded, name } = state;
+  // Unknown event payloads carry no facts under this interpretation profile.
+  // Their omission cannot make the transport-fact inventory incomplete.
+  if (name !== "recovery:packet_lost" && !packetEvent(name)) return;
   if (!object(projection.reported) || !object(projection.reported.data)) {
     fact.incomplete_fact_records.push(ordinal);
     return;
@@ -240,10 +238,7 @@ const collectTransportFacts = (
   const visible = projection.reported;
   // Facts are selected by event name, so a declaration that hides the name
   // of a loss or packet event omits its facts like any other hidden field.
-  if (
-    (name === "recovery:packet_lost" || packetEvent(name)) &&
-    visible.name !== name
-  ) {
+  if (visible.name !== name) {
     fact.incomplete_fact_records.push(ordinal);
     return;
   }
@@ -312,6 +307,8 @@ const collectTransportFacts = (
       length: length.toString(),
       fin: typeof frame.fin === "boolean" ? frame.fin : null,
     });
+    if (typeof frame.fin !== "boolean")
+      fact.incomplete_fact_records.push(ordinal);
   }
 };
 
@@ -437,23 +434,19 @@ const project = (
       /^\/data\/frame\/headers\/\d+\/value$/u.test(pointer) &&
       typeof parent?.name === "string";
     if (
-      (header && credentials.has(String(parent?.name).toLowerCase())) ||
+      (header && isCaptureCredentialHeader(String(parent?.name))) ||
       qlogToken(eventName, pointer, parent)
     )
       return redactor.credential(pointer);
     if (item instanceof LosslessNumber) {
-      if (
-        redactor.text(item.value, pointer) === null ||
-        (isSafeNumber(item.value) &&
-          redactor.text(String(Number(item.value)), pointer) === null)
-      )
-        return null;
+      const number = redactor.number(item, pointer);
+      if (number === null) return null;
       numeric_literals.push({
         pointer,
         producer_type: "json-number",
-        literal: item.value,
+        literal: number.literal,
       });
-      return isSafeNumber(item.value) ? Number(item.value) : null;
+      return number.reported;
     }
     if (typeof item === "string")
       return redactor.text(
@@ -462,7 +455,9 @@ const project = (
         header &&
           ["location", "referer", "origin"].includes(
             String(parent?.name).toLowerCase(),
-          ),
+          )
+          ? {}
+          : undefined,
       );
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))

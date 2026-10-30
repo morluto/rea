@@ -183,3 +183,96 @@ describe("CdpBrowserProvider: redirect errors: preserving authorized predecessor
     expect(output).not.toContain("header-secret");
   });
 });
+
+it.each([
+  { phase: "redirect", malformed: true, orphan: true },
+  { phase: "redirect", malformed: false, orphan: true },
+  { phase: "redirect", malformed: true, orphan: false },
+  { phase: "redirect", malformed: false, orphan: false },
+  { phase: "response", malformed: true, orphan: false },
+  { phase: "response", malformed: false, orphan: false },
+])(
+  "retains $phase facts with missing versus malformed status (orphan=$orphan, malformed=$malformed)",
+  async ({ phase, malformed, orphan }) => {
+    const { browser, inspection } = await inspectNetwork({
+      commandEvents(command, origin) {
+        if (command.method !== "Network.enable") return undefined;
+        const request = (url: string) => ({
+          requestId: "status-request",
+          timestamp: 1,
+          type: "Fetch",
+          request: { url, method: "GET" },
+          initiator: { type: "other" },
+        });
+        const response = {
+          url: `${origin}/prior`,
+          mimeType: "text/plain",
+          encodedDataLength: 0,
+          ...(malformed ? { status: "302" } : {}),
+        };
+        return [
+          ...(orphan
+            ? []
+            : [
+                {
+                  method: "Network.requestWillBeSent",
+                  sessionId: command.sessionId,
+                  params: request(`${origin}/prior`),
+                },
+              ]),
+          phase === "redirect"
+            ? {
+                method: "Network.requestWillBeSent",
+                sessionId: command.sessionId,
+                params: {
+                  ...request(`${origin}/final`),
+                  timestamp: 2,
+                  redirectResponse: response,
+                },
+              }
+            : {
+                method: "Network.responseReceived",
+                sessionId: command.sessionId,
+                params: { requestId: "status-request", response },
+              },
+          {
+            method: "Network.loadingFinished",
+            sessionId: command.sessionId,
+            params: {
+              requestId: "status-request",
+              timestamp: 3,
+              encodedDataLength: 0,
+            },
+          },
+        ];
+      },
+    });
+    expect(inspection.network.requests).toHaveLength(1);
+    const retained = inspection.network.requests[0];
+    if (orphan)
+      expect(retained).toMatchObject({
+        url: `${browser.allowedOrigin}/final`,
+        redirects: [],
+      });
+    else if (phase === "redirect")
+      expect(retained?.redirects).toContainEqual(
+        expect.objectContaining({
+          response_url: `${browser.allowedOrigin}/prior`,
+          status: null,
+        }),
+      );
+    else
+      expect(retained).toMatchObject({
+        url: `${browser.allowedOrigin}/prior`,
+        status: null,
+      });
+    const invalid = expect.objectContaining({
+      section: "network_requests",
+      reason: "invalid_protocol_value",
+      count: 1,
+    });
+    if (malformed)
+      expect(inspection.completeness.excluded).toContainEqual(invalid);
+    else expect(inspection.completeness.excluded).not.toContainEqual(invalid);
+  },
+);

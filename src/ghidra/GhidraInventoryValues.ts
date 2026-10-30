@@ -1,10 +1,17 @@
+import { nativeSearchFields } from "../domain/native/nativeSearch.js";
+import { nativeSymbolMetadataSchema } from "../domain/native/nativeSymbol.js";
+import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
+import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { z } from "zod";
+import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import {
+  MAX_BYTE_SEARCH_MATCHES,
   bytePatternFields,
   validateBytePattern,
   byteSearchResultSchema,
 } from "../domain/native/bytePattern.js";
 import {
+  normalizeNativeLoadImageObservation,
   nativeLoadImageObservationSchema,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
@@ -13,11 +20,12 @@ import {
   type AnalysisInputError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { projectBinaryOverview } from "../domain/native/nativeSegments.js";
 import {
-  functionBodySchema,
+  availableFunctionBodySchema,
   functionBodyEntryAgrees,
-  projectBinaryOverview,
-} from "../domain/hopperValues.js";
+} from "../domain/native/functionBody.js";
+import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
@@ -76,9 +84,7 @@ export const ghidraInputAddressSchema = z
 const explicitAddress = ghidraInputAddressSchema;
 const filteredAddress = explicitAddress.nullable().default(null);
 const searchInput = {
-  pattern: z.string().min(1),
-  mode: z.enum(["literal", "regex"]).default("literal"),
-  case_sensitive: z.boolean().default(false),
+  ...nativeSearchFields,
   document,
 };
 
@@ -90,7 +96,7 @@ const inputSchemas = {
       document,
       start: explicitAddress.optional(),
       end: explicitAddress.optional(),
-      limit: z.number().int().min(1).max(1000).default(100),
+      limit: z.int().min(1).max(MAX_BYTE_SEARCH_MATCHES).default(100),
       cursor: z.string().min(1).optional(),
     })
     .superRefine(validateBytePattern),
@@ -98,7 +104,7 @@ const inputSchemas = {
   read_bytes: z.strictObject({
     document,
     address: explicitAddress,
-    length: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).default(256),
+    length: z.int().min(1).max(Number.MAX_SAFE_INTEGER).default(256),
   }),
   address_to_file_offset: z.strictObject({
     document,
@@ -122,7 +128,7 @@ const inputSchemas = {
   set_addresses_names: z
     .object({
       document,
-      names: z.record(explicitAddress, z.string().min(1)),
+      names: jsonRecordSchema(z.string().min(1), explicitAddress),
     })
     .strict()
     .refine(
@@ -146,10 +152,6 @@ export const parseGhidraInventoryInput = (
   return ok(parsed.data);
 };
 
-export const ghidraCanonicalAddressSchema = z
-  .string()
-  .regex(/^(?:0x[0-9a-f]+|(?:[A-Za-z0-9._~-]|%[0-9A-F]{2})+:0x[0-9a-f]+)$/u);
-const canonicalAddress = ghidraCanonicalAddressSchema;
 const symbolFacts = z
   .object({
     primary: z.boolean(),
@@ -163,7 +165,7 @@ const procedureFacts = z
   .object({
     external: z.boolean(),
     thunk: z.boolean(),
-    thunk_target: canonicalAddress.nullable(),
+    thunk_target: nativeAddressObservationSchema.nullable(),
   })
   .strict();
 /** Ghidra FunctionManager classification, independent of body ownership inference. */
@@ -171,64 +173,55 @@ export const ghidraFunctionClassificationSchema = procedureFacts
   .extend({ provenance: z.literal("ghidra-function-manager") })
   .strict();
 /** Require complete canonical AddressSet evidence on every Ghidra function identity. */
-export const ghidraFunctionBodySchema = functionBodySchema.superRefine(
-  (body, context) => {
-    if (
-      !body.available ||
-      body.provenance !== "ghidra-function-body-address-set" ||
-      body.ranges.some(
-        ({ start, end }) =>
-          !ghidraCanonicalAddressSchema.safeParse(start).success ||
-          !ghidraCanonicalAddressSchema.safeParse(end).success,
-      )
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Ghidra omitted complete canonical function-body AddressSet evidence",
-      });
-  },
-);
+export const ghidraFunctionBodySchema = availableFunctionBodySchema.safeExtend({
+  provenance: z.literal("ghidra-function-body-address-set"),
+  ranges: z.array(
+    availableFunctionBodySchema.shape.ranges.element.extend({
+      start: nativeAddressObservationSchema,
+      end: nativeAddressObservationSchema,
+    }),
+  ),
+});
 
-/** Strict provider identity shared by inventory and function-analysis results. */
-export const ghidraProcedureIdentitySchema = z
-  .object({
-    address: ghidraCanonicalAddressSchema,
-    name: z.string().min(1),
+/** Canonical Ghidra identity, retaining the generic dossier's name and symbol admission. */
+export const ghidraFunctionIdentitySchema = procedureIdentitySchema
+  .safeExtend({
+    address: nativeAddressObservationSchema,
     classification: ghidraFunctionClassificationSchema,
     body: ghidraFunctionBodySchema,
   })
-  .strict()
   .superRefine((value, context) => {
-    if (
-      !functionBodyEntryAgrees(value.body, value.address) ||
-      (value.body.available &&
-        !value.classification.external &&
-        !value.body.contains_entry)
-    )
+    if (!value.classification.external && !value.body.contains_entry)
       context.addIssue({
         code: "custom",
         message: "Ghidra function body disagrees with its entry point",
       });
   });
 
+/** Inventory identities require a nonempty name and an explicit symbol observation. */
+export const ghidraProcedureIdentitySchema =
+  ghidraFunctionIdentitySchema.safeExtend({
+    name: z.string().min(1),
+    symbol: nativeSymbolMetadataSchema.nullable(),
+  });
+
 const stringFacts = z
   .object({
     encoding: z.string().min(1),
     termination: z.enum(["missing", "present_or_not_required"]),
-    byte_length: z.number().int().min(0),
+    byte_length: z.int().min(0),
   })
   .strict();
 const baseItem = {
-  address: canonicalAddress,
+  address: nativeAddressObservationSchema,
   value: z.string(),
 };
 const symbolItem = z.object({ ...baseItem, symbol: symbolFacts }).strict();
-const procedureItem = z
-  .object({ ...baseItem, procedure: procedureFacts })
+const addressedItem = z
+  .object({ ...baseItem, symbol: symbolFacts.exactOptional() })
   .strict();
+const procedureItem = addressedItem.extend({ procedure: procedureFacts });
 const stringItem = z.object({ ...baseItem, string: stringFacts }).strict();
-const searchItem = z.object(baseItem).strict();
 
 const availablePermissions = z
   .object({
@@ -239,15 +232,15 @@ const availablePermissions = z
 const memoryRegion = z
   .object({
     name: z.string(),
-    start: canonicalAddress,
-    end: canonicalAddress,
+    start: nativeAddressObservationSchema,
+    end: nativeAddressObservationSchema,
     readable: z.boolean(),
     writable: z.boolean(),
     executable: z.boolean(),
     permissions: availablePermissions,
     provenance: z.literal("ghidra-memory-block"),
     address_space: z.string().min(1),
-    image_base: canonicalAddress,
+    image_base: nativeAddressObservationSchema,
     initialized: z.boolean(),
     overlay: z.boolean(),
   })
@@ -258,7 +251,7 @@ const segment = memoryRegion
 const containingProcedure = z.discriminatedUnion("found", [
   z
     .object({
-      query_address: canonicalAddress,
+      query_address: nativeAddressObservationSchema,
       found: z.literal(true),
       procedure: ghidraProcedureIdentitySchema,
     })
@@ -284,7 +277,7 @@ const containingProcedure = z.discriminatedUnion("found", [
     }),
   z
     .object({
-      query_address: canonicalAddress,
+      query_address: nativeAddressObservationSchema,
       found: z.literal(false),
       procedure: z.null(),
       reason: z.enum(["outside_segments", "not_in_procedure"]),
@@ -292,56 +285,44 @@ const containingProcedure = z.discriminatedUnion("found", [
     .strict(),
 ]);
 
+const byteMatch = byteSearchResultSchema.shape.matches.element;
+const canonicalByteMatch = byteMatch.safeExtend({
+  address: nativeAddressObservationSchema,
+  procedure: byteMatch.shape.procedure
+    .unwrap()
+    .safeExtend({ address: nativeAddressObservationSchema })
+    .nullable(),
+});
+const byteCoverage = byteSearchResultSchema.shape.searched.shape;
+const canonicalByteCoverage = byteCoverage.blocks.element.safeExtend({
+  start: nativeAddressObservationSchema,
+  end: nativeAddressObservationSchema,
+});
+
 const resultSchemas = {
   read_binary_inventory_summary: z
     .strictObject({
       document: identifier,
       segments: z.array(segment),
-      procedure_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      string_count: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      procedure_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
+      string_count: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
     })
     .transform(projectBinaryOverview),
-  search_bytes: byteSearchResultSchema.superRefine((value, context) => {
-    const addresses = [
-      ...value.matches.flatMap((match) => [
-        match.address,
-        ...(match.procedure === null ? [] : [match.procedure.address]),
-      ]),
-      ...[
-        ...value.searched.blocks,
-        ...value.searched.skipped_uninitialized,
-        ...value.searched.skipped_not_loaded,
-      ].flatMap((block) => [block.start, block.end]),
-    ];
-    if (addresses.some((value) => !canonicalAddress.safeParse(value).success))
-      context.addIssue({
-        code: "custom",
-        message: "Byte search addresses must be canonical",
-      });
+  search_bytes: byteSearchResultSchema.safeExtend({
+    matches: z.array(canonicalByteMatch).max(MAX_BYTE_SEARCH_MATCHES),
+    searched: byteSearchResultSchema.shape.searched.safeExtend({
+      blocks: z.array(canonicalByteCoverage),
+      skipped_uninitialized: z.array(canonicalByteCoverage),
+      skipped_not_loaded: z.array(canonicalByteCoverage),
+    }),
   }),
   inspect_native_load_image: nativeLoadImageObservationSchema,
-  read_bytes: z
-    .strictObject({
-      address: canonicalAddress,
-      requested_bytes: z.number().int().min(1),
-      returned_bytes: z.number().int().min(0),
-      bytes_hex: z.string().regex(/^(?:[a-f0-9]{2})*$/u),
-      complete: z.boolean(),
-    })
-    .superRefine((value, context) => {
-      if (
-        value.returned_bytes * 2 !== value.bytes_hex.length ||
-        value.returned_bytes > value.requested_bytes ||
-        value.complete !== (value.returned_bytes === value.requested_bytes)
-      )
-        context.addIssue({
-          code: "custom",
-          message: "Read-byte length and completeness disagree",
-        });
-    }),
+  read_bytes: nativeByteReadSchema
+    .safeExtend({ address: nativeAddressObservationSchema })
+    .strict(),
   address_to_file_offset: z.strictObject({
-    address: canonicalAddress,
-    file_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    address: nativeAddressObservationSchema,
+    file_offset: z.int().min(0).max(Number.MAX_SAFE_INTEGER),
   }),
   address_name: z.string().nullable(),
   list_documents: z.array(z.string().min(1)).length(1),
@@ -349,36 +330,55 @@ const resultSchemas = {
   list_procedures: z.array(procedureItem),
   list_segments: z.array(segment),
   list_strings: z.array(stringItem),
-  procedure_address: canonicalAddress,
+  procedure_address: nativeAddressObservationSchema,
   resolve_containing_procedure: containingProcedure,
-  search_procedures: z.array(searchItem),
-  search_strings: z.array(searchItem),
+  search_procedures: z.array(addressedItem),
+  search_strings: z.array(addressedItem),
   set_address_name: z.boolean(),
   set_addresses_names: z.record(z.string(), z.boolean()),
 } satisfies Readonly<Record<GhidraInventoryOperation, z.ZodType>>;
 
-/** Validate exact Java-bridge output before creating Evidence. */
+/** The format owner retains raw output only when projection omits reported facts. */
+export interface ParsedGhidraInventoryResult<Value = JsonValue> {
+  readonly value: Value;
+  readonly rawResult?: JsonValue;
+}
+
+/** Validate exact Java-bridge output and own its Evidence representation. */
 export function parseGhidraInventoryResult(
   operation: "inspect_native_load_image",
   value: JsonValue,
-): Result<NativeLoadImageObservation, AnalysisOutputError>;
+): Result<
+  ParsedGhidraInventoryResult<NativeLoadImageObservation>,
+  AnalysisOutputError
+>;
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
-): Result<JsonValue, AnalysisOutputError>;
+): Result<ParsedGhidraInventoryResult, AnalysisOutputError>;
 export function parseGhidraInventoryResult(
   operation: GhidraInventoryOperation,
   value: JsonValue,
-): Result<JsonValue | NativeLoadImageObservation, AnalysisOutputError> {
+): Result<
+  ParsedGhidraInventoryResult<JsonValue | NativeLoadImageObservation>,
+  AnalysisOutputError
+> {
   if (operation === "inspect_native_load_image") {
     const parsed = resultSchemas.inspect_native_load_image.safeParse(value);
     return parsed.success
-      ? ok(parsed.data)
+      ? ok({ value: normalizeNativeLoadImageObservation(parsed.data) })
       : err(inventoryOutputFailure(operation, parsed.error));
   }
   const parsed = resultSchemas[operation].safeParse(value);
   return parsed.success
-    ? ok(jsonValueSchema.parse(parsed.data))
+    ? ok({
+        value: jsonValueSchema.parse(parsed.data),
+        // The overview omits detailed segment permissions, sections and provenance.
+        // Load-image observations above undergo separate local attestation.
+        ...(operation === "read_binary_inventory_summary"
+          ? { rawResult: value }
+          : {}),
+      })
     : err(inventoryOutputFailure(operation, parsed.error));
 }
 
